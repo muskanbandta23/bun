@@ -8,8 +8,8 @@ use crate::heap::{Owned, barrier};
 use crate::{
     Attributes, CallFrame, CellKind, CellType, Cx, DeletePropertySlot, DontEnumMode, Environment,
     Field, Gc, GlobalObject, JsObject, JsObjectInit, JsResult, PropertyDescriptor,
-    PropertyNameList, PropertySlot, PutPropertySlot, Shape, ShapeSpec, SparseEntry, TypeFlags,
-    Value, Visitor, Vm,
+    PropertyNameList, PropertySlot, PutPropertySlot, Shape, ShapeSpec, SparseEntry, Storage,
+    TypeFlags, Value, Visitor, Vm,
 };
 
 /// Only this module knows how much memory to ask for.
@@ -93,6 +93,33 @@ impl MappedArguments {
             }
             barrier::publish_fence();
             Ok(Gc::from_address(address))
+        }
+    }
+
+    /// All but the slots.
+    ///
+    /// # Safety
+    /// A new cell with room for them, and the `direct_arguments_shape` of a realm.
+    #[inline(always)]
+    pub unsafe fn initialize_direct(
+        address: usize,
+        shape: Gc<Shape>,
+        callee: Gc<JsObject>,
+        length: u32,
+        parameters: u32,
+    ) {
+        // SAFETY: the caller's. The shape is empty.
+        unsafe {
+            let init = MappedArgumentsInit {
+                base: JsObjectInit::with_storage(shape, Storage::NONE),
+                callee,
+                length,
+                plain_length: Cell::new(length),
+                parameters,
+                scope: None,
+                slots: FollowedBySlots(()),
+            };
+            Self::initialize(core::ptr::with_exposed_provenance_mut(address), init);
         }
     }
 
@@ -184,6 +211,17 @@ impl MappedArguments {
     #[inline(always)]
     pub fn try_get(&self, index: u32) -> Option<Value> {
         (index < self.plain_length.get()).then(|| self.load(index))
+    }
+
+    /// The same without any check but that of the index.
+    ///
+    /// # Safety
+    /// The type is `DirectArguments`.
+    #[inline(always)]
+    pub unsafe fn try_get_direct(&self, index: usize) -> Option<Value> {
+        // SAFETY: each argument has a slot.
+        (index < self.plain_length() as usize)
+            .then(|| unsafe { self.slot_unchecked(index as u32) }.get())
     }
 
     #[inline(always)]

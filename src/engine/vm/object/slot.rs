@@ -3,7 +3,7 @@ use bun_engine_text::{Identifier, PropertyName};
 
 use crate::{
     Attributes, Class, Cx, Gc, GetterSetter, JsObject, JsResult, ModuleEnvironment, PropertyOffset,
-    Value, WatchpointSet, errors,
+    TypeFlags, Value, WatchpointSet, errors,
 };
 
 /// `this` is the receiver for `CUSTOM_ACCESSOR`, and the object that has the property for `CUSTOM_VALUE`.
@@ -183,6 +183,14 @@ impl PropertySlot {
     #[inline(always)]
     pub fn attributes(&self) -> Attributes {
         self.attributes
+    }
+
+    /// For `for`-`in`.
+    pub(crate) fn is_enumerable(&self) -> bool {
+        let unreliable = TypeFlags::GET_OWN_PROPERTY_SLOT_MAY_BE_WRONG_ABOUT_DONT_ENUM;
+        !self.is_unset()
+            && (self.attributes.is_enumerable()
+                || (self.base).is_some_and(|base| base.shape().type_flags().contains(unreliable)))
     }
 
     #[inline(always)]

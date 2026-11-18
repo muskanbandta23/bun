@@ -5,5 +5,6 @@ mod dominators;
 mod frequency;
 
 pub use cfg::{Cfg, Loop, LoopData};
+pub(crate) use dominators::Ancestry;
 pub use dominators::Dominators;
 pub use frequency::Frequencies;

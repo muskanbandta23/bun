@@ -7,8 +7,9 @@ use core::mem::offset_of;
 use core::ops::Deref;
 use std::rc::Rc;
 
-use bun_engine_bytecode::{ScopeKind, StaticScope};
+use bun_engine_bytecode::{ScopeKind, SlotKind, StaticScope};
 use bun_engine_macros::cell;
+use bun_engine_text::PropertyName;
 
 pub use dynamic::dynamic_this;
 pub(crate) use variables::VariableScope;
@@ -29,8 +30,8 @@ pub struct ScopeTemplate {
     /// Valid while there has been at most one instance.
     singleton_watchpoints: InlineWatchpointSet,
     pub(self) first_instance: WeakField<Option<Gc<Environment>>>,
-    /// Of the scope of a module, its record.
-    pub module: Field<Option<Gc<JsObject>>>,
+    /// Valid while nothing but the code of the scope has written to an instance. `SlotFlags` tell what that code does.
+    foreign_write_watchpoints: InlineWatchpointSet,
     scope: Rc<StaticScope>,
 }
 
@@ -44,12 +45,13 @@ impl ScopeTemplate {
             base: vm.shapes.scope_template(),
             slot_count: match scope.kind() {
                 ScopeKind::With => 1,
+                ScopeKind::Module => scope.slot_count() + ModuleEnvironment::EXTRA_SLOTS,
                 _ => scope.slot_count(),
             },
             undefined_slots: scope.undefined_slots(),
             singleton_watchpoints: InlineWatchpointSet::new(WatchpointState::Clear),
             first_instance: None,
-            module: None,
+            foreign_write_watchpoints: InlineWatchpointSet::new(WatchpointState::Watched),
             scope,
         })
     }
@@ -76,6 +78,10 @@ impl ScopeTemplate {
     #[inline(always)]
     pub fn singleton_watchpoints(&self) -> &InlineWatchpointSet {
         &self.singleton_watchpoints
+    }
+
+    pub fn foreign_write_watchpoints(&self) -> &InlineWatchpointSet {
+        &self.foreign_write_watchpoints
     }
 
     #[inline(never)]
@@ -335,6 +341,20 @@ impl Environment {
         unsafe { Owned::new(self, self.fields()) }.set(index as usize, value);
     }
 
+    /// For the embedder and the debugger, to which nothing is constant. False unless there is such a variable.
+    pub fn overwrite(&self, vm: &Vm, name: PropertyName<'_>, value: Value) -> bool {
+        use SlotKind::{Callee, Const, LazyFunction, Let, Variable};
+        let slot = self.template.scope.find(name);
+        let Some(slot) = slot.filter(|it| matches!(it.kind, Variable | Let | Const | Callee | LazyFunction))
+        else {
+            return false;
+        };
+        // SAFETY: code takes it for any value, and is told of the change.
+        unsafe { self.set(slot.index, Some(value)) };
+        self.template.foreign_write_watchpoints.invalidate(vm);
+        true
+    }
+
     /// Of a `with` scope.
     pub fn with_object(&self) -> Option<Gc<JsObject>> {
         if self.cell_type() != CellType::WithScope {
@@ -349,6 +369,7 @@ impl Environment {
     }
 }
 
+/// After the slots of the scope come the record and the namespace object.
 #[cell(name = "JSModuleEnvironment", cell_type = ModuleEnvironment, export = "engine_class_ModuleEnvironment")]
 pub struct ModuleEnvironment {
     base: Environment,

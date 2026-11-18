@@ -21,6 +21,7 @@ mod tagged_field;
 use core::cell::{Cell, RefCell};
 use std::rc::Weak;
 
+pub(crate) use async_context::AsyncContextScope;
 pub use async_function::{JsAsyncFunctionGenerator, async_return, async_throw};
 pub use async_generator::JsAsyncGenerator;
 pub use async_iteration::{

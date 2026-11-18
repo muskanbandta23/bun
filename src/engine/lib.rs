@@ -34,6 +34,11 @@ fn hooks() -> Hooks {
         did_declare_global_lexical: |_, _, _| {},
         builtin_source: bun_engine_builtins::builtin_source,
         temporal_to_locale_string: |cx, this, _, _| this.as_value().to_string(cx).map(Into::into),
+        parse_json: |cx, text| {
+            let text = cx.new_string(text)?.into();
+            cx.invoke(cx.json_object().into(), bun_engine_text::names::parse, &[text])
+        },
+        make_wasm_module: |cx, _, _, _, _| Err(cx.throw_type_error("Not supported: WebAssembly")),
         find_wasm_handler: |_, _| None,
         debugger_did_parse: |_, _, _| {},
         debugger_microtask_event: |_, _, _, _| {},

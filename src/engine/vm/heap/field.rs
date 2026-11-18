@@ -485,6 +485,9 @@ plain_keys!(
 // SAFETY: made of two that are.
 unsafe impl<A: PlainKey, B: PlainKey> PlainKey for (A, B) {}
 
+// SAFETY: one that is, or nothing.
+unsafe impl<A: PlainKey> PlainKey for Option<A> {}
+
 impl<K: PlainKey, V: Copy> Owned<'_, TracedMap<K, V>> {
     #[inline(always)]
     fn read<R>(self, read: impl FnOnce(&FastHashMap<K, V>) -> R) -> R {
@@ -528,6 +531,11 @@ impl<K: PlainKey, V: Copy> Owned<'_, TracedMap<K, V>> {
 
     pub fn clear(self) {
         self.change(|map| *map = FastHashMap::default());
+    }
+
+    /// `keeps` does not touch the map.
+    pub(crate) fn retain(self, mut keeps: impl FnMut(&K, V) -> bool) {
+        self.change(|map| map.retain(|key, &mut value| keeps(key, value)));
     }
 
     pub fn keys(self) -> Vec<K> {

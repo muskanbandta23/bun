@@ -1,9 +1,10 @@
 use bun_engine_bytecode::{BuiltinFunction, FunctionKind, FunctionRef, Visibility};
 use bun_engine_bytecode::{CoverageBlockIndex, DebugHook};
-use bun_engine_text::{Identifier, PropertyName};
+use bun_engine_text::{Identifier, PropertyName, Text};
 
 use crate::heap::{Scope, Survivors};
 use crate::{
+    JsPromise, JsSourceCode, ModuleLoader,
     BuiltinId, CallFrame, CodeBlock, CompileError, Cx, Gc, GlobalObject, Intrinsic, JsObject,
     JsResult, PropertyCondition, RealmSlot, RealmWatchpoint, SourceProvider, Value, Visitor, Vm,
 };
@@ -34,6 +35,11 @@ pub struct Hooks {
     pub builtin_source: fn(BuiltinId) -> &'static BuiltinSource,
     /// `toLocaleString` of an instance of a class of `Temporal`, with the locales and the options.
     pub temporal_to_locale_string: fn(&mut Cx, Gc<JsObject>, Value, Value) -> JsResult<Value>,
+    /// `JSON.parse` without a reviver.
+    pub parse_json: fn(&mut Cx, Text<'_>) -> JsResult<Value>,
+    /// Settles the promise with the record of the module whose bytes are the Latin-1 characters of the source.
+    pub make_wasm_module:
+        fn(&mut Cx, Gc<ModuleLoader>, &Identifier, Gc<JsSourceCode>, Gc<JsPromise>) -> JsResult<()>,
     pub find_wasm_handler: fn(&Vm, &CallFrame) -> Option<(usize, u32)>,
     pub debugger_did_parse: fn(&Cx, &SourceProvider, Option<&CompileError>),
     /// With a number that tells the task from all others.

@@ -35,7 +35,7 @@ impl ShellGlobal {
 }
 
 static HOOKS: RealmHooks = RealmHooks {
-    modules: ModuleHooks {},
+    modules: ModuleHooks::DEFAULT,
     promise_rejection_tracker: |_, _, _| {},
     report_uncaught_exception: |cx, exception| {
         run::dump_exception(cx, exception.value());

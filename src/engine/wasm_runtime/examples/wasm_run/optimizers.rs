@@ -1,9 +1,15 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
+
 use bun_engine_wasm_compiler::optimize::{CallFeedback, Feedback, InliningBudget, Level};
 use bun_engine_wasm_compiler::{CompiledFunction, Environment};
 use bun_engine_wasm_format::CodeIndex;
-use bun_engine_wasm_runtime::{Compilers, Optimizer, optimize_fully};
+use bun_engine_wasm_runtime::{Compilers, Optimizer};
 
 use crate::support::baseline_without_counters;
+
+static NANOSECONDS: AtomicU64 = AtomicU64::new(0);
+static COMPILATIONS: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
 
 /// Every call is hot, and indirect ones seem to go anywhere.
 struct Fake<'a> {
@@ -56,15 +62,22 @@ fn optimize<const IS_FULL: bool, const FAKES: bool>(
     };
     let feedback = if FAKES { &fake } else { real };
     let level = if IS_FULL { Level::Full } else { Level::Quick };
-    let optimizing = &mut compilers.optimizing;
-    optimizing
-        .compile(env, code, loop_entry, level, feedback)
-        .ok()
+    let start = Instant::now();
+    let compiled = (compilers.optimizing).compile(env, code, loop_entry, level, feedback);
+    NANOSECONDS.fetch_add(start.elapsed().as_nanos() as u64, Ordering::Relaxed);
+    COMPILATIONS[usize::from(compiled.is_err())].fetch_add(1, Ordering::Relaxed);
+    compiled.ok()
+}
+
+pub(crate) fn report() {
+    let [done, refused] = COMPILATIONS.each_ref().map(|it| it.load(Ordering::Relaxed));
+    let time = NANOSECONDS.load(Ordering::Relaxed) as f64 / 1e6;
+    eprintln!("optimize: {time:.3} ms, {done} done, {refused} refused");
 }
 
 pub(crate) fn named(name: &str, fakes_feedback: bool) -> Option<Optimizer> {
     Some(match (name, fakes_feedback) {
-        ("full", false) => optimize_fully,
+        ("full", false) => optimize::<true, false>,
         ("full", true) => optimize::<true, true>,
         ("quick", false) => optimize::<false, false>,
         ("quick", true) => optimize::<false, true>,

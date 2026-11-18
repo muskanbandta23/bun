@@ -129,13 +129,17 @@ fn main() -> ExitCode {
     let mut arguments = std::env::args().skip(1).collect::<Vec<_>>().into_iter();
     let outcome = parse(&mut arguments).and_then(|(settings, command)| {
         let rest = arguments.as_slice();
-        match command.as_str() {
+        let outcome = match command.as_str() {
             "script" => Some(script::run_all(&settings, rest)),
             "run" => program::run(&settings, rest),
             "call" => program::call(&settings, rest),
             "all" => Some(program::call_all(&settings, rest)),
             _ => None,
+        };
+        if settings.time {
+            optimizers::report();
         }
+        outcome
     });
     outcome.unwrap_or_else(|| {
         eprintln!("{USAGE}");

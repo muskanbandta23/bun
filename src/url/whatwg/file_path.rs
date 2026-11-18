@@ -58,9 +58,10 @@ impl Url {
         let mut parser = Parser::new(path, Punycode::Unchecked, parts);
         parser.out.start_with(PREFIX, start);
         let end = parser
-            .path(start, &mut FILE_PATH_SCAN.scan(path.bytes, start), syntax)
+            .segment_start(start, syntax)
+            .and_then(|start| parser.path(&mut FILE_PATH_SCAN.scan(path.bytes, start), syntax))
             .map_err(|_| AllocError)?;
-        let text = concat(&parser.out.pieces(end))?;
+        let text = concat(parser.out.pieces(end))?;
         parts.path_end = text.len() as u32;
         parts.query_end = parts.path_end;
         Ok(Url {

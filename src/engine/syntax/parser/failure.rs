@@ -123,7 +123,7 @@ impl Session<'_> {
 
     /// The context is not part of it: what changes the context changes it back, whether it fails or not.
     pub(super) fn rewind(&mut self, mark: &Mark) {
-        self.units_read_again += u64::from(self.start().saturating_sub(mark.token.start));
+        self.units_read_again += u64::from(self.start().saturating_sub(mark.token.start()));
         self.lexer.restore(mark.token, mark.previous_end);
         self.facts = mark.facts;
         self.assignments = mark.assignments;
@@ -201,7 +201,7 @@ impl Session<'_> {
         };
         Error {
             kind,
-            recovery: match token.kind {
+            recovery: match token.kind() {
                 TokenKind::End | TokenKind::UnterminatedMultiline => Recovery::Recoverable,
                 TokenKind::Unterminated | TokenKind::IncompleteEscape => {
                     Recovery::UnterminatedLiteral
@@ -209,8 +209,8 @@ impl Session<'_> {
                 _ => Recovery::Irrecoverable,
             },
             message,
-            token: token.start..token.end,
-            offset: token.end,
+            token: token.start()..token.end(),
+            offset: token.end(),
         }
     }
 }

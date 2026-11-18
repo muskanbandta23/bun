@@ -232,14 +232,14 @@ impl Session<'_> {
                 self.refer_to_private_name(token);
                 PropertyKey::Private(token.name())
             }
-            FieldKind::Named if matches!(token.kind, TokenKind::Number | TokenKind::BigInt) => {
+            FieldKind::Named if matches!(token.kind(), TokenKind::Number | TokenKind::BigInt) => {
                 PropertyKey::Named(self.numeric_key::<true>()?)
             }
             FieldKind::Named => PropertyKey::Named(self.word_or_string(token)),
             FieldKind::Computed | FieldKind::StaticBlock => PropertyKey::None,
         };
         if field.initializer_start == 0 {
-            self.lexer.previous_end = token.end;
+            self.lexer.previous_end = token.end();
             let value = None;
             return Ok(StmtKind::DefineField { index, key, value });
         }

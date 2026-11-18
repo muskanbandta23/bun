@@ -5,16 +5,32 @@ pub mod json;
 mod regexp;
 
 pub use date::DateInstance;
-pub use regexp::{RegExp, RegExpGlobalState};
+pub use regexp::*;
+
+use crate::heap::Survivors;
+use crate::{Visitor, Vm};
 
 #[derive(Default)]
 pub(crate) struct State {
     dates: bun_engine_date::DateCache,
+    regexps: regexp::State,
 }
 
 impl crate::services::Service for State {
+    fn initialize(&self, vm: &Vm) {
+        self.regexps.initialize(vm);
+    }
+
     #[inline]
-    fn will_enter(&self, vm: &crate::Vm) {
+    fn will_enter(&self, vm: &Vm) {
         vm.follow_time_zone();
+    }
+
+    fn visit(&self, visitor: &mut Visitor) {
+        self.regexps.visit(visitor);
+    }
+
+    fn reconcile_weak_references(&self, vm: &Vm, survivors: &Survivors) {
+        self.regexps.reconcile_weak_references(vm, survivors);
     }
 }

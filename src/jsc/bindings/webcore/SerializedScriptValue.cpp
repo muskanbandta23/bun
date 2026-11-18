@@ -1012,19 +1012,6 @@ private:
         }
     }
 
-    JSC::JSValue toJSArrayBuffer(ArrayBuffer& arrayBuffer)
-    {
-        auto& vm = m_lexicalGlobalObject->vm();
-        auto* globalObject = m_lexicalGlobalObject;
-        if (globalObject->inherits<JSDOMGlobalObject>())
-            return toJS(globalObject, uncheckedDowncast<JSDOMGlobalObject>(globalObject), &arrayBuffer);
-
-        if (auto* buffer = arrayBuffer.m_wrapper.get())
-            return buffer;
-
-        return JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(arrayBuffer.sharingMode()), &arrayBuffer);
-    }
-
     bool dumpArrayBufferView(JSObject* obj, SerializationReturnCode& code)
     {
         VM& vm = m_lexicalGlobalObject->vm();
@@ -1083,7 +1070,7 @@ private:
             return true;
         }
 
-        return dumpIfTerminal(toJSArrayBuffer(*arrayBuffer), code);
+        return dumpIfTerminal(JSArrayBuffer::wrap(m_lexicalGlobalObject, *arrayBuffer), code);
     }
 
     void dumpDOMException(JSObject* obj, SerializationReturnCode& code)
@@ -1378,23 +1365,20 @@ private:
                     return false;
 
                 uint32_t index = m_wasmModules.size();
-                m_wasmModules.append(&module->module());
+                m_wasmModules.append(module->module());
                 write(WasmModuleTag);
                 write(agentClusterIDFromGlobalObject(*m_lexicalGlobalObject));
                 write(index);
                 return true;
             }
             if (JSWebAssemblyMemory* memory = dynamicDowncast<JSWebAssemblyMemory>(obj)) {
-                if (!JSC::Options::alwaysUseSharedArrayBuffer() || memory->memory().sharingMode() != JSC::MemorySharingMode::Shared) {
-                    code = SerializationReturnCode::DataCloneError;
-                    return true;
-                }
-                if (m_context != SerializationContext::WorkerPostMessage) {
+                auto shared = memory->share();
+                if (!JSC::Options::alwaysUseSharedArrayBuffer() || !shared || m_context != SerializationContext::WorkerPostMessage) {
                     code = SerializationReturnCode::DataCloneError;
                     return true;
                 }
                 uint32_t index = m_wasmMemoryHandles.size();
-                m_wasmMemoryHandles.append(memory->memory().shared());
+                m_wasmMemoryHandles.append(shared.releaseNonNull());
                 write(WasmMemoryTag);
                 write(agentClusterIDFromGlobalObject(*m_lexicalGlobalObject));
                 write(index);
@@ -3842,7 +3826,7 @@ private:
                 fail();
                 return JSValue();
             }
-            return JSC::JSWebAssemblyModule::create(m_lexicalGlobalObject->vm(), m_globalObject->webAssemblyModuleStructure(), Ref { *m_wasmModules->at(index) });
+            return JSC::JSWebAssemblyModule::create(m_globalObject, m_wasmModules->at(index));
         }
         case WasmMemoryTag: {
             if (m_version >= 12) {
@@ -3860,33 +3844,7 @@ private:
                 return JSValue();
             }
 
-            auto& vm = m_lexicalGlobalObject->vm();
-            auto scope = DECLARE_THROW_SCOPE(vm);
-            JSWebAssemblyMemory* result = JSC::JSWebAssemblyMemory::create(vm, m_globalObject->webAssemblyMemoryStructure());
-            // Since we are cloning a JSWebAssemblyMemory, it's impossible for that
-            // module to not have been a valid module. Therefore, createStub should
-            // not throw.
-            scope.releaseAssertNoException();
-
-            RefPtr<Wasm::Memory> memory;
-            auto handler = [&vm, result](Wasm::Memory::GrowSuccess, PageCount oldPageCount, PageCount newPageCount) { result->growSuccessCallback(vm, oldPageCount, newPageCount); };
-            // Memory64 is not yet serialized in WasmMemoryTag, so we only
-            // support I32 address type for structured clone. Upstream WebKit
-            // has the same limitation (it calls result->memory().addressType()
-            // on an uninitialized stub here, which happens to return I32).
-            constexpr auto addressType = Wasm::AddressType::I32;
-            if (RefPtr<SharedArrayBufferContents> contents = m_wasmMemoryHandles->at(index)) {
-                if (!contents->memoryHandle()) {
-                    fail();
-                    return JSValue();
-                }
-                memory = Wasm::Memory::create(contents.releaseNonNull(), addressType, WTF::move(handler));
-            } else {
-                // zero size & max-size.
-                memory = Wasm::Memory::createZeroSized(JSC::MemorySharingMode::Shared, addressType, WTF::move(handler));
-            }
-
-            result->adopt(memory.releaseNonNull());
+            auto* result = JSC::JSWebAssemblyMemory::create(m_globalObject, m_wasmMemoryHandles->at(index));
             m_gcBuffer.appendWithCrashOnOverflow(result);
             return result;
         }
@@ -4358,11 +4316,8 @@ size_t SerializedScriptValue::computeMemoryCost() const
 #if ENABLE(WEBASSEMBLY)
     // We are not supporting WebAssembly Module memory estimation yet.
     if (m_wasmMemoryHandlesArray) {
-        // A shared memory with a maximum of zero has null contents.
-        for (auto& content : *m_wasmMemoryHandlesArray) {
-            if (content)
-                cost += content->sizeInBytes(std::memory_order_relaxed);
-        }
+        for (auto& memory : *m_wasmMemoryHandlesArray)
+            cost += memory->size();
     }
 #endif
 
@@ -4888,13 +4843,11 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
             if (arrayBuffer->isDetached() || arrayBuffer->isShared())
                 return Exception { DataCloneError };
             if (arrayBuffer->isWasmMemory()) {
-                throwVMTypeError(&lexicalGlobalObject, scope, errorMessageForTransfer(arrayBuffer));
+                throwVMTypeError(&lexicalGlobalObject, scope, "Cannot transfer a WebAssembly.Memory"_s);
                 RELEASE_AND_RETURN(scope, Exception { ExistingExceptionError });
             }
-            // No generic isDetachable() gate: Bun's native borrows call
-            // ArrayBuffer::pin(), which clears isDetachable() without setting
-            // the lock flag. A pinned buffer falls through so transferTo()
-            // takes its copyTo() fallback (see bindings.cpp
+            // No generic isDetachable() gate: a buffer that a native borrow has
+            // pinned falls through so transferTo() copies it (see bindings.cpp
             // JSC__JSValue__pinArrayBuffer). WebAssembly.Memory stays rejected
             // above per the spec's [[ArrayBufferDetachKey]] requirement.
             arrayBuffers.append(WTF::move(arrayBuffer));
@@ -4994,7 +4947,6 @@ Ref<JSC::ArrayBuffer> SerializedScriptValue::toArrayBuffer()
     auto arrayBuffer = ArrayBuffer::createFromBytes(
         { this->m_data.begin(), this->m_data.size() }, createSharedTask<void(void*)>([protectedThis = Ref { *this }](void*) {}));
 
-    // Note: using the SharedArrayBufferContents::create function directly didn't work.
     arrayBuffer->makeShared();
 
     return arrayBuffer;
@@ -5228,36 +5180,17 @@ NEVER_INLINE JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalG
     case FastPath::DoubleArray: {
         IndexingType arrayType = (m_fastPath == FastPath::Int32Array) ? ArrayWithInt32 : ArrayWithDouble;
         Structure* resultStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(arrayType);
+        ObjectInitializationScope initScope(vm);
+        JSArray* resultArray = JSArray::tryCreateUninitializedRestricted(initScope, resultStructure, m_arrayLength);
 
-        if (hasAnyArrayStorage(resultStructure->indexingType())) [[unlikely]]
-            break; // isHavingABadTime → fall through to normal deserialization
-
-        unsigned outOfLineStorage = resultStructure->outOfLineCapacity();
-        unsigned vectorLength = Butterfly::optimalContiguousVectorLength(resultStructure, m_arrayLength);
-        void* memory = vm.auxiliarySpace().allocate(
-            vm,
-            Butterfly::totalSize(0, outOfLineStorage, true, vectorLength * sizeof(EncodedJSValue)),
-            nullptr, AllocationFailureMode::ReturnNull);
-
-        if (!memory) [[unlikely]] {
+        if (!resultArray) [[unlikely]] {
             if (didFail)
                 *didFail = true;
             return {};
         }
 
-        Butterfly* butterfly = Butterfly::fromBase(memory, 0, outOfLineStorage);
-        butterfly->setVectorLength(vectorLength);
-        butterfly->setPublicLength(m_arrayLength);
+        memcpy(static_cast<void*>(resultArray->butterfly()->contiguous().data()), m_arrayButterflyData.span().data(), m_arrayButterflyData.size());
 
-        if (m_fastPath == FastPath::DoubleArray)
-            memcpy(butterfly->contiguousDouble().data(), m_arrayButterflyData.span().data(), m_arrayButterflyData.size());
-        else
-            memcpy(butterfly->contiguous().data(), m_arrayButterflyData.span().data(), m_arrayButterflyData.size());
-
-        // Clear unused tail slots with hole values
-        Butterfly::clearRange(arrayType, butterfly, m_arrayLength, vectorLength);
-
-        JSArray* resultArray = JSArray::createWithButterfly(vm, nullptr, resultStructure, butterfly);
         if (didFail)
             *didFail = false;
         return resultArray;

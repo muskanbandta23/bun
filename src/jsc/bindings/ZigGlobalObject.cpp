@@ -4999,8 +4999,7 @@ static NEVER_INLINE void handleResponseOnStreamingAction(JSGlobalObject* lexical
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSLockHolder locker(vm);
 
-    auto sourceCode = makeSource("[wasm code]"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
-    auto compiler = JSC::Wasm::StreamingCompiler::create(vm, mode, globalObject, promise, importObject, WTF::move(compileOptions), sourceCode);
+    auto compiler = JSC::Wasm::StreamingCompiler::create(mode, globalObject, promise, importObject, WTF::move(compileOptions));
 
     // The streaming hook used to return a freshly created promise; the caller
     // (webAssemblyCompileStreamingFunc) was a host function that propagated

@@ -12,10 +12,10 @@ use recent_days::{Day, RecentDays};
 use crate::fields::{DateFields, OffsetBits};
 use crate::format::{date_time_string, time_string};
 use crate::parse::{Parsed, parse_date};
-use crate::time_value::{DAY, TIME_VALUES, split_at_midnight, time_clip, time_clip_integer};
+use crate::time_value::{DAY, LOCAL_TIMES, split_at_midnight, time_clip, time_clip_integer};
 use crate::zone::{Side, TimeZoneId, ZoneRules, system_time_zone, time_zone_generation};
 
-/// A span of time values.
+/// A span of instants in milliseconds, cut to those that have fields.
 #[derive(Clone, Copy)]
 struct UtcSpan {
     start: i64,
@@ -122,17 +122,17 @@ impl DateCache {
 
     #[inline(never)]
     fn utc_fields_of_new_day(&self, time: i64) -> Option<DateFields> {
-        TIME_VALUES.contains(&time).then_some(())?;
+        LOCAL_TIMES.contains(&time).then_some(())?;
         let (days, since_midnight) = split_at_midnight(time);
         let fields = DateFields::at_midnight(days, OffsetBits::UTC);
         let midnight = time - i64::from(since_midnight);
-        if midnight != *TIME_VALUES.end() {
+        if midnight != *LOCAL_TIMES.end() {
             self.utc_days.add(time, Day { midnight, fields });
         }
         Some(fields.later(since_midnight))
     }
 
-    /// The fields of LocalTime(`time`). `None` if `time` is not in the range of time values.
+    /// `DateFields::in_zone` for `time_zone`: the fields of LocalTime(`time`).
     #[inline]
     pub fn local_fields(&self, time: f64) -> Option<DateFields> {
         let time = time.to_int_checked()?;
@@ -143,8 +143,8 @@ impl DateCache {
     fn local_fields_of_new_day(&self, time: i64) -> Option<DateFields> {
         let mut span = self.utc_span.get();
         if !(span.start..span.end).contains(&time) {
-            TIME_VALUES.contains(&time).then_some(())?;
             span = self.find_utc_span(time);
+            (span.start..span.end).contains(&time).then_some(())?;
         }
         let (days, since_midnight) = split_at_midnight(time + i64::from(span.offset));
         let fields = DateFields::at_midnight(days, span.offset_bits);
@@ -158,10 +158,13 @@ impl DateCache {
     #[inline(never)]
     fn find_utc_span(&self, time: i64) -> UtcSpan {
         let span = self.zone().1.span_at(time.div_euclid(1000));
+        let offset = span.offset.seconds * 1000;
+        let first = LOCAL_TIMES.start() - i64::from(offset.min(0));
+        let last = LOCAL_TIMES.end() - i64::from(offset.max(0));
         let span = UtcSpan {
-            start: span.start.saturating_mul(1000).max(*TIME_VALUES.start()),
-            end: span.end.saturating_mul(1000).min(TIME_VALUES.end() + 1),
-            offset: span.offset.seconds * 1000,
+            start: span.start.saturating_mul(1000).max(first),
+            end: span.end.saturating_mul(1000).min(last + 1),
+            offset,
             offset_bits: OffsetBits::new(span.offset),
         };
         self.utc_span.set(span);

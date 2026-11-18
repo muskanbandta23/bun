@@ -339,7 +339,7 @@ impl Generator<'_> {
                 self.await_value(result, value, start);
                 result.into()
             }
-            Some(value) => self.expr(value, Dest::Any),
+            Some(value) => self.expr(value, self.return_dest()),
         };
         self.exit(Exit::Return(value));
     }

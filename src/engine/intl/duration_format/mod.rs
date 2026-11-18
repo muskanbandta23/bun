@@ -33,6 +33,9 @@ use output::Output;
 const NUMBER_FAILURE: &str = "Failed to format a number.";
 const LIST_FAILURE: &str = "failed to format list of strings";
 
+/// Once it has formatted three units.
+const ESTIMATED_SIZE: usize = 24 * 1024;
+
 /// Where the items of a list are in the text that joins them.
 type Items = SmallVec<[Range<usize>; Unit::ALL.len()]>;
 
@@ -184,7 +187,10 @@ impl DurationFormat {
                     && it.0.fractional_digits == options.fractional_digits
                     && it.0.locale == locale
             },
-            || Shared::new(&locale, options).map(|it| DurationFormat(Rc::new(it))),
+            || {
+                cache.note_allocation(ESTIMATED_SIZE);
+                Shared::new(&locale, options).map(|it| DurationFormat(Rc::new(it)))
+            },
         )
     }
 

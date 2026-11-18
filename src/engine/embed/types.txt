@@ -145,6 +145,16 @@ mirror  FfiType embed/api/missing.rs
 opaque  FfiInvocation class JSC::FFI::ThreadsafeInvocation
 
 # Promises, collections, text and time
+mirror  PromiseStatus vm/runtime/control/promise.rs
+mirror  InternalMicrotask vm/runtime/control/microtask.rs
+mirror  WorkKind vm/runtime/deferred/ticket.rs
+opaque  QueuedTask class JSC::QueuedTask
+opaque  MicrotaskQueue class JSC::MicrotaskQueue
+counted MicrotaskQueueRef JSC::MicrotaskQueue
+opaque  Ticket class JSC::DeferredWorkTicket
+opaque  DeferredTask class Engine::DeferredTask
+value   InternalMicrotask JSC::InternalMicrotask
+value   WorkKind uint8_t
 
 # Modules, scopes and cached bytecode
 

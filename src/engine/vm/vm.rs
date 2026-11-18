@@ -133,7 +133,6 @@ impl VmShapes {
 pub struct Embedder {
     pub debugger_break: Cell<Option<fn(&mut Cx)>>,
     pub shell_timeout_check: Cell<Option<fn(&mut Cx)>>,
-    pub reconcile_weak_references: Cell<Option<fn(&Vm, &Survivors)>>,
     /// After the last cell.
     pub destroy_members: Cell<Option<fn(&Vm)>>,
     /// AgentCanSuspend is false.
@@ -832,9 +831,6 @@ impl Vm {
         self.custom_accessor_functions.prune(survivors);
         self.services.reconcile_weak_references(self, survivors);
         (self.hooks.reconcile_weak_references)(self, survivors);
-        if let Some(reconcile) = self.embedder.reconcile_weak_references.get() {
-            reconcile(self, survivors);
-        }
     }
 
     pub(crate) fn did_collect(&self, scope: Scope, cells_on_stack: &[usize]) {

@@ -8,6 +8,7 @@ use bun_engine_number::Random;
 use bun_engine_text::{PropertyName, StringRef, names};
 
 use super::watchpoints::RealmWatchpoints;
+use crate::runtime::control::RealmMicrotaskQueue;
 use crate::{
     Attributes, Cx, DeferredFire, DeletePropertySlot, DontEnumMode, ElementKind, Environment,
     Field, FieldArray, Gc, GcFree, GlobalBinding, GlobalBindings, GlobalProxy, IndexingMode,
@@ -124,9 +125,10 @@ pub struct GlobalObject {
     lexical_epoch: Cell<u32>,
     is_initialized: Cell<bool>,
     needs_debug_hooks: Cell<bool>,
+    discards_microtasks: Cell<bool>,
     /// What other crates keep for the realm. See `extension_cell`.
     pub(self) extension_cells: TracedVec<Option<Gc<JsCell>>>,
-    microtask_queue: RefCell<MicrotaskQueueRef>,
+    microtask_queue: RealmMicrotaskQueue,
     regexp_state: RegExpGlobalState,
     random: Cell<Random>,
     stack_trace_limit: Cell<Option<u32>>,
@@ -227,6 +229,7 @@ impl GlobalObject {
 impl GlobalObject {
     pub const OFFSET_OF_VM: usize = offset_of!(GlobalObject, vm);
     pub const OFFSET_OF_LEXICAL_EPOCH: usize = offset_of!(GlobalObject, lexical_epoch);
+    pub const OFFSET_OF_MICROTASK_QUEUE: usize = offset_of!(GlobalObject, microtask_queue);
     pub const OFFSET_OF_RANDOM: usize = offset_of!(GlobalObject, random);
 
     pub const fn offset_of_slot(slot: RealmSlot) -> usize {
@@ -260,8 +263,9 @@ impl GlobalObject {
             lexical_epoch: Cell::new(1),
             is_initialized: Cell::new(false),
             needs_debug_hooks: Cell::new(false),
+            discards_microtasks: Cell::new(false),
             scope_extension: None,
-            microtask_queue: RefCell::new(vm.default_microtask_queue().clone()),
+            microtask_queue: RealmMicrotaskQueue::new(vm.default_microtask_queue().clone()),
             regexp_state: RegExpGlobalState::default(),
             random: Cell::new(Random::new(vm.random_seed() as u32)),
             stack_trace_limit: Cell::new(Some(crate::options().default_error_stack_trace_limit)),
@@ -458,11 +462,22 @@ impl GlobalObject {
     }
 
     pub fn microtask_queue(&self) -> MicrotaskQueueRef {
-        self.microtask_queue.borrow().clone()
+        self.microtask_queue.get()
     }
 
     pub fn set_microtask_queue(&self, queue: MicrotaskQueueRef) {
-        self.microtask_queue.replace(queue);
+        self.microtask_queue.set(queue);
+    }
+
+    #[inline(always)]
+    pub(crate) fn realm_microtask_queue(&self) -> &RealmMicrotaskQueue {
+        &self.microtask_queue
+    }
+
+    /// Whether the microtasks of the realm are dropped when it is their turn.
+    #[inline(always)]
+    pub fn discards_microtasks(&self) -> &Cell<bool> {
+        &self.discards_microtasks
     }
 
     pub fn regexp_state(&self) -> crate::heap::Owned<'_, RegExpGlobalState> {

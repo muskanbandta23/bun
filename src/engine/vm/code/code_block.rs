@@ -123,6 +123,7 @@ pub struct CodeBlock {
     execution_counter: Cell<i32>,
     tier: Cell<Tier>,
     is_jettisoned: Cell<bool>,
+    saved_words: u32,
     alternative: Option<Gc<CodeBlock>>,
     code: Rc<Code>,
     words: Words,
@@ -169,6 +170,7 @@ impl CodeBlock {
             execution_counter: Cell::new(-crate::options().threshold_for_baseline),
             tier: Cell::new(Tier::Interpreter),
             is_jettisoned: Cell::new(false),
+            saved_words: code.body.saved_words(),
             alternative: None,
             code,
             words,
@@ -202,6 +204,7 @@ impl CodeBlock {
             execution_counter: Cell::new(0),
             tier: Cell::new(tier),
             is_jettisoned: Cell::new(false),
+            saved_words: self.saved_words,
             alternative: Some(self.baseline()),
             code: Rc::clone(&self.code),
             words: Words::zeroed(0).unwrap_or_else(|| bun_alloc::out_of_memory()),
@@ -342,6 +345,12 @@ impl CodeBlock {
     #[inline(always)]
     pub fn locals(&self) -> u32 {
         self.locals
+    }
+
+    /// The most registers that it saves when it suspends.
+    #[inline(always)]
+    pub fn saved_words(&self) -> u32 {
+        self.saved_words
     }
 
     /// With `this`.

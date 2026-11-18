@@ -1,4 +1,5 @@
 /// The pattern, the flags, the subject, where to start, and the offsets of the match and of its groups.
+#[rustfmt::skip]
 const CASES: &[(&str, &str, &str, u32, &[i32])] = &[
     ("a|ab", "", "abc", 0, &[0, 1]),
     ("((a)|(ab))((c)|(bc))", "", "abc", 0, &[0, 3, 0, 1, 0, 1, -1, -1, 1, 3, -1, -1, 1, 3]),

@@ -2051,6 +2051,7 @@ dependencies = [
  "bun_http1",
  "bun_http_jsc",
  "bun_http_types",
+ "bun_icu",
  "bun_install",
  "bun_install_jsc",
  "bun_install_types",

@@ -12,10 +12,10 @@ JavaScript and WebAssembly execution for Bun, in Rust. Each folder here is a cra
 | `syntax`                                        | lexer, parser, scope analysis, early errors                                                        | forbidden    |
 | `bytecode`                                      | instruction set, generator, verifier, liveness, serialized form                                    | forbidden    |
 | `asm`, `codegen`                                | assemblers and macro assembler; SSA IR down to machine code                                        | forbidden    |
+| `wasm_format`, `wasm_compiler`                  | decoding and validation of modules; machine code for functions                                     | forbidden    |
 | `exec_memory`                                   | executable pages, linking, patching                                                                | yes          |
-| `macros`                                        | cell declarations                                                                                  | yes          |
-| `vm`                                            | `Value`, `Gc<T>`, allocator, collector                                                             | yes          |
-|                                                 | object model, realms, calls, errors, modules, promises, inline caches, run-time operations         | `raw` module |
+| `wasm_runtime`                                  | linear memories, tables, instances, installing and tiering of code, faults                         | yes          |
+| `macros`, `vm`                                  | heap and collector, object model, realms, calls, errors, modules, promises, caches, operations     | yes          |
 | `interpreter`                                   | bytecode handlers and the stubs that enter, call and leave frames                                  | yes          |
 | `builtins`, `intl`, `temporal`                  | the standard library                                                                               | forbidden    |
 | `baseline`, `optimizer`, `wasm`                 | compilers (safe code that produces bytes) and the code that installs and enters what they produce  | install only |
@@ -75,4 +75,4 @@ Native functions and run-time operations use the C calling convention (System V 
 
 ## The heap
 
-Cells do not move. The collector is generational mark and sweep, finds roots by scanning the native stack conservatively, and traces cells precisely. So a `Gc<T>`, a `Value` or a `&T` of a cell is safe in a local, an argument or a struct on the stack, and in a field of another cell. It is **never** put in memory of the Rust allocator (`Vec`, `Box`, `Rc`, a hash map, a boxed closure, a static): use the containers of `vm`'s heap (`ValueVec`, `Strong`, `Weak`, traced fields).
+Cells do not move. The collector is generational mark and sweep, finds roots by scanning the native stack conservatively, and traces cells precisely. So a `Gc<T>`, a `Value` or a `&T` of a cell is safe in a local, an argument or a struct on the stack, and in a field of another cell. It is **never** put in memory of the Rust allocator (`Vec`, `Box`, `Rc`, a hash map, a boxed closure, a static): use the containers of `vm::heap` (`ValueVec`, `Strong`, `Weak`, traced fields).

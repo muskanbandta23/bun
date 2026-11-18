@@ -1,3 +1,40 @@
 //! The instruction set, the bytecode generator and the serialized form of code.
 
 #![forbid(unsafe_code)]
+#![allow(dead_code, unused_imports)]
+
+mod assembler;
+mod code;
+mod constant;
+mod dump;
+mod effects;
+mod function;
+mod generator;
+mod graph;
+mod host;
+mod instruction;
+mod liveness;
+mod metadata;
+mod operand;
+mod positions;
+mod scope;
+mod table;
+#[cfg(test)]
+mod unit_tests;
+mod verifier;
+
+pub use bun_engine_syntax::{EvalContext, FunctionKind};
+pub use code::*;
+pub use constant::*;
+pub use dump::Dump;
+pub use effects::{EdgeKind, Run, Written};
+pub use function::{FunctionInfo, FunctionRef, Origin, Specialization, Visibility};
+pub use graph::{BlockIndex, Edge, Graph};
+pub use host::{BuiltinValue, Host};
+pub use instruction::{Flow, Instruction, Instructions, Op, Opcode, RawInstruction, Shape, op};
+pub use liveness::{Liveness, Locals, Walk};
+pub use metadata::{MetadataKind, MetadataLayout};
+pub use operand::*;
+pub use positions::{Position, Positions};
+pub use scope::{ScopeKind, Slot, SlotFlags, SlotKind, StaticScope};
+pub use verifier::{Fault, VerifyError, verify};

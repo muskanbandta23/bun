@@ -1,0 +1,241 @@
+//! `Intl.NumberFormat`
+
+mod currency;
+mod digit_options;
+mod mathematical_value;
+mod options;
+pub(crate) mod parts;
+mod skeleton;
+mod unit;
+
+use core::cell::{OnceCell, RefCell};
+use std::rc::Rc;
+
+use bun_engine_text::{StringImpl, StringRef};
+use bun_icu::formatted_value::{Category, FormattedValue};
+use bun_icu::number_format::{
+    Collapse, FormattedNumber, FormattedNumberRange, IdentityFallback, NumberFormatter,
+    NumberRangeFormatter,
+};
+
+pub use currency::Currency;
+pub use digit_options::{
+    DigitOptions, DigitRange, MinimumIntegerDigits, RequestedDigits, RoundingIncrement,
+    RoundingMode, RoundingPriority, RoundingType, TrailingZeroDisplay,
+};
+pub use mathematical_value::MathematicalValue;
+pub use options::{
+    CompactDisplay, CurrencyDisplay, CurrencySign, Grouping, Notation, Options, RequestedStyle,
+    SignDisplay, Style, StyleOptions, UnitDisplay,
+};
+use parts::{FieldContext, collect_fields, push_flattened, push_number_parts};
+pub(crate) use skeleton::Skeleton;
+pub(crate) use unit::SANCTIONED_UNITS;
+pub use unit::Unit;
+
+use crate::error::IcuResult;
+use crate::numbering_system::NumericLocale;
+use crate::parts::new_string;
+use crate::{
+    Cache, Error, KeywordValue, LanguageTag, NumberingSystem, Part, Parts, Result, Source,
+};
+
+/// Those with the same locale and options are one.
+#[derive(Clone)]
+pub struct NumberFormat(Rc<Shared>);
+
+struct Shared {
+    locale: NumericLocale,
+    options: Options,
+    formatter: ReusingFormatter,
+    range_formatter: OnceCell<NumberRangeFormatter>,
+}
+
+impl NumberFormat {
+    pub fn new(
+        cache: &Cache,
+        requested: &[LanguageTag],
+        numbering_system: Option<&KeywordValue>,
+        options: Options,
+    ) -> Result<NumberFormat> {
+        let locale = NumericLocale::resolve(cache, requested, numbering_system)?;
+        cache.number_formats.find_or_insert(
+            |it| it.0.options == options && it.0.locale == locale,
+            || {
+                let formatter =
+                    ReusingFormatter::open(&Skeleton::from(&options), &locale.icu_locale()?)
+                        .or_type_error("Failed to initialize NumberFormat")?;
+                Ok(NumberFormat(Rc::new(Shared {
+                    locale: locale.clone(),
+                    options,
+                    formatter,
+                    range_formatter: OnceCell::new(),
+                })))
+            },
+        )
+    }
+
+    /// `toLocaleString` of a Number or a BigInt, with no options and no list of locales.
+    pub fn format_by_default(
+        cache: &Cache,
+        locale: Option<&StringImpl>,
+        value: &MathematicalValue,
+    ) -> Result<StringRef> {
+        cache.default_number_formats.with(
+            cache,
+            locale,
+            |requested| NumberFormat::new(cache, requested, None, Options::default()),
+            |format| format.format(value),
+        )
+    }
+
+    pub fn locale(&self) -> &LanguageTag {
+        self.0.locale.tag()
+    }
+
+    pub fn numbering_system(&self) -> Result<NumberingSystem> {
+        self.0.locale.numbering_system()
+    }
+
+    pub fn options(&self) -> &Options {
+        &self.0.options
+    }
+
+    pub fn format(&self, value: &MathematicalValue) -> Result<StringRef> {
+        let failure = match value.as_number() {
+            Some(_) => "Failed to format a number.",
+            None => "Failed to format a BigInt.",
+        };
+        self.0.formatter.format(value, failure, |result| {
+            let text = result.value().and_then(FormattedValue::text);
+            new_string(text.or_type_error(failure)?)
+        })
+    }
+
+    pub fn format_to_parts(&self, value: &MathematicalValue) -> Result<Parts> {
+        let failure = "Failed to format a number.";
+        self.0.formatter.format(value, failure, |result| {
+            let mut parts = Parts::default();
+            let number = result.value().or_type_error(failure)?;
+            push_number_parts(&mut parts, number, self.context(value), Part::from)?;
+            Ok(parts)
+        })
+    }
+
+    pub fn format_range(
+        &self,
+        start: &MathematicalValue,
+        end: &MathematicalValue,
+    ) -> Result<StringRef> {
+        let range = self.range(start, end)?;
+        let text = range.value().and_then(FormattedValue::text);
+        new_string(text.or_type_error("failed to format a range")?)
+    }
+
+    pub fn format_range_to_parts(
+        &self,
+        start: &MathematicalValue,
+        end: &MathematicalValue,
+    ) -> Result<Parts> {
+        let range = self.range(start, end)?;
+        let range = range.value().or_type_error("failed to format a range")?;
+        let failure = "Failed to format number range";
+        let text = range.text().or_type_error(failure)?;
+        let fields = collect_fields(range, failure)?;
+        let span = |index| {
+            let mut spans = fields.iter();
+            let span =
+                spans.find(|it| it.category == Category::NUMBER_RANGE_SPAN && it.field == index);
+            span.map_or(0..0, |it| it.range.clone())
+        };
+        let (start_span, end_span) = (span(0), span(1));
+
+        let mut parts = Parts::default();
+        push_flattened(&mut parts, text, fields, |field, at| {
+            let (source, value) = if start_span.contains(&at) {
+                (Source::StartRange, start)
+            } else if end_span.contains(&at) {
+                (Source::EndRange, end)
+            } else {
+                (Source::Shared, start)
+            };
+            Part {
+                kind: self.context(value).kind_of(field),
+                unit: None,
+                source: Some(source),
+            }
+        })?;
+        Ok(parts)
+    }
+
+    fn range(
+        &self,
+        start: &MathematicalValue,
+        end: &MathematicalValue,
+    ) -> Result<FormattedNumberRange> {
+        check_range(start, end)?;
+        let formatter = self.0.range_formatter.get_or_try_init(|| {
+            NumberRangeFormatter::open(
+                &Skeleton::from(&self.0.options),
+                &self.0.locale.icu_locale()?,
+                Collapse::Auto,
+                IdentityFallback::Approximately,
+            )
+            .or_type_error("failed to initialize NumberFormat")
+        })?;
+        (start.format_range_to(end, formatter)).or_type_error("failed to format a range")
+    }
+
+    fn context(&self, value: &MathematicalValue) -> FieldContext {
+        FieldContext {
+            is_negative: value.is_negative(),
+            is_infinite: value.is_infinite(),
+            is_nan: value.is_nan(),
+            is_unit_style: self.0.options.style.style() == Style::Unit,
+        }
+    }
+}
+
+pub(crate) fn check_range(start: &MathematicalValue, end: &MathematicalValue) -> Result<()> {
+    if start.is_nan() || end.is_nan() {
+        return Err(Error::Range("Passed numbers are out of range"));
+    }
+    Ok(())
+}
+
+/// Keeps the object that takes the results.
+pub(crate) struct ReusingFormatter {
+    formatter: NumberFormatter,
+    result: RefCell<FormattedNumber>,
+}
+
+impl ReusingFormatter {
+    pub(crate) fn open(
+        skeleton: &Skeleton,
+        locale: &core::ffi::CStr,
+    ) -> bun_icu::Result<ReusingFormatter> {
+        Ok(ReusingFormatter {
+            formatter: NumberFormatter::open(skeleton, locale)?,
+            result: RefCell::new(FormattedNumber::open()?),
+        })
+    }
+
+    pub(crate) fn format<T>(
+        &self,
+        value: &MathematicalValue,
+        failure: &'static str,
+        read: impl FnOnce(&FormattedNumber) -> Result<T>,
+    ) -> Result<T> {
+        let format_into = |result: &mut FormattedNumber| {
+            value
+                .format(&self.formatter, result)
+                .or_type_error(failure)?;
+            read(result)
+        };
+        match value.as_number() {
+            Some(_) => format_into(&mut self.result.borrow_mut()),
+            // It can be long, and a result object keeps the memory that it has grown to.
+            None => format_into(&mut FormattedNumber::open().or_type_error(failure)?),
+        }
+    }
+}

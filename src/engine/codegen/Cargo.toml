@@ -13,7 +13,6 @@ workspace = true
 bun_engine_asm.workspace = true
 bitflags.workspace = true
 smallvec.workspace = true
-hashbrown.workspace = true
 
 [dev-dependencies]
-bun_engine_standalone.workspace = true
+bun_engine_exec_memory.workspace = true

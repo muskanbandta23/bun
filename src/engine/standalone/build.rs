@@ -74,10 +74,15 @@ fn main() {
     if env::var("CARGO_CFG_TARGET_OS").unwrap() == "macos" {
         println!("cargo:rustc-link-lib=icucore");
     } else {
+        // A static build with `include` and `lib` folders, in place of the system's.
+        if let Ok(root) = env::var("BUN_ICU_ROOT") {
+            println!("cargo:rustc-link-search=native={root}/lib");
+        }
         for library in ["icui18n", "icuuc", "icudata"] {
             println!("cargo:rustc-link-lib={library}");
         }
     }
+    println!("cargo:rerun-if-env-changed=BUN_ICU_ROOT");
     println!("cargo:rerun-if-changed=include/root.h");
     println!("cargo:rerun-if-changed=build.rs");
 }

@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 bun_engine_text.workspace = true
+bun_engine_unicode.workspace = true
 
 [dev-dependencies]
 bun_engine_standalone.workspace = true

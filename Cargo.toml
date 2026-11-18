@@ -102,6 +102,7 @@ members = [
   "src/resolve_builtins",
   "src/sourcemap_jsc",
   "src/url",
+  "src/url/whatwg",
   "src/windows_sys",
   "src/jsc",
   "src/jsc_macros",
@@ -159,6 +160,9 @@ members = [
   "src/engine/temporal",
   "src/engine/baseline",
   "src/engine/optimizer",
+  "src/engine/wasm_format",
+  "src/engine/wasm_compiler",
+  "src/engine/wasm_runtime",
   "src/engine/wasm",
   "src/engine/inspector",
   "src/engine",
@@ -442,6 +446,9 @@ bun_engine_intl = { path = "src/engine/intl" }
 bun_engine_temporal = { path = "src/engine/temporal" }
 bun_engine_baseline = { path = "src/engine/baseline" }
 bun_engine_optimizer = { path = "src/engine/optimizer" }
+bun_engine_wasm_format = { path = "src/engine/wasm_format" }
+bun_engine_wasm_compiler = { path = "src/engine/wasm_compiler" }
+bun_engine_wasm_runtime = { path = "src/engine/wasm_runtime" }
 bun_engine_wasm = { path = "src/engine/wasm" }
 bun_engine_inspector = { path = "src/engine/inspector" }
 bun_engine = { path = "src/engine" }
@@ -536,6 +543,7 @@ bun_perf = { path = "src/perf" }
 bun_resolve_builtins = { path = "src/resolve_builtins" }
 bun_sourcemap_jsc = { path = "src/sourcemap_jsc" }
 bun_url = { path = "src/url" }
+bun_url_whatwg = { path = "src/url/whatwg" }
 bun_windows_sys = { path = "src/windows_sys" }
 bun_jsc = { path = "src/jsc" }
 bun_jsc_macros = { path = "src/jsc_macros" }

@@ -1,0 +1,339 @@
+//! Generated code, before a realm links it.
+
+use core::ops::Range;
+use std::rc::Rc;
+use std::sync::Arc;
+
+use bun_engine_text::{Atom, Identifier, StringRef};
+
+use crate::constant::Constant;
+use crate::function::FunctionInfo;
+use crate::metadata::MetadataLayout;
+use crate::operand::{ImportPhase, Register, SpreadMaskIndex, SuspendKind, SuspendPointIndex};
+use crate::positions::Positions;
+use crate::scope::StaticScope;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum CodeKind {
+    Script,
+    Module,
+    Eval,
+    Call,
+    Construct,
+}
+
+bitflags::bitflags! {
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+    pub struct CodeFlags: u8 {
+        const STRICT = 1 << 0;
+        const BUILTIN = 1 << 1;
+        /// Has `resume_dispatch`.
+        const SUSPENDS = 1 << 2;
+        const HAS_TAIL_CALLS = 1 << 3;
+        const HAS_DEBUG_HOOKS = 1 << 4;
+        const HAS_COVERAGE = 1 << 5;
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum HandlerKind {
+    Catch,
+    Finally,
+    /// Not in the source. Turns the exception into something else, such as a rejection.
+    SynthesizedCatch,
+    /// Not in the source. Cleans up and throws again.
+    SynthesizedFinally,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Handler {
+    pub range: Range<u32>,
+    pub target: u32,
+    pub kind: HandlerKind,
+}
+
+/// The targets are offsets from the start of the code.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct IntSwitch {
+    pub default: u32,
+    pub cases: IntCases,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum IntCases {
+    Dense {
+        first: i32,
+        targets: Box<[u32]>,
+    },
+    /// Sorted by key.
+    Sparse(Box<[(i32, u32)]>),
+}
+
+impl IntSwitch {
+    pub fn target(&self, key: i32) -> u32 {
+        let target = match &self.cases {
+            IntCases::Dense { first, targets } => {
+                targets.get(key.wrapping_sub(*first) as u32 as usize)
+            }
+            IntCases::Sparse(cases) => cases
+                .binary_search_by_key(&key, |&(key, _)| key)
+                .ok()
+                .map(|index| &cases[index].1),
+        };
+        target.copied().unwrap_or(self.default)
+    }
+}
+
+/// The keys are in `Code::string_switches`, in the same order. The first of equal keys counts.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct StringSwitch {
+    pub default: u32,
+    pub targets: Box<[u32]>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct SuspendPoint {
+    /// Of the instruction that suspends.
+    pub suspend: u32,
+    /// Of the `resume` after it.
+    pub resume: u32,
+    pub kind: SuspendKind,
+    pub(crate) registers: Range<u32>,
+}
+
+/// A range of the source whose executions are counted.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct CoverageBlock {
+    pub start: i32,
+    /// Zero for the block that the code begins with, which is all that no other block or function takes.
+    pub end: i32,
+    pub is_in_loop_header: bool,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub(crate) struct Tables {
+    pub(crate) handlers: Box<[Handler]>,
+    pub(crate) int_switches: Box<[IntSwitch]>,
+    pub(crate) string_switches: Box<[StringSwitch]>,
+    pub(crate) spread_masks: Box<[Box<[u32]>]>,
+    pub(crate) suspend_points: Box<[SuspendPoint]>,
+    pub(crate) saved_registers: Box<[Register]>,
+    pub(crate) coverage_blocks: Box<[CoverageBlock]>,
+}
+
+/// The part of code that any thread may read.
+pub struct Body {
+    /// The instructions, the layout of the metadata and the positions. Needs no alignment and holds no address.
+    pub(crate) bytes: Box<[u8]>,
+    pub(crate) tables: Option<Box<Tables>>,
+    pub(crate) metadata_kinds: u64,
+    pub(crate) instructions_size: u32,
+    pub(crate) locals: u32,
+    pub(crate) parameters: u32,
+    pub(crate) kind: CodeKind,
+    pub(crate) flags: CodeFlags,
+    pub(crate) has_wide_layout: bool,
+}
+
+/// Over a limit of the format, or over the memory that there is.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct TooLarge;
+
+macro_rules! table_getters {
+    ($($(#[$doc:meta])* $name:ident: $element:ty,)*) => {$(
+        $(#[$doc])*
+        pub fn $name(&self) -> &[$element] {
+            self.tables.as_ref().map_or(&[], |tables| &tables.$name)
+        }
+    )*};
+}
+
+impl Body {
+    pub const MAX_SIZE: u32 = i32::MAX as u32;
+    /// The most locals and the most parameters: the distance in bytes to any slot fits in 31 bits.
+    pub const MAX_FRAME_WORDS: u32 = 1 << 27;
+
+    #[inline]
+    pub fn instructions(&self) -> &[u8] {
+        &self.bytes[..self.instructions_size as usize]
+    }
+
+    /// `None` if the bytes end early.
+    pub(crate) fn sections(&self) -> Option<(MetadataLayout<'_>, Positions<'_>)> {
+        let rest = self.bytes.get(self.instructions_size as usize..)?;
+        let (layout, rest) = MetadataLayout::read(self.metadata_kinds, self.has_wide_layout, rest)?;
+        Some((layout, Positions::read(rest)?))
+    }
+
+    pub fn kind(&self) -> CodeKind {
+        self.kind
+    }
+
+    pub fn flags(&self) -> CodeFlags {
+        self.flags
+    }
+
+    /// The words of the frame below the frame pointer, with the frames of callees: an even number.
+    pub fn locals(&self) -> u32 {
+        self.locals
+    }
+
+    /// With `this`. A frame has at least as many arguments.
+    pub fn parameters(&self) -> u32 {
+        self.parameters
+    }
+
+    pub fn metadata(&self) -> MetadataLayout<'_> {
+        self.sections().expect("verified").0
+    }
+
+    pub fn positions(&self) -> Positions<'_> {
+        self.sections().expect("verified").1
+    }
+
+    table_getters! {
+        /// The first whose range has the instruction is the one.
+        handlers: Handler,
+        int_switches: IntSwitch,
+        string_switches: StringSwitch,
+        suspend_points: SuspendPoint,
+        /// Some have no instruction: nothing reaches them from here.
+        coverage_blocks: CoverageBlock,
+        spread_masks: Box<[u32]>,
+    }
+
+    pub fn handler_for(&self, offset: u32) -> Option<&Handler> {
+        self.handlers()
+            .iter()
+            .find(|handler| handler.range.contains(&offset))
+    }
+
+    pub fn is_spread(&self, mask: SpreadMaskIndex, element: u32) -> bool {
+        self.spread_masks()[mask.index()]
+            .get(element as usize / 32)
+            .is_some_and(|word| word >> (element % 32) & 1 != 0)
+    }
+
+    /// What the generator keeps while it is suspended there, in the order of its slots.
+    pub fn saved_registers(&self, point: SuspendPointIndex) -> &[Register] {
+        self.tables.as_ref().map_or(&[], |tables| {
+            let range = &tables.suspend_points[point.index()].registers;
+            &tables.saved_registers[range.start as usize..range.end as usize]
+        })
+    }
+
+    /// The most that any point saves.
+    pub fn saved_words(&self) -> u32 {
+        self.suspend_points()
+            .iter()
+            .map(|point| point.registers.end - point.registers.start)
+            .max()
+            .unwrap_or(0)
+    }
+}
+
+pub struct Code {
+    pub body: Arc<Body>,
+    pub identifiers: Box<[Identifier]>,
+    pub constants: Box<[Constant]>,
+    pub functions: Rc<[FunctionInfo]>,
+    pub scopes: Box<[Rc<StaticScope>]>,
+    pub name_lists: Box<[Box<[Identifier]>]>,
+    pub string_switches: Box<[Box<[Atom]>]>,
+}
+
+/// Functions nest as deep as the stack of the parser went.
+impl Drop for Code {
+    fn drop(&mut self) {
+        let mut pending = vec![];
+        let mut functions = core::mem::take(&mut self.functions);
+        loop {
+            if let Some(functions) = Rc::get_mut(&mut functions) {
+                let inner = functions
+                    .iter_mut()
+                    .flat_map(|function| &mut function.code)
+                    .filter_map(|code| code.take().and_then(Rc::into_inner));
+                pending.extend(inner.map(|mut code| core::mem::take(&mut code.functions)));
+            }
+            match pending.pop() {
+                Some(next) => functions = next,
+                None => return,
+            }
+        }
+    }
+}
+
+/// What has to be declared around a script, or around `eval` code that is not strict, before it runs.
+#[derive(Default)]
+pub struct Declarations {
+    pub variables: Box<[Identifier]>,
+    pub functions: Box<[Identifier]>,
+    /// Functions in blocks, which get a variable if nothing is in the way (ECMA-262 B.3.2.2, B.3.2.3).
+    pub hoisted_functions: Box<[Identifier]>,
+    /// Of a script.
+    pub lets: Box<[Identifier]>,
+    pub constants: Box<[Identifier]>,
+}
+
+#[derive(Default)]
+pub struct Directives {
+    pub source_url: Option<StringRef>,
+    pub source_mapping_url: Option<StringRef>,
+}
+
+pub struct Script {
+    pub code: Rc<Code>,
+    pub declarations: Declarations,
+    pub directives: Directives,
+}
+
+pub struct Eval {
+    pub code: Rc<Code>,
+    pub declarations: Declarations,
+    pub directives: Directives,
+    /// Not if it has a tagged template, whose object is new for each evaluation of the text.
+    pub is_reusable: bool,
+}
+
+pub struct ModuleRequest {
+    pub specifier: Atom,
+    pub attributes: Box<[(Atom, Atom)]>,
+    pub phase: ImportPhase,
+}
+
+/// `request` is an index into [`Module::requests`]. A name that is none stands for the namespace.
+pub struct ImportEntry {
+    pub request: u32,
+    pub imported: Option<Atom>,
+    pub local: Atom,
+    /// In the scope of the module.
+    pub slot: u32,
+}
+
+pub enum ExportEntry {
+    Local {
+        exported: Atom,
+        slot: u32,
+    },
+    Indirect {
+        exported: Atom,
+        request: u32,
+        imported: Option<Atom>,
+    },
+    Star {
+        request: u32,
+    },
+}
+
+pub struct Module {
+    /// Is entered with an instance of `scope` as the scope of its callee. If it suspends it returns a promise.
+    pub code: Rc<Code>,
+    pub scope: Rc<StaticScope>,
+    /// One for each declaration that names a module, in the order of the source.
+    pub requests: Box<[ModuleRequest]>,
+    pub imports: Box<[ImportEntry]>,
+    pub exports: Box<[ExportEntry]>,
+    pub directives: Directives,
+}

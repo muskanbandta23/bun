@@ -105,7 +105,7 @@ impl Visitor {
     #[inline(always)]
     fn append_cell(&mut self, cell: usize) {
         if !self.analyzer.is_null() {
-            self.analyze_edge(cell, false);
+            self.analyze_edge(cell);
         }
         self.append_hidden_cell(cell);
     }
@@ -242,12 +242,10 @@ impl Visitor {
 
     #[cold]
     #[inline(never)]
-    fn analyze_edge(&mut self, to: usize, is_hidden: bool) {
+    fn analyze_edge(&mut self, to: usize) {
         let from = self.current_cell;
-        if let Some(analyzer) = self.analyzer()
-            && !is_hidden
-        {
-            analyzer.edge(from, to);
+        if let Some(analyzer) = self.analyzer() {
+            analyzer.will_mark(from, to);
         }
     }
 
@@ -284,17 +282,6 @@ impl Visitor {
             fence(Ordering::SeqCst);
         }
         object::visit_cell(cell, self);
-        if !self.analyzer.is_null() {
-            self.analyze_node(cell);
-        }
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn analyze_node(&mut self, cell: Gc<JsCell>) {
-        if let Some(analyzer) = self.analyzer() {
-            analyzer.node(cell);
-        }
     }
 
     pub(super) fn did_finish_draining(&mut self) {

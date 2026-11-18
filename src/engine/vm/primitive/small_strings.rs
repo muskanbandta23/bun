@@ -69,7 +69,7 @@ impl SmallStrings {
         }
         for string in core::iter::once(&self.empty).chain(&self.of_static_atoms) {
             // SAFETY: zero or a root.
-            unsafe { visitor.append_hidden_word(string.get() as u64) };
+            unsafe { visitor.append_word(string.get() as u64) };
         }
     }
 }

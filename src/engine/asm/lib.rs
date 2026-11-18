@@ -26,7 +26,9 @@ pub use operand::{
     Width,
 };
 pub use register::{Bank, Fpr, Gpr, Reg, RegisterSet, RegisterSetIter};
-pub use vector::{VectorBinary, VectorReduce, VectorShift, VectorTernary, VectorUnary};
+pub use vector::{
+    Relaxed, VectorBinary, VectorReduce, VectorShift, VectorTernary, VectorUnary, lanes,
+};
 
 #[cfg(target_arch = "x86_64")]
 pub use {features::X64Features as Features, x64 as host};

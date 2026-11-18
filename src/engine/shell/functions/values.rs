@@ -1,8 +1,10 @@
 //! How values are represented, and values that scripts cannot make.
 
 use bun_engine_macros::cell;
+use bun_engine_number::Random;
 use bun_engine_vm::{
-    ElementKind, GlobalObject, InternalFunction, JsArrayBuffer, PropertyDescriptor, RealmWatchpoint, Shape, ShapeSpec, TypeFlags, call,
+    InternalFunction, JsArrayBuffer, JsArrayBufferView, JsFunctionWithFields, RealmWatchpoint,
+    Shape, ShapeSpec, TypeFlags, call,
 };
 
 use super::{return_false, return_undefined, string};
@@ -11,7 +13,6 @@ use crate::prelude::*;
 pub(super) const FUNCTIONS: Functions = &[
     ("describe", describe, 1),
     ("describeArray", describe_array, 1),
-    ("ensureArrayStorage", ensure_sparse_elements, 1),
     ("addressOf", address_of, 1),
     ("version", return_undefined, 1),
     ("isInt32", is_int32, 0),
@@ -26,10 +27,19 @@ pub(super) const FUNCTIONS: Functions = &[
     ("is32BitPlatform", return_false, 0),
     ("maxArguments", max_arguments, 0),
     ("transferArrayBuffer", transfer_array_buffer, 1),
+    ("ensureArrayStorage", ensure_array_storage, 0),
+    ("hasCustomProperties", has_custom_properties, 0),
+    ("getRandomSeed", get_random_seed, 0),
+    ("setRandomSeed", set_random_seed, 1),
+    (
+        "createNoopNativeFunctionWithCapture",
+        create_function_with_capture,
+        1,
+    ),
 ];
 
 #[native_abi]
-fn describe(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+pub(super) fn describe(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let Some(&value) = frame.arguments().first() else {
         return Ok(Value::UNDEFINED);
     };
@@ -171,9 +181,9 @@ pub(super) fn transfer_array_buffer(cx: &mut Cx, frame: &CallFrame) -> JsResult<
 }
 
 #[native_abi]
-pub(super) fn ensure_sparse_elements(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+pub(super) fn ensure_array_storage(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     for object in frame.arguments().iter().filter_map(|it| it.as_object()) {
-        if object.class().has_ordinary_define_own_property() || object.indexing_mode().is_array() {
+        if !object.is::<JsArrayBufferView>() {
             cx.or_out_of_memory(object.convert_to_sparse(cx))?;
         }
     }
@@ -181,47 +191,30 @@ pub(super) fn ensure_sparse_elements(cx: &mut Cx, frame: &CallFrame) -> JsResult
 }
 
 #[native_abi]
-pub(super) fn indexing_mode(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
-    let Some(mode) = frame.argument(0).as_object().map(|it| it.indexing_mode()) else {
-        return Ok(Value::UNDEFINED);
-    };
-    let shared = if mode.is_copy_on_write() { "CopyOnWrite" } else { "" };
-    let class = if mode.is_array() { "Array" } else { "NonArray" };
-    let kind = match mode.kind() {
-        ElementKind::None if mode.is_array() => "Class",
-        ElementKind::None => "",
-        _ if mode.is_slow_put() => "WithSlowPutArrayStorage",
-        ElementKind::Undecided => "WithUndecided",
-        ElementKind::Int32 => "WithInt32",
-        ElementKind::Double => "WithDouble",
-        ElementKind::Contiguous => "WithContiguous",
-        ElementKind::Sparse => "WithArrayStorage",
-    };
-    Ok(string(cx, &format!("{shared}{class}{kind}")))
-}
-
-fn realm_of_argument(cx: &Cx, frame: &CallFrame, function: &str) -> JsResult<Gc<GlobalObject>> {
-    match frame.argument(0) {
-        Value::UNDEFINED => Ok(cx.global()),
-        value => (value.as_object().and_then(|it| it.realm())).ok_or_else(|| {
-            cx.throw_type_error(format_args!(
-                "{function} expects first argument to be an object if provided"
-            ))
-        }),
-    }
+fn has_custom_properties(_: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let object = frame.argument(0).as_object();
+    Ok(object.is_some_and(|it| it.shape().slot_count() != 0).into())
 }
 
 #[native_abi]
-pub(super) fn have_a_bad_time(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
-    let prototype = realm_of_argument(cx, frame, "haveABadTime")?.object_prototype();
-    let name = Identifier::from_index(u32::MAX - 1);
-    let accessor = PropertyDescriptor::accessor(None, None, Attributes::DONT_ENUM);
-    prototype.define_property_or_throw(cx, name.name(), &accessor)?;
-    prototype.delete(cx, name.name()).map(Into::into)
+fn get_random_seed(cx: &mut Cx, _: &CallFrame) -> JsResult<Value> {
+    Ok(cx.global().random_state().get().seed().into())
 }
 
 #[native_abi]
-pub(super) fn is_having_a_bad_time(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
-    let realm = realm_of_argument(cx, frame, "isHavingABadTime")?;
-    Ok(realm.is_having_a_bad_time().into())
+fn set_random_seed(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let seed = frame.argument(0).to_uint32(cx)?;
+    cx.global().random_state().set(Random::new(seed));
+    Ok(Value::UNDEFINED)
+}
+
+#[native_abi]
+fn return_capture(_: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    Ok(JsFunctionWithFields::fields_of_callee(frame)[0])
+}
+
+#[native_abi]
+fn create_function_with_capture(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let fields = [frame.argument(0), Value::UNDEFINED];
+    Ok(JsFunctionWithFields::new(cx, 0, return_capture, fields).into())
 }

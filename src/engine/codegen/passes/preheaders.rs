@@ -1,5 +1,6 @@
 //! The way into a natural loop.
 
+use super::copier::as_jump;
 use crate::analysis::{Cfg, Loop};
 use crate::ir::{Builder, Edge, Function, Value};
 
@@ -29,4 +30,11 @@ pub(super) fn only_entering_edge(function: &mut Function, entering: &[Edge]) -> 
     builder.origin = origin;
     builder.jump(header, &params);
     function.successor(meeting, 0)
+}
+
+/// The only edge into the loop from now on, which leaves a block that ends with a jump. To be called once for a loop
+/// while `cfg` is in use, which does not know the blocks that may be added.
+pub fn edge_from_preheader(function: &mut Function, cfg: &Cfg, entered: Loop) -> Edge {
+    let only = only_entering_edge(function, entering_edges(function, cfg, entered));
+    as_jump(function, only)
 }

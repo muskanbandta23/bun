@@ -51,6 +51,7 @@ pub(crate) fn case(function: &Function, inputs: &[(usize, Vec<u128>)]) -> Case {
         function: function.clone(),
         target: TARGET,
         params: entries.map(|entry| classes(entry.block)).collect(),
+        remarkable: vec![0],
     };
     let mut random = Random::new(0);
     let inputs = inputs.iter().map(|(entry, args)| {

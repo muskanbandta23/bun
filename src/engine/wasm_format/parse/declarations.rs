@@ -244,16 +244,18 @@ impl Section<'_> {
             "Memory64 is not enabled"
         );
         let limit = |section: &mut Self, which: &str| {
-            let value = if is_64_bit {
-                section.reader.u64()
+            let mut reader = section.reader;
+            let value = reader.u64();
+            if let Some(value) = value.filter(|&value| is_64_bit || value <= u32::MAX.into()) {
+                section.reader = reader;
+                return Ok(value);
+            }
+            if is_64_bit {
+                section.reader = reader;
             } else {
-                section.reader.u32().map(u64::from)
-            };
-            Ok(read!(
-                section,
-                value,
-                "can't parse resizable limits {which} page count"
-            ))
+                section.reader.u32();
+            }
+            fail!(section, "can't parse resizable limits {which} page count");
         };
         let initial = limit(self, "initial")?;
         let mut maximum = None;

@@ -132,6 +132,37 @@ pub(crate) fn keep_alive(word: usize) {
     }
 }
 
+/// Memory that a cell owns outside itself and never replaces. The cell stays alive while this is.
+pub struct Held<'a, T: ?Sized> {
+    owner: &'a JsCell,
+    value: &'a T,
+}
+
+impl<T: ?Sized> !GcFree for Held<'_, T> {}
+
+impl<'a, T: ?Sized> Held<'a, T> {
+    #[inline(always)]
+    pub fn new(owner: &'a JsCell, value: &'a T) -> Held<'a, T> {
+        Held { owner, value }
+    }
+}
+
+impl<T: ?Sized> Deref for Held<'_, T> {
+    type Target = T;
+
+    #[inline(always)]
+    fn deref(&self) -> &T {
+        self.value
+    }
+}
+
+impl<T: ?Sized> Drop for Held<'_, T> {
+    #[inline(always)]
+    fn drop(&mut self) {
+        keep_alive(self.owner.address());
+    }
+}
+
 impl<T> Clone for Gc<T> {
     #[inline(always)]
     fn clone(&self) -> Gc<T> {

@@ -76,19 +76,14 @@ impl<'a, T: CodeUnit> Cursor<'a, T> {
         self.text.get(self.position).copied()
     }
 
+    /// Zero at the end.
     #[inline(always)]
-    fn peek_at(&self, position: usize) -> u8 {
-        match self.text.get(position) {
+    pub(super) fn peek(&self) -> u8 {
+        match self.unit() {
             None => 0,
             Some(unit) if unit.is_ascii() => unit.to_u16() as u8,
             Some(unit) => self.spaces.stand_in(unit.to_u32()),
         }
-    }
-
-    /// Zero at the end.
-    #[inline(always)]
-    pub(super) fn peek(&self) -> u8 {
-        self.peek_at(self.position)
     }
 
     #[inline(always)]
@@ -116,25 +111,9 @@ impl<'a, T: CodeUnit> Cursor<'a, T> {
         self.unit().is_some_and(T::is_ascii_digit)
     }
 
-    /// Whether the next word is this one lower case letter, in either case.
-    #[inline(always)]
-    pub(super) fn is_at_letter(&self, letter: u8) -> bool {
-        (self.is_at(letter) || self.is_at(letter ^ 0x20))
-            && !is_letter(self.peek_at(self.position + 1))
-    }
-
     #[inline(always)]
     pub(super) fn skip(&mut self, ascii: u8) -> bool {
         let is_next = self.is_at(ascii);
-        if is_next {
-            self.advance(1);
-        }
-        is_next
-    }
-
-    #[inline(always)]
-    pub(super) fn skip_letter(&mut self, letter: u8) -> bool {
-        let is_next = self.is_at_letter(letter);
         if is_next {
             self.advance(1);
         }

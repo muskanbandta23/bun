@@ -816,6 +816,7 @@ objectObject = [object Object]
 objectRegExp = [object RegExp]
 objectString = [object String]
 objectUndefined = [object Undefined]
+regExpStringIteratorTag = RegExp String Iterator
 segmenterStringIterator = Segmenter String Iterator
 setIterator = Set Iterator
 starDefaultText = *default*

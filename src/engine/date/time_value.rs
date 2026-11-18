@@ -5,18 +5,19 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::civil::days_from_civil;
 
-pub const MS_PER_SECOND: f64 = 1000.0;
-pub const MS_PER_MINUTE: f64 = 60_000.0;
-pub const MS_PER_HOUR: f64 = 3_600_000.0;
+const MS_PER_SECOND: f64 = 1000.0;
+const MS_PER_MINUTE: f64 = 60_000.0;
+const MS_PER_HOUR: f64 = 3_600_000.0;
 pub const MS_PER_DAY: f64 = 86_400_000.0;
 pub const MAX_TIME_VALUE: f64 = 8.64e15;
 pub(crate) const TIME_VALUES: RangeInclusive<i64> =
     -(MAX_TIME_VALUE as i64)..=MAX_TIME_VALUE as i64;
+pub(crate) const DAY: i64 = MS_PER_DAY as i64;
 
 /// The time value of now.
 pub fn current_time() -> f64 {
     match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(since) => (since.as_secs() * 1000 + u64::from(since.subsec_millis())) as f64,
+        Ok(since) => since.as_millis() as i64 as f64,
         Err(before) => -(before.duration().as_nanos().div_ceil(1_000_000) as f64),
     }
 }
@@ -37,6 +38,23 @@ pub(crate) fn time_clip_integer(time: i64) -> f64 {
     } else {
         f64::NAN
     }
+}
+
+/// Rounded towards zero, if that is in the range of time values.
+#[inline(always)]
+pub(crate) fn time_as_integer(time: f64) -> Option<i64> {
+    (time.to_int_checked()).filter(|time| TIME_VALUES.contains(time))
+}
+
+/// Day and TimeWithinDay. `time` is within a day of the range of time values.
+#[inline(always)]
+pub(crate) const fn split_at_midnight(time: i64) -> (i32, u32) {
+    const DAYS_BEFORE_EPOCH: u64 = 100_000_001;
+    let since_start = (time as u64).wrapping_add(DAYS_BEFORE_EPOCH * DAY as u64);
+    (
+        (since_start / DAY as u64).wrapping_sub(DAYS_BEFORE_EPOCH) as i32,
+        (since_start % DAY as u64) as u32,
+    )
 }
 
 /// The result is not finite if an argument is not, which `make_date` turns into NaN.

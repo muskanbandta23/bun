@@ -1,6 +1,7 @@
 use core::cell::Cell;
 
-use crate::fields::{DateFields, MS_PER_DAY};
+use crate::fields::DateFields;
+use crate::time_value::DAY;
 
 /// A day that has one offset from its start to its end.
 #[derive(Clone, Copy)]
@@ -44,7 +45,7 @@ impl RecentDays {
     pub(super) fn find(&self, time: i64) -> Option<DateFields> {
         let day = self.slot(time).get();
         let since_midnight = time.wrapping_sub(day.midnight) as u64;
-        (since_midnight < u64::from(MS_PER_DAY)).then(|| day.fields.later(since_midnight as u32))
+        (since_midnight < DAY as u64).then(|| day.fields.later(since_midnight as u32))
     }
 
     /// `time` is on `day`.

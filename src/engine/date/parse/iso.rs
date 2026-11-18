@@ -6,6 +6,7 @@ use bun_engine_text::CodeUnit;
 use super::Parsed;
 use super::cursor::Cursor;
 use crate::civil::days_from_civil;
+use crate::time_value::DAY;
 
 pub(super) enum Attempt {
     Complete(Parsed),
@@ -51,11 +52,11 @@ pub(super) fn parse<T: CodeUnit>(cursor: &mut Cursor<'_, T>) -> Attempt {
         count += 1;
     }
 
-    let midnight = days_from_civil(year, numbers[1] as u8, numbers[2] as u8) * 86_400_000;
+    let midnight = days_from_civil(year, numbers[1] as u8, numbers[2] as u8) * DAY;
     if cursor.is_at_end() {
         return Attempt::Complete(Parsed::Utc(midnight));
     }
-    if !cursor.skip_letter(b't') {
+    if !cursor.skip(b'T') && !cursor.skip(b't') {
         return unfinished(numbers, count);
     }
     time_of_day(cursor)
@@ -89,7 +90,7 @@ fn usual_date_and_time<T: CodeUnit>(units: &[T; USUAL_LENGTH]) -> Option<i64> {
     };
     let days = days_from_civil(i32::from(century) * 100 + i32::from(year), month, day);
     let seconds = (i64::from(hour) * 60 + i64::from(minute)) * 60 + i64::from(second);
-    Some((days * 86_400 + seconds) * 1000)
+    Some(days * DAY + seconds * 1000)
 }
 
 /// In milliseconds.
@@ -120,7 +121,7 @@ fn fraction<T: CodeUnit>(cursor: &mut Cursor<'_, T>, max_digits: i32) -> Option<
 /// Through the end of the text.
 #[inline(always)]
 fn zone<T: CodeUnit>(cursor: &mut Cursor<'_, T>, time: i64) -> Option<Parsed> {
-    let parsed = if cursor.skip_letter(b'z') {
+    let parsed = if cursor.skip(b'Z') || cursor.skip(b'z') {
         Parsed::Utc(time)
     } else if let Some(sign) = cursor.sign() {
         Parsed::Utc(time - i64::from(sign * offset_minutes(cursor)? * 60_000))

@@ -11,6 +11,7 @@ mod label;
 mod operand;
 mod register;
 mod vector;
+#[path = "x86_64/mod.rs"]
 pub mod x64;
 
 pub use assembly::{

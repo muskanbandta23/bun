@@ -12,6 +12,7 @@ JavaScript and WebAssembly execution for Bun, in Rust. Each folder here is a cra
 | `syntax`                                        | lexer, parser, scope analysis, early errors                                                        | forbidden    |
 | `bytecode`                                      | instruction set, generator, verifier, liveness, serialized form                                    | forbidden    |
 | `asm`, `codegen`                                | assemblers and macro assembler; SSA IR down to machine code                                        | forbidden    |
+| `wasm_format`, `wasm_compiler`                  | decoding and validation of modules; machine code for functions                                     | forbidden    |
 | `exec_memory`                                   | executable pages, linking, patching                                                                | yes          |
 | `macros`, `heap`                                | `Value`, `Gc<T>`, cell declarations, allocator, collector                                          | yes          |
 | `vm`                                            | object model, realms, calls, errors, modules, promises, inline caches, run-time operations         | `raw` module |

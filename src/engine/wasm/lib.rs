@@ -1,1 +1,1 @@
-//! WebAssembly: decoder, validator, compilers, run time and JavaScript API.
+//! WebAssembly: memories, tables, instances, tiers and the JavaScript API.

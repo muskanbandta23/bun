@@ -17,7 +17,9 @@ enum Query {
     /// That nothing on the chain has a say in a store.
     SetMiss,
     /// The name is not used.
-    Instanceof { prototype: usize },
+    Instanceof {
+        prototype: usize,
+    },
 }
 
 /// What a prototype chain says about a name, for as long as that stays true. All caches that ask the same share it.
@@ -225,8 +227,9 @@ impl PrototypeLookup {
     /// What the slot of the holder has now. The property is in its shape.
     #[inline(always)]
     pub(super) fn stored_value(&self) -> Option<Value> {
+        let holder = self.holder()?;
         // SAFETY: a condition says that the holder has the slot.
-        unsafe { super::slot_at(&*self.holder()?, self.byte_offset) }.get()
+        unsafe { super::slot_at(&holder, self.byte_offset) }.get()
     }
 
     pub fn name(&self) -> PropertyName<'_> {

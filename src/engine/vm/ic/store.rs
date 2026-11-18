@@ -15,9 +15,13 @@ use crate::{
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum StoreMode {
-    Set { is_strict: bool },
+    Set {
+        is_strict: bool,
+    },
     /// CreateDataProperty
-    Define { is_strict: bool },
+    Define {
+        is_strict: bool,
+    },
 }
 
 /// One case inline, and the others in a list.
@@ -88,7 +92,8 @@ impl StoreCache {
 
     fn ensure_cases(&self, vm: &Vm, owner: &CodeBlock) -> &AccessCases {
         if let Some(lookup) = self.inline_lookup() {
-            let mut case = AccessCase::new(AccessKind::Transition, self.shape()).with_lookup(lookup);
+            let mut case =
+                AccessCase::new(AccessKind::Transition, self.shape()).with_lookup(lookup);
             (case.new_shape, case.byte_offset) = (self.new_shape(), self.byte_offset());
             self.clear_inline_case();
             if lookup.is_valid() {
@@ -168,9 +173,10 @@ impl StoreCache {
         }
         match plan(cx, object, old, name, slot, needs_setter_miss) {
             Ok(case) => self.add(cx, owner, case),
-            Err(Plan::Fail) => self
-                .ensure_cases(cx, owner)
-                .did_fail_to_cache(cx, owner, Key::Fixed),
+            Err(Plan::Fail) => {
+                self.ensure_cases(cx, owner)
+                    .did_fail_to_cache(cx, owner, Key::Fixed)
+            }
             Err(_) => {}
         }
     }
@@ -275,7 +281,10 @@ fn plan(
     let (found, attributes) = match holder.shape().get(name) {
         Some(found) => found,
         None => {
-            let (_, entry) = holder.shape().find_static_property(name).ok_or(Plan::Retry)?;
+            let (_, entry) = holder
+                .shape()
+                .find_static_property(name)
+                .ok_or(Plan::Retry)?;
             (crate::PropertyOffset::INVALID, entry.attributes())
         }
     };
@@ -285,7 +294,8 @@ fn plan(
         PutKind::CustomValue => Attributes::CUSTOM_VALUE,
         _ => Attributes::NONE,
     };
-    if found != offset || attributes & (Attributes::ANY_ACCESSOR | Attributes::READ_ONLY) != expected
+    if found != offset
+        || attributes & (Attributes::ANY_ACCESSOR | Attributes::READ_ONLY) != expected
     {
         return Err(Plan::Retry);
     }

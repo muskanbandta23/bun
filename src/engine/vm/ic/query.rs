@@ -174,7 +174,11 @@ pub fn instance_of(
     };
     let shape = object.shape();
     let matches = |it: &&AccessCase| it.shape() == shape.id() && it.pointer == wanted.address();
-    if let Some(answer) = cases.iter().find(matches).and_then(|it| it.lookup()?.constant()) {
+    if let Some(answer) = cases
+        .iter()
+        .find(matches)
+        .and_then(|it| it.lookup()?.constant())
+    {
         return Ok(answer.is_true());
     }
     let answer = JsObject::default_has_instance(cx, value, prototype)?;

@@ -3,8 +3,7 @@
 use core::cell::Cell;
 
 use crate::{
-    CellType, ElementKind, JsCell, JsObject, Shape, ShapeId, SpeculatedType, Value,
-    heap::Survivors,
+    CellType, ElementKind, JsCell, JsObject, Shape, ShapeId, SpeculatedType, Value, heap::Survivors,
 };
 
 /// The last value that an instruction produced. It is not kept alive.

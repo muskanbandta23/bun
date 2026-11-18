@@ -8,8 +8,8 @@ mod prototype_lookup;
 mod query;
 mod store;
 
-pub use access_case::{AccessCase, AccessCases, AccessKind, Key};
 pub(crate) use access_case::CaseArena;
+pub use access_case::{AccessCase, AccessCases, AccessKind, Key};
 pub use call_profile::{CallProfile, CallTargetCount};
 pub use load::{LoadCache, get_by_key, get_own_by_id};
 pub use prototype_lookup::PrototypeLookup;

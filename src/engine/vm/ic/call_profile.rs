@@ -65,7 +65,8 @@ impl CallProfile {
     /// If the site is polymorphic and knows the target. `executable` is what the callee has in that field.
     #[inline(always)]
     pub fn try_count(&self, callee: usize, executable: usize) -> bool {
-        let known = |it: &&CallTargetCount| it.target.bits() == executable || it.target.bits() == callee;
+        let known =
+            |it: &&CallTargetCount| it.target.bits() == executable || it.target.bits() == callee;
         match self.targets().iter().find(known) {
             Some(entry) => entry.count.update(|count| count.wrapping_add(1)),
             None => return false,

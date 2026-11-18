@@ -270,8 +270,8 @@ fn plan_or_reason(
         let mut case = AccessCase::new(AccessKind::LoadModuleBinding, namespace.shape_id());
         case.pointer = namespace.address();
         // SAFETY: from the namespace, which keeps the environment alive.
-        case.second_pointer = core::ptr::from_ref(unsafe { environment.slot_unchecked(offset) })
-            .expose_provenance();
+        case.second_pointer =
+            core::ptr::from_ref(unsafe { environment.slot_unchecked(offset) }).expose_provenance();
         return Ok(case);
     }
     if let Some(proxy) = base.downcast::<GlobalProxy>() {
@@ -299,9 +299,15 @@ fn plan_or_reason(
     };
     if let Some(getter) = slot.custom_getter() {
         let is_accessor = slot.attributes().contains(Attributes::CUSTOM_ACCESSOR);
-        let this = if is_accessor { Some(base) } else { slot.base().map(Into::into) };
+        let this = if is_accessor {
+            Some(base)
+        } else {
+            slot.base().map(Into::into)
+        };
         if let Some(class) = slot.required_class()
-            && !this.and_then(Value::as_cell).is_some_and(|it| it.inherits(class))
+            && !this
+                .and_then(Value::as_cell)
+                .is_some_and(|it| it.inherits(class))
         {
             return Err(Plan::Fail);
         }

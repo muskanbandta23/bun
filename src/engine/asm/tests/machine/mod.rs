@@ -1,7 +1,6 @@
 //! Runs operations of the macro assembler on the processor and compares all that they change with a model.
 //!
-//! `ASM_TEST_SEED` and `ASM_TEST_RUNS` vary the operands, `ASM_TEST_ALL_FEATURES` tries every set of features on
-//! every case, and `ASM_TEST_TRACE` names each case before it runs.
+//! `ASM_TEST_SEED` and `ASM_TEST_RUNS` vary the operands, and `ASM_TEST_TRACE` names each case before it runs.
 
 #![allow(
     dead_code,
@@ -364,24 +363,13 @@ impl Harness {
         }
     }
 
-    fn configurations(&mut self) -> Vec<(Features, bool)> {
-        if variable("ASM_TEST_ALL_FEATURES").is_some() {
-            let both = |&features| [(features, false), (features, true)];
-            return self.feature_sets.iter().flat_map(both).collect();
-        }
-        vec![
-            (Features::empty(), false),
-            (Features::host(), true),
-            (self.random.pick(&self.feature_sets), false),
-            (self.random.pick(&self.feature_sets), true),
-        ]
-    }
-
     fn run_batch(&mut self) {
         let cases = std::mem::take(&mut self.cases);
         self.batches += 1;
         let mut seen: Vec<Vec<u8>> = Vec::new();
-        for (features, shorten_jumps) in self.configurations() {
+        let both = |&features| [(features, false), (features, true)];
+        let configurations: Vec<_> = self.feature_sets.iter().flat_map(both).collect();
+        for (features, shorten_jumps) in configurations {
             let masm = Self::assembler(features, shorten_jumps, self.batches as u64);
             let (code, entries) = self.assemble(masm, &cases, usize::from(shorten_jumps));
             if !seen.iter().any(|bytes| bytes == code.bytes()) {

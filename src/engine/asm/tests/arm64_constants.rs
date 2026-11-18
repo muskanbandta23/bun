@@ -125,7 +125,7 @@ fn the_register_gets_the_constant() {
 #[test]
 fn no_first_instruction_makes_it_shorter() {
     let bitmasks = bitmasks();
-    let stride = if cfg!(debug_assertions) { 97 } else { 1 };
+    let stride = if cfg!(debug_assertions) { 5 } else { 1 };
     let near_bitmasks = bitmasks.iter().enumerate().flat_map(|(index, bitmask)| {
         let (first, second) = (index % 4 * 16, index / 4 % 4 * 16);
         [

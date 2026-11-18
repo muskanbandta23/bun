@@ -80,7 +80,7 @@ impl JsString {
     pub fn from_name(vm: &Vm, name: PropertyName<'_>) -> Gc<JsString> {
         match name.static_atom_index() {
             Some(index) => vm.small_strings.of_static_atom(vm, index),
-            None => Self::from_impl_cached(vm, name.string()),
+            None => Self::from_name_cached(vm, name),
         }
     }
 }

@@ -1270,3 +1270,7 @@ groupEnd
 record
 recordEnd
 screenshot
+evalCode = eval code
+moduleCode = module code
+globalCode = global code
+nativeCode = [native code]

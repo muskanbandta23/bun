@@ -18,7 +18,7 @@ use super::profile::ValueProfile;
 use crate::heap::Survivors;
 use crate::{
     Attributes, Cx, Field, FunctionExecutable, Gc, GcFree, GlobalObject, ImmutableArray,
-    IntegrityLevel, JsArray, JsBigInt, JsCell, JsResult, JsString, LineColumn, RealmSlot, RegExp,
+    IntegrityLevel, JsArray, JsBigInt, JsCell, JsResult, JsString, RealmSlot, RegExp,
     ScopeTemplate, ScriptExecutable, SourceProviderRef, TypeFlags, Value, ValueVec, Visitor, Vm,
 };
 
@@ -543,11 +543,6 @@ impl CodeBlock {
             Some(function) => function.code_provider(),
             None => self.executable.provider().clone(),
         }
-    }
-
-    pub fn line_column(&self, bytecode_offset: u32) -> LineColumn {
-        let divot = self.position(bytecode_offset).divot;
-        self.source_provider().position_in_document(divot)
     }
 
     fn visit_children(&self, visitor: &mut Visitor) {

@@ -263,21 +263,17 @@ fn a_reviver_sees_the_source_of_what_is_unchanged() {
         })
     }
     with_realm(|cx| {
-        let many = r#""k1":0,"k2":0,"k3":0,"k4":0,"k5":0,"k6":0,"k7":0,"k1":-0"#;
         for (text, expected) in [
-            (" 1.0 ", r#""1.0""#.to_owned()),
+            (" 1.0 ", r#""1.0""#),
             (
                 r#"{"a":1,"a":1.0,"1":[ "\u0041",null]}"#,
-                r#"{"1":["\"\\u0041\"","null"],"a":"1.0"}"#.to_owned(),
+                r#"{"1":["\"\\u0041\"","null"],"a":"1.0"}"#,
             ),
+            (r#"{"gone":1,"later":2,"b":{}}"#, r#"{"later":5,"b":{}}"#),
             (
-                r#"{"gone":1,"later":2,"b":{}}"#,
-                r#"{"later":5,"b":{}}"#.to_owned(),
+                r#"{"a":1e0,"b":0,"c":0,"d":0,"e":0,"f":0,"g":0,"h":0,"b":-0}"#,
+                r#"{"a":"1e0","b":"-0","c":"0","d":"0","e":"0","f":"0","g":"0","h":"0"}"#,
             ),
-            (&format!("{{\"k0\":1e0,{many}}}"), {
-                let rest: String = (2..8).map(|it| format!(",\"k{it}\":\"0\"")).collect();
-                format!("{{\"k0\":\"1e0\",\"k1\":\"-0\"{rest}}}")
-            }),
         ] {
             let arguments = [string(cx, text), function(cx, reviver)];
             let value = call(cx, "parse", &arguments).unwrap();
@@ -323,16 +319,19 @@ fn gaps_and_lists() {
     with_realm(|cx| {
         let value = parse(cx, r#"{"a":[1,[],{}],"b":{"a":"x","1":2}}"#);
         set(cx, value, "c", Value::UNDEFINED);
-        let pretty =
-            "{\n_\"a\": [\n__1,\n__[],\n__{}\n_],\n_\"b\": {\n__\"1\": 2,\n__\"a\": \"x\"\n_}\n}";
         for (space, gap) in [
             (2.9.into(), "  "),
             (100.into(), "          "),
             (string(cx, "\t"), "\t"),
             (string(cx, "中123456789ab"), "中123456789"),
         ] {
-            let text = stringify(cx, &[value, Value::NULL, space]);
-            assert_eq!(text, pretty.split('_').collect::<Vec<_>>().join(gap));
+            let (a, b) = (format!("\n{gap}"), format!("\n{gap}{gap}"));
+            assert_eq!(
+                stringify(cx, &[value, Value::NULL, space]),
+                format!(
+                    "{{{a}\"a\": [{b}1,{b}[],{b}{{}}{a}],{a}\"b\": {{{b}\"1\": 2,{b}\"a\": \"x\"{a}}}\n}}"
+                )
+            );
         }
         let list = parse(cx, r#"["b",1,"a","b",null,{}]"#);
         let listed = r#"{"b":{"1":2,"a":"x"},"a":[1,[],{}]}"#;

@@ -19,7 +19,7 @@ impl GetPrivateName {
         symbol: Gc<JsSymbol>,
     ) -> JsResult<Value> {
         let mut slot = PropertySlot::new(base, InternalMethod::GetOwnProperty);
-        let value = base.get_private_field(cx, symbol.name(), &mut slot)?;
+        let value = base.get_private_field(cx, symbol.anchor().name(), &mut slot)?;
         if let Some(object) = slot.base()
             && (self.cache.shape().is_none() || self.cache.list().should_cache())
             && prepare(cx, &object, false).is_ok()
@@ -30,7 +30,7 @@ impl GetPrivateName {
                 self.cache.set_inline_own(&case);
                 self.name.set(owner, &symbol);
             } else {
-                let key = Some(symbol.name());
+                let key = Some(symbol.anchor().name());
                 (self.cache.list()).add(cx, owner, case, key, AccessKind::Generic);
             }
         }
@@ -44,9 +44,9 @@ impl PutPrivateName {
             return self.name.set(owner, &symbol);
         };
         let inline_symbol = self.name.get().map(Gc::cast::<JsSymbol>);
-        let inline_name = inline_symbol.as_ref().map(|it| it.name());
+        let inline_name = inline_symbol.as_ref().map(|it| it.anchor().name());
         let cases = self.cache.ensure_cases(cx, owner, inline_name);
-        cases.add(cx, owner, case, Some(symbol.name()), AccessKind::Generic);
+        cases.add(cx, owner, case, Some(symbol.anchor().name()), AccessKind::Generic);
     }
 
     #[inline(always)]
@@ -63,7 +63,7 @@ impl PutPrivateName {
         let Some(object) = base.as_object() else {
             return uncached(cx, &mut slot);
         };
-        let (old, name) = (object.shape(), symbol.name());
+        let (old, name) = (object.shape(), symbol.anchor().name());
         if let Some(case) = (self.cache.cases()).and_then(|it| it.find(old.id(), name.address()))
             && let Some(result) = store::execute(cx, case, object, name, value, true)
         {
@@ -93,7 +93,7 @@ impl PutPrivateName {
         value: Value,
     ) -> JsResult<()> {
         self.store(cx, owner, base, symbol, value, |cx, slot| {
-            base.set_private_field(cx, symbol.name(), value, slot)
+            base.set_private_field(cx, symbol.anchor().name(), value, slot)
         })
     }
 
@@ -106,7 +106,7 @@ impl PutPrivateName {
         value: Value,
     ) -> JsResult<()> {
         self.store(cx, owner, base.into(), symbol, value, |cx, slot| {
-            base.define_private_field(cx, symbol.name(), value, slot)
+            base.define_private_field(cx, symbol.anchor().name(), value, slot)
         })
     }
 
@@ -119,7 +119,7 @@ impl PutPrivateName {
     ) -> JsResult<()> {
         let value = JsObject::PRIVATE_BRAND_VALUE;
         self.store(cx, owner, base.into(), brand, value, |cx, slot| {
-            base.set_private_brand(cx, brand.name(), slot)
+            base.set_private_brand(cx, brand.anchor().name(), slot)
         })
     }
 
@@ -132,7 +132,7 @@ impl PutPrivateName {
         brand: Gc<JsSymbol>,
     ) -> JsResult<()> {
         let mut slot = PropertySlot::new(base, InternalMethod::GetOwnProperty);
-        base.check_private_brand(cx, brand.name(), &mut slot)?;
+        base.check_private_brand(cx, brand.anchor().name(), &mut slot)?;
         if let Some(object) = slot.base()
             && (self.cache.cases()).is_some_and(|cases| cases.should_cache())
         {

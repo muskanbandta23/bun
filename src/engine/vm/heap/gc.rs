@@ -96,6 +96,21 @@ impl<T> Gc<T> {
         Gc(self.0.cast())
     }
 
+    /// The cell stays alive for as long as the borrow lasts, and with it what it owns outside itself: a variable whose
+    /// address has escaped keeps its place on the stack until it goes out of scope.
+    #[inline(always)]
+    #[cfg_attr(
+        rootcheck,
+        rootcheck::stays("if the variable is where the collector looks")
+    )]
+    pub fn anchor(&self) -> &T {
+        // SAFETY: no instruction.
+        unsafe {
+            core::arch::asm!("/* {0} */", in(reg) self, options(readonly, nostack, preserves_flags));
+        }
+        self
+    }
+
     /// The cell stays alive up to here.
     #[inline(always)]
     pub fn keep_alive(self) {
@@ -121,6 +136,16 @@ impl<T: CellKind> Gc<T> {
         assert!(U::is(&self.cell()));
         Gc(self.0.cast())
     }
+}
+
+/// `Gc::anchor` for a `&T`, or for a `Gc<T>` that is in no variable: `let this = anchor!(self);`
+#[macro_export]
+#[allow_internal_unstable(super_let)]
+macro_rules! anchor {
+    ($cell:expr) => {{
+        super let cell = $crate::Gc::from($cell);
+        $crate::Gc::anchor(&cell)
+    }};
 }
 
 /// Makes the compiler hold the word in a register or on the stack up to here.

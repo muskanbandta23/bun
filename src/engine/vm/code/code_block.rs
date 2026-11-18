@@ -194,7 +194,8 @@ impl CodeBlock {
         if !code_block.coverage_counts.is_empty() {
             code_block.link_coverage_counts();
         }
-        for (slot, constant) in code_block.fields().iter().zip(&code_block.code.constants) {
+        let anchored = code_block.anchor();
+        for (slot, constant) in anchored.fields().iter().zip(&anchored.code.constants) {
             let value = code_block.link_constant(cx, constant)?;
             // SAFETY: traced by `visit_children`.
             unsafe { slot.set(&code_block, value) };

@@ -66,6 +66,7 @@ impl JsNativeClosure {
 }
 
 #[native_abi]
+#[cfg_attr(rootcheck, rootcheck::allow("the frame holds its callee"))]
 fn call(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let closure = frame.callee().cast::<JsNativeClosure>();
     (closure.body.0)(cx, frame, &closure.captures)

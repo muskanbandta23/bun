@@ -45,6 +45,18 @@ impl<'a, 'tcx> Calls<'a, 'tcx> {
         tcx.generics_of(tcx.typeck_root_def_id(def_id)).requires_monomorphization(tcx)
     }
 
+    pub fn as_declared(&self, def_id: DefId) -> Instance<'tcx> {
+        let tcx = self.cx.tcx;
+        let closure = tcx.is_closure_like(def_id).then(|| tcx.type_of(def_id).skip_binder());
+        let args = match closure.map(|it| *it.kind()) {
+            Some(ty::Closure(_, args) | ty::CoroutineClosure(_, args) | ty::Coroutine(_, args)) => {
+                args
+            }
+            _ => GenericArgs::identity_for_item(tcx, def_id),
+        };
+        Instance::new_raw(def_id, tcx.erase_and_anonymize_regions(args))
+    }
+
     /// Whether code that knows nothing of the engine is given something that does.
     fn mentions_upper(&self, args: GenericArgs<'tcx>) -> bool {
         *self.mentions_upper.borrow_mut().entry(args).or_insert_with(|| {
@@ -81,6 +93,9 @@ impl<'a, 'tcx> Calls<'a, 'tcx> {
         terminator: &Terminator<'tcx>,
     ) -> Option<Way<'tcx>> {
         let mut callees = Vec::new();
+        if self.is_inside_collection(frame.instance) {
+            return None;
+        }
         if self.collects_at(frame, terminator, &mut callees) {
             return Some(Way::At(terminator.source_info.span));
         }
@@ -124,7 +139,7 @@ impl<'a, 'tcx> Calls<'a, 'tcx> {
                 let ty = frame.place_type(*place);
                 // What a cell can own is dropped by the sweeper too.
                 if ty.is_trait() {
-                    return !cx.is_gc_free(frame.env, ty);
+                    return cx.has_unknown_code(frame.env, ty) && !cx.is_gc_free(frame.env, ty);
                 }
                 if !cx.can_allocate(frame.env, ty) && !cx.has_unknown_code(frame.env, ty) {
                     return false;
@@ -178,6 +193,15 @@ impl<'a, 'tcx> Calls<'a, 'tcx> {
         false
     }
 
+    pub fn is_inside_collection(&self, instance: Instance<'tcx>) -> bool {
+        let (tcx, parts) = (self.cx.tcx, &self.cx.engine.collector_parts);
+        let function = tcx.typeck_root_def_id(instance.def_id());
+        matches!(tcx.def_kind(function), DefKind::Fn | DefKind::AssocFn)
+            && (tcx.fn_sig(function).skip_binder().skip_binder().inputs().iter())
+                .filter_map(|it| it.peel_refs().ty_adt_def())
+                .any(|it| parts.contains(&it.did()))
+    }
+
     fn calls_back(&self, callee: Instance<'tcx>) -> bool {
         match callee.def {
             InstanceKind::Intrinsic(_) | InstanceKind::LlvmIntrinsic(_) => false,
@@ -218,6 +242,9 @@ impl<'a, 'tcx> Calls<'a, 'tcx> {
         instance: Instance<'tcx>,
         callees: &mut Vec<Instance<'tcx>>,
     ) -> Option<Way<'tcx>> {
+        if self.is_inside_collection(instance) {
+            return None;
+        }
         let frame = self.frame(instance, TypingEnv::fully_monomorphized())?;
         if !self.cx.engine.is_upper(instance.def_id()) {
             let mentioned = self.mentioned(frame).into_iter();
@@ -362,38 +389,25 @@ impl Node<'_> {
     }
 }
 
-pub fn check(cx: &Types<'_>) {
+pub fn check<'a, 'tcx>(calls: &Calls<'a, 'tcx>, cx: &'a Types<'tcx>) {
     let tcx = cx.tcx;
-    let calls = Calls::new(cx);
     let mut nodes = Vec::new();
     let mut index_of = FxHashMap::default();
     let node = |instance| Node { instance, findings: Vec::new(), callers: Vec::new() };
     let (generic, plain): (Vec<_>, Vec<_>) =
         tcx.hir_body_owners().map(|it| it.to_def_id()).partition(|&it| calls.is_generic(it));
-    let as_declared = |def_id: DefId| {
-        let args = match tcx
-            .is_closure_like(def_id)
-            .then(|| tcx.type_of(def_id).skip_binder().kind())
-        {
-            Some(
-                &(ty::Closure(_, args) | ty::CoroutineClosure(_, args) | ty::Coroutine(_, args)),
-            ) => args,
-            _ => GenericArgs::identity_for_item(tcx, def_id),
-        };
-        Instance::new_raw(def_id, tcx.erase_and_anonymize_regions(args))
-    };
     for def_id in generic {
-        let instance = as_declared(def_id);
+        let instance = calls.as_declared(def_id);
         if let Some(frame) = calls.frame(instance, TypingEnv::post_analysis(tcx, def_id)) {
-            nodes.push(Node { findings: bodies::check(frame, &calls), ..node(instance) });
+            nodes.push(Node { findings: bodies::check(frame, calls), ..node(instance) });
         }
     }
     let mut next = nodes.len();
-    nodes.extend(plain.into_iter().map(|it| node(as_declared(it))));
+    nodes.extend(plain.into_iter().map(|it| node(calls.as_declared(it))));
     while next < nodes.len() {
         let instance = nodes[next].instance;
         if let Some(frame) = calls.frame(instance, TypingEnv::fully_monomorphized()) {
-            nodes[next].findings = bodies::check(frame, &calls);
+            nodes[next].findings = bodies::check(frame, calls);
             for Mention { instance: callee, span, .. } in calls.mentioned(frame) {
                 if !calls.is_generic(callee.def_id()) {
                     continue;
@@ -407,7 +421,7 @@ pub fn check(cx: &Types<'_>) {
         }
         next += 1;
     }
-    report(&calls, &nodes);
+    report(calls, &nodes);
 }
 
 fn report<'tcx>(calls: &Calls<'_, 'tcx>, nodes: &[Node<'tcx>]) {

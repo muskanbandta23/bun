@@ -4,10 +4,16 @@
 mod ffi;
 mod c_text;
 pub mod calendar;
+pub mod collator;
 mod enumeration;
 mod error;
+pub mod formatted_value;
+pub mod list_format;
 pub mod locale;
 pub mod normalizer;
+pub mod number_format;
+pub mod numbering_system;
+pub mod resource_bundle;
 pub mod time_zone;
 mod version;
 

@@ -64,7 +64,7 @@ define_class!(
 
 /// ToTemporalDate
 pub fn to_temporal_date(cx: &mut Cx, item: Value) -> JsResult<PlainDate> {
-    PlainDate::from_item(cx, item, Value::UNDEFINED)
+    PlainDate::from_argument(cx, item)
 }
 
 impl FromItem for PlainDate {
@@ -189,7 +189,7 @@ fn to_zoned_date_time(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     {
         (
             to_time_zone(cx, time_zone)?,
-            object.get(cx, names::plainTime)?,
+            get(cx, &object, names::plainTime)?,
         )
     } else {
         (to_time_zone(cx, item)?, Value::UNDEFINED)

@@ -81,8 +81,8 @@ impl CalendarId {
             return Ok(calendar);
         }
         match parse::any_date_or_time(text) {
-            Some((_, annotations)) if annotations.can_name_calendar() => {
-                CalendarId::from_annotation(annotations.calendar)
+            Some(parsed) if parsed.annotations.can_name_calendar() => {
+                CalendarId::from_annotation(parsed.annotations.calendar)
             }
             _ => Err(InputError::Text(TextError::Calendar, text)),
         }

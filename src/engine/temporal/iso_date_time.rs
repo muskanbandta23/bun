@@ -38,6 +38,7 @@ impl IsoDateTime {
     }
 
     /// RoundISODateTime
+    #[inline]
     pub(crate) fn round(self, rounding: Rounding) -> IsoDateTime {
         let (is_next_day, time) = self.time.round_with_carry(rounding);
         IsoDateTime {

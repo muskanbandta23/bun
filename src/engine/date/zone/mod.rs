@@ -9,10 +9,10 @@ use bun_icu::Buffer;
 
 pub use id::TimeZoneId;
 pub use rules::{LocalOffsets, ZoneRules};
-pub(crate) use rules::{Offset, Side, Span};
+pub(crate) use rules::{Offset, Side};
 pub use system::{set_time_zone_override, system_time_zone, time_zone_generation};
 
-use crate::AsciiBuffer;
+use crate::format::{gmt_offset, iso_offset};
 
 /// A time zone identifier (ECMA-262, 21.4.1.19).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -29,11 +29,7 @@ impl TimeZone {
     pub fn identifier(self) -> Identifier {
         match self {
             TimeZone::Named(id) => Identifier::Name(id.identifier()),
-            TimeZone::Offset { minutes } => {
-                let mut text = AsciiBuffer::new();
-                text.push_offset(minutes, b":");
-                Identifier::Offset(text)
-            }
+            TimeZone::Offset { minutes } => Identifier::Offset(iso_offset(minutes.into())),
         }
     }
 
@@ -41,10 +37,7 @@ impl TimeZone {
         match self {
             TimeZone::Named(id) => id::widen(id.in_icu().identifier()),
             TimeZone::Offset { minutes } => {
-                let mut text = AsciiBuffer::<8>::new();
-                text.push(b"GMT");
-                text.push_offset(minutes, b"");
-                id::widen(&text)
+                Buffer::from_slice(&gmt_offset(minutes.into()).map(u16::from))
             }
         }
     }
@@ -62,7 +55,7 @@ impl TimeZone {
 
 pub enum Identifier {
     Name(&'static str),
-    Offset(AsciiBuffer<6>),
+    Offset([u8; 6]),
 }
 
 impl core::ops::Deref for Identifier {
@@ -71,7 +64,7 @@ impl core::ops::Deref for Identifier {
     fn deref(&self) -> &str {
         match self {
             Identifier::Name(name) => name,
-            Identifier::Offset(text) => text,
+            Identifier::Offset(ascii) => str::from_utf8(ascii).unwrap_or_default(),
         }
     }
 }

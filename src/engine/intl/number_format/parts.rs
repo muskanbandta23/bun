@@ -57,6 +57,32 @@ pub(crate) fn collect_fields(value: FormattedValue<'_>, failure: &'static str) -
     Ok(fields)
 }
 
+/// Returns what the start and the end of a range cover. ICU does not count the space after a currency that they share.
+pub(crate) fn align_spans(fields: &mut Fields) -> [Range<usize>; 2] {
+    let is_span = |it: &Field| it.category == Category::NUMBER_RANGE_SPAN;
+    let Some(start) = (fields
+        .iter()
+        .filter(|it| is_span(it))
+        .map(|it| it.range.start))
+    .min() else {
+        return [0..0, 0..0];
+    };
+    let number_fields = || fields.iter().filter(|it| !is_span(it));
+    let follows_currency =
+        number_fields().any(|it| it.field == field::CURRENCY && it.range.end == start);
+    let space = (number_fields().filter_map(|it| it.range.start.checked_sub(start)))
+        .min()
+        .filter(|_| follows_currency)
+        .unwrap_or(0);
+
+    let mut spans = [0..0, 0..0];
+    for span in fields.iter_mut().filter(|it| is_span(it)) {
+        span.range = span.range.start + space..span.range.end + space;
+        spans[usize::from(span.field != 0)] = span.range.clone();
+    }
+    spans
+}
+
 /// Cuts `text` wherever a field starts or ends. `describe` takes the innermost field of a piece and where the piece starts.
 pub(crate) fn push_flattened(
     parts: &mut Parts,

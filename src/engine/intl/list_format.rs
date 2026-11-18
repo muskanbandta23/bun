@@ -1,6 +1,8 @@
 //! `Intl.ListFormat`
 
+use core::cell::OnceCell;
 use core::cmp::Ordering;
+use std::borrow::Cow;
 use std::rc::Rc;
 
 use bun_engine_text::{StringBuilder, StringRef};
@@ -32,6 +34,8 @@ struct Shared {
     kind: Type,
     style: Style,
     formatter: ListFormatter,
+    /// By the number of stand-ins, for `NEUTRAL` as the last.
+    neutral_literals: [OnceCell<Literals>; MAX_STAND_INS + 1],
 }
 
 impl ListFormat {
@@ -62,6 +66,7 @@ impl ListFormat {
                     kind,
                     style,
                     formatter,
+                    neutral_literals: Default::default(),
                 })))
             },
         )
@@ -91,34 +96,35 @@ impl ListFormat {
         Ok(out.finish()?)
     }
 
-    pub fn format_to_parts<'a>(&self, list: &'a [StringRef]) -> Result<ListParts<'a>> {
+    pub fn format_to_parts<'a>(&'a self, list: &'a [StringRef]) -> Result<ListParts<'a>> {
         Ok(ListParts {
             literals: self.literals(list)?,
             list,
         })
     }
 
-    /// Of a list that stands in for `list`. By UTS #35 all elements from the second to the last but one have the same text
-    /// between them, and the start of the last element is all that a pattern depends on.
-    fn literals(&self, list: &[StringRef]) -> Result<Literals> {
-        const FAILURE: &str = "failed to format list of strings";
+    /// By UTS #35 the elements from the second to the last but one have the same text between them.
+    fn literals(&self, list: &[StringRef]) -> Result<Cow<'_, Literals>> {
         const CONTEXT_LENGTH: usize = 8;
-        /// Selects the patterns that an empty element gets.
-        const NEUTRAL: &[u16] = &[0x05d0];
 
-        let [_, .., last] = list else {
-            return Ok(Literals::from_elem(StringRef::empty(), list.len() + 1));
-        };
-        let context: SmallVec<[u16; CONTEXT_LENGTH]> =
-            last.text().code_units().take(CONTEXT_LENGTH).collect();
-        let last = if context.is_empty() {
-            NEUTRAL
-        } else {
-            &context
-        };
         let count = list.len().min(MAX_STAND_INS);
-        let stand_ins = core::iter::repeat_n(NEUTRAL, count - 1).chain([last]);
+        match list.last() {
+            // The conjunctions of these depend on how the next word starts.
+            Some(last) if matches!(self.locale().language(), b"es" | b"he") && !last.is_empty() => {
+                let context: SmallVec<[u16; CONTEXT_LENGTH]> =
+                    last.text().code_units().take(CONTEXT_LENGTH).collect();
+                self.literals_of_stand_ins(count, &context).map(Cow::Owned)
+            }
+            _ => self.0.neutral_literals[count]
+                .get_or_try_init(|| self.literals_of_stand_ins(count, NEUTRAL))
+                .map(Cow::Borrowed),
+        }
+    }
 
+    fn literals_of_stand_ins(&self, count: usize, last: &[u16]) -> Result<Literals> {
+        const FAILURE: &str = "failed to format list of strings";
+
+        let stand_ins = (1..=count).map(|it| if it == count { last } else { NEUTRAL });
         let formatted = self.0.formatter.format(stand_ins).or_type_error(FAILURE)?;
         let formatted = formatted.value().or_type_error(FAILURE)?;
         let text = formatted.text().or_type_error(FAILURE)?;
@@ -141,6 +147,8 @@ impl ListFormat {
 }
 
 const MAX_STAND_INS: usize = 4;
+/// Selects the patterns that an empty element gets.
+const NEUTRAL: &[u16] = &[0x05d0];
 
 /// What comes before each element of a list of at most `MAX_STAND_INS`, and after the last.
 type Literals = SmallVec<[StringRef; MAX_STAND_INS + 1]>;
@@ -165,7 +173,7 @@ fn pieces<'a>(
 }
 
 pub struct ListParts<'a> {
-    literals: Literals,
+    literals: Cow<'a, Literals>,
     list: &'a [StringRef],
 }
 

@@ -9,9 +9,9 @@ use bun_engine_macros::cell;
 
 use crate::heap::{HeapAnalyzer, Owned, barrier, visit_children_of};
 use crate::{
-    CellKind, CellType, CellTypeRange, Class, ClassOps, Extends, Field, Gc, GcFree, GlobalObject,
-    InlineWatchpointSet, JsCell, JsObject, Shape, Trace, TypeFlags, Value, Visitor, Vm,
-    WatchpointState, WeakField, ascii_literal,
+    CellKind, CellType, CellTypeRange, Class, ClassOps, Cx, Extends, Field, Gc, GcFree,
+    GlobalObject, InlineWatchpointSet, JsCell, JsObject, Shape, ShapeSpec, Trace, TypeFlags, Value,
+    Visitor, Vm, WatchpointState, WeakField, ascii_literal,
 };
 
 /// What the instances of a scope that one code block makes have in common.
@@ -162,6 +162,15 @@ impl Environment {
     #[inline(always)]
     pub const fn allocation_size(slot_count: u32) -> usize {
         Self::OFFSET_OF_SLOTS + slot_count as usize * size_of::<u64>()
+    }
+
+    pub fn create_shapes(cx: &Cx) {
+        let global = cx.global();
+        let shape = |spec| Shape::create(cx, Some(global), Value::NULL, spec);
+        let spec = ShapeSpec::of::<Environment>();
+        global.init_environment_shape(shape(spec));
+        global.init_with_scope_shape(shape(spec.with_type(CellType::WithScope)));
+        global.init_module_environment_shape(shape(ShapeSpec::of::<ModuleEnvironment>()));
     }
 
     /// The slots are not initialized.

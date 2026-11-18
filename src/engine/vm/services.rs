@@ -1,23 +1,68 @@
 //! The state that the parts of the run time keep in the `Vm`.
 
 use crate::heap::{Scope, Survivors};
-use crate::{Visitor, Vm};
+use crate::{Visitor, Vm, caches, code, error, runtime};
 
-#[derive(Default)]
-pub(crate) struct Services {}
+pub(crate) trait Service {
+    fn initialize(&self, _: &Vm) {}
 
-impl Services {
-    pub(crate) fn initialize(&self, _: &Vm) {}
+    /// From outside of any script.
+    fn will_enter(&self, _: &Vm) {}
 
-    pub(crate) fn will_enter(&self, _: &Vm) {}
+    fn visit(&self, _: &mut Visitor) {}
 
-    pub(crate) fn did_wrap_epoch(&self) {}
+    fn reconcile_weak_references(&self, _: &Vm, _: &Survivors) {}
 
-    pub(crate) fn visit(&self, _: &mut Visitor) {}
+    fn did_collect(&self, _: &Vm, _: Scope) {}
 
-    pub(crate) fn reconcile_weak_references(&self, _: &Vm, _: &Survivors) {}
+    fn will_destroy(&self, _: &Vm) {}
+}
 
-    pub(crate) fn did_collect(&self, _: &Vm, _: Scope) {}
+macro_rules! services {
+    ($($name:ident: $type:ty,)*) => {
+        #[derive(Default)]
+        pub(crate) struct Services {
+            $(pub(crate) $name: $type,)*
+        }
 
-    pub(crate) fn will_destroy(&self, _: &Vm) {}
+        impl Service for Services {
+            fn initialize(&self, vm: &Vm) {
+                $(self.$name.initialize(vm);)*
+            }
+
+            #[inline]
+            fn will_enter(&self, vm: &Vm) {
+                $(self.$name.will_enter(vm);)*
+            }
+
+            fn visit(&self, visitor: &mut Visitor) {
+                $(self.$name.visit(visitor);)*
+            }
+
+            fn reconcile_weak_references(&self, vm: &Vm, survivors: &Survivors) {
+                $(self.$name.reconcile_weak_references(vm, survivors);)*
+            }
+
+            fn did_collect(&self, vm: &Vm, scope: Scope) {
+                $(self.$name.did_collect(vm, scope);)*
+            }
+
+            fn will_destroy(&self, vm: &Vm) {
+                $(self.$name.will_destroy(vm);)*
+            }
+        }
+    };
+}
+
+services! {
+    caches: caches::State,
+    code: code::State,
+    errors: error::State,
+    buffers: runtime::buffers::State,
+    collections: runtime::collections::State,
+    control: runtime::control::State,
+    exotic: runtime::exotic::State,
+    iteration: runtime::iteration::State,
+    modules: runtime::modules::State,
+    text: runtime::text::State,
 }

@@ -15,6 +15,7 @@ use crate::heap::stack::{self, StackBounds, stack_pointer};
 use crate::heap::{Heap, HeapKind, IsoSpace, Scope, Survivors, WeakValueMap, barrier};
 use crate::object::ShapeCache;
 use crate::primitive::StringCaches;
+use crate::services::Service;
 use crate::{
     BuiltinId, CallFrame, CellKind, CellType, Cx, ElementKind, EntryRecord, Exception, Executable,
     FastHashMap, FunctionExecutable, Gc, GcFree, GlobalObject, Hooks, IndexingMode,
@@ -715,7 +716,7 @@ impl Vm {
         let epoch = self.prototype_chain_epoch.get().wrapping_add(1);
         self.prototype_chain_epoch.set(epoch);
         if epoch == 0 {
-            self.services.did_wrap_epoch();
+            self.services.caches.did_wrap_epoch();
             self.prototype_chain_epoch.set(1);
         }
     }

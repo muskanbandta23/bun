@@ -4,8 +4,7 @@ mod recent_days;
 use core::cell::{Cell, RefCell};
 
 use bun_engine_text::{StringRef, Text};
-use bun_icu::calendar::{Calendar, ZoneName};
-use bun_icu::host_language;
+use bun_icu::calendar::ZoneName;
 
 use last_parsed::LastParsed;
 use recent_days::{Day, RecentDays};
@@ -14,7 +13,7 @@ use crate::fields::{DateFields, MS_PER_DAY, OffsetBits, split_at_midnight};
 use crate::format::{date_time_string, time_string};
 use crate::parse::{Parsed, parse_date};
 use crate::time_value::{TIME_VALUES, time_clip, time_clip_integer};
-use crate::zone::{Side, TimeZone, TimeZoneId, ZoneRules, system_time_zone, time_zone_generation};
+use crate::zone::{Side, TimeZoneId, ZoneRules, system_time_zone, time_zone_generation};
 
 /// A span of time values.
 #[derive(Clone, Copy)]
@@ -61,7 +60,7 @@ pub struct DateCache {
     last_parsed: LastParsed,
     has_made_local_fields: Cell<bool>,
     /// For standard time and for daylight saving time, with what goes around them.
-    zone_names: RefCell<Option<[StringRef; 2]>>,
+    zone_names: RefCell<[Option<StringRef>; 2]>,
 }
 
 impl Default for DateCache {
@@ -75,7 +74,7 @@ impl Default for DateCache {
             local_span: Cell::new(LocalSpan::EMPTY),
             last_parsed: LastParsed::default(),
             has_made_local_fields: Cell::new(false),
-            zone_names: RefCell::new(None),
+            zone_names: RefCell::default(),
         }
     }
 }
@@ -226,22 +225,23 @@ impl DateCache {
         format: impl FnOnce(DateFields, Text<'_>) -> StringRef,
     ) -> StringRef {
         let mut names = self.zone_names.borrow_mut();
-        let names = names.get_or_insert_with(|| parenthesized_names(self.time_zone()));
-        format(fields, names[usize::from(fields.is_daylight())].text())
+        let name = names[usize::from(fields.is_daylight())]
+            .get_or_insert_with(|| self.parenthesized_zone_name(fields.is_daylight()));
+        format(fields, name.text())
     }
-}
 
-#[cold]
-fn parenthesized_names(zone: TimeZoneId) -> [StringRef; 2] {
-    let calendar = Calendar::open(&TimeZone::Named(zone).icu_id(), c"").ok();
-    [ZoneName::Standard, ZoneName::Daylight]
-        .map(|kind| {
-            let name = calendar.as_ref()?.zone_name(kind, host_language()).ok()?;
-            let name = StringRef::try_narrowed(Text::Utf16(&name)).ok()?;
-            let parts = [Text::from_ascii(" ("), name.text(), Text::from_ascii(")")];
-            StringRef::try_concat(&parts)
-                .ok()
-                .filter(|_| !name.is_empty())
-        })
-        .map(Option::unwrap_or_default)
+    #[cold]
+    fn parenthesized_zone_name(&self, is_daylight: bool) -> StringRef {
+        let kind = if is_daylight {
+            ZoneName::Daylight
+        } else {
+            ZoneName::Standard
+        };
+        let mut name = self.time_zone().long_name(kind).unwrap_or_default();
+        if !name.is_empty() {
+            name.insert_from_slice(0, &b" (".map(u16::from));
+            name.push(b')'.into());
+        }
+        StringRef::try_narrowed(Text::Utf16(&name)).unwrap_or_default()
+    }
 }

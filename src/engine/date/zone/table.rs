@@ -29,6 +29,7 @@ pub(super) struct Table {
 impl Table {
     pub(super) const UTC: u16 = 0;
     const FREE: u16 = u16::MAX;
+    const MAX_NAMES: usize = Entry::NOT_AVAILABLE as usize - 1;
 
     pub(super) fn get() -> &'static Table {
         static TABLE: OnceLock<Table> = OnceLock::new();
@@ -40,7 +41,7 @@ impl Table {
         let source = data::names().ok();
         let count = (source.as_ref())
             .map_or(0, |names| names.item_count())
-            .min(usize::from(Entry::NOT_AVAILABLE) - 1);
+            .min(Table::MAX_NAMES);
         let mut table = Table {
             names: String::with_capacity(16 * count),
             entries: Vec::with_capacity(count + 1),

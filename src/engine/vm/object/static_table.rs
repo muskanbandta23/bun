@@ -302,7 +302,7 @@ unsafe impl Sync for StaticProperty {}
 macro_rules! static_table {
     ($visibility:vis static $name:ident = [$($property:expr),* $(,)?]) => {
         $visibility static $name: $crate::StaticTable = {
-            const COUNT: usize = [$(stringify!($property)),*].len();
+            const COUNT: usize = <[&str]>::len(&[$(stringify!($property)),*]);
             static VALUES: [$crate::StaticProperty; COUNT] = [$($property),*];
             static INDEX: [$crate::StaticIndex; $crate::StaticTable::index_length(COUNT)] =
                 $crate::StaticTable::build_index(&VALUES);

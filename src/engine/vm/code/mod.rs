@@ -16,3 +16,8 @@ pub(crate) use executable::{NativeExecutableKey, native_source_text};
 pub use source::{
     LineColumn, SourceCode, SourceProvider, SourceProviderBuilder, SourceProviderRef, SourceType,
 };
+
+#[derive(Default)]
+pub(crate) struct State {}
+
+impl crate::services::Service for State {}

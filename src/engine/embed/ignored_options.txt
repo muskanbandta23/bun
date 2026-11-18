@@ -62,7 +62,6 @@ flag dumpGraphAtEachPhase
 flag dumpHeapOnLowMemory
 flag dumpHeapStatisticsAtVMDestruction
 flag dumpIonGraph
-flag dumpModuleLoadingState
 flag dumpModuleRecord
 flag dumpOMGDisassembly
 flag dumpOptimizationTracing
@@ -253,6 +252,7 @@ flag usePolymorphicCallInlining
 flag usePolymorphicCallInliningForNonStubStatus
 flag usePolyvariantDevirtualization
 flag usePredictionFileCreatingFuzzerAgent
+flag usePrelinkedModuleInfo
 flag useProfiler
 flag usePromiseIsPromise
 flag usePutStackSinking

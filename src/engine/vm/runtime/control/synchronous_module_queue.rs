@@ -3,10 +3,8 @@
 use core::ptr::NonNull;
 
 use super::jobs;
-use super::microtask_queue::queue_tracked;
 use crate::{
-    Cx, InternalMicrotask, JsAsyncFunctionGenerator, JsResult, MicrotaskQueue, QueuedTask, Value,
-    Vm,
+    Cx, InternalMicrotask, JsAsyncFunctionGenerator, JsResult, MicrotaskQueue, QueuedTask, Vm,
 };
 
 /// What is left in the queue at the end is dropped.
@@ -45,11 +43,9 @@ impl Vm {
     }
 
     /// Whether the task belongs there.
-    #[cold]
-    #[inline(never)]
     pub(super) fn divert_to_synchronous_module_queue(&self, task: &QueuedTask) -> bool {
         let resumes_module = || {
-            let generator = task.arguments[2].and_then(Value::downcast::<JsAsyncFunctionGenerator>);
+            let generator = task.context().downcast::<JsAsyncFunctionGenerator>();
             generator.is_some_and(|it| it.is_of_module())
         };
         let queues = self.services.control.synchronous_module_queues.borrow();
@@ -78,7 +74,7 @@ impl Cx {
         while let Some(task) = self.next_synchronous_module_task() {
             if let Err(thrown) = jobs::run_out_of_line(self.in_realm(task.global()), &task) {
                 while let Some(task) = self.next_synchronous_module_task() {
-                    queue_tracked(self, &task);
+                    task.queue(self, &task.global());
                 }
                 return Err(thrown);
             }

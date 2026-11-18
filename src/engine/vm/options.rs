@@ -119,7 +119,7 @@ options! {
     use_code_cache / useCodeCache: bool = true,
     use_source_cache / useSourceProviderCache: bool = true,
     log_bytecode_cache / verboseDiskCache: bool = false,
-    use_prelinked_modules / usePrelinkedModuleInfo: bool = true,
+    log_module_loading / dumpModuleLoadingState: bool = false,
     runs_only_static_code / disallowNonStaticCode: bool = false,
     eval_mode / evalMode: bool = false,
     show_private_scripts_in_stack_traces / showPrivateScriptsInStackTraces: bool = false,

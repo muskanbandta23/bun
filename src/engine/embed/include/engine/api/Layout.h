@@ -182,7 +182,7 @@ ENGINE_CONSTANT(CallFrame_argument_count, 32, CallFrame::OFFSET_OF_ARGUMENT_COUN
 ENGINE_CONSTANT(CallFrame_this, 40, CallFrame::OFFSET_OF_THIS)
 ENGINE_CONSTANT(CallFrame_arguments, 48, CallFrame::OFFSET_OF_ARGUMENTS)
 ENGINE_CONSTANT(nativeCalleeTag, 3, Value::NATIVE_CALLEE_TAG)
-ENGINE_SIZE(EntryRecord, 16)
+ENGINE_SIZE(EntryRecord, 24)
 ENGINE_OFFSET(Exception, value, 8)
 
 ENGINE_OFFSET(SourceProvider, ref_count, 8)

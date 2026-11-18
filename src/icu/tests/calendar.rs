@@ -28,7 +28,7 @@ fn fields() {
     assert_eq!(hebrew.set_gregorian_change(0.0), Err(Error::UNSUPPORTED));
 
     let mut copy = hebrew.try_clone().unwrap();
-    copy.set(Field::DayOfMonth, 30);
+    copy.set_millis(7.0 * 86_400_000.0).unwrap();
     assert_eq!(date(&mut copy), [5730, 4, 1]);
     assert_eq!(date(&mut hebrew), [5730, 3, 23]);
     assert_eq!(copy.set_millis(f64::NAN), Err(Error::ILLEGAL_ARGUMENT));

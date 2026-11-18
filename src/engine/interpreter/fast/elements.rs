@@ -3,7 +3,8 @@ use bun_engine_vm::code::metadata::{ArrayAccess, GetByVal};
 use bun_engine_vm::{ArrayModes, ElementKind, IndexingMode, JsObject, Value};
 
 use super::barrier_and_next;
-use crate::machine::{EMPTY, boolean, cell, handler, next, slow};
+use super::properties::{get_by_name, put_by_name, put_by_name_direct};
+use crate::machine::{EMPTY, boolean, cell, go, handler, next, slow};
 
 const INT32: u8 = ElementKind::Int32 as u8;
 const DOUBLE: u8 = ElementKind::Double as u8;
@@ -12,7 +13,10 @@ const CONTIGUOUS: u8 = ElementKind::Contiguous as u8;
 handler! {
     fn get_by_val(m, op: op::GetByVal) {
         let (base, key) = (m.get(op.base), m.get(op.key));
-        if !m.is_cell(base) || !m.is_int32(key) {
+        if !m.is_int32(key) {
+            go!(m, get_by_name::<W>)
+        }
+        if !m.is_cell(base) {
             slow!(m, op::GetByVal)
         }
         let (object, index) = (cell::<JsObject>(base), key as u32);
@@ -57,10 +61,13 @@ handler! {
 }
 
 macro_rules! stores {
-    ($($name:ident, $Op:ident;)*) => { handler! {$(
+    ($($name:ident, $by_name:ident, $Op:ident;)*) => { handler! {$(
         fn $name(m, op: op::$Op) {
             let (base, key, value) = (m.get(op.base), m.get(op.key), m.get(op.value));
-            if !m.is_cell(base) || !m.is_int32(key) {
+            if !m.is_int32(key) {
+                go!(m, $by_name::<W>)
+            }
+            if !m.is_cell(base) {
                 slow!(m, op::$Op)
             }
             let (object, index) = (cell::<JsObject>(base), key as u32);
@@ -88,6 +95,6 @@ macro_rules! stores {
 }
 
 stores! {
-    put_by_val, PutByVal;
-    put_by_val_direct, PutByValDirect;
+    put_by_val, put_by_name, PutByVal;
+    put_by_val_direct, put_by_name_direct, PutByValDirect;
 }

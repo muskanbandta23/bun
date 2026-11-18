@@ -65,6 +65,12 @@ impl Allocator {
         self.try_allocate_sized(heap, self.cell_size())
     }
 
+    /// # Safety
+    /// The cell is initialized, as what the allocator is for, before the next allocation.
+    pub unsafe fn try_allocate_uninitialized(&self, heap: &Heap) -> usize {
+        self.try_allocate(heap)
+    }
+
     /// `cell_size` is that of the allocator, which the caller may know as a constant.
     #[inline(always)]
     pub(crate) fn try_allocate_sized(&self, heap: &Heap, cell_size: usize) -> usize {
@@ -122,21 +128,29 @@ impl Allocator {
             block.did_consume_free_list();
             heap.did_allocate(self.free_list_size.take() as usize);
         }
-        heap.collect_if_necessary();
-        // What ran at the end of a collection may have allocated.
-        if self.current_block.get().is_some() {
-            return self.start.get() != self.end.get()
-                || self.next_interval.get() != 0
-                || self.refill(heap);
-        }
+        heap.will_allocate_slowly();
         let secret = heap.next_secret();
-        let Some((block, swept)) = directory.find_free_cells(secret) else {
-            return false;
+        let mut found = None;
+        if self.current_block.get().is_none() {
+            found = heap.find_free_cells(directory, secret);
+            if found.is_none()
+                && heap.collect_for_lack_of_memory()
+                && self.current_block.get().is_none()
+            {
+                found = heap.find_free_cells(directory, secret);
+            }
+        }
+        let Some((block, free_list)) = found else {
+            // What ran at the end of a collection may have allocated.
+            return self.current_block.get().is_some()
+                && (self.start.get() != self.end.get()
+                    || self.next_interval.get() != 0
+                    || self.refill(heap));
         };
         self.current_block.set(Some(block));
         self.secret.set(secret);
-        self.free_list_size.set(swept.free_bytes as u32);
-        self.next_interval.set(swept.first_interval);
+        self.free_list_size.set(free_list.bytes as u32);
+        self.next_interval.set(free_list.first_interval);
         true
     }
 

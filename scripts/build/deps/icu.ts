@@ -167,6 +167,27 @@ function bundled(cfg: Config): DirectBuild {
   };
 }
 
+/** The C functions that came after ICU 70, the libicucore of macOS 13.0: with an import of one, Bun does not start there. */
+export const newerThanOldestIcucore: readonly string[] = [
+  "u_getIDTypes",
+  "u_hasIDType",
+  "ubidi_getMFOption",
+  "ubidi_isolate",
+  "ucal_getIanaTimeZoneID",
+  "ucnv_clone",
+  "ucol_clone",
+  "udatpg_*DateTimeFormatForStyle",
+  "udispopt_*",
+  "ulocale_*",
+  "ulocbld_*",
+  "unorm2_getNFKCSimpleCasefoldInstance",
+  "unum_hasAttribute",
+  "uset_getString*",
+  "usnum_*",
+  "usnumf_*",
+  "uspoof_*Bidi*",
+];
+
 /** In link order. */
 const libraries = ["icui18n", "icuuc", "icudata"];
 
@@ -184,8 +205,10 @@ export const icu: Dependency = {
         },
 
   patches: [
+    "patches/icu/calendar-known-region.patch",
     "patches/icu/data-item-hook.patch",
     "patches/icu/decnum-resize-status.patch",
+    "patches/icu/likely-subtags-lazy.patch",
     "patches/icu/round-to-five-carry.patch",
   ],
 

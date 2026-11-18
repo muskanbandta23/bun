@@ -19,7 +19,6 @@
 #include "JavaScriptCore/ExceptionScope.h"
 
 #include "ExtendedDOMClientIsoSubspaces.h"
-#include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
 // #include "JSBlob.h"
 #include "JSDOMAttribute.h"
@@ -70,7 +69,6 @@
 #include <windows.h>
 #endif
 
-#include <JavaScriptCore/DOMJITAbstractHeap.h>
 #include <JavaScriptCore/DFGAbstractHeap.h>
 
 // #include <JavaScriptCore/JSTypedArrayViewPrototype.h>
@@ -441,9 +439,7 @@ JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalO
         if (Bun::rejectBytesNoCopyAboveArrayBufferLimit(lexicalGlobalObject, scope, ptr, length, bytesDeallocator, ctx)) [[unlikely]]
             return {};
 
-        auto buffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(ptr), length }, createSharedTask<void(void*)>([=](void* p) {
-            bytesDeallocator(p, ctx);
-        }));
+        auto buffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(ptr), length }, bytesDeallocator, ctx);
 
         uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(buffer), 0, length);
     } else {
@@ -2676,9 +2672,7 @@ extern "C" JSC::EncodedJSValue JSBuffer__fromMmap(Zig::GlobalObject* globalObjec
 
     auto* structure = globalObject->JSBufferSubclassStructure();
 
-    auto buffer = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), length }, createSharedTask<void(void*)>([lengthAsContext](void* p) {
-        unmapBufferBytes(p, lengthAsContext);
-    }));
+    auto buffer = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), length }, unmapBufferBytes, lengthAsContext);
 
     auto* view = JSC::JSUint8Array::create(globalObject, structure, WTF::move(buffer), 0, length);
     RETURN_IF_EXCEPTION(scope, {});
@@ -3674,18 +3668,12 @@ static const HashTableValue JSBufferPrototypeTableValues[]
         this->putDirect(vm, alias_ident, original, PropertyAttribute::Builtin | 0);              \
     } while (false);
 
-// The accessor descriptor JSC's DFG needs, derived from the same template arguments the host
+// The accessor descriptor the JIT needs, derived from the same template arguments the host
 // function is instantiated with so the two cannot disagree.
 template<typename T, bool isLittleEndian, bool isWrite>
 static void registerBufferAccessor(JSC::NativeFunction function)
 {
-    JSC::DFG::DataViewData data {};
-    data.byteSize = sizeof(T);
-    data.isSigned = std::is_signed_v<T> && !std::is_floating_point_v<T>;
-    data.isFloatingPoint = std::is_floating_point_v<T>;
-    data.isResizable = false;
-    data.isLittleEndian = triState(isLittleEndian);
-    JSC::registerBufferAccessor(JSC::toTagged(function), { data, isWrite });
+    JSC::registerBufferAccessor(function, { sizeof(T), std::is_signed_v<T> && !std::is_floating_point_v<T>, std::is_floating_point_v<T>, isLittleEndian, isWrite });
 }
 
 // read(U)Int{LE,BE} / write(U)Int{LE,BE}: the width comes from the byteLength argument, so the JIT
@@ -3693,13 +3681,7 @@ static void registerBufferAccessor(JSC::NativeFunction function)
 template<bool isSigned, bool isLittleEndian, bool isWrite>
 static void registerBufferVarWidthAccessor(JSC::NativeFunction function)
 {
-    JSC::DFG::DataViewData data {};
-    data.byteSize = 0;
-    data.isSigned = isSigned;
-    data.isFloatingPoint = false;
-    data.isResizable = false;
-    data.isLittleEndian = triState(isLittleEndian);
-    JSC::registerBufferAccessor(JSC::toTagged(function), { data, isWrite, /* byteLengthFromArgument */ true });
+    JSC::registerBufferAccessor(function, { 0, isSigned, false, isLittleEndian, isWrite });
 }
 
 // Process-global (the descriptor belongs to the function pointer): once, before the functions are

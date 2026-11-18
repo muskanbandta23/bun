@@ -53,13 +53,19 @@ impl Storage {
             * WORD
     }
 
+    /// What to allocate at least for that many elements.
+    #[inline(always)]
+    pub fn min_vector_length(length: u32) -> u32 {
+        match length {
+            0 => Self::EMPTY_ARRAY_VECTOR_LENGTH,
+            _ => length.max(Self::MIN_VECTOR_LENGTH),
+        }
+    }
+
     /// At least `length`, and as many more as the allocation has room for anyway.
     #[inline]
     pub fn optimal_vector_length(capacity: usize, length: u32) -> u32 {
-        let length = match length {
-            0 => Self::EMPTY_ARRAY_VECTOR_LENGTH,
-            _ => length.max(Self::MIN_VECTOR_LENGTH),
-        };
+        let length = Self::min_vector_length(length);
         let words = optimal_size(Self::size(capacity, Some(length))) / WORD;
         ((words - capacity - 1) as u32).min(Self::MAX_VECTOR_LENGTH)
     }

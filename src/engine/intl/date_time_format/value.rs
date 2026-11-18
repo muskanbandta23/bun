@@ -77,6 +77,7 @@ impl DateTimeValue {
         })
     }
 
+    #[inline]
     pub(super) fn moment(self) -> Result<Moment> {
         let unless_iso = |calendar| Some(calendar).filter(|&it| it != CalendarId::Iso8601);
         let (temporal_type, time, calendar) = match self {

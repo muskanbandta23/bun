@@ -28,6 +28,7 @@ pub fn float16_from_f64(value: f64) -> u16 {
     }
 }
 
+/// The exact value of a half-precision number.
 #[inline]
 pub fn float16_to_f64(bits: u16) -> f64 {
     let sign = u64::from(bits) << 48 & SIGN_BIT;

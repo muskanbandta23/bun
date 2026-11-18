@@ -14,6 +14,7 @@ JavaScript and WebAssembly execution for Bun, in Rust. Each folder here is a cra
 | `asm`, `codegen`                                | assemblers and macro assembler; SSA IR down to machine code                                        | forbidden    |
 | `wasm_format`, `wasm_compiler`                  | decoding and validation of modules; machine code for functions                                     | forbidden    |
 | `exec_memory`                                   | executable pages, linking, patching                                                                | yes          |
+| `platform`                                      | clocks, limits of the machine, stack bounds, suspending threads                                    | yes          |
 | `wasm_runtime`                                  | linear memories, tables, instances, installing and tiering of code, faults                         | yes          |
 | `macros`, `vm`                                  | heap and collector, object model, realms, calls, errors, modules, promises, caches, operations     | yes          |
 | `interpreter`                                   | bytecode handlers and the stubs that enter, call and leave frames                                  | yes          |
@@ -87,7 +88,7 @@ Cells do not move. The collector is generational mark and sweep, finds roots by 
 | a reference from outside the heap     | `Strong`, `Weak`                                                            |
 | state of the `Vm`                     | the `State` of the module, which is a `Service` and visits what it holds    |
 
-The compiler does not check this. `bun run rust:rootcheck` does, in seconds (`tools/rootcheck/README.md`): run it before you commit.
+The compiler checks neither this nor the anchors below. `bun run rust:rootcheck` does, in seconds (`tools/rootcheck/README.md`): run it before you commit.
 
 What a function may do is in its signature:
 
@@ -98,10 +99,10 @@ What a function may do is in its signature:
 | `&mut Cx`     | also run scripts                                           |
 | `&NoGc`       | none of these: `cx.no_gc()` borrows the `Cx` while it lives |
 
-Memory that a cell owns outside itself is borrowed through a guard that keeps the cell alive (`StringView`, `ResolvedString`, `PropertyKey`, `GcRef`) or, if a script or an allocation can replace it, under `NoGc` (`elements`, `elements_mut`). A loop that calls out reads lengths and elements again on each turn.
+Memory that a cell owns outside itself is borrowed through a guard that keeps the cell alive (`StringView`, `ResolvedString`, `PropertyKey`, `GcRef`) or, if a script or an allocation can replace it, under `NoGc` (`elements`, `elements_mut`). What a plain accessor lends is held across an allocation only through an anchor: `symbol.anchor().name()`, `anchor!(self).info()`. A loop that calls out reads lengths and elements again on each turn.
 
 ## Cells and built-ins
 
 `#[cell(..)]` declares a type of cell (see `CellKind`), `#[object_ops]` the internal methods that it overrides (see `ClassOps`; `Inherited` calls those of the base). An object that owns something with a destructor extends `JsDestructibleObject`. A type whose layout a tier or the embedder reads is in `vm` and has `OFFSET_OF_*` constants; the others are in the crate that uses them. Objects with internal fields that built-ins written in JavaScript read have a `FieldArray` right after the `JsObject`.
 
-A native function is `#[native_abi] fn(&mut Cx, &CallFrame) -> JsResult<Value>`. Prototypes, constructors and namespaces list their properties in a `static_table!`, in the order in which they enumerate, and nothing is made before it is used: `builtins/fundamental/boolean.rs` has the pattern. What a realm has one of is a `RealmSlot`, and what a fast path assumes of the library is a `RealmWatchpoint`. A function that calls back for each element is written in JavaScript (`builtins/js`), where the compilers can inline the callback. Names are constants: add a line to `text/names.txt` and use `names::x`, `symbols::x` or `private_names::x`.
+A native function is `#[native_abi] fn(&mut Cx, &CallFrame) -> JsResult<Value>`. Prototypes, constructors and namespaces list their properties in a `static_table!`, in the order in which they enumerate, and nothing is made before it is used: `builtins/fundamental/symbol.rs` has the pattern. What a realm has one of is a `RealmSlot`, and what a fast path assumes of the library is a `RealmWatchpoint`. A function that calls back for each element is written in JavaScript (`builtins/js`), where the compilers can inline the callback. Names are constants: add a line to `text/names.txt` and use `names::x`, `symbols::x` or `private_names::x`.

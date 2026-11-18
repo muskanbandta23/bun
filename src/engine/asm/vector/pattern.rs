@@ -86,9 +86,9 @@ pub(crate) fn lanes_with(size: Size, bytes: u16) -> u16 {
     })
 }
 
-/// All bytes of the lanes that have any of the bytes.
+/// All bytes of the lanes, of up to 32 bits, that have any of the bytes.
 pub(crate) fn whole_lanes(size: Size, bytes: u16) -> u16 {
-    let steps = [(0x5555, 1), (0x3333, 2), (0x0f0f, 4)];
+    let steps = [(0x5555, 1), (0x3333, 2)];
     let steps = &steps[..size.log2_bytes().into()];
     steps.iter().fold(bytes, |set, (lower, distance)| {
         set | set >> distance & lower | (set & lower) << distance
@@ -110,7 +110,8 @@ impl Pattern {
         Self(bits.to_le_bytes())
     }
 
-    const fn bits(self) -> u128 {
+    /// They suit a table lookup that gives zero for indices from 128 up.
+    pub(crate) const fn bits(self) -> u128 {
         u128::from_le_bytes(self.0)
     }
 
@@ -330,10 +331,5 @@ impl Pattern {
             operands.as_flattened_mut()[usize::from(index)] = wanted;
         }
         Self(operands[side as usize])
-    }
-
-    /// For a table lookup that gives zero for indices from 128 up.
-    pub(crate) fn indices(self) -> u128 {
-        self.put(self.any_flags(), ZERO).bits()
     }
 }

@@ -9,6 +9,7 @@ use super::rules::ZoneRules;
 /// What a name stands for is looked up when it is first asked for.
 pub(super) struct Entry {
     name_end: u32,
+    /// Every thread that looks it up finds the same.
     pub(super) primary: AtomicU16,
     pub(super) rules: OnceLock<&'static ZoneRules>,
 }

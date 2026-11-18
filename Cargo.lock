@@ -700,13 +700,21 @@ dependencies = [
  "bun_alloc",
  "bun_core",
  "bun_engine",
+ "bun_engine_bigint",
+ "bun_engine_bytecode",
  "bun_engine_date",
+ "bun_engine_inspector",
+ "bun_engine_macros",
  "bun_engine_number",
+ "bun_engine_platform",
+ "bun_engine_regexp",
  "bun_engine_standalone",
+ "bun_engine_temporal",
  "bun_engine_text",
  "bun_engine_unicode",
  "bun_engine_vm",
  "bun_icu",
+ "bun_sys",
  "bun_threading",
  "bun_url_whatwg",
  "libc",
@@ -768,6 +776,7 @@ dependencies = [
  "bun_highway",
  "bun_icu",
  "bun_pod",
+ "bun_threading",
  "hashbrown 0.15.5",
  "smallvec",
 ]
@@ -796,10 +805,11 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bun_engine_asm",
- "bun_engine_baseline",
  "bun_engine_bytecode",
  "bun_engine_codegen",
  "bun_engine_exec_memory",
+ "bun_engine_interpreter",
+ "bun_engine_macros",
  "bun_engine_number",
  "bun_engine_standalone",
  "bun_engine_text",
@@ -807,6 +817,19 @@ dependencies = [
  "bun_threading",
  "hashbrown 0.15.5",
  "smallvec",
+]
+
+[[package]]
+name = "bun_engine_platform"
+version = "0.0.0"
+dependencies = [
+ "bun_alloc",
+ "bun_core",
+ "bun_engine_standalone",
+ "bun_sys",
+ "bun_threading",
+ "bun_windows_sys",
+ "libc",
 ]
 
 [[package]]
@@ -841,10 +864,14 @@ version = "0.0.0"
 dependencies = [
  "bun_engine",
  "bun_engine_bytecode",
+ "bun_engine_inspector",
+ "bun_engine_intl",
  "bun_engine_macros",
+ "bun_engine_number",
  "bun_engine_standalone",
  "bun_engine_text",
  "bun_engine_vm",
+ "bun_icu",
 ]
 
 [[package]]
@@ -852,6 +879,7 @@ name = "bun_engine_standalone"
 version = "0.0.0"
 dependencies = [
  "bun_alloc",
+ "bun_core",
  "cc",
 ]
 
@@ -916,6 +944,7 @@ dependencies = [
  "bun_engine_exec_memory",
  "bun_engine_macros",
  "bun_engine_number",
+ "bun_engine_platform",
  "bun_engine_regexp",
  "bun_engine_regexp_jit",
  "bun_engine_standalone",
@@ -1037,6 +1066,7 @@ name = "bun_executable"
 version = "0.0.0"
 dependencies = [
  "bun_aot_absent",
+ "bun_engine_embed",
  "bun_runtime",
 ]
 
@@ -1433,8 +1463,6 @@ dependencies = [
  "bun_core",
  "bun_crash_handler",
  "bun_dotenv",
- "bun_engine",
- "bun_engine_embed",
  "bun_errno",
  "bun_event_loop",
  "bun_exe_format",
@@ -1465,6 +1493,7 @@ dependencies = [
  "bun_uws",
  "bun_watcher",
  "bun_wyhash",
+ "bun_yarr",
  "libc",
  "scopeguard",
  "strum",
@@ -2003,6 +2032,8 @@ dependencies = [
  "bun_deflate",
  "bun_dns",
  "bun_dotenv",
+ "bun_engine_date",
+ "bun_engine_text",
  "bun_errno",
  "bun_event_loop",
  "bun_exe_format",

@@ -1,5 +1,6 @@
 //! What is known at generation of the scopes that exist at run time.
 
+use core::num::NonZeroU32;
 use std::rc::Rc;
 
 use bun_engine_syntax::Name;
@@ -15,8 +16,12 @@ pub enum ScopeKind {
     /// The name of a function expression that `eval` may shadow.
     FunctionName,
     Block,
+    /// The lexical bindings at the top level of a script or of `eval` code.
+    Program,
     /// `catch (e)`, which lets `var e` through.
     SimpleCatch,
+    /// `catch` with a pattern.
+    Catch,
     Class,
     Module,
     /// The bindings are the properties of an object.
@@ -61,6 +66,8 @@ bitflags::bitflags! {
         const STATIC = 1 << 4;
         const HAS_GETTER = 1 << 5;
         const HAS_SETTER = 1 << 6;
+        /// `arguments` too.
+        const PARAMETER = 1 << 7;
     }
 }
 
@@ -95,6 +102,9 @@ pub struct StaticScope {
     pub(crate) parent: Option<Rc<StaticScope>>,
     pub(crate) kind: ScopeKind,
     pub(crate) eval_variables_slot: Option<u32>,
+    /// Only what a debugger evaluates adds variables, and only that sees them.
+    pub(crate) is_extensible_by_debugger_only: bool,
+    pub(crate) body_start: Option<NonZeroU32>,
     /// Of the outermost scope of a function: where that function was created.
     pub(crate) entered_at: Option<u32>,
     pub(crate) slot_count: u32,
@@ -110,6 +120,10 @@ pub struct StaticScope {
 
 const LINEAR_SEARCH_LIMIT: usize = 8;
 
+fn known_text(name: Name) -> Text<'static> {
+    Text::from_ascii(Name::known_text(name.index()).unwrap_or_default())
+}
+
 impl StaticScope {
     /// For an object that the embedder puts on the scope chain.
     pub fn with(parent: Option<Rc<StaticScope>>) -> Rc<StaticScope> {
@@ -122,6 +136,31 @@ impl StaticScope {
         parent: Option<Rc<StaticScope>>,
         names: Box<[Identifier]>,
     ) -> Rc<StaticScope> {
+        let (slot, undefined_slots) = ((SlotKind::Variable, SlotFlags::empty()), names.len());
+        Self::without_source(kind, parent, names, slot, undefined_slots as u32)
+    }
+
+    /// For a module that has no code. The slots start empty.
+    pub fn of_exports(names: Box<[Identifier]>) -> Rc<StaticScope> {
+        let flags = SlotFlags::IMMUTABLE | SlotFlags::EXPORTED;
+        let slot = (SlotKind::Variable, flags);
+        Self::without_source(ScopeKind::Module, None, names, slot, 0)
+    }
+
+    /// Its one slot, which starts empty, has the `this` of the code inside.
+    pub fn for_this(parent: Option<Rc<StaticScope>>) -> Rc<StaticScope> {
+        let names = [Identifier::new(known_text(Name::THIS_VALUE))];
+        let slot = (SlotKind::Internal, SlotFlags::empty());
+        Self::without_source(ScopeKind::Block, parent, names.into(), slot, 0)
+    }
+
+    fn without_source(
+        kind: ScopeKind,
+        parent: Option<Rc<StaticScope>>,
+        names: Box<[Identifier]>,
+        (slot_kind, flags): (SlotKind, SlotFlags),
+        undefined_slots: u32,
+    ) -> Rc<StaticScope> {
         let slots: Box<[Slot]> = (0..)
             .zip(&names)
             .map(|(index, name)| Slot {
@@ -130,17 +169,19 @@ impl StaticScope {
                 name_length: Slot::OWNED,
                 index,
                 detail: 0,
-                kind: SlotKind::Variable,
-                flags: SlotFlags::empty(),
+                kind: slot_kind,
+                flags,
             })
             .collect();
         Rc::new(StaticScope {
             parent,
             kind,
             eval_variables_slot: None,
+            is_extensible_by_debugger_only: false,
+            body_start: None,
             entered_at: None,
             slot_count: slots.len() as u32,
-            undefined_slots: slots.len() as u32,
+            undefined_slots,
             mapped_parameters: 0,
             table: Self::table_for(&slots),
             slots,
@@ -176,6 +217,31 @@ impl StaticScope {
     /// Where the object with the variables that `eval` code adds goes, if it may add any. Starts empty.
     pub fn eval_variables_slot(&self) -> Option<u32> {
         self.eval_variables_slot
+    }
+
+    /// Of the scope of a function with debug hooks: where its variables count as declared, if that is apart from
+    /// its parameters.
+    pub fn body_start(&self) -> Option<u32> {
+        self.body_start.map(NonZeroU32::get)
+    }
+
+    fn internal_slot(&self, name: Name) -> Option<u32> {
+        let text = known_text(name);
+        Some(self.find_text(text, text.hash(), true)?.index)
+    }
+
+    pub fn this_slot(&self) -> Option<u32> {
+        self.internal_slot(Name::THIS_VALUE)
+    }
+
+    /// Of a class: the private symbol that marks the objects which have its private methods.
+    pub fn brand_slot(&self) -> Option<u32> {
+        self.internal_slot(Name::CLASS_BRAND)
+    }
+
+    /// Of a class: the constructor, which has the private methods that are static.
+    pub fn static_brand_slot(&self) -> Option<u32> {
+        self.internal_slot(Name::CLASS_STATIC_HOME)
     }
 
     pub fn slot_count(&self) -> u32 {

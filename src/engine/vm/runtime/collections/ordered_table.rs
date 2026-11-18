@@ -10,10 +10,10 @@ use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use bun_alloc::AllocError;
 
 use super::{HashedKey, OrderedCollection};
-use crate::heap::{barrier, optimal_size};
+use crate::heap::{Scope, barrier, optimal_size};
 use crate::{
     CellKind, CellType, CellTypeRange, Class, ClassOps, Extends, Field, Gc, GcFree, JsCell, Shape,
-    Trace, TypeFlags, Value, Visitor, Vm, ascii_literal,
+    TypeFlags, Value, Visitor, Vm, ascii_literal,
 };
 
 const WORD: usize = size_of::<u64>();
@@ -30,14 +30,14 @@ mod sealed {
 pub trait TableKind: sealed::Sealed + Sized + 'static {
     /// What an entry has besides the key.
     type Payload: Copy;
-    type Slot: Trace;
+    type Slot;
     type Item: Copy;
 
     const HAS_VALUES: bool;
     const COLLECTION_TYPE: CellType;
 
     fn payload(slot: &Self::Slot) -> Self::Payload;
-    fn payload_is_cell(payload: Self::Payload) -> bool;
+    fn cell_in(payload: Self::Payload) -> Option<Gc<JsCell>>;
     /// # Safety
     /// As for `Field::set_without_barrier`.
     unsafe fn store(slot: &Self::Slot, payload: Self::Payload);
@@ -64,8 +64,8 @@ impl TableKind for MapKind {
     }
 
     #[inline(always)]
-    fn payload_is_cell(payload: Value) -> bool {
-        payload.is_cell()
+    fn cell_in(payload: Value) -> Option<Gc<JsCell>> {
+        payload.as_cell()
     }
 
     #[inline(always)]
@@ -95,35 +95,27 @@ pub enum SetKind {}
 
 impl sealed::Sealed for SetKind {}
 
-pub struct NoSlot;
-
-// SAFETY: has nothing.
-unsafe impl Trace for NoSlot {
-    #[inline(always)]
-    fn trace(&self, _: &mut Visitor) {}
-}
-
 impl TableKind for SetKind {
     type Payload = ();
-    type Slot = NoSlot;
+    type Slot = ();
     type Item = Value;
 
     const HAS_VALUES: bool = false;
     const COLLECTION_TYPE: CellType = CellType::Set;
 
     #[inline(always)]
-    fn payload(_: &NoSlot) {}
+    fn payload((): &()) {}
 
     #[inline(always)]
-    fn payload_is_cell((): ()) -> bool {
-        false
+    fn cell_in((): ()) -> Option<Gc<JsCell>> {
+        None
     }
 
     #[inline(always)]
-    unsafe fn store(_: &NoSlot, (): ()) {}
+    unsafe fn store((): &(), (): ()) {}
 
     #[inline(always)]
-    fn clear(_: &NoSlot) {}
+    fn clear((): &()) {}
 
     #[inline(always)]
     fn item(key: Value, (): ()) -> Value {
@@ -252,24 +244,27 @@ unsafe impl<K: TableKind> CellKind for OrderedTable<K> {
     fn trace_fields(&self, visitor: &mut Visitor) {
         let forward = self.forward.load(Ordering::Relaxed);
         // SAFETY: zero, or a cell that the table keeps alive.
-        unsafe { visitor.append_hidden_word((forward & !Self::IS_CURRENT) as u64) };
+        unsafe { visitor.append_word((forward & !Self::IS_CURRENT) as u64) };
         if forward & Self::IS_CURRENT == 0 {
             return;
         }
         let end = self.link_of(self.used.load(Ordering::Acquire));
-        let mut link = self.link_of(self.first_live.load(Ordering::Relaxed));
+        let mut first = self.link_of(self.first_live.load(Ordering::Relaxed));
         if !barrier::is_fenced() {
-            if !visitor.is_first_visit() {
-                link = link.max(self.clean_until.load(Ordering::Relaxed));
+            if visitor.scope() == Scope::Eden && !visitor.is_first_visit() {
+                first = first.max(self.clean_until.load(Ordering::Relaxed));
             }
             self.clean_until.store(end, Ordering::Relaxed);
         }
-        while link < end {
-            // SAFETY: has been written.
-            let entry = unsafe { self.entry_at(link) };
-            entry.key.trace(visitor);
-            entry.slot.trace(visitor);
-            link += Self::ENTRY_WORDS;
+        let count = (end.saturating_sub(first) / Self::ENTRY_WORDS) as usize;
+        let first = self.entry_ptr(first).cast();
+        // SAFETY: they have been written, and are inside the cell.
+        unsafe {
+            if K::HAS_VALUES {
+                visitor.append_entries::<{ MapTable::ENTRY_WORDS as usize }>(first, count);
+            } else {
+                visitor.append_entries::<{ SetTable::ENTRY_WORDS as usize }>(first, count);
+            }
         }
     }
 }
@@ -582,7 +577,7 @@ impl<K: TableKind> OrderedTable<K> {
         };
         // SAFETY: from a chain, and the barrier follows.
         unsafe { K::store(&self.entry_at(link).slot, payload) };
-        if K::payload_is_cell(payload) {
+        if K::cell_in(payload).is_some() {
             self.did_dirty(link);
             self.write_barrier_for_cell();
         }
@@ -621,7 +616,7 @@ impl<K: TableKind> OrderedTable<K> {
         unsafe { self.write_entry(self.link_of(used), key, payload) };
         self.used.store(used + 1, Ordering::Release);
         self.live.update(|live| live + 1);
-        if key.value().is_cell() || K::payload_is_cell(payload) {
+        if key.value().is_cell() || K::cell_in(payload).is_some() {
             self.write_barrier_for_cell();
         }
     }

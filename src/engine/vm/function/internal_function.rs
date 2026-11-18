@@ -20,7 +20,7 @@ pub struct InternalFunction {
     executable: Gc<Executable>,
     function: NativeFunction,
     constructor: NativeFunction,
-    pub(self) original_name: Field<Option<Gc<JsString>>>,
+    pub original_name: Field<Option<Gc<JsString>>>,
 }
 
 const _: () = {
@@ -149,8 +149,15 @@ impl Cx {
         {
             return Ok(shape);
         }
-        let Some(prototype) = new_target.get(self, names::prototype)?.as_object() else {
-            return Ok(base);
+        let prototype = new_target.get(self, names::prototype)?;
+        // A getter may have changed what arrays are made with.
+        let base = if global.is_having_a_bad_time() && global.is_original_array_shape(&base) {
+            global.array_shape(base.instance_indexing_mode().kind())
+        } else {
+            base
+        };
+        let Some(prototype) = prototype.as_object() else {
+            return function_realm(self, new_target).map(|_| base);
         };
         let shape = if base.prototype() == prototype.into() {
             base
@@ -158,6 +165,9 @@ impl Cx {
             base.with_prototype(self, global, prototype)
         };
         if let Some(rare_data) = cache {
+            if rare_data.subclass_shape().is_some() {
+                rare_data.allocation_watchpoints().fire(self);
+            }
             rare_data.set_subclass_shape(Some(shape));
             rare_data.allocation_watchpoints().start_watching();
         }
@@ -174,7 +184,7 @@ impl Cx {
     ) -> JsResult<Gc<Shape>> {
         match new_target.as_object() {
             Some(new_target) if !new_target.is_same(callee) => {
-                let realm = function_realm(self, new_target)?;
+                let realm = try_function_realm(self, new_target).unwrap_or_else(|| self.global());
                 let base = base(&realm, self);
                 self.subclass_shape(new_target, base)
             }

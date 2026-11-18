@@ -6,8 +6,8 @@ use core::ptr::NonNull;
 use std::rc::Rc;
 
 use bun_engine_bytecode::{
-    ArrayLiteral, Body, Code, CodeKind, Constant, FunctionIndex, FunctionRef, IdentifierIndex,
-    Position, ScopeIndex, Specialization, TemplateSite,
+    ArrayLiteral, Body, Code, CodeFlags, CodeKind, Constant, FunctionIndex, FunctionRef,
+    IdentifierIndex, Instructions, Opcode, Position, ScopeIndex, Specialization, TemplateSite,
 };
 use bun_engine_macros::cell;
 use bun_engine_text::{Identifier, PropertyName, names};
@@ -18,7 +18,7 @@ use super::profile::ValueProfile;
 use crate::heap::Survivors;
 use crate::{
     Attributes, Cx, Field, FunctionExecutable, Gc, GcFree, GlobalObject, ImmutableArray,
-    IntegrityLevel, JsArray, JsBigInt, JsCell, JsResult, JsString, LineColumn, RealmSlot, RegExp,
+    IntegrityLevel, JsArray, JsBigInt, JsCell, JsResult, JsString, RealmSlot, RegExp,
     ScopeTemplate, ScriptExecutable, SourceProviderRef, TypeFlags, Value, ValueVec, Visitor, Vm,
 };
 
@@ -78,6 +78,9 @@ pub trait CompiledCode: GcFree + Any {
     fn size(&self) -> usize;
 }
 
+/// How often a range of the source has run.
+pub type CoverageCount = Rc<Cell<u64>>;
+
 /// The constants, the executables of inner functions, the scope templates, the profiles of the arguments and the
 /// metadata.
 struct Words {
@@ -106,7 +109,7 @@ impl Drop for Words {
 }
 
 /// Code linked to a realm. Optimized code has one of its own, whose `alternative` has the profiles.
-#[cell(cell_type = CodeBlock, flags = TypeFlags::SHAPE_IS_IMMORTAL,
+#[cell(cell_type = CodeBlock, flags = TypeFlags::SHAPE_IS_IMMORTAL, export = "engine_class_CodeBlock",
     visit_children, visit_output_constraints, reconcile_weak_references, estimated_size)]
 pub struct CodeBlock {
     base: JsCell,
@@ -125,10 +128,14 @@ pub struct CodeBlock {
     tier: Cell<Tier>,
     is_jettisoned: Cell<bool>,
     saved_words: u32,
+    /// How many breakpoints may be hit in the code.
+    debugger_requests: Cell<u32>,
     alternative: Option<Gc<CodeBlock>>,
     code: Rc<Code>,
     words: Words,
     compiled: RefCell<Option<Rc<dyn CompiledCode>>>,
+    /// One for each of the coverage blocks.
+    coverage_counts: Box<[CoverageCount]>,
     pub(crate) caches: metadata::SideTables,
     pub(super) optimization: Optimization,
 }
@@ -144,6 +151,7 @@ impl CodeBlock {
     pub const OFFSET_OF_FUNCTIONS: usize = offset_of!(CodeBlock, functions);
     pub const OFFSET_OF_SCOPES: usize = offset_of!(CodeBlock, scopes);
     pub const OFFSET_OF_EXECUTION_COUNTER: usize = offset_of!(CodeBlock, execution_counter);
+    pub const OFFSET_OF_DEBUGGER_REQUESTS: usize = offset_of!(CodeBlock, debugger_requests);
 
     /// In the realm of `cx`.
     pub fn link(
@@ -157,6 +165,11 @@ impl CodeBlock {
         let count = metadata + code.body.metadata().words() as usize;
         let words = Words::zeroed(count).ok_or_else(|| cx.throw_out_of_memory())?;
         let at = |index| words.first.wrapping_add(index);
+        let coverage_counts = if code.body.flags().contains(CodeFlags::HAS_COVERAGE) {
+            (cx.hooks().cover)(cx, &executable, &code)
+        } else {
+            Box::default()
+        };
         let code_block = cx.allocate::<CodeBlock>(CodeBlockInit {
             base: cx.shapes.code_block(),
             instructions: code.body.instructions().as_ptr(),
@@ -173,14 +186,20 @@ impl CodeBlock {
             tier: Cell::new(Tier::Interpreter),
             is_jettisoned: Cell::new(false),
             saved_words: code.body.saved_words(),
+            debugger_requests: Cell::new(0),
             alternative: None,
             code,
             words,
             compiled: RefCell::new(None),
+            coverage_counts,
             caches: metadata::SideTables::default(),
             optimization: Optimization::default(),
         });
-        for (slot, constant) in code_block.fields().iter().zip(&code_block.code.constants) {
+        if !code_block.coverage_counts.is_empty() {
+            code_block.link_coverage_counts();
+        }
+        let anchored = code_block.anchor();
+        for (slot, constant) in anchored.fields().iter().zip(&anchored.code.constants) {
             let value = code_block.link_constant(cx, constant)?;
             // SAFETY: traced by `visit_children`.
             unsafe { slot.set(&code_block, value) };
@@ -208,13 +227,27 @@ impl CodeBlock {
             tier: Cell::new(tier),
             is_jettisoned: Cell::new(false),
             saved_words: self.saved_words,
+            debugger_requests: Cell::new(0),
             alternative: Some(self.baseline()),
             code: Rc::clone(&self.code),
             words: Words::zeroed(0).unwrap_or_else(|| bun_alloc::out_of_memory()),
             compiled: RefCell::new(None),
+            coverage_counts: Box::default(),
             caches: metadata::SideTables::default(),
             optimization: Optimization::default(),
         })
+    }
+
+    #[cold]
+    fn link_coverage_counts(&self) {
+        let code = self.body().instructions();
+        for (_, instruction) in Instructions::new(code, 0..code.len() as u32) {
+            if let (Opcode::Cover, &[block]) = (instruction.opcode, instruction.words()) {
+                let count = &self.coverage_counts[block as usize];
+                // SAFETY: the type of its entries, and the count goes no sooner than the metadata.
+                unsafe { self.metadata::<metadata::Cover>(instruction.metadata).link(count) };
+            }
+        }
     }
 
     fn link_constant(&self, cx: &mut Cx, constant: &Constant) -> JsResult<Option<Value>> {
@@ -400,6 +433,11 @@ impl CodeBlock {
         &self.execution_counter
     }
 
+    #[inline(always)]
+    pub fn debugger_requests(&self) -> &Cell<u32> {
+        &self.debugger_requests
+    }
+
     pub fn compiled(&self) -> Option<Rc<dyn CompiledCode>> {
         self.compiled.borrow().clone()
     }
@@ -428,6 +466,15 @@ impl CodeBlock {
 
     pub fn constant(&self, index: u32) -> Option<Value> {
         self.baseline().fields()[..self.code.constants.len()][index as usize].get()
+    }
+
+    /// By the same elements in a more general kind. Code that has the address of the old one keeps that alive itself.
+    pub fn replace_array_constant(&self, index: u32, elements: Gc<ImmutableArray>) {
+        let owner = self.baseline();
+        let field = &owner.fields()[..self.code.constants.len()][index as usize];
+        assert!(field.get().is_some_and(Value::is::<ImmutableArray>));
+        // SAFETY: one of its own.
+        unsafe { field.set(&owner, Some(elements.into())) };
     }
 
     /// # Safety
@@ -469,17 +516,18 @@ impl CodeBlock {
         let slot: &Field<Option<_>> = unsafe { &*self.scopes.add(index.index()).cast() };
         slot.get().unwrap_or_else(|| {
             let template = ScopeTemplate::create(vm, Rc::clone(&self.code.scopes[index.index()]));
+            if self.has_debug_hooks() {
+                template.set_owner(Some(self.executable));
+            }
             // SAFETY: as above.
             unsafe { slot.set(&self.baseline(), Some(template)) };
             template
         })
     }
 
-    /// In the text of `source_provider`. What comes before the first position has that.
+    /// In the text of `source_provider`.
     pub fn position(&self, bytecode_offset: u32) -> Position {
-        let positions = self.body().positions();
-        let found = positions.find(bytecode_offset);
-        let found = found.or_else(|| Some(positions.entries().next()?.1));
+        let found = self.body().positions().find(bytecode_offset);
         found.unwrap_or_else(|| {
             let function = self.executable.downcast::<FunctionExecutable>();
             let start = function.map_or(0, |function| function.parameters_start());
@@ -492,15 +540,7 @@ impl CodeBlock {
     }
 
     pub fn source_provider(&self) -> SourceProviderRef {
-        match self.executable.downcast::<FunctionExecutable>() {
-            Some(function) => function.code_provider(),
-            None => self.executable.provider().clone(),
-        }
-    }
-
-    pub fn line_column(&self, bytecode_offset: u32) -> LineColumn {
-        let divot = self.position(bytecode_offset).divot;
-        self.source_provider().position_in_document(divot)
+        self.executable.code_provider()
     }
 
     fn visit_children(&self, visitor: &mut Visitor) {

@@ -3,6 +3,7 @@
 #![feature(
     adt_const_params,
     allocator_ext,
+    allow_internal_unstable,
     auto_traits,
     core_intrinsics,
     macro_metavar_expr_concat,
@@ -23,6 +24,7 @@ pub mod call;
 mod cell_type;
 pub mod code;
 mod cx;
+mod debugger;
 mod error;
 mod frame;
 mod function;
@@ -48,6 +50,7 @@ pub use call::{CallData, NativeFunction};
 pub use cell_type::{CellType, CellTypeRange, TypeFlags};
 pub use code::*;
 pub use cx::{Cx, JsResult, NoGc, Thrown};
+pub use debugger::{Debugger, DebuggerFrame};
 pub use error::*;
 pub use frame::{CallFrame, EntryRecord};
 pub use function::*;
@@ -60,7 +63,7 @@ pub use hooks::{BuiltinSource, Hooks};
 pub use intrinsic::{BuiltinId, Intrinsic};
 pub use object::*;
 pub use operations::*;
-pub use options::{Options, options, set_options};
+pub use options::{Options, options, parse_flag, parse_number, set_options};
 pub use primitive::*;
 pub use realm::*;
 pub use runtime::*;

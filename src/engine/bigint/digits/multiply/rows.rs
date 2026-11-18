@@ -1,6 +1,6 @@
 //! Products with a short operand: it is multiplied by one digit of the other at a time, and the sums stay in registers.
 
-use crate::digits::{Argument, add_with_carry, subtract_arrays, unroll};
+use crate::digits::{Argument, add_with_carry, subtract_arrays, subtract_same_length, unroll};
 
 /// The most digits in a row.
 pub(crate) const MAX_WIDTH: usize = 8;
@@ -22,7 +22,12 @@ pub(crate) fn scale<const N: usize>(a: &[u64; N], factor: u64, addend: u64) -> (
 
 /// Adds `a * factor + addend` to `sum`, returns the lowest digit and moves the others down.
 #[inline(always)]
-fn add_row<const N: usize>(sum: &mut [u64; N], a: &[u64; N], factor: u64, addend: u64) -> u64 {
+pub(crate) fn add_row<const N: usize>(
+    sum: &mut [u64; N],
+    a: &[u64; N],
+    factor: u64,
+    addend: u64,
+) -> u64 {
     let (row, top) = scale(a, factor, addend);
     let (lowest, mut carry) = sum[0].overflowing_add(row[0]);
     unroll!(i in 1, N => {
@@ -76,6 +81,20 @@ pub(crate) fn multiply_subtract_digit(a: &mut [u64], b: &[u64], factor: u64) -> 
         carry = top.wrapping_add(u64::from(borrow));
     }
     carry
+}
+
+/// `out = a - b * factor`, cut to the length of `out`, which is that of `b`.
+#[inline(always)]
+pub(crate) fn subtract_multiple(out: &mut [u64], a: &[u64], b: &[u64], factor: u64) {
+    if let (Some(out), Some(a), Some(b)) = (out.as_mut_array::<4>(), a.first_chunk(), b.as_array())
+    {
+        *out = subtract_arrays(a, &scale(b, factor, 0).0).0;
+    } else if factor == 1 {
+        subtract_same_length(out, a, b);
+    } else {
+        out.copy_from_slice(&a[..b.len()]);
+        multiply_subtract_digit(out, b, factor);
+    }
 }
 
 type Multiply = fn(Argument<&mut [u64]>, Argument<&[u64]>, Argument<&[u64]>) -> u64;
@@ -137,7 +156,7 @@ pub(super) fn square_array_into<const N: usize>(out: &mut [u64], a: &[u64]) {
 }
 
 #[inline(always)]
-pub(super) fn array<const N: usize>(digits: &[u64]) -> &[u64; N] {
+pub(crate) fn array<const N: usize>(digits: &[u64]) -> &[u64; N] {
     digits.first_chunk().unwrap()
 }
 
@@ -180,7 +199,6 @@ fn multiply_by_array<const N: usize, const ADDS: bool>(
 }
 
 /// The products of two different digits are summed once and doubled.
-#[expect(unused_assignments, reason = "the last carry of an unrolled run")]
 #[inline(never)]
 fn square_array<const N: usize>(
     mut out: Argument<&mut [u64]>,
@@ -212,14 +230,14 @@ fn square_array<const N: usize>(
     });
     let squares = squares.as_flattened_mut();
     let mut carry = false;
-    unroll!(wide k in 1, 2 * N => {
+    unroll!(16, k in 1, 2 * N => {
         (cross[k], carry) = add_with_carry(cross[k], cross[k], carry);
     });
     carry = false;
-    unroll!(wide k in 1, 2 * N => {
+    unroll!(16, k in 1, 2 * N => {
         (squares[k], carry) = add_with_carry(squares[k], cross[k], carry);
     });
-    unroll!(wide k in 0, 2 * N - 1 => {
+    unroll!(16, k in 0, 2 * N - 1 => {
         out[k] = squares[k];
     });
     squares[2 * N - 1]

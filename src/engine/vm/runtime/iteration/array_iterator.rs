@@ -1,8 +1,7 @@
 use bun_engine_macros::cell;
 
 use crate::{
-    CellType, Cx, FieldArray, Gc, JsArray, JsArrayBufferView, JsObject, JsObjectInit, JsResult,
-    Shape, Value, Vm,
+    Cx, FieldArray, Gc, JsObject, JsObjectInit, JsResult, JsTypedArray, Shape, Value, Vm,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -98,7 +97,7 @@ impl JsArrayIterator {
             return Ok(None);
         };
         let object = self.iterated_object();
-        let length = match object.downcast::<JsArray>() {
+        let length = match object.as_exact_array() {
             Some(array) => array.length().into(),
             None => length_of_other(cx, object)?,
         };
@@ -120,15 +119,8 @@ impl JsArrayIterator {
 }
 
 fn length_of_other(cx: &mut Cx, object: Gc<JsObject>) -> JsResult<u64> {
-    if CellType::TYPED_ARRAYS.contains(object.cell_type()) {
-        let view = object.cast::<JsArrayBufferView>();
-        return typed_array_length(cx, &view).map(|length| length as u64);
+    match object.downcast::<JsTypedArray>() {
+        Some(array) => array.validate(cx).map(|length| length as u64),
+        None => object.length_of_array_like(cx),
     }
-    object.length_of_array_like(cx)
-}
-
-#[inline(always)]
-pub(super) fn typed_array_length(cx: &Cx, view: &JsArrayBufferView) -> JsResult<usize> {
-    view.checked_length()
-        .ok_or_else(|| JsArrayBufferView::throw_out_of_bounds(cx))
 }

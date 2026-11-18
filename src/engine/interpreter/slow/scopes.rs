@@ -82,8 +82,10 @@ execute! {
         let module = f.outer_scope(op.scope, op.depth).cast::<ModuleEnvironment>();
         let value = module.get_import(cx, op.slot)?;
         let entry = f.entry::<GetImport>(op.metadata);
-        if let Some((environment, slot)) = module.resolved_import(op.slot) {
-            // SAFETY: what the linker has resolved the import to.
+        if !module.is_only_instance() {
+            entry.slot.set(GetImport::VARIES);
+        } else if let Some((environment, slot)) = module.import_target(op.slot) {
+            // SAFETY: what the import is bound to.
             let address = core::ptr::from_ref(unsafe { environment.slot_unchecked(slot) });
             entry.slot.set(address.expose_provenance());
             entry.environment.set(environment.address());
@@ -134,6 +136,6 @@ execute! {
     DynamicImport(op, cx, f) {
         let (specifier, options) = (f.get(op.specifier), f.get(op.options));
         let scope = f.cell(op.scope);
-        f.set(op.dst, crate::pending::dynamic_import(cx, f.code_block, specifier, options, scope, op.phase)?);
+        f.set(op.dst, bun_engine_vm::dynamic_import(cx, f.code_block, specifier, options, scope, op.phase)?);
     }
 }

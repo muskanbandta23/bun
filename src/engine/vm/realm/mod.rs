@@ -2,6 +2,7 @@
 
 mod bad_time;
 mod bindings;
+mod console;
 mod global_object;
 mod global_proxy;
 mod global_scope;
@@ -10,7 +11,8 @@ mod slots;
 mod watchpoints;
 
 pub use bindings::{GlobalBinding, GlobalBindings};
-pub use global_object::{GlobalObject, GlobalObjectInit, InspectorState};
+pub use console::{ConsoleHooks, MessageLevel, MessageType};
+pub use global_object::{GlobalObject, GlobalObjectInit};
 pub use global_proxy::GlobalProxy;
 pub(crate) use global_scope::Declarer;
 pub use global_scope::GlobalPlace;

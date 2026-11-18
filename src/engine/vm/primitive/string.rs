@@ -1,21 +1,20 @@
 use core::cell::UnsafeCell;
-use core::cmp::Ordering as Comparison;
 use core::mem::offset_of;
 use core::ops::Deref;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_alloc::AllocError;
-use bun_engine_text::{Atom, Identifier, PropertyName, StringImpl, StringRef, Text, names};
+use bun_engine_text::{PropertyName, StringImpl, StringRef, Text, names};
 
-use crate::heap::{keep_alive, visit_children_of};
+use crate::heap::Heap;
+use crate::heap::visit_children_of;
 use crate::{
     Attributes, CellKind, CellType, CellTypeRange, Class, ClassOps, Cx, Extends, Gc, GcFree,
-    JsCell, JsResult, JsRopeString, PropertyKey, PropertySlot, Shape, TypeFlags, Visitor, Vm,
-    ascii_literal,
+    JsCell, JsResult, JsRopeString, PropertySlot, Shape, TypeFlags, Visitor, Vm, ascii_literal,
 };
 
-/// The per-cell bit says that the characters are an atom.
+/// The per-cell bit says that the characters are an atom. They may be one without it.
 #[repr(C)]
 pub struct JsString {
     base: JsCell,
@@ -107,67 +106,9 @@ impl Drop for JsString {
 }
 
 #[inline(always)]
-fn impl_at(fiber: usize) -> NonNull<StringImpl> {
+pub(super) fn impl_at(fiber: usize) -> NonNull<StringImpl> {
     // SAFETY: a string that is no rope has characters.
     unsafe { NonNull::new_unchecked(core::ptr::with_exposed_provenance_mut(fiber)) }
-}
-
-/// The characters of a string, which stay where they are while this is alive.
-pub struct StringView {
-    owner: Gc<JsString>,
-    offset: u32,
-    text: Text<'static>,
-}
-
-impl StringView {
-    #[inline(always)]
-    pub fn text(&self) -> Text<'_> {
-        self.text
-    }
-
-    /// The string that has the characters, which is no rope, and where they start in it.
-    #[inline(always)]
-    pub fn owner(&self) -> (Gc<JsString>, u32) {
-        (self.owner, self.offset)
-    }
-
-    /// Panics if the range is not inside the view.
-    #[inline]
-    pub fn substring(&self, vm: &Vm, range: core::ops::Range<usize>) -> Gc<JsString> {
-        assert!(range.start <= range.end && range.end <= self.text.len());
-        let start = self.offset + range.start as u32;
-        JsRopeString::substring_of_resolved(vm, self.owner, start, range.len() as u32)
-    }
-}
-
-impl Drop for StringView {
-    #[inline(always)]
-    fn drop(&mut self) {
-        keep_alive(self.owner.address());
-    }
-}
-
-/// The same, of a string that has its own `StringImpl`.
-pub struct ResolvedString {
-    owner: Gc<JsString>,
-    string: NonNull<StringImpl>,
-}
-
-impl Deref for ResolvedString {
-    type Target = StringImpl;
-
-    #[inline(always)]
-    fn deref(&self) -> &StringImpl {
-        // SAFETY: the owner holds it or, having swapped it for an atom, the `Vm` does while the owner is on the stack.
-        unsafe { self.string.as_ref() }
-    }
-}
-
-impl Drop for ResolvedString {
-    #[inline(always)]
-    fn drop(&mut self) {
-        keep_alive(self.owner.address());
-    }
 }
 
 impl JsString {
@@ -181,9 +122,7 @@ impl JsString {
 
     #[inline]
     pub fn new(vm: &Vm, string: StringRef) -> Gc<JsString> {
-        if string.len() <= 1
-            && let Some(small) = Self::small(vm, string.text())
-        {
+        if let Some(small) = Self::small(vm, string.text()) {
             return small;
         }
         let cost = string.take_cost();
@@ -192,25 +131,30 @@ impl JsString {
         result
     }
 
+    /// For characters that something else holds too and is likely to hold longer, so the collector is not charged.
+    #[inline]
+    pub fn new_uncharged(vm: &Vm, string: StringRef) -> Gc<JsString> {
+        Self::small(vm, string.text()).unwrap_or_else(|| Self::allocate(vm, string))
+    }
+
+    /// The empty string, or that of one Latin-1 character.
     #[inline(always)]
     pub(super) fn small(vm: &Vm, text: Text<'_>) -> Option<Gc<JsString>> {
+        if text.len() > 1 {
+            return None;
+        }
         match text.get(0) {
             None => Some(vm.small_strings.empty()),
-            Some(unit @ ..=0xff) if text.len() == 1 => {
-                Some(vm.small_strings.single_character(vm, unit as u8))
-            }
-            Some(_) => None,
+            Some(unit) => Some(vm.small_strings.single_character(unit.try_into().ok()?)),
         }
     }
 
     #[inline]
     pub fn try_from_text(vm: &Vm, text: Text<'_>) -> Result<Gc<JsString>, AllocError> {
-        if text.len() <= 1
-            && let Some(small) = Self::small(vm, text)
-        {
-            return Ok(small);
+        match Self::small(vm, text) {
+            Some(small) => Ok(small),
+            None => Ok(Self::new(vm, StringRef::try_from_text(text)?)),
         }
-        Ok(Self::new(vm, StringRef::try_from_text(text)?))
     }
 
     /// For text whose size no script picks.
@@ -219,29 +163,32 @@ impl JsString {
     }
 
     pub fn from_literal(vm: &Vm, ascii: &'static str) -> Gc<JsString> {
-        Self::new(vm, StringRef::from_literal(ascii))
+        Self::new_uncharged(vm, StringRef::from_literal(ascii))
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn from_unit(vm: &Vm, unit: u16) -> Gc<JsString> {
         match u8::try_from(unit) {
-            Ok(character) => vm.small_strings.single_character(vm, character),
-            Err(_) => Self::allocate(vm, StringRef::from_text(Text::Utf16(&[unit]))),
+            Ok(character) => vm.small_strings.single_character(character),
+            Err(_) => Self::from_wide_units(vm, &[unit]),
         }
     }
 
+    /// `code_point` is at most 0x10FFFF.
+    #[inline]
     pub fn from_code_point(vm: &Vm, code_point: u32) -> Gc<JsString> {
-        match u16::try_from(code_point) {
-            Ok(unit) => Self::from_unit(vm, unit),
-            Err(_) => {
-                let offset = code_point - 0x10000;
-                let units = [
-                    0xd800 | (offset >> 10) as u16,
-                    0xdc00 | (offset & 0x3ff) as u16,
-                ];
-                Self::allocate(vm, StringRef::from_text(Text::Utf16(&units)))
+        match code_point.checked_sub(0x10000) {
+            None => Self::from_unit(vm, code_point as u16),
+            Some(offset) => {
+                let (lead, trail) = ((offset >> 10) as u16, (offset & 0x3ff) as u16);
+                Self::from_wide_units(vm, &[0xd800 | lead, 0xdc00 | trail])
             }
         }
+    }
+
+    #[inline(never)]
+    fn from_wide_units(vm: &Vm, units: &[u16]) -> Gc<JsString> {
+        Self::allocate(vm, StringRef::from_text(Text::Utf16(units)))
     }
 
     #[inline(always)]
@@ -256,7 +203,14 @@ impl JsString {
         unsafe { AtomicUsize::from_ptr(self.fiber.get()) }
     }
 
-    pub(super) fn become_resolved(&self, string: StringRef) {
+    /// `string` has the same characters. Whatever the cell held before is not released.
+    #[inline(always)]
+    pub(super) fn set_characters(&self, string: StringRef) {
+        debug_assert!(string.len() == self.len() as usize);
+        debug_assert!(string.is_latin1() || !self.is_latin1());
+        if self.is_rope() {
+            Heap::request_destruction(self);
+        }
         let is_atom = string.is_atom();
         let fiber = string.into_raw().as_ptr().expose_provenance();
         self.fiber_atomic().store(fiber, Ordering::Release);
@@ -270,10 +224,33 @@ impl JsString {
         self.fiber() & Self::IS_ROPE != 0
     }
 
+    /// A rope that stands for a part of another string.
+    pub fn is_unresolved_substring(&self) -> bool {
+        self.is_rope() && self.fiber() & JsRopeString::IS_SUBSTRING != 0
+    }
+
+    #[inline(always)]
+    pub fn is_substring(&self) -> bool {
+        self.fiber() & JsRopeString::IS_SUBSTRING != 0
+    }
+
+    /// A rope whose characters are not in one piece.
+    #[inline(always)]
+    pub fn is_concatenation(&self) -> bool {
+        self.fiber() & (Self::IS_ROPE | JsRopeString::IS_SUBSTRING) == Self::IS_ROPE
+    }
+
     #[inline(always)]
     pub(super) fn as_rope(&self) -> Option<Gc<JsRopeString>> {
         // SAFETY: only a `JsRopeString` has the bit.
         self.is_rope()
+            .then(|| unsafe { Gc::from(self).cast_unchecked() })
+    }
+
+    #[inline(always)]
+    pub(super) fn as_concatenation(&self) -> Option<Gc<JsRopeString>> {
+        // SAFETY: as above.
+        self.is_concatenation()
             .then(|| unsafe { Gc::from(self).cast_unchecked() })
     }
 
@@ -299,6 +276,7 @@ impl JsString {
         self.len() == 0
     }
 
+    /// Whether the characters are stored as Latin-1. Once they are they stay so, and they may come to be.
     #[inline(always)]
     pub fn is_latin1(&self) -> bool {
         match self.try_impl() {
@@ -312,170 +290,12 @@ impl JsString {
         self.per_cell_bit()
     }
 
-    #[inline(always)]
-    pub fn try_resolved(&self) -> Option<ResolvedString> {
-        let fiber = self.fiber();
-        (fiber & Self::IS_ROPE == 0).then(|| ResolvedString {
-            owner: self.into(),
-            string: impl_at(fiber),
-        })
-    }
-
-    #[inline(always)]
-    pub fn try_resolve(&self, vm: &Vm) -> Result<ResolvedString, AllocError> {
-        if let Some(rope) = self.as_rope() {
-            rope.flatten(vm)?;
-        }
-        Ok(ResolvedString {
-            owner: self.into(),
-            string: impl_at(self.fiber()),
-        })
-    }
-
-    #[inline(always)]
-    pub fn resolve(&self, cx: &Cx) -> JsResult<ResolvedString> {
-        self.try_resolve(cx).map_err(|_| cx.throw_out_of_memory())
-    }
-
-    pub fn to_string_ref(&self, cx: &Cx) -> JsResult<StringRef> {
-        Ok(StringRef::retain(&*self.resolve(cx)?))
-    }
-
-    /// Unless the characters have to be put together first.
-    #[inline(always)]
-    pub fn try_view(&self) -> Option<StringView> {
-        let (owner, offset, length) = match self.as_rope() {
-            None => (self.into(), 0, None),
-            Some(rope) => {
-                let (base, offset) = rope.as_substring()?;
-                (base, offset, Some(rope.rope_length()))
-            }
-        };
-        // SAFETY: as in `ResolvedString::deref`. The base of a substring is no rope.
-        let mut text = unsafe { impl_at(owner.fiber()).as_ref() }.text();
-        if let Some(length) = length {
-            text = text.slice(offset as usize..(offset + length) as usize);
-        }
-        Some(StringView {
-            owner,
-            offset,
-            text,
-        })
-    }
-
-    #[inline(always)]
-    pub fn view(&self, cx: &Cx) -> JsResult<StringView> {
-        if let Some(view) = self.try_view() {
-            return Ok(view);
-        }
-        let resolved = self.resolve(cx)?;
-        Ok(StringView {
-            owner: resolved.owner,
-            offset: 0,
-            // SAFETY: as in `ResolvedString::deref`.
-            text: unsafe { resolved.string.as_ref() }.text(),
-        })
-    }
-
-    #[inline(always)]
-    pub fn to_property_key(&self, cx: &Cx) -> JsResult<PropertyKey> {
-        if !self.is_atom() {
-            self.atomize(cx).map_err(|_| cx.throw_out_of_memory())?;
-        }
-        // SAFETY: an atom, which is never swapped again.
-        Ok(unsafe { PropertyKey::from_atom_string(self.into(), impl_at(self.fiber())) })
-    }
-
-    pub fn to_identifier(&self, cx: &Cx) -> JsResult<Identifier> {
-        Ok(self.to_property_key(cx)?.to_identifier())
-    }
-
-    /// `None` if no atom has these characters, so that no ordinary object has such a property.
-    #[inline]
-    pub fn to_existing_property_key(&self, cx: &Cx) -> JsResult<Option<PropertyKey>> {
-        if !self.is_atom() {
-            let Some(atom) = Atom::find_string(&*self.resolve(cx)?) else {
-                return Ok(None);
-            };
-            self.swap_to_atom(cx, atom);
-        }
-        self.to_property_key(cx).map(Some)
-    }
-
-    #[inline(never)]
-    fn atomize(&self, vm: &Vm) -> Result<(), AllocError> {
-        if let Some(rope) = self.as_rope() {
-            return rope.flatten_to_atom(vm);
-        }
-        // SAFETY: no rope, and nothing is allocated in the heap meanwhile.
-        let atom = Atom::from_string(unsafe { impl_at(self.fiber()).as_ref() });
-        self.swap_to_atom(vm, atom);
-        Ok(())
-    }
-
-    fn swap_to_atom(&self, vm: &Vm, atom: Atom) {
-        let old = self.fiber();
-        if old == atom.address() {
-            return self.set_per_cell_bit(true);
-        }
-        self.become_resolved(atom.into_string());
-        // SAFETY: the reference that the cell held.
-        let old = unsafe { StringRef::from_raw(impl_at(old)) };
-        vm.string_caches.retire(self.address(), old);
-    }
-
-    /// `None` unless both are atoms.
-    #[inline(always)]
-    pub fn equals_if_atoms(&self, other: &JsString) -> Option<bool> {
-        (self.is_atom() && other.is_atom()).then(|| self.fiber() == other.fiber())
-    }
-
-    #[inline(always)]
-    pub fn equals(&self, cx: &Cx, other: &JsString) -> JsResult<bool> {
-        if let (Some(a), Some(b)) = (self.try_impl(), other.try_impl()) {
-            return Ok(a == b);
-        }
-        self.equals_slow(cx, other)
-    }
-
-    #[inline(never)]
-    fn equals_slow(&self, cx: &Cx, other: &JsString) -> JsResult<bool> {
-        Ok(self.len() == other.len() && self.view(cx)?.text() == other.view(cx)?.text())
-    }
-
-    pub fn compare(&self, cx: &Cx, other: &JsString) -> JsResult<Comparison> {
-        Ok(self.view(cx)?.text().cmp(&other.view(cx)?.text()))
-    }
-
-    /// Panics past the end.
-    #[inline]
-    pub fn unit_at(&self, cx: &Cx, index: u32) -> JsResult<u16> {
-        Ok(self.view(cx)?.text().at(index as usize))
-    }
-
-    /// Panics past the end.
-    #[inline]
-    pub fn string_at(&self, cx: &Cx, index: u32) -> JsResult<Gc<JsString>> {
-        Ok(Self::from_unit(cx, self.unit_at(cx, index)?))
-    }
-
-    /// Panics if the range is not inside the string.
-    #[inline]
-    pub fn substring(&self, cx: &Cx, start: u32, end: u32) -> JsResult<Gc<JsString>> {
-        if start == 0 && end == self.len() {
-            return Ok(self.into());
-        }
-        if start == end {
-            return Ok(cx.small_strings.empty());
-        }
-        Ok(self.view(cx)?.substring(cx, start as usize..end as usize))
-    }
-
     pub fn to_number(&self, cx: &Cx) -> JsResult<f64> {
         Ok(bun_engine_number::string_to_number(self.view(cx)?.text()))
     }
 
     /// The properties that a String object has because of its value.
+    #[inline]
     pub fn get_string_property_slot(
         &self,
         cx: &Cx,

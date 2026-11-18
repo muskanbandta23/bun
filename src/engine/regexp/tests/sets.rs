@@ -1,4 +1,6 @@
-use bun_engine_regexp::set::{CharRange, Set, SetBuilder, SharedSet};
+use bun_engine_regexp::set::{
+    CharRange, Latin1Set, Set, SetBuilder, SharedSet, find_member, find_non_member,
+};
 use bun_engine_standalone as _;
 use bun_engine_text::Text;
 use bun_engine_unicode::{IgnoreCase, MAX_CODE_POINT, Property, is_str_white_space};
@@ -130,6 +132,66 @@ fn tables_agree_with_ranges() {
                 assert_eq!(table.contains(c), set.contains(c));
                 assert!(c > 0xffff || units.contains(c) == set.contains(c));
             }
+        }
+    }
+}
+
+/// A deterministic sequence, so that a failure is reproducible.
+fn numbers(seed: u64) -> impl FnMut() -> u64 {
+    let mut state = seed | 1;
+    move || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    }
+}
+
+#[test]
+fn finds_members_in_text() {
+    let mut next = numbers(0x5eed);
+    for round in 0..600 {
+        // From a single character to nearly all of Latin-1, and the complement of each.
+        let mut members = Latin1Set::EMPTY;
+        for _ in 0..1 + round % 37 {
+            let first = (next() % 0x100) as u8;
+            let last = first.saturating_add((next() % (1 + round as u64 % 19)) as u8);
+            members.insert_range(first, last);
+        }
+        if round % 3 == 0 {
+            members = !members;
+        }
+        for length in [0, 1, 15, 16, 17, 63, 64, 100, 1100, 4096] {
+            let mut units: Vec<u16> = (0..length)
+                .map(|_| match next() % 8 {
+                    0 => (next() % 0x11000) as u16,
+                    _ => (next() % 0x100) as u16,
+                })
+                .collect();
+            // Texts whose only member is at the end, and texts without one.
+            match next() % 4 {
+                0 => units.iter_mut().for_each(|it| *it = 0x3000),
+                1 if length > 0 => units[length - 1] = 0x3000,
+                _ => {}
+            }
+            let member = |&unit: &u16| unit <= 0xff && members.contains(unit as u8);
+            let expected = (
+                units.iter().position(member),
+                units.iter().position(|it| !member(it)),
+            );
+            let narrow: Option<Vec<u8>> = units.iter().map(|&it| u8::try_from(it).ok()).collect();
+            if let Some(narrow) = &narrow {
+                let found = (
+                    find_member(narrow, &members),
+                    find_non_member(narrow, &members),
+                );
+                assert_eq!(found, expected, "{length} units of Latin-1, round {round}");
+            }
+            let found = (
+                find_member(&units, &members),
+                find_non_member(&units, &members),
+            );
+            assert_eq!(found, expected, "{length} units, round {round}");
         }
     }
 }

@@ -1,5 +1,9 @@
 use crate::FormatError;
 
+/// Padded to a power of two, so that a mask keeps an index inside.
+pub(crate) const DIGITS: &[u8; 64] =
+    b"0123456789abcdefghijklmnopqrstuvwxyz0000000000000000000000000000";
+
 /// A radix from 2 to 36.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Radix(u8);

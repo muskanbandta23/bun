@@ -1,5 +1,6 @@
 //! Exceptions, error objects and stack traces.
 
+mod caches;
 mod error_info;
 mod error_instance;
 pub mod errors;
@@ -24,10 +25,12 @@ pub use termination::{AfterDeferral, DeferTermination, TerminationDeadline};
 pub use throw::Message;
 
 use crate::Vm;
+use crate::heap::Survivors;
 use crate::traps::BlockedThread;
 
 #[derive(Default)]
 pub(crate) struct State {
+    caches: caches::Caches,
     entry_contexts: stack_visitor::EntryContexts,
     termination_deferral: termination::Deferral,
     has_had_deadlines: Cell<bool>,
@@ -35,6 +38,10 @@ pub(crate) struct State {
 }
 
 impl crate::services::Service for State {
+    fn reconcile_weak_references(&self, _: &Vm, survivors: &Survivors) {
+        self.caches.prune(survivors);
+    }
+
     fn will_destroy(&self, vm: &Vm) {
         vm.cancel_termination_deadlines();
     }

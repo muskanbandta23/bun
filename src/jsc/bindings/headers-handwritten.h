@@ -212,11 +212,9 @@ public:
 private:
     uint8_t* m_bytes { nullptr };
     size_t m_size { 0 };
-    // Otherwise borrowed from the standalone module graph / compile cache.
+    // Otherwise they outlive every VM (executable section / retired compile-cache blob).
     bool m_owned { false };
-    // The bytes outlive every VM (executable section / retired compile-cache blob): JSC may alias them.
-    bool m_persistent { false };
-    // Where this module's cache entry starts (non-zero: one payload shared by every module, JSC::BytecodeLinkEncoder).
+    // Where this module's cache entry starts (non-zero: one payload shared by every module, Bun::BytecodeLinkEncoder).
     uint32_t m_entryOffset { 0 };
 };
 typedef struct ResolvedSource {
@@ -246,7 +244,7 @@ static_assert(sizeof(ResolvedSource) == 136 && OBJECT_OFFSETOF(ResolvedSource, i
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 using ErrorableResolvedSource = Errorable<ResolvedSource>;
 static_assert(sizeof(ErrorableResolvedSource) == 144 && alignof(ErrorableResolvedSource) == 8, "ErrorableResolvedSource layout is mirrored in src/jsc/Errorable.rs");
-static_assert(JSC::CompiledEnvironmentType == 33 && JSC::ObjectType == 34 && JSC::JSFunctionType == 37 && JSC::CompiledClosureType == 38 && JSC::InternalFunctionType == 39 && JSC::Int8ArrayType == 51 && JSC::DataViewType == 63 && JSC::WebAssemblyGCObjectType == 96 && JSC::CompiledObjectType == 97 && JSC::SlimClosureType == 98 && JSC::SlimClosureWithPropertiesType == 99 && JSC::StringObjectType == 100 && JSC::DerivedStringObjectType == 101, "JSType numbers are mirrored in src/jsc/JSType.rs");
+static_assert(JSC::ObjectType == 34 && JSC::JSFunctionType == 37 && JSC::InternalFunctionType == 39 && JSC::Int8ArrayType == 51 && JSC::DataViewType == 63 && JSC::WebAssemblyGCObjectType == 96 && JSC::StringObjectType == 100 && JSC::DerivedStringObjectType == 101, "JSType numbers are mirrored in src/jsc/JSType.rs");
 
 typedef struct SystemError {
     int errno_;

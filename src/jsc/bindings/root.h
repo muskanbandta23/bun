@@ -66,6 +66,7 @@
 #ifdef __cplusplus
 #if OS(LINUX)
 #include <limits>
+#include <mutex>
 #endif
 #include <wtf/PlatformCallingConventions.h>
 #include <JavaScriptCore/JSCJSValue.h>
@@ -74,8 +75,8 @@
 #include <JavaScriptCore/StrongSet.h>
 #include <wtf/Ref.h>
 #include <wtf/ThreadSafeRefCounted.h>
-#include "RemovableFeatures.h"
 #include "BunWithoutAOT.h"
+#include "RemovableFeatures.h"
 #endif
 
 #define ENABLE_WEB_CRYPTO 1

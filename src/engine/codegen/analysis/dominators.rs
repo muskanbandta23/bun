@@ -252,6 +252,12 @@ impl Dominators {
         &self.pre_order
     }
 
+    /// The position in `pre_order` after the last block that `block` dominates.
+    #[inline]
+    pub fn end_of_subtree(&self, block: Block) -> u32 {
+        self.interval[block].1
+    }
+
     /// A block dominates itself.
     #[inline]
     pub fn dominates(&self, a: Block, b: Block) -> bool {

@@ -1,9 +1,12 @@
 //! Conversions between numeric types (ECMA-262, Type Conversion).
 
+use core::hint::select_unpredictable;
+
 use bun_engine_text::MAX_ARRAY_INDEX;
 
 use crate::double::{FRACTION_MASK, IMPLICIT_BIT, SIGN_BIT, SIGNIFICAND_BIAS, biased_exponent};
 
+/// Number.MAX_SAFE_INTEGER
 pub const MAX_SAFE_INTEGER: f64 = ((1u64 << 53) - 1) as f64;
 
 /// The sum of this and an integer below 2^51 in magnitude has that integer, in two's complement, in its low bits.
@@ -42,6 +45,7 @@ pub fn to_uint8(value: f64) -> u8 {
     to_int32(value) as u8
 }
 
+/// ToUint8Clamp, which rounds halves to even.
 #[inline]
 pub fn to_uint8_clamp(value: f64) -> u8 {
     let clamped = if value > 0.0 { value } else { 0.0 };
@@ -61,16 +65,13 @@ pub fn to_uint64(value: f64) -> u64 {
     let bits = value.to_bits();
     let significand = bits & FRACTION_MASK | IMPLICIT_BIT;
     let exponent = biased_exponent(bits) as i32 - SIGNIFICAND_BIAS;
-    let magnitude = if exponent < 0 {
-        significand.unbounded_shr(exponent.unsigned_abs())
-    } else {
-        significand.unbounded_shl(exponent as u32)
-    };
-    if bits & SIGN_BIT != 0 {
-        magnitude.wrapping_neg()
-    } else {
-        magnitude
-    }
+    let magnitude = select_unpredictable(
+        exponent < 0,
+        significand.unbounded_shr(exponent.wrapping_neg() as u32),
+        significand.unbounded_shl(exponent as u32),
+    );
+    let sign = (bits as i64 >> 63) as u64;
+    (magnitude ^ sign).wrapping_sub(sign)
 }
 
 #[inline]
@@ -159,6 +160,7 @@ pub fn is_integer(value: f64) -> bool {
     value - value.trunc() == 0.0
 }
 
+/// Number.isSafeInteger
 #[inline]
 pub fn is_safe_integer(value: f64) -> bool {
     value.trunc() == value && value.abs() <= MAX_SAFE_INTEGER

@@ -131,7 +131,21 @@ pub unsafe fn free_strong_slot(slot: usize) {
     // SAFETY: cleared when the set goes.
     if let Some(set) = unsafe { chunk.set.get().as_ref() } {
         slot_at(slot).set(set.first_free.replace(slot) as u64 | FREE_TAG);
+    } else if chunk.used.get() == 0 {
+        let chunk = core::ptr::with_exposed_provenance_mut::<Chunk>(slot & !(CHUNK_SIZE - 1));
+        // SAFETY: leaked by `grow`, and that was the last handle.
+        drop(unsafe { Box::from_raw(chunk) });
     }
+}
+
+/// Another slot with the same content, or zero if the heap is gone.
+///
+/// # Safety
+/// `slot` came from `Heap::allocate_strong_slot` on this thread and has not been freed.
+pub unsafe fn duplicate_strong_slot(slot: usize) -> usize {
+    // SAFETY: as in `free_strong_slot`.
+    let set = unsafe { chunk_of(slot).set.get().as_ref() };
+    set.map_or(0, |set| set.allocate(slot_at(slot).get()))
 }
 
 /// Keeps a value alive from anywhere in memory.

@@ -5,6 +5,8 @@ mod transform;
 
 pub(crate) use rows::*;
 
+use core::ops::Deref;
+
 use super::add_assign;
 use crate::work::try_filled;
 use crate::{Error, Scratch, Work};
@@ -13,6 +15,7 @@ use transform::Transformed;
 /// The longest operand that is multiplied row by row, or by halves that are.
 const MAX_SHORT_LENGTH: usize = 2 * MAX_WIDTH;
 const TOOM3_LENGTH: usize = 130;
+const MIN_TRANSFORM_LENGTH: usize = 130;
 
 #[inline(always)]
 fn is_square(a: &[u64], b: &[u64]) -> bool {
@@ -26,9 +29,8 @@ pub(crate) fn long_and_short<'a>(a: &'a [u64], b: &'a [u64]) -> (&'a [u64], &'a 
 
 /// The longer the other operand is, the sooner transforms pay.
 fn suits_transforms(long: &[u64], short: &[u64]) -> bool {
-    const MIN_LENGTH: usize = 130;
     let extra = if is_square(long, short) { 390 } else { 450 };
-    short.len().saturating_sub(MIN_LENGTH) * long.len() >= extra * short.len()
+    short.len().saturating_sub(MIN_TRANSFORM_LENGTH) * long.len() >= extra * short.len()
 }
 
 /// `out = a * b`. Neither is empty, and `out` is as long as both together.
@@ -70,6 +72,55 @@ pub(crate) fn multiply(
         multiply_medium(product, short, piece, scratch);
         work.spend(short.len() * short.len() / 2)
     })
+}
+
+/// A number that several others are multiplied by.
+pub(crate) struct Multiplier<D> {
+    digits: D,
+    transformed: Option<Transformed>,
+}
+
+impl<D: Deref<Target = [u64]>> Multiplier<D> {
+    pub(crate) fn new(
+        digits: D,
+        max_other_length: usize,
+        uses: usize,
+        work: &mut Work<'_>,
+    ) -> Result<Multiplier<D>, Error> {
+        /// The transforms that are kept take seven times the room of the product.
+        const MAX_PRODUCT_LENGTH: usize = 1 << 21;
+        let (long, short) = (
+            digits.len().max(max_other_length),
+            digits.len().min(max_other_length),
+        );
+        let is_worth_keeping = uses > 1
+            && long + short <= MAX_PRODUCT_LENGTH
+            && short.saturating_sub(MIN_TRANSFORM_LENGTH) * long >= 250 * short;
+        let transformed = if is_worth_keeping {
+            Some(Transformed::new(&digits, max_other_length, work)?)
+        } else {
+            None
+        };
+        Ok(Multiplier {
+            digits,
+            transformed,
+        })
+    }
+
+    /// `other` is not empty, and `out` is as long as both together.
+    pub(crate) fn multiply(
+        &mut self,
+        out: &mut [u64],
+        other: &[u64],
+        work: &mut Work<'_>,
+    ) -> Result<(), Error> {
+        match &mut self.transformed {
+            Some(transformed) if 2 * other.len() >= transformed.max_other_length() => {
+                transformed.multiply(out, other, work)
+            }
+            _ => multiply(out, &self.digits, other, work),
+        }
+    }
 }
 
 #[inline(always)]

@@ -1,12 +1,22 @@
 //! How values are represented, and values that scripts cannot make.
 
 use bun_engine_macros::cell;
-use bun_engine_vm::{InternalFunction, RealmWatchpoint, Shape, ShapeSpec, TypeFlags, call};
+use bun_engine_number::Random;
+use bun_engine_text::{Base64Alphabet, LastChunkHandling, Text};
+use bun_engine_vm::ValueVec;
+use bun_engine_vm::json::{self, LinesEnd};
+use bun_engine_vm::{
+    InternalFunction, JsArrayBuffer, JsArrayBufferView, JsFunctionWithFields, RealmWatchpoint,
+    Shape, ShapeSpec, TypeFlags, call,
+};
 
-use super::{return_false, return_undefined, string};
+use super::{put, return_false, return_undefined, string};
 use crate::prelude::*;
 
 pub(super) const FUNCTIONS: Functions = &[
+    ("atob", atob, 1),
+    ("btoa", btoa, 1),
+    ("streamingJSONParse", parse_json_lines, 1),
     ("describe", describe, 1),
     ("describeArray", describe_array, 1),
     ("addressOf", address_of, 1),
@@ -22,34 +32,28 @@ pub(super) const FUNCTIONS: Functions = &[
     ("createNonRopeNonAtomString", create_plain_string, 1),
     ("is32BitPlatform", return_false, 0),
     ("maxArguments", max_arguments, 0),
+    ("transferArrayBuffer", transfer_array_buffer, 1),
+    ("ensureArrayStorage", ensure_array_storage, 0),
+    ("hasCustomProperties", has_custom_properties, 0),
+    ("getRandomSeed", get_random_seed, 0),
+    ("setRandomSeed", set_random_seed, 1),
+    (
+        "createNoopNativeFunctionWithCapture",
+        create_function_with_capture,
+        1,
+    ),
 ];
 
 #[native_abi]
-fn describe(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
-    let Some(&value) = frame.arguments().first() else {
-        return Ok(Value::UNDEFINED);
-    };
-    let text = if let Some(integer) = value.as_int32() {
-        format!("Int32: {integer}")
-    } else if let Some(number) = value.as_double() {
-        format!("Double: {}, {number:.6}", number.to_bits() as i64)
-    } else if let Some(object) = value.as_object() {
-        let (address, class) = (object.address(), object.class().name());
-        let (shape, kind) = (object.shape().address(), object.element_kind());
-        format!("Object: {address:#x} (Shape {shape:#x}:[{class}, {kind:?}])")
-    } else if let Some(text) = value.as_string() {
-        let kind = match (text.is_rope(), text.is_atom()) {
-            (true, _) => " (rope)",
-            (_, true) => " (atomic)",
-            _ => "",
-        };
-        let width = if text.is_latin1() { "8Bit" } else { "16Bit" };
-        let (length, text) = (text.len(), text.to_string_without_resolving());
-        format!("String{kind},{width}:(1),length:({length}): {text}")
-    } else {
-        format!("{value:?}")
-    };
-    Ok(string(cx, &text))
+pub(super) fn describe(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let value = frame.arguments().first();
+    Ok(value.map_or_default(|it| JsString::new(cx, it.describe()).into()))
+}
+
+pub(super) fn indexing_mode_name(object: &JsObject) -> String {
+    let mut name = String::new();
+    let _ = object.indexing_mode().describe(&mut name);
+    name
 }
 
 #[native_abi]
@@ -63,7 +67,7 @@ fn describe_array(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let (storage, length) = (object.storage().address(), object.public_length());
     let capacity = object.vector_length();
     let text =
-        format!("<Storage: {storage:#x}; public length: {length}; vector length: {capacity}>");
+        format!("<Butterfly: {storage:#x}; public length: {length}; vector length: {capacity}>");
     Ok(string(cx, &text))
 }
 
@@ -150,4 +154,108 @@ fn create_plain_string(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 fn max_arguments(cx: &mut Cx, _: &CallFrame) -> JsResult<Value> {
     let words = (cx.stack_bounds().origin - cx.soft_stack_limit()) / size_of::<Value>();
     Ok(words.min(call::MAX_ARGUMENTS).into())
+}
+
+#[native_abi]
+pub(super) fn transfer_array_buffer(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    if frame.argument_count() == 0 {
+        return Err(cx.throw_error(ErrorType::Error, "Not enough arguments"));
+    }
+    let Some(buffer) = frame.argument(0).downcast::<JsArrayBuffer>() else {
+        return Err(cx.throw_error(ErrorType::Error, "Expected an array buffer"));
+    };
+    if !buffer.is_shared() && buffer.buffer().is_detachable() {
+        buffer.buffer().detach(cx);
+    }
+    Ok(Value::UNDEFINED)
+}
+
+#[native_abi]
+pub(super) fn ensure_array_storage(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    for object in frame.arguments().iter().filter_map(|it| it.as_object()) {
+        if !object.is::<JsArrayBufferView>() {
+            cx.or_out_of_memory(object.convert_to_sparse(cx))?;
+        }
+    }
+    Ok(Value::UNDEFINED)
+}
+
+#[native_abi]
+fn has_custom_properties(_: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let object = frame.argument(0).as_object();
+    Ok(object.is_some_and(|it| it.shape().slot_count() != 0).into())
+}
+
+#[native_abi]
+fn get_random_seed(cx: &mut Cx, _: &CallFrame) -> JsResult<Value> {
+    Ok(cx.global().random_state().get().seed().into())
+}
+
+#[native_abi]
+fn set_random_seed(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let seed = frame.argument(0).to_uint32(cx)?;
+    cx.global().random_state().set(Random::new(seed));
+    Ok(Value::UNDEFINED)
+}
+
+#[native_abi]
+fn return_capture(_: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    Ok(JsFunctionWithFields::fields_of_callee(frame)[0])
+}
+
+#[native_abi]
+fn create_function_with_capture(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let fields = [frame.argument(0), Value::UNDEFINED];
+    Ok(JsFunctionWithFields::new(cx, 0, return_capture, fields).into())
+}
+
+#[native_abi]
+fn atob(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    const INVALID: &str = "Invalid character in argument for atob.";
+    if frame.argument_count() == 0 {
+        return Err(cx.throw_error(ErrorType::Error, "Missing input for atob."));
+    }
+    if frame.argument(0).is_undefined() {
+        return Err(cx.throw_error(ErrorType::Error, INVALID));
+    }
+    let view = frame.argument(0).to_string_view(cx)?;
+    let mut bytes = vec![0; view.text().base64_decoded_capacity()];
+    let (alphabet, last) = (Base64Alphabet::Standard, LastChunkHandling::Loose);
+    match view.text().decode_base64_into(alphabet, last, &mut bytes) {
+        Ok(progress) if progress.read == view.text().len() => {
+            (cx.new_string(Text::Latin1(&bytes[..progress.written]))).map(Into::into)
+        }
+        _ => Err(cx.throw_error(ErrorType::Error, INVALID)),
+    }
+}
+
+#[native_abi]
+fn btoa(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    if frame.argument_count() == 0 {
+        return Err(cx.throw_error(ErrorType::Error, "Missing input for btoa."));
+    }
+    let view = frame.argument(0).to_string_view(cx)?;
+    let text = cx.or_out_of_memory(StringRef::try_narrowed(view.text()))?;
+    let Text::Latin1(bytes) = text.text() else {
+        let message = "Invalid character in argument for btoa.";
+        return Err(cx.throw_error(ErrorType::Error, message));
+    };
+    let encoded = StringRef::try_base64_of(bytes, Base64Alphabet::Standard, false);
+    Ok(JsString::new(cx, cx.or_out_of_memory(encoded)?).into())
+}
+
+#[native_abi]
+fn parse_json_lines(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let (view, mut values) = (frame.argument(0).to_string_view(cx)?, ValueVec::new());
+    let parsed = json::parse_lines(cx, view.text().into(), &mut values)?;
+    let status = match parsed.end {
+        LinesEnd::Complete => "complete",
+        LinesEnd::NeedsMoreText => "needMoreData",
+        LinesEnd::SyntaxError => "error",
+    };
+    let result = cx.new_object();
+    put(cx, &result, "values", cx.new_array_from(&values)?.into());
+    put(cx, &result, "charactersConsumed", parsed.read.into());
+    put(cx, &result, "status", string(cx, status));
+    Ok(result.into())
 }

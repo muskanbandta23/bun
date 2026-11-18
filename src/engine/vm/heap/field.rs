@@ -166,6 +166,7 @@ impl<'a, T: ?Sized> Owned<'a, T> {
     /// # Safety
     /// `owner` traces `field` for as long as the borrow lasts.
     #[inline(always)]
+    #[cfg_attr(rootcheck, rootcheck::stays("as long as `field` does"))]
     pub unsafe fn new(owner: &'a JsCell, field: &'a T) -> Owned<'a, T> {
         Owned { owner, field }
     }
@@ -316,6 +317,7 @@ impl<'a, T: FieldValue, const N: usize> Owned<'a, FieldArray<T, N>> {
 
 /// A growable list that a cell owns. Elements are copied in and out, so nothing borrows it across other code.
 #[cfg_attr(rootcheck, rootcheck::allow("filled and read only through `Owned`"))]
+#[cfg_attr(rootcheck, rootcheck::stays("lends nothing"))]
 pub struct TracedVec<T>(UnsafeCell<Vec<T>>);
 
 impl<T> TracedVec<T> {
@@ -442,6 +444,7 @@ impl<'a, T: Copy> Owned<'a, TracedVec<T>> {
 
 /// A hash map that a cell owns. Values are copied in and out.
 #[cfg_attr(rootcheck, rootcheck::allow("filled and read only through `Owned`"))]
+#[cfg_attr(rootcheck, rootcheck::stays("lends nothing"))]
 pub struct TracedMap<K, V>(UnsafeCell<FastHashMap<K, V>>);
 
 impl<K, V> TracedMap<K, V> {
@@ -488,6 +491,9 @@ plain_keys!(
 
 // SAFETY: made of two that are.
 unsafe impl<A: PlainKey, B: PlainKey> PlainKey for (A, B) {}
+
+// SAFETY: one that is, or nothing.
+unsafe impl<A: PlainKey> PlainKey for Option<A> {}
 
 impl<K: PlainKey, V: Copy> Owned<'_, TracedMap<K, V>> {
     #[inline(always)]
@@ -542,6 +548,11 @@ impl<K: PlainKey, V: Copy> Owned<'_, TracedMap<K, V>> {
         self.change(|map| *map = FastHashMap::default());
     }
 
+    /// `keeps` does not touch the map.
+    pub(crate) fn retain(self, mut keeps: impl FnMut(&K, V) -> bool) {
+        self.change(|map| map.retain(|key, &mut value| keeps(key, value)));
+    }
+
     pub fn keys(self) -> Vec<K> {
         self.read(|map| map.keys().cloned().collect())
     }
@@ -564,6 +575,7 @@ impl<K: PlainKey, V: Copy> Owned<'_, TracedMap<K, V>> {
 /// State of any shape that a cell owns. Reading it borrows the `Vm`, so no script runs meanwhile. Changing it borrows
 /// the `Cx` exclusively, so nothing is allocated either.
 #[cfg_attr(rootcheck, rootcheck::allow("filled and read only through `Owned`"))]
+#[cfg_attr(rootcheck, rootcheck::stays("lends nothing"))]
 pub struct GcCell<T>(UnsafeCell<T>);
 
 impl<T: Default> GcCell<T> {
@@ -624,6 +636,7 @@ impl<T> Drop for GcRef<'_, T> {
     }
 }
 
+#[cfg_attr(rootcheck, rootcheck::stays("ends with the barrier of the owner"))]
 pub struct GcRefMut<'a, T> {
     lock: Option<CellLockGuard<'a>>,
     cell: Owned<'a, GcCell<T>>,

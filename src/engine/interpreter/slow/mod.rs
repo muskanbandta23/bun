@@ -84,6 +84,7 @@ impl Next {
 #[derive(Clone, Copy)]
 pub(crate) struct Frame<'a> {
     pub(crate) header: &'a CallFrame,
+    #[cfg_attr(rootcheck, rootcheck::stays("the frame holds it"))]
     pub(crate) code_block: &'a CodeBlock,
 }
 
@@ -233,17 +234,7 @@ macro_rules! execute {
     )*};
 }
 
-/// For instructions whose run-time support is yet to come.
-#[allow(unused_macros)]
-macro_rules! not_supported {
-    ($($Op:ident)*) => { $crate::slow::execute! {$(
-        $Op(op, cx, f) {
-            return Err(cx.throw_type_error(concat!("Not supported: ", stringify!($Op))))
-        }
-    )*} };
-}
-
-pub(crate) use {execute, not_supported};
+pub(crate) use execute;
 
 impl From<()> for Next {
     #[inline(always)]

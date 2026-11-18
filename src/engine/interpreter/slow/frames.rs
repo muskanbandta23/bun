@@ -2,7 +2,8 @@ use bun_engine_bytecode::Register;
 use bun_engine_text::names;
 use bun_engine_vm::code::metadata::WeakCell;
 use bun_engine_vm::{
-    Cx, Gc, JsFinalObject, JsFunction, JsObject, JsResult, Value, errors, function_realm,
+    Cx, ElementKind, Gc, JsArray, JsFinalObject, JsFunction, JsObject, JsResult, Value, errors,
+    function_realm,
 };
 
 use super::{Next, execute};
@@ -50,9 +51,7 @@ execute! {
     }
     CheckThis(op, cx, f) {
         if f.reg_or_empty(op.this).is_none() {
-            return Err(cx.throw_reference_error(
-                "'super()' must be called in derived constructor before accessing |this| or returning non-object.",
-            ));
+            return Err(errors::throw_this_is_not_bound(cx));
         }
     }
     BindThis(op, cx, f) {
@@ -68,7 +67,8 @@ execute! {
         f.set_profiled(op.dst, op.metadata, f.header.argument(op.index as usize));
     }
     CreateRest(op, cx, f) {
-        f.set(op.dst, cx.new_array_from(f.header.rest(op.skip as usize))?);
+        let (shape, rest) = (cx.global().array_shape(ElementKind::Contiguous), f.header.rest(op.skip as usize));
+        f.set(op.dst, cx.or_out_of_memory(JsArray::try_from_values_with_shape(cx, shape, rest))?);
     }
     GetArgumentsLength(op, cx, f) {
         let length = match f.reg_or_empty(op.arguments) {

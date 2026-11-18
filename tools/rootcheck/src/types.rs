@@ -3,15 +3,18 @@
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
+use rustc_attr_ir::LangItem;
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_errors::Diag;
 use rustc_hir::def_id::DefId;
 use rustc_infer::infer::TyCtxtInferExt;
+use rustc_middle::mir::{BasicBlockData, TerminatorKind};
+use rustc_middle::ty::elaborate::supertrait_def_ids;
 use rustc_middle::ty::{
     self, AdtDef, CallerBoundsIterator, EarlyBinder, GenericArgs, ImplPolarity, Ty, TyCtxt,
     TypeVisitableExt, TypingEnv, Unnormalized,
 };
-use rustc_span::Span;
+use rustc_span::{Span, Symbol, sym};
 use rustc_trait_selection::traits::type_known_to_meet_bound_modulo_regions;
 
 use crate::allow::Allows;
@@ -26,8 +29,11 @@ pub struct Types<'tcx> {
     /// The types of this crate whose content the collector gets to see.
     pub traced: OnceCell<FxHashSet<DefId>>,
     refers: Cache<'tcx, bool>,
+    points_to_references: Cache<'tcx, bool>,
+    lends: Cache<'tcx, bool>,
     can_allocate: Cache<'tcx, bool>,
     has_unknown_code: Cache<'tcx, bool>,
+    has_callback: Cache<'tcx, bool>,
     hides: Cache<'tcx, Option<Hidden<'tcx>>>,
     parts: RefCell<FxHashMap<DefId, Rc<[Part<'tcx>]>>>,
     incomplete_parts: Cell<usize>,
@@ -70,12 +76,15 @@ impl<'tcx> Types<'tcx> {
     pub fn new(tcx: TyCtxt<'tcx>, engine: Engine) -> Types<'tcx> {
         Types {
             tcx,
+            allows: Allows::new(tcx, &engine),
             engine,
-            allows: Allows::default(),
             traced: OnceCell::new(),
             refers: Default::default(),
+            points_to_references: Default::default(),
+            lends: Default::default(),
             can_allocate: Default::default(),
             has_unknown_code: Default::default(),
+            has_callback: Default::default(),
             hides: Default::default(),
             parts: Default::default(),
             incomplete_parts: Cell::new(0),
@@ -90,28 +99,33 @@ impl<'tcx> Types<'tcx> {
 
     pub fn normalize(&self, env: TypingEnv<'tcx>, ty: Unnormalized<'tcx, Ty<'tcx>>) -> Ty<'tcx> {
         let normalized = self.tcx.try_normalize_erasing_regions(env, ty);
-        normalized.unwrap_or_else(|_| {
-            self.tcx
-                .erase_and_anonymize_regions(ty.skip_normalization())
-        })
+        normalized.unwrap_or_else(|_| self.tcx.erase_and_anonymize_regions(ty.skip_normalization()))
     }
 
     fn instantiate(&self, env: TypingEnv<'tcx>, ty: Ty<'tcx>, args: GenericArgs<'tcx>) -> Ty<'tcx> {
-        self.normalize(
-            env,
-            EarlyBinder::bind(self.tcx, ty).instantiate(self.tcx, args),
-        )
+        self.normalize(env, EarlyBinder::bind(self.tcx, ty).instantiate(self.tcx, args))
     }
 
     pub fn implements(&self, ty: Ty<'tcx>, trait_id: DefId) -> bool {
-        self.tcx
-            .non_blanket_impls_for_ty(trait_id, ty)
-            .next()
-            .is_some()
+        self.tcx.non_blanket_impls_for_ty(trait_id, ty).next().is_some()
     }
 
-    pub fn is_cell(&self, ty: Ty<'tcx>) -> bool {
-        self.implements(ty, self.engine.cell_kind)
+    pub fn is_cell(&self, env: TypingEnv<'tcx>, ty: Ty<'tcx>) -> bool {
+        match *ty.kind() {
+            ty::Param(_) | ty::Alias(..) => {
+                let ty = self.normalize(env, ty::set_aliases_to_non_rigid(self.tcx, ty));
+                !ty.has_escaping_bound_vars() && self.meets(env, ty, self.engine.cell_kind)
+            }
+            ty::Adt(def, args) if def.is_struct() => {
+                self.implements(ty, self.engine.cell_kind)
+                    || def.all_fields().next().is_some_and(|first| {
+                        first.name.as_str() == "base"
+                            && self.engine.is_upper(def.did())
+                            && self.is_cell(env, first.ty(self.tcx, args).skip_normalization())
+                    })
+            }
+            _ => false,
+        }
     }
 
     /// Of an `impl GcFree` or `impl !GcFree` that is written out.
@@ -121,14 +135,13 @@ impl<'tcx> Types<'tcx> {
     }
 
     /// The types that an auto trait looks at.
-    fn constituents(&self, env: TypingEnv<'tcx>, ty: Ty<'tcx>) -> Vec<Ty<'tcx>> {
+    pub fn constituents(&self, env: TypingEnv<'tcx>, ty: Ty<'tcx>) -> Vec<Ty<'tcx>> {
         let tcx = self.tcx;
         match *ty.kind() {
             ty::Adt(def, args) if def.is_phantom_data() => vec![args.type_at(0)],
-            ty::Adt(def, args) => def
-                .all_fields()
-                .map(|field| self.normalize(env, field.ty(tcx, args)))
-                .collect(),
+            ty::Adt(def, args) => {
+                def.all_fields().map(|field| self.normalize(env, field.ty(tcx, args))).collect()
+            }
             ty::RawPtr(inner, _) | ty::Ref(_, inner, _) => vec![inner],
             ty::Pat(inner, _) | ty::Array(inner, _) | ty::Slice(inner) => vec![inner],
             ty::Tuple(members) => members.to_vec(),
@@ -137,12 +150,9 @@ impl<'tcx> Types<'tcx> {
             ty::Coroutine(def_id, args) => {
                 let held = tcx.coroutine_hidden_types(def_id).instantiate(tcx, args);
                 let held = tcx.instantiate_bound_regions_with_erased(held.skip_normalization());
-                (held
-                    .types
-                    .iter()
-                    .map(|it| self.normalize(env, Unnormalized::new(it))))
-                .chain(args.as_coroutine().upvar_tys())
-                .collect()
+                (held.types.iter().map(|it| self.normalize(env, Unnormalized::new(it))))
+                    .chain(args.as_coroutine().upvar_tys())
+                    .collect()
             }
             ty::UnsafeBinder(inner) => vec![tcx.instantiate_bound_regions_with_erased(*inner)],
             _ => Vec::new(),
@@ -174,28 +184,80 @@ impl<'tcx> Types<'tcx> {
                 _ => {}
             }
         }
-        cache
-            .borrow_mut()
-            .extend(seen.into_iter().map(|it| (key(it), false)));
+        cache.borrow_mut().extend(seen.into_iter().map(|it| (key(it), false)));
         false
+    }
+
+    fn meets(&self, env: TypingEnv<'tcx>, ty: Ty<'tcx>, bound: DefId) -> bool {
+        let (infcx, param_env) = self.tcx.infer_ctxt().build_with_typing_env(env);
+        type_known_to_meet_bound_modulo_regions(&infcx, param_env, ty, bound)
+    }
+
+    pub fn is_gc_free(&self, env: TypingEnv<'tcx>, ty: Ty<'tcx>) -> bool {
+        self.meets(env, ty, self.engine.gc_free)
     }
 
     /// Not `GcFree`, and not just for want of knowing: a type parameter is judged where it is instantiated and a trait
     /// object where it is made.
     pub fn refers(&self, env: TypingEnv<'tcx>, ty: Ty<'tcx>) -> bool {
-        self.reaches(&self.refers, env, ty, |ty| {
-            match self.declared_polarity(ty)? {
-                ImplPolarity::Negative => Some(true),
-                ImplPolarity::Positive => {
-                    let (infcx, param_env) = self.tcx.infer_ctxt().build_with_typing_env(env);
-                    let gc_free = self.engine.gc_free;
-                    let holds =
-                        type_known_to_meet_bound_modulo_regions(&infcx, param_env, ty, gc_free);
-                    let mut arguments = ty.walk().skip(1).filter_map(|it| it.as_type());
-                    Some(!holds && arguments.any(|it| self.refers(env, it)))
-                }
+        self.reaches(&self.refers, env, ty, |ty| match self.declared_polarity(ty)? {
+            ImplPolarity::Negative => Some(true),
+            ImplPolarity::Positive => {
+                let mut arguments = ty.walk().skip(1).filter_map(|it| it.as_type());
+                Some(!self.is_gc_free(env, ty) && arguments.any(|it| self.refers(env, it)))
             }
         })
+    }
+
+    /// Whether it has the address of a reference to a cell, and not just such references.
+    pub fn points_to_references(&self, env: TypingEnv<'tcx>, ty: Ty<'tcx>) -> bool {
+        self.reaches(&self.points_to_references, env, ty, |ty| match *ty.kind() {
+            ty::Ref(_, inner, _) | ty::RawPtr(inner, _) => {
+                Some(!self.is_cell(env, inner) && self.refers(env, inner))
+            }
+            _ => self.declared_polarity(ty).map(|_| false),
+        })
+    }
+
+    /// Whether a borrow of it leads to memory that it owns, or to a `&Gc<T>`.
+    pub fn lends(&self, env: TypingEnv<'tcx>, ty: Ty<'tcx>) -> bool {
+        self.reaches(&self.lends, env, ty, |ty| match *ty.kind() {
+            ty::Adt(def, _) if def.did() == self.engine.gc => Some(true),
+            ty::Adt(def, _)
+                if def.is_phantom_data()
+                    || self.engine.lend_nothing.contains(&Some(def.did()))
+                    || self.allows.stays(self.tcx, def.did()) =>
+            {
+                Some(false)
+            }
+            ty::Adt(def, _) => def.has_dtor(self.tcx).then_some(true),
+            ty::Ref(..) | ty::RawPtr(..) => Some(false),
+            _ => None,
+        })
+    }
+
+    /// Keeps a cell alive until it is dropped.
+    pub fn is_guard(&self, def: AdtDef<'tcx>) -> bool {
+        let tcx = self.tcx;
+        let keeps_alive = |block: &BasicBlockData<'_>| match &block.terminator().kind {
+            TerminatorKind::Call { func, .. } => func.const_fn_def().is_some_and(|(callee, _)| {
+                self.engine.is_upper(callee) && tcx.item_name(callee).as_str() == "keep_alive"
+            }),
+            _ => false,
+        };
+        self.engine.is_upper(def.did())
+            && (self.allows.stays(tcx, def.did())
+                || (def.destructor(tcx)).is_some_and(|it| {
+                    tcx.optimized_mir(it.did).basic_blocks.iter().any(keeps_alive)
+                }))
+    }
+
+    pub fn contains_inline(&self, env: TypingEnv<'tcx>, whole: Ty<'tcx>, part: Ty<'tcx>) -> bool {
+        whole == part
+            || (!whole.is_any_ptr()
+                && !whole.is_phantom_data()
+                && (self.constituents(env, whole).into_iter())
+                    .any(|it| self.contains_inline(env, it, part)))
     }
 
     /// Whether code that is given such a value can allocate in the heap.
@@ -214,10 +276,34 @@ impl<'tcx> Types<'tcx> {
     /// Whether code that knows nothing of the engine finds something in it to call, of which the type does not say
     /// what it has brought along.
     pub fn has_unknown_code(&self, env: TypingEnv<'tcx>, ty: Ty<'tcx>) -> bool {
+        let is_any = |def_id| self.tcx.is_diagnostic_item(Symbol::intern("Any"), def_id);
+        let is_static = |def_id| supertrait_def_ids(self.tcx, def_id).any(is_any);
         self.reaches(&self.has_unknown_code, env, ty, |ty| match *ty.kind() {
-            ty::Dynamic(..) => Some(true),
+            ty::Dynamic(bounds, _) => Some(!bounds.principal_def_id().is_some_and(is_static)),
             ty::FnPtr(_, header) => Some(header.safety().is_unsafe()),
+            // Judged where they are put together.
+            ty::Adt(def, _) if self.engine.formatting.contains(&Some(def.did())) => Some(false),
             _ => (ty.is_phantom_data() || self.is_upper(ty)).then_some(false),
+        })
+    }
+
+    /// Whether it has a value of a type parameter in it that can be called.
+    pub fn has_callback(&self, env: TypingEnv<'tcx>, ty: Ty<'tcx>) -> bool {
+        let tcx = self.tcx;
+        let calls_back = |bound: DefId| {
+            tcx.is_fn_trait(bound)
+                || tcx.is_lang_item(bound, LangItem::Iterator)
+                || tcx.is_diagnostic_item(sym::IntoIterator, bound)
+                || self.engine.is_upper(bound)
+        };
+        self.reaches(&self.has_callback, env, ty, |ty| match *ty.kind() {
+            _ if !ty.has_param() || ty.is_phantom_data() || self.is_cell(env, ty) => Some(false),
+            ty::Param(_) | ty::Alias(..) => {
+                let bounds = env.param_env.caller_bounds().trait_clauses(tcx).iter();
+                let mut bounds = bounds.filter(|it| it.skip_binder().self_ty() == ty);
+                Some(bounds.any(|it| calls_back(it.def_id())) && !self.is_gc_free(env, ty))
+            }
+            _ => self.declared_polarity(ty).map(|_| false),
         })
     }
 
@@ -289,10 +375,7 @@ impl<'tcx> Types<'tcx> {
             return None;
         }
         let env = TypingEnv::post_analysis(self.tcx, def.did());
-        self.hides(
-            env,
-            self.normalize(env, self.tcx.type_of(field).instantiate_identity()),
-        )
+        self.hides(env, self.normalize(env, self.tcx.type_of(field).instantiate_identity()))
     }
 
     fn parts(&self, def: AdtDef<'tcx>) -> Rc<[Part<'tcx>]> {
@@ -325,31 +408,17 @@ impl<'tcx> Types<'tcx> {
         if parts.iter().any(|it| matches!(it, Part::Behind(_))) {
             parts.extend(markers.into_iter().map(|ty| {
                 let ownership = Ownership::Marker;
-                Part::Behind(Pointee {
-                    ty,
-                    container: this,
-                    allocator: None,
-                    ownership,
-                })
+                Part::Behind(Pointee { ty, container: this, allocator: None, ownership })
             }));
         }
-        let is_copy = tcx
-            .lang_items()
-            .copy_trait()
-            .is_some_and(|it| self.implements(this, it));
+        let is_copy = tcx.lang_items().copy_trait().is_some_and(|it| self.implements(this, it));
         let borrows = tcx.generics_of(def.did()).own_counts().lifetimes != 0;
         let is_ours = self.engine.is_in_workspace(def.did());
         // The private ones of other crates are guards that put things back in place.
-        let frees = def.has_dtor(tcx)
-            && self.declared_polarity(this).is_none()
-            && (is_ours || tcx.visibility(def.did()).is_public());
-        let allocator = (tcx
-            .param_env(def.did())
-            .caller_bounds()
-            .trait_clauses(tcx)
-            .iter())
-        .find(|clause| tcx.item_name(clause.def_id()).as_str() == "Allocator")
-        .map(|clause| clause.skip_binder().self_ty());
+        let frees = def.has_dtor(tcx) && (is_ours || tcx.visibility(def.did()).is_public());
+        let allocator = (tcx.param_env(def.did()).caller_bounds().trait_clauses(tcx).iter())
+            .find(|clause| tcx.item_name(clause.def_id()).as_str() == "Allocator")
+            .map(|clause| clause.skip_binder().self_ty());
         parts.retain_mut(|part| {
             let Part::Behind(pointee) = part else {
                 return true;
@@ -432,9 +501,5 @@ fn owned_by_marker<'tcx>(ty: Ty<'tcx>, markers: &mut Vec<Ty<'tcx>>) {
 }
 
 fn env_for<'tcx>(env: TypingEnv<'tcx>, ty: Ty<'tcx>) -> TypingEnv<'tcx> {
-    if ty.has_param() {
-        env
-    } else {
-        TypingEnv::fully_monomorphized()
-    }
+    if ty.has_param() { env } else { TypingEnv::fully_monomorphized() }
 }

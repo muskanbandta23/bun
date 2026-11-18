@@ -42,6 +42,11 @@ static_table!(static PROPERTIES = [
         .with_intrinsic(Intrinsic::ObjectCreate),
     StaticProperty::function(private_names::defineProperty, define_property, 3)
         .with_intrinsic(Intrinsic::ObjectDefineProperty),
+    StaticProperty::function(private_names::getOwnPropertyDescriptor, get_own_property_descriptor, 2),
+    StaticProperty::function(private_names::getOwnPropertyNames, get_own_property_names, 1)
+        .with_intrinsic(Intrinsic::ObjectGetOwnPropertyNames),
+    StaticProperty::function(private_names::getOwnPropertySymbols, get_own_property_symbols, 1)
+        .with_intrinsic(Intrinsic::ObjectGetOwnPropertySymbols),
     StaticProperty::function(private_names::getPrototypeOf, get_prototype_of, 1)
         .with_intrinsic(Intrinsic::ObjectGetPrototypeOf),
     StaticProperty::function(private_names::keys, keys, 1).with_intrinsic(Intrinsic::ObjectKeys),
@@ -114,12 +119,13 @@ fn get_own_property_descriptor(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value
 fn get_own_property_descriptors(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let object = frame.argument(0).to_object(cx)?;
     let kinds = PropertyNameMode::StringsAndSymbols;
-    let keys = object.own_keys(cx, kinds, DontEnumMode::Include)?;
-    let descriptors = cx.new_object();
+    let keys = object.snapshot_own_keys(cx, kinds, DontEnumMode::Include)?;
+    let capacity = keys.max_len().max(JsFinalObject::DEFAULT_INLINE_CAPACITY);
+    let descriptors = JsFinalObject::create(cx, Shape::for_new_object(cx, capacity));
     for key in keys.iter() {
-        if let Some(descriptor) = object.get_own_property_descriptor(cx, key.name())? {
+        if let Some(descriptor) = object.get_own_property_descriptor(cx, key)? {
             let descriptor = descriptor.to_object(cx);
-            descriptors.put_direct_may_be_index(cx, key.name(), descriptor.into())?;
+            descriptors.put_direct_may_be_index(cx, key, descriptor.into())?;
         }
     }
     Ok(descriptors.into())
@@ -169,16 +175,16 @@ fn define_property(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 fn define_all(cx: &mut Cx, object: Gc<JsObject>, properties: Value) -> JsResult<Value> {
     let properties = properties.to_object(cx)?;
     let kinds = PropertyNameMode::StringsAndSymbols;
-    let keys = properties.own_keys(cx, kinds, DontEnumMode::Include)?;
+    let keys = properties.snapshot_own_keys(cx, kinds, DontEnumMode::Include)?;
     let mut descriptors = root_vec();
-    (descriptors.try_reserve_exact(keys.len())).map_err(|_| cx.throw_out_of_memory())?;
+    (descriptors.try_reserve_exact(keys.max_len())).map_err(|_| cx.throw_out_of_memory())?;
     for key in keys.iter() {
-        if let Some(description) = properties.get_if_own_and_enumerable(cx, key.name())? {
+        if let Some(description) = properties.get_if_own_and_enumerable(cx, key)? {
             descriptors.push((key, PropertyDescriptor::from_value(cx, description)?));
         }
     }
-    for (key, descriptor) in &descriptors {
-        object.define_property_or_throw(cx, key.name(), descriptor)?;
+    for &(key, ref descriptor) in &descriptors {
+        object.define_property_or_throw(cx, key, descriptor)?;
     }
     Ok(object.into())
 }

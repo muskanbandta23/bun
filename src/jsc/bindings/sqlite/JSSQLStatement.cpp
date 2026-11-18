@@ -30,9 +30,7 @@
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
 #include <JavaScriptCore/TypedArrayInlines.h>
-#include "GCDefferalContext.h"
 
-#include <JavaScriptCore/DOMJITAbstractHeap.h>
 #include "JSBuffer.h"
 #include <JavaScriptCore/DFGAbstractHeap.h>
 #include "wtf/SIMDUTF.h"
@@ -834,10 +832,7 @@ void JSSQLStatement::buildRowShape(JSC::JSGlobalObject* globalObject)
         } else if (namesLeft) {
             namesLeft--;
             PropertyOffset offset;
-            if (auto* existing = Structure::addPropertyTransitionToExistingStructure(structure, name, 0, offset))
-                structure = existing;
-            else
-                structure = Structure::addNewPropertyTransition(vm, structure, name, 0, offset, PutPropertySlot::PutById);
+            structure = Structure::addPropertyTransition(vm, structure, name, 0, offset);
             slots.append({ SQLiteColumnSlot::Kind::Offset, static_cast<uint32_t>(offset) });
         } else {
             structure = nullptr;
@@ -869,7 +864,6 @@ static bool holdsNamedParameters(JSC::JSObject* object)
     switch (object->type()) {
     case FinalObjectType:
     case ObjectType:
-    case CompiledObjectType:
     case ProxyObjectType:
     case DirectArgumentsType:
     case ScopedArgumentsType:
@@ -2000,10 +1994,7 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
     JSC::JSObject* result;
 
     if (auto* structure = castedThis->_structure.get()) [[likely]] {
-        if (unsigned outOfLineCapacity = structure->outOfLineCapacity()) [[unlikely]]
-            result = JSC::JSFinalObject::createWithButterfly(vm, structure, JSC::Butterfly::create(vm, nullptr, 0, outOfLineCapacity, false, JSC::IndexingHeader(), 0));
-        else
-            result = JSC::constructEmptyObject(vm, structure);
+        result = JSC::constructEmptyObject(vm, structure);
 
         int i = 0;
         for (auto slot : castedThis->columnSlots) {

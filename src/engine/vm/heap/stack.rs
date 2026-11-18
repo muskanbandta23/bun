@@ -1,90 +1,6 @@
 //! The native stack of the current thread.
 
-/// The stack grows from `origin` down to `end`.
-#[derive(Clone, Copy)]
-pub struct StackBounds {
-    pub origin: usize,
-    pub end: usize,
-}
-
-impl StackBounds {
-    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-    pub fn current() -> StackBounds {
-        let mut attributes = core::mem::MaybeUninit::<libc::pthread_attr_t>::uninit();
-        let (mut end, mut size) = (core::ptr::null_mut(), 0);
-        // SAFETY: the attributes are initialized, read and destroyed in that order.
-        unsafe {
-            #[cfg(target_os = "freebsd")]
-            {
-                libc::pthread_attr_init(attributes.as_mut_ptr());
-                libc::pthread_attr_get_np(libc::pthread_self(), attributes.as_mut_ptr());
-            }
-            #[cfg(not(target_os = "freebsd"))]
-            libc::pthread_getattr_np(libc::pthread_self(), attributes.as_mut_ptr());
-            libc::pthread_attr_getstack(attributes.as_ptr(), &raw mut end, &raw mut size);
-            libc::pthread_attr_destroy(attributes.as_mut_ptr());
-        }
-        let origin = end.addr() + size;
-        // musl reports only what the first thread has touched so far.
-        #[cfg(target_env = "musl")]
-        // SAFETY: neither has preconditions.
-        if unsafe { libc::getpid() == libc::gettid() } {
-            size = size.max(main_thread_limit());
-        }
-        StackBounds {
-            origin,
-            end: origin - size,
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    pub fn current() -> StackBounds {
-        // SAFETY: questions about the current thread.
-        unsafe {
-            let thread = libc::pthread_self();
-            let origin = libc::pthread_get_stackaddr_np(thread).addr();
-            let size = if libc::pthread_main_np() != 0 {
-                main_thread_limit()
-            } else {
-                libc::pthread_get_stacksize_np(thread)
-            };
-            StackBounds {
-                origin,
-                end: origin - size,
-            }
-        }
-    }
-
-    #[cfg(windows)]
-    pub fn current() -> StackBounds {
-        #[link(name = "kernel32")]
-        unsafe extern "system" {
-            safe fn GetCurrentThreadStackLimits(low: &mut usize, high: &mut usize);
-        }
-        const GUARD_PAGES: usize = 4;
-        let (mut low, mut high) = (0, 0);
-        GetCurrentThreadStackLimits(&mut low, &mut high);
-        StackBounds {
-            origin: high,
-            end: low + GUARD_PAGES * bun_alloc::page_size(),
-        }
-    }
-}
-
-#[cfg(any(target_os = "macos", target_env = "musl"))]
-fn main_thread_limit() -> usize {
-    const DEFAULT: usize = 8 << 20;
-    let mut limit = libc::rlimit {
-        rlim_cur: 0,
-        rlim_max: 0,
-    };
-    // SAFETY: writes the struct.
-    unsafe { libc::getrlimit(libc::RLIMIT_STACK, &raw mut limit) };
-    match limit.rlim_cur {
-        0 | libc::RLIM_INFINITY => DEFAULT,
-        size => size as usize,
-    }
-}
+pub use bun_engine_platform::StackBounds;
 
 #[inline(always)]
 pub fn stack_pointer() -> usize {
@@ -196,6 +112,13 @@ pub(crate) unsafe extern "C" fn clear_below_stack_pointer(lowest: usize) {
     )
 }
 
+/// The frames that come next would not write all the words in which it has left addresses of cells.
+#[inline(never)]
+pub(super) fn clear_what_the_collector_left() {
+    const SIZE: usize = if cfg!(debug_assertions) { 16384 } else { 4096 };
+    core::hint::black_box(&mut [0u8; SIZE]);
+}
+
 /// Loads a word that may be uninitialized or poisoned by a sanitizer.
 ///
 /// # Safety
@@ -211,4 +134,16 @@ pub(super) unsafe fn load_word(address: usize) -> usize {
         core::arch::asm!("ldr {}, [{}]", lateout(reg) word, in(reg) address, options(readonly, nostack, preserves_flags));
     }
     word
+}
+
+/// A hint that the memory, which need not be mapped, is about to be read.
+#[inline(always)]
+pub(super) fn prefetch(address: usize) {
+    // SAFETY: never faults, and changes nothing.
+    unsafe {
+        #[cfg(target_arch = "x86_64")]
+        core::arch::asm!("prefetcht0 [{}]", in(reg) address, options(nomem, nostack, preserves_flags));
+        #[cfg(target_arch = "aarch64")]
+        core::arch::asm!("prfm pldl1keep, [{}]", in(reg) address, options(nomem, nostack, preserves_flags));
+    }
 }

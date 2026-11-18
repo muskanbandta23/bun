@@ -4,28 +4,9 @@
 //! |----------------------------------|------------------------------------------|----------------------------|
 //! | zlib `alloc_func`/`free_func`    | `(opaque, items: c_uint, size: c_uint)`  | `(opaque, ptr)`            |
 //! | brotli `brotli_alloc/free_func`  | `(opaque, size: usize)`                  | `(opaque, ptr)`            |
-//! | JSC `JSTypedArrayBytesDeallocator` | —                                      | `(bytes, ctx)`             |
 //!
 //! The zone-tagged zlib and brotli variants are minted per-label by
 //! [`c_thunks_for_zone!`].
-
-use core::ffi::c_void;
-
-use crate::default_alloc as raw;
-
-// ──────────────────────────────────────────────────────────────────────────
-// Plain default-allocator thunks (no heap-breakdown tagging)
-// ──────────────────────────────────────────────────────────────────────────
-
-/// JSC `JSTypedArrayBytesDeallocator` → default allocator `free(bytes)`; `ctx` ignored.
-pub unsafe extern "C" fn mi_free_bytes(bytes: *mut c_void, _ctx: *mut c_void) {
-    // SAFETY: bytes was allocated by the default allocator (or is null).
-    unsafe { raw::free(bytes) };
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Zone-tagged thunks
-// ──────────────────────────────────────────────────────────────────────────
 
 /// Expands a set of `extern "C"` allocator thunks bound to a named
 /// heap-breakdown zone. When `heap_breakdown::ENABLED` is false (release /

@@ -1,11 +1,11 @@
 //! Accesses to a few places on several ways and in loops, and addresses that are good only on some ways.
 
-use bun_engine_asm::Cond;
-use bun_engine_codegen::ir::{Access, AccessFlags, Binary, Heap, Load, Op, Type, Unary, Value};
+use bun_engine_asm::{Cond, Sign, Size};
+use bun_engine_codegen::ir::{Access, AccessFlags, Binary, Lanes, Load, Op, Type, Unary, Value};
 
 use super::super::Generator;
 use super::{Pointer, Purpose, Spot};
-use crate::support::memory::Region;
+use crate::support::memory::{Region, position};
 
 impl Generator<'_> {
     pub(in super::super) fn memory_shape(&mut self, budget: u32) {
@@ -28,7 +28,7 @@ impl Generator<'_> {
     fn some_spots(&mut self) -> Vec<Spot> {
         let whole = self.spot(16, Purpose::Write);
         let part = |this: &mut Self| {
-            let size = this.random.pick(&[1, 2, 4, 4, 8, 8]);
+            let size = this.random.pick(&[1, 2, 4, 4, 8, 8, 16]);
             if this.random.one_in(4) {
                 return this.spot(size, Purpose::Write);
             }
@@ -44,9 +44,13 @@ impl Generator<'_> {
 
     fn load_some_of(&mut self, spot: Spot) -> Value {
         loop {
-            let ty = self
-                .random
-                .pick(&[Type::I32, Type::I64, Type::F32, Type::F64]);
+            let ty = self.random.weighted(&[
+                (3, Type::I32),
+                (3, Type::I64),
+                (2, Type::F32),
+                (2, Type::F64),
+                (1, Type::V128),
+            ]);
             let (kind, size) = self.load_kind(ty);
             if size == spot.size || size < spot.size && self.random.one_in(4) {
                 let loaded = self.load_from(Spot { size, ..spot }, kind, ty);
@@ -59,6 +63,15 @@ impl Generator<'_> {
         let bits = match self.type_of(value) {
             Type::F32 => self.unary(Unary::Bitcast, Type::I32, value),
             Type::F64 => self.unary(Unary::Bitcast, Type::I64, value),
+            Type::V128 => {
+                let [low, high] = [0, 1].map(|lane| {
+                    let lanes = Lanes::Int(Size::S64);
+                    self.builder()
+                        .extract_lane(lanes, Sign::Unsigned, value, lane)
+                });
+                let turned = self.binary_constant(Binary::RotateLeft, high, 9);
+                self.binary(Binary::Xor, low, turned)
+            }
             _ => value,
         };
         self.convert_int(bits, Type::I64)
@@ -76,6 +89,7 @@ impl Generator<'_> {
                 }
                 3..6 => {
                     let ty = match (spot.size, self.random.below(4)) {
+                        (16, _) => Type::V128,
                         (8, 0) => Type::F64,
                         (4, 0) => Type::F32,
                         (8, _) | (_, 1) => Type::I64,
@@ -84,7 +98,7 @@ impl Generator<'_> {
                     let value = self.data(ty);
                     self.store_to(spot, value, Purpose::Write);
                 }
-                6 => {
+                6 if spot.size <= 8 => {
                     let old = self.load_some_of(spot);
                     let by = self.random.between(0, 2);
                     let new = self.binary_constant(Binary::Add, old, by);
@@ -126,6 +140,18 @@ impl Generator<'_> {
         });
         let after = self.touch(&spots, results[0]);
         self.keep_all(&[after]);
+    }
+
+    /// The place is written between the load and the edge that passes on its value.
+    pub(in super::super) fn load_for_rare_edge(&mut self) -> Vec<Value> {
+        let spot = self.spot(4, Purpose::Write);
+        let loaded = self.load_from(spot, Load::Full, Type::I32);
+        let (outer, usual) = (self.condition(), self.known_int(Type::I32));
+        self.perhaps(outer, &[usual], &mut |this| {
+            let (inner, other) = (this.condition(), this.int(Type::I32));
+            this.store_to(spot, other, Purpose::Write);
+            this.perhaps(inner, &[loaded], &mut |_| vec![usual])
+        })
     }
 
     /// An object, or null if the condition is zero.
@@ -182,8 +208,9 @@ impl Generator<'_> {
         self.keep_all(&results);
     }
 
-    fn load_trusted(&mut self, address: Value) -> Value {
-        let access = Access::new(Heap::EVERYTHING, AccessFlags::ALWAYS_READABLE);
+    fn load_trusted(&mut self, address: Value, first: u32, last: u32) -> Value {
+        let heap = self.heap_including(first, last);
+        let access = Access::new(heap, AccessFlags::ALWAYS_READABLE);
         let address = if self.random.one_in(3) {
             let condition = self.condition();
             self.choose(condition, &[Type::I64], &mut |_, _| vec![address])[0]
@@ -208,8 +235,14 @@ impl Generator<'_> {
         let small = self.unary(Unary::Opaque, ty, masked);
         let element = |this: &mut Self, index| {
             let pointer = Pointer::exactly(Region::Arrays, 0);
+            let index = if this.random.one_in(4) {
+                let condition = this.condition();
+                this.choose(condition, &[ty], &mut |_, _| vec![index])[0]
+            } else {
+                index
+            };
             let address = this.add_index(start, pointer, index, 8, 8, false).0;
-            this.load_trusted(address)
+            this.load_trusted(address, position::FIRST_ARRAY, position::SECOND_ARRAY)
         };
         let initial = [self.known_int(Type::I64)];
         let results = self.count(&initial, &mut |this, counting| {
@@ -247,9 +280,10 @@ impl Generator<'_> {
                         offset: 0,
                         size: 8,
                     };
-                    this.store_to(link, object, Purpose::Write);
+                    // What the link holds is read as an address that can be read, so it is one.
+                    this.store_to(link, holder, Purpose::Write);
                     let again = this.load_from(link, Load::Full, Type::I64);
-                    this.load_trusted(again)
+                    this.load_trusted(again, position::LINK + 1, position::LINK + 1)
                 }),
             };
             vec![this.binary(Binary::Add, sum, seen)]
@@ -270,6 +304,7 @@ impl Generator<'_> {
                 let by = back + self.random.between(0, 3);
                 let moved = self.binary_constant(Binary::Add, origin, by);
                 let pointer = Pointer::exactly(Region::Arrays, 0);
+                let scale = self.random.pick(&[scale, scale, scale, 1, 2, 4, 8]);
                 let (base, pointer) = self.add_index(start, pointer, moved, scale, 7, false);
                 Spot {
                     base,

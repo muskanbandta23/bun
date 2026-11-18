@@ -1,12 +1,10 @@
 //! What the parsers of all sections use.
 
-use core::fmt;
-
 use bun_engine_asm::Width;
 
 use crate::alloc::TryPush;
 use crate::decode::V128_CONST;
-use crate::error::Error;
+use crate::error::{Error, Quoted};
 use crate::index::{FuncIndex, GlobalIndex};
 use crate::module::{ConstCode, ConstExpr, Features, ModuleHeader, Span};
 use crate::opcode::{
@@ -26,24 +24,6 @@ pub(super) struct Section<'a> {
     scratch: &'a mut Scratch,
     /// By the constant expressions since they were last declared.
     named_funcs: Vec<FuncIndex>,
-}
-
-/// A name in a message.
-#[derive(Clone, Copy)]
-pub(super) struct Quoted<'a>(&'a str);
-
-impl fmt::Display for Quoted<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        const MAX_LENGTH: usize = 4096;
-        if self.0.len() <= MAX_LENGTH {
-            return f.write_str(self.0);
-        }
-        write!(
-            f,
-            "{}...",
-            &self.0[..self.0.floor_char_boundary(MAX_LENGTH)]
-        )
-    }
 }
 
 impl<'a> Section<'a> {

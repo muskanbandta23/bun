@@ -1,28 +1,9 @@
-use bun_engine_bytecode::{ErrorKind, StaticError};
+use bun_engine_bytecode::{DebugHook, ErrorKind};
 use bun_engine_text::PropertyName;
-use bun_engine_vm::code::metadata::{Counter, Flags};
-use bun_engine_vm::{Cx, ErrorType, JsString, Thrown, errors};
+use bun_engine_vm::code::metadata::{Counter, Cover, Flags};
+use bun_engine_vm::{JsString, errors};
 
 use super::{Next, execute};
-
-fn error_type(kind: ErrorKind) -> ErrorType {
-    match kind {
-        ErrorKind::TypeError => ErrorType::TypeError,
-        ErrorKind::RangeError | ErrorKind::OutOfMemory => ErrorType::RangeError,
-        ErrorKind::ReferenceError => ErrorType::ReferenceError,
-        ErrorKind::SyntaxError => ErrorType::SyntaxError,
-    }
-}
-
-fn throw_static(cx: &Cx, error: StaticError, name: PropertyName<'_>) -> Thrown {
-    let (error_type, message) = (error_type(error.kind()), error.message());
-    match error.message_around_name() {
-        Some((before, after)) if !name.text().is_empty() => {
-            errors::throw_naming(cx, error_type, before, name, after, message)
-        }
-        _ => cx.throw_error(error_type, message),
-    }
-}
 
 execute! {
     Wide16Prefix(op, cx, f) {
@@ -88,25 +69,32 @@ execute! {
             return Err(cx.throw_out_of_memory());
         }
         let message = f.get(op.message).cast::<JsString>().to_string_ref(cx)?;
-        return Err(cx.throw_error(error_type(op.kind), message))
+        return Err(cx.throw_error(errors::error_type_of(op.kind), message))
     }
     ThrowStatic(op, cx, f) {
-        return Err(throw_static(cx, op.error, f.name(op.name)))
+        return Err(errors::throw_static(cx, op.error, f.name(op.name)))
     }
     ThrowIfNotObject(op, cx, f) {
         if !f.get(op.value).is_object() {
-            return Err(throw_static(cx, op.error, PropertyName::EMPTY));
+            return Err(errors::throw_static(cx, op.error, PropertyName::EMPTY));
         }
     }
     ThrowIfNullish(op, cx, f) {
         if f.get(op.value).is_undefined_or_null() {
-            return Err(throw_static(cx, op.error, f.name(op.name)));
+            return Err(errors::throw_static(cx, op.error, f.name(op.name)));
         }
     }
     Debug(op, cx, f) {
-        (cx.hooks().debug)(cx, f.header, op.hook, f.reg(op.scope))?;
+        if op.hook == DebugHook::DidReachDebuggerStatement
+            || cx.stepping_debugger_count().get() | f.code_block.debugger_requests().get() != 0
+        {
+            cx.debug(f.header, op.hook);
+        }
+    }
+    JumpIfFrameIsKept(op, cx, f) {
+        Next::jump_if(cx.keeps_frame_at_tail_call(f.header))
     }
     Cover(op, cx, f) {
-        (cx.hooks().cover)(cx, f.code_block, op.block, f.entry(op.metadata));
+        f.entry::<Cover>(op.metadata).count().update(|count| count + 1);
     }
 }

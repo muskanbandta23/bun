@@ -1,7 +1,7 @@
 //! Names that only a search at run time finds. What holds a binding is an environment, the object that has the
 //! variables of `eval` code, or the global object.
 
-use bun_engine_bytecode::{SlotKind, Unresolved};
+use bun_engine_bytecode::{Slot, SlotKind, Unresolved};
 use bun_engine_text::{PropertyName, symbols};
 
 use crate::{
@@ -61,6 +61,21 @@ impl Environment {
         match self.get(index) {
             Some(value) => Ok(value),
             None => self.read_empty_slot(cx, index),
+        }
+    }
+
+    /// Of one of the slots of its scope. `None` before it is initialized.
+    pub fn read_binding(&self, cx: &mut Cx, slot: &Slot) -> JsResult<Option<Value>> {
+        let Some(module) = self.downcast::<ModuleEnvironment>() else {
+            return Ok(self.get(slot.index));
+        };
+        if slot.kind != SlotKind::Import {
+            return Ok(module.read_variable(cx, slot.index));
+        }
+        match module.import_target(slot.index) {
+            Some((target, index)) => Ok(target.read_variable(cx, index)),
+            None if self.get(slot.index).is_none() => Ok(None),
+            None => module.get_import(cx, slot.index).map(Some),
         }
     }
 

@@ -103,9 +103,9 @@ impl AbstractModuleRecord {
         }
     }
 
-    /// GetImportedModule. Panics unless all that is requested has been loaded.
-    pub fn imported_module(&self, request: ModuleKeyRef<'_>) -> Gc<AbstractModuleRecord> {
-        self.loaded_modules().get(&request).expect("loaded")
+    /// GetImportedModule. There is none if the entries that the embedder gave name what they do not request.
+    pub fn imported_module(&self, request: ModuleKeyRef<'_>) -> Option<Gc<AbstractModuleRecord>> {
+        self.loaded_modules().get(&request)
     }
 
     /// For modules that the embedder loads itself.

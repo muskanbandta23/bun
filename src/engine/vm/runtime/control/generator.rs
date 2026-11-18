@@ -11,7 +11,7 @@ impl JsGenerator {
     #[inline(always)]
     pub fn for_frame(cx: &mut Cx, frame: &CallFrame) -> JsResult<Gc<JsGenerator>> {
         let shape = Coroutine::shape_for_frame(cx, frame, Cx::generator_shape)?;
-        let base = Coroutine::init(cx, shape, frame);
+        let base = Coroutine::init::<Self>(shape, frame);
         Coroutine::allocate(cx, frame, JsGeneratorInit { base })
     }
 }

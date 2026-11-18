@@ -20,9 +20,11 @@ bun_engine_vm.workspace = true
 bun_engine_interpreter.workspace = true
 bun_engine_macros.workspace = true
 bun_threading.workspace = true
+bun_alloc.workspace = true
 bitflags.workspace = true
 smallvec.workspace = true
 hashbrown.workspace = true
 
 [dev-dependencies]
+bun_engine.workspace = true
 bun_engine_standalone.workspace = true

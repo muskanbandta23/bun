@@ -57,7 +57,7 @@ unsafe fn coverage_source_providers(
             && seen.insert(executable.provider().id())
         {
             // SAFETY: as above.
-            unsafe { add(context, executable.provider()) }
+            unsafe { add(context, executable.anchor().provider()) }
         }
     });
 }

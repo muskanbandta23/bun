@@ -11,8 +11,8 @@ mod promise_prototype;
 
 use bun_engine_text::PropertyName;
 use bun_engine_vm::{
-    Attributes, CellKind, JsAsyncFunctionGenerator, JsFunctionWithFields, PropertyCondition,
-    RealmSlot, RealmWatchpoint,
+    Attributes, CellKind, JsAsyncFunctionGenerator, JsFunctionWithFields, RealmSlot,
+    RealmWatchpoint,
 };
 
 use crate::prelude::*;
@@ -78,8 +78,7 @@ pub(crate) fn add_conditions(
     match which {
         RealmWatchpoint::PromiseThen => {
             conditions.pristine(&cx.promise_prototype(), names::then);
-            let object = cx.object_prototype();
-            conditions.add(&object, || PropertyCondition::absence(&object, names::then));
+            conditions.absent(&cx.object_prototype(), names::then, Value::NULL);
         }
         RealmWatchpoint::PromiseResolve => {
             conditions.pristine(&cx.promise_constructor(), names::resolve);

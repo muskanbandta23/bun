@@ -1,8 +1,8 @@
 //! Who is waiting for whom.
 
 use crate::{
-    FastHashSet, Gc, InternalMicrotask, InternalReaction, JsAsyncFromSyncIterator, JsAsyncFunctionGenerator,
-    JsFunction, JsPromise, PromiseCombinator, StackFrame, Value,
+    FastHashSet, Gc, InternalMicrotask, InternalReaction, JsAsyncFromSyncIterator,
+    JsAsyncFunctionGenerator, JsFunction, JsPromise, PromiseCombinator, StackFrame, Value,
 };
 
 impl InternalReaction {

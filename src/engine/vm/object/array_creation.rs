@@ -107,6 +107,7 @@ impl JsArray {
 
     /// An array of the current realm with what `fill` writes, which is at most `room` elements.
     #[inline(always)]
+    #[cfg_attr(rootcheck, rootcheck::allow("`fill` runs after the allocations"))]
     pub fn build(
         cx: &mut Cx,
         kind: ElementKind,

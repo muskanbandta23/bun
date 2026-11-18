@@ -19,6 +19,7 @@ pub struct CallFrame {
 impl !GcFree for CallFrame {}
 
 impl CallFrame {
+    pub const OFFSET_OF_CALLER: usize = offset_of!(CallFrame, caller);
     pub const OFFSET_OF_RETURN_ADDRESS: usize = offset_of!(CallFrame, return_address);
     pub const OFFSET_OF_CODE_BLOCK: usize = offset_of!(CallFrame, code_block);
     pub const OFFSET_OF_CALLEE: usize = offset_of!(CallFrame, callee);
@@ -164,6 +165,8 @@ impl CallFrame {
 /// What native code leaves below its frame pointer when it calls into generated code.
 #[repr(C)]
 pub struct EntryRecord {
+    /// The coroutine that the call resumes.
+    context: Option<Value>,
     pub(crate) previous_top_entry_frame: usize,
     pub(crate) previous_top_call_frame: usize,
 }
@@ -177,6 +180,10 @@ impl EntryRecord {
     pub unsafe fn of<'a>(entry_frame: usize) -> &'a EntryRecord {
         // SAFETY: the caller's.
         unsafe { &*core::ptr::with_exposed_provenance(entry_frame - Self::DISTANCE) }
+    }
+
+    pub fn context(&self) -> Option<Value> {
+        self.context
     }
 
     pub fn previous_top_call_frame(&self) -> usize {

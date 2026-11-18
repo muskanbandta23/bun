@@ -34,12 +34,12 @@ use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use bun_engine_bytecode::{Register, ResumeMode, SuspendKind, SuspendPointIndex};
 use bun_engine_macros::cell;
 
+use super::initialize_at;
 use crate::heap::barrier;
 use crate::{
-    CallFrame, CellKind, CellType, Cx, Extends, Field, Gc, JsAsyncFunctionGenerator, JsAsyncGenerator,
-    JsFunction, JsGenerator, JsObject, JsObjectInit, JsResult, OFFSET_OF_INTERNAL_FIELDS,
-    ScriptExecutable, Shape,
-    Value, Visitor, Vm,
+    CallFrame, CellKind, CellType, CodeBlock, Cx, Extends, Field, Gc, JsAsyncFunctionGenerator,
+    JsAsyncGenerator, JsFunction, JsGenerator, JsObject, JsObjectInit, JsResult,
+    OFFSET_OF_INTERNAL_FIELDS, ScriptExecutable, Shape, Storage, Value, Visitor,
 };
 
 /// The first four are those of `SuspendKind`.
@@ -100,16 +100,26 @@ impl Coroutine {
         (SIZES >> ((cell_type.0 - CellType::Generator.0) * 8)) as u8 as usize
     }
 
+    /// `shape` is one that the realm has for instances of `T`, or one like it but for the prototype.
     #[inline(always)]
-    pub(super) fn init(vm: &Vm, shape: Gc<Shape>, frame: &CallFrame) -> CoroutineInit {
+    pub(super) fn init<T: CellKind>(shape: Gc<Shape>, frame: &CallFrame) -> CoroutineInit {
+        assert!(shape.instance_type() == T::CELL_TYPE);
+        debug_assert!(!shape.max_offset().is_valid() && !shape.is_dictionary());
         CoroutineInit {
-            base: JsObjectInit::new(vm, shape),
+            // SAFETY: it has neither properties nor elements.
+            base: unsafe { JsObjectInit::with_storage(shape, Storage::NONE) },
             state: Cell::new(Value::int32(CoroutineState::Executing as i32).to_bits()),
             point: Cell::new(0),
             saved_count: AtomicU32::new(0),
             callee: frame.callee(),
             code_owner: (frame.code_block().expect("a frame of bytecode")).executable(),
         }
+    }
+
+    /// Nothing reads a register that has not been saved.
+    #[inline(always)]
+    pub(super) fn allocation_size<T>(code_block: &CodeBlock) -> usize {
+        size_of::<T>() + code_block.saved_words() as usize * size_of::<u64>()
     }
 
     /// For the code that `frame` runs.
@@ -119,19 +129,12 @@ impl Coroutine {
         frame: &CallFrame,
         init: T::Init,
     ) -> JsResult<Gc<T>> {
-        const { assert!(!core::mem::needs_drop::<T>()) };
-        assert!(T::shape_of(&init).instance_type() == T::CELL_TYPE);
-        let words = frame.code_block().map_or(0, |it| it.saved_words());
-        let size = size_of::<T>() + words as usize * size_of::<u64>();
-        let address = cx.heap.cells.try_allocate(&cx.heap, size);
-        if address == 0 {
-            return Err(cx.throw_out_of_memory());
-        }
-        // SAFETY: a new cell that is large enough. Nothing reads a register that has not been saved.
-        unsafe {
-            T::initialize(core::ptr::with_exposed_provenance_mut(address), init);
-            barrier::publish_fence();
-            Ok(Gc::from_address(address))
+        let code_block = frame.code_block().expect("code that suspends");
+        let size = Self::allocation_size::<T>(&code_block);
+        match cx.heap.cells.try_allocate(&cx.heap, size) {
+            0 => Err(cx.throw_out_of_memory()),
+            // SAFETY: new, and large enough.
+            address => Ok(unsafe { initialize_at(address, init) }),
         }
     }
 

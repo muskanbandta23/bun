@@ -192,7 +192,7 @@ impl DateFields {
     pub fn with_components(self, millisecond: u16, first: Component, values: &[f64]) -> f64 {
         let value = |component: Component, current: i32| {
             let index = (component as usize).wrapping_sub(first as usize);
-            values.get(index).copied().unwrap_or(current.into())
+            values.get(index).copied().unwrap_or_else(|| current.into())
         };
         let day = make_day(
             value(Component::Year, self.year()),

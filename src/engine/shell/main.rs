@@ -1,7 +1,7 @@
 //! Runs scripts and modules on the engine alone, for conformance suites and benchmarks.
 
 #![feature(negative_impls)]
-#![allow(dead_code, improper_ctypes_definitions)]
+#![allow(improper_ctypes_definitions)]
 // The wrappers that these lints point to need the rest of Bun.
 #![allow(
     clippy::disallowed_methods,
@@ -13,6 +13,7 @@ mod command_line;
 mod files;
 mod functions;
 mod global;
+mod modules;
 mod run;
 mod state;
 

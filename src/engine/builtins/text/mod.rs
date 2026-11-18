@@ -1,8 +1,9 @@
-//! `String`, `RegExp` and `JSON`.
+//! `String`, `RegExp`, `JSON` and the escaping of text.
 
 mod json;
 pub(crate) mod regexp;
 pub(crate) mod string;
+mod uri;
 
 use bun_engine_vm::{RealmSlot, RealmWatchpoint};
 
@@ -10,7 +11,10 @@ use crate::prelude::*;
 use crate::watchpoints::Conditions;
 
 pub(crate) fn initialize_slot(cx: &Cx, slot: RealmSlot) -> bool {
-    json::initialize_slot(cx, slot) || regexp::initialize_slot(cx, slot)
+    string::initialize_slot(cx, slot)
+        || uri::initialize_slot(cx, slot)
+        || json::initialize_slot(cx, slot)
+        || regexp::initialize_slot(cx, slot)
 }
 
 pub(crate) fn add_conditions(
@@ -18,5 +22,5 @@ pub(crate) fn add_conditions(
     which: RealmWatchpoint,
     conditions: &mut Conditions<'_>,
 ) -> bool {
-    regexp::add_conditions(cx, which, conditions)
+    string::add_conditions(cx, which, conditions) || regexp::add_conditions(cx, which, conditions)
 }

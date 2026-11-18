@@ -14,8 +14,8 @@ use smallvec::SmallVec;
 
 use super::element::Element;
 use crate::{
-    Cx, Gc, GcFree, JsPromise, JsResult, JsString, Timer, TypedArray, Value, Vm, WeakTicket,
-    WorkKind,
+    Cx, Gc, GcFree, JsPromise, JsResult, JsString, JsTypedArray, Timer, TypedArray, Value, Vm,
+    WeakTicket, WorkKind,
 };
 
 /// The numbers are what `memory.atomic.wait` returns.
@@ -285,12 +285,19 @@ pub(super) fn forget_agent(vm: &Vm) {
 }
 
 /// All panic unless the memory is shared and the index is valid.
-impl<T: Element + PartialEq> TypedArray<T> {
+impl JsTypedArray {
     pub fn address_of_shared_element(&self, index: usize) -> usize {
         assert!(self.is_shared() && self.is_valid_index(index));
-        self.vector().addr() + index * size_of::<T>()
+        self.vector().addr() + (index << self.size_shift())
     }
 
+    pub fn notify(&self, index: usize, count: u32) -> u32 {
+        notify_at_address(self.address_of_shared_element(index), count)
+    }
+}
+
+/// So do these.
+impl<T: Element + PartialEq> TypedArray<T> {
     fn has_at(&self, index: usize, expected: T) -> bool {
         // SAFETY: only read, at once.
         unsafe { self.elements_unchecked() }.atomic_load(index) == expected
@@ -319,9 +326,5 @@ impl<T: Element + PartialEq> TypedArray<T> {
     ) -> Result<Gc<JsPromise>, WaitResult> {
         let address = self.address_of_shared_element(index);
         wait_asynchronously(cx, address, || self.has_at(index, expected), timeout)
-    }
-
-    pub fn notify(&self, index: usize, count: u32) -> u32 {
-        notify_at_address(self.address_of_shared_element(index), count)
     }
 }

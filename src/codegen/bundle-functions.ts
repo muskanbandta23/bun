@@ -753,7 +753,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
 
     inline void ${basename}BuiltinsWrapper::exportNames()
     {
-    #define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
+    #define EXPORT_FUNCTION_NAME(name) m_vm.registerPrivateName(name##PublicName(), name##PrivateName());
         WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
     #undef EXPORT_FUNCTION_NAME
     }

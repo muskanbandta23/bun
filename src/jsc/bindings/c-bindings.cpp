@@ -911,11 +911,6 @@ static NEVER_INLINE void openDevNullIfStdioIsClosed(int fd)
 
 extern "C" void bun_initialize_process()
 {
-#if OS(DARWIN)
-    if (JSC::Bun__removableFeatureState.isTrimmed || JSC::Bun__removableFeatureState.removedRangeCount) [[unlikely]]
-        Bun__prepareTrimmedExecutable();
-#endif
-
     // Disable printf() buffering. We buffer it ourselves.
     setvbuf(stdout, nullptr, _IONBF, 0);
     setvbuf(stderr, nullptr, _IONBF, 0);

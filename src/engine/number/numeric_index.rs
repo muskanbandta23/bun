@@ -1,6 +1,6 @@
-use bun_engine_text::Text;
+use bun_engine_text::{Text, parse_array_index};
 
-use crate::{NumberText, string_to_number};
+use crate::{string_to_number, write_f64};
 
 /// CanonicalNumericIndexString of ECMA-262.
 #[inline]
@@ -17,9 +17,14 @@ fn by_round_trip(text: Text<'_>) -> Option<f64> {
     if text.len() > MAX_LENGTH {
         return None;
     }
+    if let Some(index) = parse_array_index(text) {
+        return Some(f64::from(index));
+    }
     if text.eq_ascii("-0") {
         return Some(-0.0);
     }
     let number = string_to_number(text);
-    (NumberText::from(number).text() == text).then_some(number)
+    let mut canonical = [0; _];
+    let length = write_f64(number, &mut canonical);
+    (Text::Latin1(&canonical[..length]) == text).then_some(number)
 }

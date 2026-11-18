@@ -26,7 +26,7 @@ pub(super) fn initialize(cx: &Cx) {
 fn current_instant(cx: &Cx) -> JsResult<Instant> {
     let overridden = cx.global().overridden_date_now().get();
     if overridden.is_nan() {
-        return Ok(Instant::now());
+        return Ok(Instant::clamped(bun_core::time::nano_timestamp()));
     }
     Instant::from_overridden_clock(overridden).or_throw(cx)
 }

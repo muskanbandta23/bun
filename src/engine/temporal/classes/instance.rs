@@ -1,3 +1,5 @@
+use core::cell::Cell;
+
 use bun_engine_vm::{CellType, GlobalObject, Shape, Vm};
 
 use super::prelude::*;
@@ -50,6 +52,25 @@ pub(super) trait Instance: Copy {
     fn constructed(self, cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
         let shape = cx.shape_from_new_target(frame.new_target(), &frame.callee(), Self::shape)?;
         Ok(self.allocate(cx, shape).into())
+    }
+}
+
+/// The field that holds the value of an instance.
+pub(super) trait Slot<T> {
+    fn load(&self) -> T;
+}
+
+impl<T: Instance> Slot<T> for T {
+    #[inline(always)]
+    fn load(&self) -> T {
+        *self
+    }
+}
+
+impl<T: Instance> Slot<T> for Cell<T> {
+    #[inline(always)]
+    fn load(&self) -> T {
+        self.get()
     }
 }
 

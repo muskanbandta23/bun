@@ -45,11 +45,11 @@ impl PlainMonthDay {
 
     /// For `FieldSet::Date`.
     pub fn from_fields(fields: &Fields, overflow: Overflow) -> Result<PlainMonthDay> {
-        PlainMonthDay::from_date_fields(fields.date, fields.calendar, overflow)
+        PlainMonthDay::from_date_fields(&fields.date, fields.calendar, overflow)
     }
 
     fn from_date_fields(
-        fields: DateFields,
+        fields: &DateFields,
         calendar: CalendarId,
         overflow: Overflow,
     ) -> Result<PlainMonthDay> {
@@ -59,7 +59,7 @@ impl PlainMonthDay {
 
     pub(crate) fn of_date(date: IsoDate, calendar: CalendarId) -> Result<PlainMonthDay> {
         let fields = DateFields::of_month_day(calendar, date)?;
-        PlainMonthDay::from_date_fields(fields, calendar, Overflow::Constrain)
+        PlainMonthDay::from_date_fields(&fields, calendar, Overflow::Constrain)
     }
 
     pub fn parse(text: Text<'_>) -> Result<ParsedPlainMonthDay, InputError<'_>> {
@@ -86,8 +86,8 @@ impl PlainMonthDay {
 
     /// For `FieldSet::Date` in the calendar of `self`.
     pub fn with(self, fields: &Fields, overflow: Overflow) -> Result<PlainMonthDay> {
-        let merged = self.fields()?.merged(fields.date);
-        PlainMonthDay::from_date_fields(merged, self.calendar, overflow)
+        let merged = self.fields()?.merged(&fields.date);
+        PlainMonthDay::from_date_fields(&merged, self.calendar, overflow)
     }
 
     /// For `FieldSet::Year` in the calendar of `self`.
@@ -96,12 +96,13 @@ impl PlainMonthDay {
         if given.year.is_none() && given.era.zip(given.era_year).is_none() {
             return Err(Error::MonthDayItemWithoutYear);
         }
-        let merged = self.fields()?.merged(given);
-        let date = (self.calendar).date_from_fields(merged, Overflow::Constrain)?;
+        let merged = self.fields()?.merged(&given);
+        let date = (self.calendar).date_from_fields(&merged, Overflow::Constrain)?;
         Ok(PlainDate::from_valid(date, self.calendar))
     }
 
     /// TemporalMonthDayToString
+    #[inline(always)]
     pub fn to_text(self, show_calendar: ShowCalendar) -> IsoText {
         let mut text = IsoText::new();
         if show_calendar.needs_full_date(self.calendar) {

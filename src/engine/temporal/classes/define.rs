@@ -25,17 +25,26 @@ macro_rules! define_object {
 }
 
 /// Makes a value type an `Instance`, and defines `initialize`, which makes the constructor, its prototype and the shape of
-/// the instances. The module has `CONSTRUCTOR_PROPERTIES`, `PROTOTYPE_PROPERTIES` and `construct`. A method of `Instance` can
-/// follow.
+/// the instances. The module has `CONSTRUCTOR_PROPERTIES`, `PROTOTYPE_PROPERTIES` and `construct`. `Name in Slot` stores the
+/// value in another type, and is followed by a method of `Instance`.
 macro_rules! define_class {
     (
         $name:ident, $prototype_name:literal, length $length:literal, $value_of:ident,
-        $shape:ident, $init_shape:ident, $init_constructor:ident $(, { $override:item })?
+        $shape:ident, $init_shape:ident, $init_constructor:ident
+    ) => {
+        define_class!(
+            $name in $name, $prototype_name, length $length, $value_of,
+            $shape, $init_shape, $init_constructor, {}
+        );
+    };
+    (
+        $name:ident in $slot:ty, $prototype_name:literal, length $length:literal, $value_of:ident,
+        $shape:ident, $init_shape:ident, $init_constructor:ident, { $($override:item)? }
     ) => {
         #[bun_engine_macros::cell(name = "Object")]
         struct Object {
             base: JsObject,
-            value: core::cell::Cell<$name>,
+            value: $slot,
         }
 
         impl Instance for $name {
@@ -45,7 +54,7 @@ macro_rules! define_class {
             #[inline(always)]
             fn of(object: &JsObject) -> Option<$name> {
                 let is_instance = object.class().is(<Object as bun_engine_vm::CellKind>::CLASS);
-                is_instance.then(|| Gc::from(object).cast::<Object>().value.get())
+                is_instance.then(|| super::instance::Slot::load(&Gc::from(object).cast::<Object>().value))
             }
 
             #[inline(always)]

@@ -176,10 +176,15 @@ impl PlainTime {
     }
 
     /// RoundTime, and whether the result is on the next day. The increment divides the next larger unit.
+    #[inline(always)]
     pub(crate) fn round_with_carry(self, rounding: Rounding) -> (bool, PlainTime) {
         if rounding.is_to_one(Unit::Nanosecond) {
             return (false, self);
         }
+        self.round_to_step(rounding)
+    }
+
+    fn round_to_step(self, rounding: Rounding) -> (bool, PlainTime) {
         let step = rounding.step_nanoseconds() as u64;
         let remainder = self.0 % step;
         if remainder == 0 {
@@ -202,10 +207,12 @@ impl PlainTime {
         (false, PlainTime(rounded))
     }
 
+    #[inline]
     pub fn precision(options: PrecisionOptions) -> Result<Precision> {
         options.resolve(Unit::Minute, Error::HourInPlainTimeText)
     }
 
+    #[inline(always)]
     pub fn to_text(self, precision: Precision) -> IsoText {
         let mut text = IsoText::new();
         text.push_time(

@@ -147,20 +147,25 @@ impl PlainDateTime {
         Ok(ZonedDateTime::from_local(local, time_zone, self.calendar))
     }
 
+    #[inline]
     pub fn precision(options: PrecisionOptions) -> Result<Precision> {
         options.resolve(Unit::Minute, Error::HourInPlainDateTimeText)
     }
 
-    /// Cannot fail with `Precision::AUTO`.
-    pub fn to_text(self, precision: Precision, show_calendar: ShowCalendar) -> Result<IsoText> {
+    /// The step of `toString` that comes before `to_text`.
+    #[inline]
+    pub fn round_for_text(self, precision: Precision) -> Result<PlainDateTime> {
         let rounded = self.iso_date_time().round(precision.rounding);
-        if !rounded.is_within_limits() {
-            return Err(Error::RoundedDateTimeOutOfRange);
-        }
+        PlainDateTime::new(rounded, self.calendar).or(Err(Error::RoundedDateTimeOutOfRange))
+    }
+
+    /// ISODateTimeToString
+    #[inline(always)]
+    pub fn to_text(self, precision: Precision, show_calendar: ShowCalendar) -> IsoText {
         let mut text = IsoText::new();
-        text.push_date_time(rounded, precision.format);
+        text.push_date_time(self.iso_date_time(), precision.format);
         text.push_calendar(self.calendar, show_calendar);
-        Ok(text)
+        text
     }
 }
 

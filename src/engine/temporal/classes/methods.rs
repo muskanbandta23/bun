@@ -2,7 +2,7 @@
 
 use core::cmp::Ordering;
 
-use super::duration::to_temporal_duration;
+use super::duration::with_duration;
 use super::fields::read_partial_fields;
 use super::getters::HasDate;
 use super::options::overflow_option;
@@ -93,8 +93,9 @@ pub(super) fn add_duration<T: Instance>(
     operation: impl FnOnce(T, &Duration) -> Result<T>,
 ) -> JsResult<Value> {
     let this = T::this(cx, frame.this_value(), member)?;
-    let duration = to_temporal_duration(cx, frame.argument(0))?;
-    operation(this, &duration).or_throw(cx)?.returned(cx)
+    with_duration(cx, frame.argument(0), |cx, duration| {
+        operation(this, duration).or_throw(cx)?.returned(cx)
+    })
 }
 
 /// `add` or `subtract` of a class that has a calendar.
@@ -106,11 +107,12 @@ pub(super) fn add_duration_in_calendar<T: Instance>(
     operation: impl FnOnce(T, &Duration, Overflow) -> Result<T>,
 ) -> JsResult<Value> {
     let this = T::this(cx, frame.this_value(), member)?;
-    let duration = to_temporal_duration(cx, frame.argument(0))?;
-    let overflow = overflow_option(cx, frame.argument(1))?;
-    (operation(this, &duration, overflow))
-        .or_throw(cx)?
-        .returned(cx)
+    with_duration(cx, frame.argument(0), |cx, duration| {
+        let overflow = overflow_option(cx, frame.argument(1))?;
+        (operation(this, duration, overflow))
+            .or_throw(cx)?
+            .returned(cx)
+    })
 }
 
 /// `with` of a plain type that has a calendar.

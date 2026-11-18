@@ -42,7 +42,7 @@ fn three_fields(fields: [u32; 3], separator: u8) -> [u8; 8] {
 #[inline(always)]
 fn eight_digit_values(number: u32) -> u64 {
     let (upper, lower) = (u64::from(number / 10_000), u64::from(number % 10_000));
-    let pairs = upper / 100 | (upper % 100) << 16 | (lower / 100) << 32 | (lower % 100) << 48;
+    let pairs = (upper / 100) | (upper % 100) << 16 | (lower / 100) << 32 | (lower % 100) << 48;
     split_tens(pairs, 0x000f_000f_000f_000f)
 }
 
@@ -53,6 +53,7 @@ const fn two_digits(value: u32) -> [u8; 2] {
 
 impl ShowCalendar {
     /// Whether a month of a year, or a day of a month, is written with all of the date that it holds.
+    #[inline]
     pub(crate) fn needs_full_date(self, calendar: CalendarId) -> bool {
         matches!(self, ShowCalendar::Always | ShowCalendar::Critical)
             || calendar != CalendarId::Iso8601
@@ -112,7 +113,6 @@ impl IsoText {
         self.push_prefix(three_fields(fields, b'-'), 8 - omitted);
     }
 
-    #[inline(always)]
     pub(crate) fn push_date(&mut self, date: IsoDate) {
         self.push_start_of_date(date, 0);
     }
@@ -127,7 +127,6 @@ impl IsoText {
     }
 
     /// FormatTimeString
-    #[inline(always)]
     pub(crate) fn push_time(&mut self, time: PlainTime, format: SecondsFormat) {
         let seconds = time.second_of_day();
         let clock = three_fields([seconds / 3600, seconds / 60 % 60, seconds % 60], b':');
@@ -163,7 +162,6 @@ impl IsoText {
     }
 
     /// FormatUTCOffsetNanoseconds
-    #[inline]
     pub(crate) fn push_offset(&mut self, seconds: i32) {
         let magnitude = seconds.unsigned_abs();
         let fields = [magnitude / 3600, magnitude / 60 % 60, magnitude % 60];
@@ -194,15 +192,16 @@ impl IsoText {
     }
 
     /// FormatCalendarAnnotation
-    #[inline]
+    #[inline(always)]
     pub(crate) fn push_calendar(&mut self, calendar: CalendarId, show: ShowCalendar) {
-        if show == ShowCalendar::Never
-            || (show == ShowCalendar::Auto && calendar == CalendarId::Iso8601)
-        {
-            return;
+        if show != ShowCalendar::Never && show.needs_full_date(calendar) {
+            self.push_calendar_annotation(calendar, show == ShowCalendar::Critical);
         }
-        self.open_annotation(show == ShowCalendar::Critical);
-        self.push_slice(b"u-ca=");
+    }
+
+    fn push_calendar_annotation(&mut self, calendar: CalendarId, is_critical: bool) {
+        self.open_annotation(is_critical);
+        self.push_prefix(*b"u-ca=", 5);
         self.push_slice(calendar.identifier().as_bytes());
         self.push(b']');
     }

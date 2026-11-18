@@ -164,6 +164,7 @@ impl ZonedDateTime {
         i64::from(self.offset_seconds()) * NANOSECONDS_PER_SECOND
     }
 
+    #[inline(always)]
     pub fn offset_text(&self) -> IsoText {
         let mut text = IsoText::new();
         text.push_offset(self.offset_seconds());
@@ -403,11 +404,13 @@ impl ZonedDateTime {
         PlainDateTime::from_valid(self.iso_date_time(), self.calendar)
     }
 
+    #[inline]
     pub fn precision(options: PrecisionOptions) -> Result<Precision> {
         options.resolve(Unit::Minute, Error::HourInZonedDateTimeText)
     }
 
     /// TemporalZonedDateTimeToString
+    #[inline(always)]
     pub fn to_text(&self, precision: Precision, display: ZonedDisplay) -> IsoText {
         let instant = self.instant.rounded(precision.rounding);
         let offset_seconds = if instant == self.instant {

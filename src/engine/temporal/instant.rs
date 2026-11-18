@@ -1,5 +1,3 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use bun_engine_date::TimeZone;
 use bun_engine_text::Text;
 
@@ -69,15 +67,6 @@ impl Instant {
             NumberError::OverriddenClock,
             milliseconds,
         ))
-    }
-
-    /// SystemUTCEpochNanoseconds
-    #[inline]
-    pub fn now() -> Instant {
-        Instant::clamped(match SystemTime::now().duration_since(UNIX_EPOCH) {
-            Ok(since) => since.as_nanos() as i128,
-            Err(before) => -(before.duration().as_nanos() as i128),
-        })
     }
 
     #[inline]
@@ -168,10 +157,15 @@ impl Instant {
     }
 
     /// RoundTemporalInstant. The increment divides a day, so the result is within the limits.
+    #[inline(always)]
     pub(crate) fn rounded(self, rounding: Rounding) -> Instant {
         if rounding.is_to_one(Unit::Nanosecond) {
             return self;
         }
+        self.round_to_step(rounding)
+    }
+
+    fn round_to_step(self, rounding: Rounding) -> Instant {
         let step = rounding.step_nanoseconds() as i64;
         let (days, rest) = split_days(self.0);
         let remainder = rest % step;
@@ -187,11 +181,13 @@ impl Instant {
         Instant(self.0 + i128::from(adjustment))
     }
 
+    #[inline]
     pub fn precision(options: PrecisionOptions) -> Result<Precision> {
         options.resolve(Unit::Minute, Error::HourInInstantText)
     }
 
     /// TemporalInstantToString
+    #[inline(always)]
     pub fn to_text(self, time_zone: Option<TimeZone>, precision: Precision) -> IsoText {
         let rounded = self.rounded(precision.rounding);
         let offset = time_zone.map(|zone| zone.offset_seconds_at(rounded));
@@ -205,7 +201,7 @@ impl Instant {
     }
 }
 
-#[inline]
+#[inline(always)]
 fn time_units_only(duration: &Duration) -> Result<TimeDuration> {
     if !duration.has_date_units() {
         return Ok(duration.time());

@@ -15,6 +15,15 @@ pub(super) fn get(cx: &mut Cx, object: &JsObject, name: PropertyName<'_>) -> JsR
     get_megamorphic(cx, object.into(), name)
 }
 
+/// The first `N` arguments, if each is an int32 or undefined, which counts as zero.
+#[inline(always)]
+pub(super) fn small_integers<const N: usize>(frame: &CallFrame) -> Option<[i32; N]> {
+    let values: [Value; N] = core::array::from_fn(|index| frame.argument(index));
+    (values.iter())
+        .all(|value| value.is_int32() || value.is_undefined())
+        .then(|| values.map(|value| value.as_int32().unwrap_or(0)))
+}
+
 /// ToIntegerWithTruncation
 #[inline]
 pub(super) fn to_integer(cx: &mut Cx, value: Value, not_finite: Error) -> JsResult<i32> {
@@ -36,11 +45,17 @@ pub(super) fn to_optional_integer(
     to_integer(cx, value, not_finite).map(Some)
 }
 
-#[inline]
+#[inline(always)]
 pub(super) fn require_string(cx: &Cx, value: Value, otherwise: Error) -> JsResult<StringView> {
     (value.as_string())
         .ok_or_else(|| throw(cx, otherwise))?
         .view(cx)
+}
+
+/// ToString
+#[inline(always)]
+pub(super) fn to_string(cx: &mut Cx, value: Value) -> JsResult<StringView> {
+    value.to_string(cx)?.view(cx)
 }
 
 #[inline]
@@ -122,7 +137,7 @@ pub(super) fn to_time_zone(cx: &Cx, value: Value) -> JsResult<TimeZone> {
     parse_time_zone(string.text()).or_throw(cx)
 }
 
-#[inline]
+#[inline(always)]
 pub(super) fn text_value(cx: &Cx, text: &IsoText) -> JsResult<Value> {
     Ok(JsString::from_text(cx, text.text()).into())
 }

@@ -1,3 +1,4 @@
+use core::cell::Cell;
 use core::cmp::Ordering;
 
 use bun_engine_vm::JsBigInt;
@@ -78,7 +79,7 @@ static_table!(static PROTOTYPE_PROPERTIES = [
 ]);
 
 define_class!(
-    ZonedDateTime, "Temporal.ZonedDateTime", length 2, ZonedDateTimeValueOf,
+    ZonedDateTime in Cell<ZonedDateTime>, "Temporal.ZonedDateTime", length 2, ZonedDateTimeValueOf,
     temporal_zoned_date_time_shape, init_temporal_zoned_date_time_shape,
     init_temporal_zoned_date_time_constructor,
     {

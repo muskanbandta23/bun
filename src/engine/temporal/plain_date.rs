@@ -48,7 +48,7 @@ impl PlainDate {
 
     /// For `FieldSet::Date`.
     pub fn from_fields(fields: &Fields, overflow: Overflow) -> Result<PlainDate> {
-        let date = fields.calendar.date_from_fields(fields.date, overflow)?;
+        let date = fields.calendar.date_from_fields(&fields.date, overflow)?;
         Ok(PlainDate::from_valid(date, fields.calendar))
     }
 
@@ -73,8 +73,8 @@ impl PlainDate {
 
     /// For `FieldSet::Date` in the calendar of `self`.
     pub fn with(self, fields: &Fields, overflow: Overflow) -> Result<PlainDate> {
-        let merged = DateFields::of_date(self.calendar, self.date)?.merged(fields.date);
-        let date = self.calendar.date_from_fields(merged, overflow)?;
+        let merged = DateFields::of_date(self.calendar, self.date)?.merged(&fields.date);
+        let date = self.calendar.date_from_fields(&merged, overflow)?;
         Ok(PlainDate::from_valid(date, self.calendar))
     }
 
@@ -153,6 +153,7 @@ impl PlainDate {
     }
 
     /// TemporalDateToString
+    #[inline(always)]
     pub fn to_text(self, show_calendar: ShowCalendar) -> IsoText {
         let mut text = IsoText::new();
         text.push_date(self.date);

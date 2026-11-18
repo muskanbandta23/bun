@@ -50,7 +50,12 @@ pub(crate) fn map_unless<S: Copy, T>(
                 return true;
             }
             let target = block_mut::<_, { 2 * BLOCK }>(target, at);
-            map_parts::<S, T, BLOCK, _>(target, block::<_, { 2 * BLOCK }>(source, at), [0, BLOCK], map);
+            map_parts::<S, T, BLOCK, _>(
+                target,
+                block::<_, { 2 * BLOCK }>(source, at),
+                [0, BLOCK],
+                map,
+            );
             at += 2 * BLOCK;
         }
         blocks!(at, at + BLOCK, last, last + BLOCK)
@@ -65,7 +70,10 @@ fn map_parts<S: Copy, T, const SIZE: usize, const PARTS: usize>(
     map: impl Fn(S) -> T,
 ) {
     for at in starts {
-        let (to, from) = (block_mut::<_, SIZE>(target, at), block::<_, SIZE>(source, at));
+        let (to, from) = (
+            block_mut::<_, SIZE>(target, at),
+            block::<_, SIZE>(source, at),
+        );
         for lane in 0..SIZE {
             to[lane].write(map(from[lane]));
         }

@@ -104,6 +104,19 @@ impl<'a, T: CodeUnit> Cursor<'a, T> {
         self.take(count);
     }
 
+    /// [`Self::push_prefix`] with `first` in place of the first unit.
+    #[inline(always)]
+    pub(crate) fn push_prefix_starting_with<const N: usize>(
+        &mut self,
+        first: T,
+        units: &[T; N],
+        count: usize,
+    ) {
+        assert!(count <= N);
+        self.rest[..N].write_copy_of_slice(units)[0] = first;
+        self.take(count);
+    }
+
     #[inline(always)]
     pub fn push_slice(&mut self, units: &[T]) {
         copy::copy(self.take(units.len()), units);
@@ -151,22 +164,30 @@ impl<'a, T: CodeUnit> Cursor<'a, T> {
         true
     }
 
-    /// [`Self::push_mapped_unless`] of the units themselves, between quotation marks.
+    /// [`Self::push_mapped_unless`] of the units themselves, between `before` and `after`.
     #[inline(always)]
-    pub(crate) fn push_quoted_unless<S: CodeUnit>(
+    pub(crate) fn push_between_unless<S: CodeUnit, const N: usize>(
         &mut self,
         source: &[S],
+        before: [u8; N],
+        after: [u8; N],
         stop: impl Fn(S) -> bool + Copy,
     ) -> bool {
-        let [first, middle @ .., last] = &mut self.rest[..source.len() + 2] else {
-            unreachable!()
-        };
-        first.write(T::from(b'"'));
-        last.write(T::from(b'"'));
-        if copy::map_unless(middle, source, |it| T::from_u16_truncating(it.to_u16()), stop) {
+        let (start, rest) = self.rest[..source.len() + 2 * N].split_at_mut(N);
+        let (middle, end) = rest.split_at_mut(source.len());
+        for index in 0..N {
+            start[index].write(T::from(before[index]));
+            end[index].write(T::from(after[index]));
+        }
+        if copy::map_unless(
+            middle,
+            source,
+            |it| T::from_u16_truncating(it.to_u16()),
+            stop,
+        ) {
             return false;
         }
-        self.take(source.len() + 2);
+        self.take(source.len() + 2 * N);
         true
     }
 

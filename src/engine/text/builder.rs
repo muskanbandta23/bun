@@ -143,7 +143,7 @@ impl StringBuilder {
     /// Room for exactly so many more units of the present width, unless there is more already.
     #[inline]
     pub fn reserve(&mut self, additional: usize) {
-        if additional > self.capacity() - self.length {
+        if additional > self.spare() {
             self.resize(self.length.saturating_add(additional));
         }
     }
@@ -151,6 +151,12 @@ impl StringBuilder {
     #[inline(always)]
     fn capacity(&self) -> usize {
         self.latin1_capacity | self.utf16_capacity
+    }
+
+    /// For how many more units of the present width there is room.
+    #[inline(always)]
+    pub(crate) fn spare(&self) -> usize {
+        self.capacity() - self.length
     }
 
     /// Whether the units are of type `T` and `count` more fit, or else there are and will be none.
@@ -199,7 +205,7 @@ impl StringBuilder {
     /// Lends all the room that there is, if the units are of type `T`.
     #[inline(always)]
     pub(crate) fn write_in_spare<T: CodeUnit>(&mut self, write: impl FnOnce(&mut Cursor<'_, T>)) {
-        self.write_in_room(self.capacity() - self.length, write);
+        self.write_in_room(self.spare(), write);
     }
 
     /// Appends what `write` writes, `count` characters at most. Does not call it after an overflow.
@@ -356,7 +362,7 @@ impl StringBuilder {
     /// Room for so many more units of the present width.
     #[inline]
     pub fn grow(&mut self, additional: usize) {
-        if additional > self.capacity() - self.length {
+        if additional > self.spare() {
             self.resize(if self.is_latin1 {
                 self.grown_capacity::<u8>(additional)
             } else {
@@ -372,7 +378,7 @@ impl StringBuilder {
             return self.grow(additional);
         }
         let required = self.length.saturating_add(additional);
-        if !self.is_allocated && required <= self.latin1_capacity / 2 {
+        if self.units == self.scratch && required <= self.latin1_capacity / 2 {
             return self.widen_in_place();
         }
         let capacity = if required <= self.latin1_capacity {

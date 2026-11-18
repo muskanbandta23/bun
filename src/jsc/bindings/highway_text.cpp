@@ -421,6 +421,17 @@ struct JsonStep<uint16_t> {
     }
 };
 
+// A window tells of an unpaired trail surrogate through the lane before it, which its own first lane does not have.
+template<typename In, typename Out>
+static HWY_INLINE bool OpensWithLoneTrail(const In* HWY_RESTRICT in, size_t at)
+{
+    if constexpr (sizeof(In) == 2 && sizeof(Out) == 2) {
+        return at != 0 && (in[at] & 0xfc00) == 0xdc00 && (in[at - 1] & 0xfc00) != 0xd800;
+    } else {
+        return false;
+    }
+}
+
 // Copies units with the escapes of JSON until they end, the room gets short, or a step has a unit that it leaves to
 // the caller. Returns how many it read. The first unit is no trail surrogate.
 template<typename In, typename Out>
@@ -435,6 +446,8 @@ static HWY_INLINE size_t EscapeJson(const In* HWY_RESTRICT in, size_t len, Out* 
 
     // Whether a vector has something to escape is hard to predict, whether one of a stride has is easier.
     for (; at + kJsonStride + lookahead <= len && static_cast<size_t>(limit - out) >= 2 * kJsonStride; at += kJsonStride) {
+        if (OpensWithLoneTrail<In, Out>(in, at))
+            break;
         was_plain = CopyPlainStride(in + at, out);
         if (was_plain) {
             out += kJsonStride;
@@ -465,6 +478,8 @@ static HWY_INLINE size_t EscapeJson(const In* HWY_RESTRICT in, size_t len, Out* 
     }
 
     while (at < len && static_cast<size_t>(limit - out) >= 2 * kJsonStep) {
+        if (OpensWithLoneTrail<In, Out>(in, at))
+            break;
         const size_t count = HWY_MIN(len - at, kJsonStep);
         const auto step = at + kJsonStep + lookahead <= len ? JsonStep<In>::Load(in + at) : JsonStep<In>::LoadLast(in + at, count);
         if (step.template IsLeft<Out>()) break;

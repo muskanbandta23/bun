@@ -122,6 +122,7 @@ realm_slots! {
         proxy_constructor: JsObject,
         proxy_shape: Shape,
         callable_proxy_shape: Shape,
+        revocable_proxy_shape: Shape,
         internal_field_tuple_shape: Shape,
 
         // Functions of the global object

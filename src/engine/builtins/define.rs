@@ -27,8 +27,8 @@ macro_rules! define_object {
 /// `define_constructor!(Name, TABLE, call, construct)` declares the type.
 /// `Name::create(cx, parent, length, name, prototype)` makes the function and links it with the prototype.
 macro_rules! define_constructor {
-    ($name:ident, $table:ident, $call:expr, $construct:expr) => {
-        #[bun_engine_macros::cell(name = "Function", static_table = $table)]
+    ($name:ident, $table:ident, $call:expr, $construct:expr $(, export = $export:literal)?) => {
+        #[bun_engine_macros::cell(name = "Function", static_table = $table $(, export = $export)?)]
         pub(crate) struct $name {
             base: bun_engine_vm::InternalFunction,
         }

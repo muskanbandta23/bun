@@ -23,6 +23,35 @@ fn loads() {
 }
 
 #[test]
+fn every_register_in_an_address() {
+    let mut h = Harness::new();
+    let registers = h.operand_registers;
+    for base in registers.gprs().chain([SP]) {
+        for index in registers.gprs().map(Some).chain([None]) {
+            for offset in [0, 8, 300] {
+                let address = match index {
+                    Some(index) => Address::indexed(base, index, h.random.pick(&SCALES), offset),
+                    None => Address::new(base, offset),
+                };
+                let (reg, size) = (h.any_gpr(), h.random.pick(&SIZES));
+                let case = Case::new(op!(load(size, reg, address)), move |m| {
+                    m.set64(reg, m.load(size, address));
+                });
+                h.add(case.accesses(address));
+                let case = Case::new(op!(store(size, address, reg)), move |m| {
+                    m.store(size, address, m.get64(reg));
+                });
+                h.add(case.accesses(address));
+            }
+            let (dst, rhs) = (h.any_gpr(), index.unwrap_or(SP));
+            h.add(Case::new(op!(add64(dst, base, rhs)), move |m| {
+                m.set64(dst, m.get64(base).wrapping_add(m.get64(rhs)));
+            }));
+        }
+    }
+}
+
+#[test]
 fn loads_that_extend_the_sign() {
     let mut h = Harness::new();
     for size in SIZES {
@@ -85,7 +114,8 @@ fn or_to_memory() {
 #[test]
 fn the_first_scratch_register_as_an_operand() {
     let mut h = Harness::new();
-    let scratch = Harness::default_scratch().gprs[0].unwrap();
+    let scratch = Harness::default_scratch();
+    let (scratch, float) = (scratch.gprs[0].unwrap(), scratch.fprs[0].unwrap());
     for ([reg], address) in h.addresses(&[scratch], ALL_OFFSETS) {
         let size = h.random.pick(&SIZES);
         let case = Case::new(op!(load(size, reg, address)), move |m| {
@@ -100,11 +130,41 @@ fn the_first_scratch_register_as_an_operand() {
             m.set64(reg, m.address(address) as u64);
         });
         h.add(case.keeps_first_scratch());
-        let fpr = h.any_fpr();
-        let case = Case::new(op!(load_f64(fpr, address)), move |m| {
-            m.set_vector(fpr, m.load(Size::S64, address).into());
+        let case = Case::new(op!(load_signed(size, Width::W64, reg, address)), move |m| {
+            m.set64(reg, sign_extend(size, m.load(size, address)) as u64);
         });
         h.add(case.accesses(address).keeps_first_scratch());
+        let case = Case::new(op!(load_f64(float, address)), move |m| {
+            m.set_vector(float, m.load(Size::S64, address).into());
+        });
+        h.add(case.accesses(address).keeps_first_scratch());
+        let case = Case::new(op!(store_f32(address, float)), move |m| {
+            m.store(Size::S32, address, m.vector(float) as u64);
+        });
+        h.add(case.accesses(address).keeps_first_scratch());
+        let case = Case::new(op!(load_vector(float, address)), move |m| {
+            m.set_vector(float, m.load_vector(address));
+        });
+        h.add(case.accesses(address).keeps_first_scratch());
+        let case = Case::new(op!(store_vector(address, float)), move |m| {
+            m.store_vector(address, m.vector(float));
+        });
+        h.add(case.accesses(address).keeps_first_scratch());
+    }
+    for ([low, high], address) in h.addresses(&[scratch], 4) {
+        let case = Case::new(op!(store_pair64(address, low, high)), move |m| {
+            m.store(Size::S64, address, m.get64(low));
+            m.store(Size::S64, address.plus(8), m.get64(high));
+        });
+        h.add(case.accesses(address).keeps_first_scratch());
+        if low != high {
+            let case = Case::new(op!(load_pair64(low, high, address)), move |m| {
+                let both = [address, address.plus(8)].map(|src| m.load(Size::S64, src));
+                m.set64(low, both[0]);
+                m.set64(high, both[1]);
+            });
+            h.add(case.accesses(address).keeps_first_scratch());
+        }
     }
 }
 
@@ -114,20 +174,25 @@ fn integers_are_loaded_from_an_absolute_address_without_scratch_registers() {
     for src in h.absolute_addresses() {
         for size in SIZES {
             let dst = h.any_gpr();
-            let operation = Operation {
-                describe: op!(load(size, dst, src)).describe,
-                emit: Box::new(move |masm, _| {
-                    let scratch = masm.set_scratch(bun_engine_asm::Scratch {
-                        gprs: [None; 2],
-                        fprs: [None; 2],
-                    });
-                    masm.load(size, dst, src);
-                    masm.set_scratch(scratch);
-                }),
-            };
+            let operation = op!(load(size, dst, src)).wrapped(dst, |masm, _, emit| {
+                masm.set_scratch(bun_engine_asm::Scratch {
+                    gprs: [None; 2],
+                    fprs: [None; 2],
+                });
+                emit(masm);
+            });
             let case = Case::new(operation, move |m| m.set64(dst, m.load(size, src)));
             h.add(case.accesses(src));
         }
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn absolute_addresses_are_of_all_lengths() {
+    let addresses = Harness::new().absolute_addresses();
+    for range in [0..1 << 31, 1 << 31..1 << 32, 1 << 32..usize::MAX] {
+        assert!(addresses.iter().any(|address| range.contains(&address.0)));
     }
 }
 
@@ -324,12 +389,11 @@ fn atomic_compare_exchange() {
 
 /// `first` moves the stack pointer by `distance`, and a constant moves it back.
 fn moving_by(distance: i32, operation: Operation, model: impl Fn(&mut Machine) + 'static) -> Case {
-    let Operation { describe, emit } = operation;
-    let emit = Box::new(move |masm: &mut MacroAssembler, target| {
-        emit(masm, target);
+    let operation = operation.wrapped(SP, move |masm, _, emit| {
+        emit(masm);
         masm.sub64(SP, SP, distance);
     });
-    Case::new(Operation { describe, emit }, model)
+    Case::new(operation, model)
 }
 
 #[test]

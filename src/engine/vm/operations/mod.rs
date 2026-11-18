@@ -3,6 +3,7 @@
 pub mod arithmetic;
 mod compare;
 mod convert;
+mod describe;
 mod object;
 mod property;
 

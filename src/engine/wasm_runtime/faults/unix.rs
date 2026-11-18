@@ -38,14 +38,9 @@ pub(super) fn install_handler() -> bool {
         })
 }
 
-fn is_raised_by_instruction(info: &libc::siginfo_t) -> bool {
-    // These number the signals that processes send from here up, and Linux from zero down.
-    const FIRST_SENT: c_int = if cfg!(any(target_os = "macos", target_os = "freebsd")) {
-        0x10001
-    } else {
-        c_int::MAX
-    };
-    (1..FIRST_SENT).contains(&info.si_code)
+/// Nothing is mapped at the address, or the access is not allowed. Only then there is an address.
+fn is_page_fault(info: &libc::siginfo_t) -> bool {
+    matches!(info.si_code, 1 | 2)
 }
 
 /// # Safety
@@ -53,7 +48,7 @@ fn is_raised_by_instruction(info: &libc::siginfo_t) -> bool {
 unsafe extern "C" fn handle(signal: c_int, info: *mut libc::siginfo_t, context: *mut c_void) {
     // SAFETY: the kernel gave us these.
     unsafe {
-        let is_handled = is_raised_by_instruction(&*info)
+        let is_handled = is_page_fault(&*info)
             && redirect(
                 (*info).si_addr().addr(),
                 &mut registers(&mut *context.cast()),
@@ -74,19 +69,16 @@ unsafe fn pass_on(signal: c_int, info: *mut libc::siginfo_t, context: *mut c_voi
     let previous = PREVIOUS[usize::from(signal != SIGNALS[0])].get();
     let previous = previous.unwrap_or(&default);
     let (handler, flags) = (previous.sa_sigaction, previous.sa_flags as c_int);
+    let has_handler = handler != libc::SIG_DFL && handler != libc::SIG_IGN;
     // SAFETY: what the kernel would have done.
     unsafe {
-        let was_sent = !is_raised_by_instruction(&*info);
-        if handler == libc::SIG_IGN && was_sent {
-            return;
-        }
-        let has_handler = handler != libc::SIG_DFL && handler != libc::SIG_IGN;
+        // macOS does not tell signals that were sent.
+        let happens_again = is_page_fault(&*info) && !cfg!(target_os = "macos");
         if !has_handler || flags & libc::SA_RESETHAND != 0 {
             libc::sigaction(signal, &raw const default, ptr::null_mut());
         }
         if !has_handler {
-            // An instruction faults again.
-            if was_sent {
+            if !happens_again {
                 libc::raise(signal);
             }
         } else if flags & libc::SA_SIGINFO != 0 {

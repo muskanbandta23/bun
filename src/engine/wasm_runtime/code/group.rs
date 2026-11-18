@@ -172,9 +172,8 @@ impl CodeGroup {
         let function = self.function(module, code)?;
         let tiering = module.engine().options().tiering;
         if let Tiering::OptimizedOnly = tiering
-            && let Some(optimized) = self.optimize(module, code, Kind::Optimized, compilers)
+            && self.replace_with_optimized(module, code, compilers)
         {
-            self.install_optimized(code, optimized);
             return Ok(());
         }
         let counters = matches!(tiering, Tiering::After(_)).then(|| Counters {
@@ -252,12 +251,24 @@ impl CodeGroup {
         }
     }
 
-    pub(super) fn install_optimized(&self, code: CodeIndex, optimized: Arc<InstalledCode>) {
-        let function = self.existing_function(code).expect("it was compiled");
+    /// Gives `false` if there is no optimized code.
+    pub(super) fn replace_with_optimized(
+        &self,
+        module: &Module,
+        code: CodeIndex,
+        compilers: &mut Compilers,
+    ) -> bool {
+        let optimized = self.optimize(module, code, Kind::Optimized, compilers);
+        let function = self.existing_function(code).expect("it was called");
         let mut state = function.state.lock();
         if let Optimized::Done(_) = state.optimized {
-            return;
+            return true;
         }
+        let Some(optimized) = optimized else {
+            state.optimized = Optimized::Failed;
+            state.waiting_calls = Vec::new();
+            return false;
+        };
         self.slot(code)
             .entry
             .store(optimized.entry(), Ordering::Release);
@@ -273,13 +284,7 @@ impl CodeGroup {
                 user.add(Arc::clone(&baseline));
             }
         }
-    }
-}
-
-impl State {
-    pub(super) fn give_up_optimizing(&mut self) {
-        self.optimized = Optimized::Failed;
-        self.waiting_calls = Vec::new();
+        true
     }
 }
 

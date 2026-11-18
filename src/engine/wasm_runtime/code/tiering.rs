@@ -251,13 +251,11 @@ fn compile(
     compilers: &mut Compilers,
 ) {
     let group = module.code(mode);
-    let function = group.existing_function(code).expect("it was compiled");
     let Kind::LoopEntry(index) = kind else {
-        return match group.optimize(module, code, kind, compilers) {
-            Some(optimized) => group.install_optimized(code, optimized),
-            None => function.state.lock().give_up_optimizing(),
-        };
+        group.replace_with_optimized(module, code, compilers);
+        return;
     };
+    let function = group.existing_function(code).expect("it was compiled");
     let baseline = function.state.lock().lingering_baseline.upgrade();
     let Some(baseline) = baseline else { return };
     if let Some(entry) = group.optimize(module, code, kind, compilers) {

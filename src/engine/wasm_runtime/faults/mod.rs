@@ -43,20 +43,19 @@ unsafe fn redirect(address: usize, registers: &mut Registers<'_>) -> bool {
     if !engine.options().handle_faults {
         return false;
     }
+    let callee = ptr::with_exposed_provenance::<u64>(registers.fp + frame::CALLEE as usize);
+    // SAFETY: generated code always has a frame there, which is the caller's if the stack ends at the entry.
+    if unsafe { callee.read() } != callee_word(code.func()).into() {
+        return false;
+    }
+    // SAFETY: it is that of a function.
+    let instance = unsafe { engine.instance_of_frame(registers.fp) };
     let trap = if address < LOWEST_ADDRESS {
         Trap::NullReference
-    } else {
-        let callee = ptr::with_exposed_provenance::<u64>(registers.fp + frame::CALLEE as usize);
-        // SAFETY: generated code always has a frame there, which is the caller's if the stack ends at the entry.
-        if unsafe { callee.read() } != callee_word(code.func()).into() {
-            return false;
-        }
-        // SAFETY: it is that of a function.
-        let instance = unsafe { engine.instance_of_frame(registers.fp) };
-        if !instance.memories().any(|memory| memory.faults_at(address)) {
-            return false;
-        }
+    } else if instance.memories().any(|memory| memory.faults_at(address)) {
         Trap::MemoryOutOfBounds
+    } else {
+        return false;
     };
     *registers.second_argument = Failure::trap(trap).word();
     *registers.third_argument = *registers.pc + 1;

@@ -335,8 +335,12 @@ impl<'a> Script<'a> {
                 self.registered
                     .insert(unquote(name), self.instance(instance)?);
             }
-            ["assert_malformed" | "assert_invalid", file, _] => {
-                if self.compile(file).is_ok() {
+            ["assert_malformed" | "assert_invalid", file, message] => {
+                let is_out_of_date = matches!(
+                    &*unquote(message),
+                    b"multiple tables" | b"multiple memories"
+                );
+                if self.compile(file).is_ok() && !is_out_of_date {
                     return Err("it is valid".into());
                 }
             }

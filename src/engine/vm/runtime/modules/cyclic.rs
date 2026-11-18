@@ -8,9 +8,9 @@ use bun_engine_text::{Identifier, StringBuilder, Text};
 use super::failure::{self, FailureKind};
 use crate::heap::stack::stack_pointer;
 use crate::{
-    AbstractModuleRecord, Cx, ExportSource, Field, Gc, JsPromise, JsResult, ModuleLoader,
-    ModuleType, Resolution, RootVec, Shape, SourceTextModuleRecord, Thrown, TracedVec, Value, Vm,
-    root_vec,
+    AbstractModuleRecord, Cx, ExportSource, Field, Gc, JsPromise, JsResult, ModuleKeyRef,
+    ModuleLoader, ModuleType, Resolution, RootVec, Shape, SourceTextModuleRecord, Thrown,
+    TracedVec, Value, Vm, root_vec,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -161,6 +161,17 @@ impl CyclicModuleRecord {
         result.map(|_| ())
     }
 
+    pub(super) fn require_imported_module(
+        &self,
+        cx: &Cx,
+        request: ModuleKeyRef<'_>,
+    ) -> JsResult<Gc<AbstractModuleRecord>> {
+        self.imported_module(request).ok_or_else(|| {
+            let words = ["Importing module '", "' is not found."];
+            throw_link_error(cx, &words, &[&request.name.to_identifier()])
+        })
+    }
+
     /// InnerModuleLinking. `require()` can come across modules that are being evaluated.
     fn link_inner(
         &self,
@@ -176,7 +187,7 @@ impl CyclicModuleRecord {
         stack.push(self.into());
         let mut next_index = index + 1;
         for request in self.entries().requests() {
-            let required = self.imported_module(request.key());
+            let required = self.require_imported_module(cx, request.key())?;
             let Some(required) = required.downcast::<CyclicModuleRecord>() else {
                 continue;
             };

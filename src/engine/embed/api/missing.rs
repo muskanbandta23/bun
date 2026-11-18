@@ -1,5 +1,7 @@
 //! What C++ links against and the engine does not have yet.
 
+#![allow(clippy::unimplemented)]
+
 use core::ffi::{c_char, c_void};
 
 use bun_engine_macros::export;
@@ -255,104 +257,4 @@ fn sampling_profiler_top_functions(_: &Vm) -> StringRef {
 #[export]
 fn sampling_profiler_top_bytecodes(_: &Vm) -> StringRef {
     unimplemented!()
-}
-
-// Inspector
-
-#[allow(dead_code, clippy::unused_self)]
-pub(super) mod inspector {
-    use core::cell::Cell;
-    use std::rc::Rc;
-
-    use bun_engine_text::{StringImpl, Text};
-    use bun_engine_vm::{Cx, GcFree, JsResult, MessageLevel, MessageType, Value};
-
-    #[repr(u8)]
-    pub(crate) enum AsyncCallType {
-        DOMTimer,
-        EventListener,
-        PostMessage,
-        RequestAnimationFrame,
-        Microtask,
-    }
-
-    #[repr(u8)]
-    pub(crate) enum ProfilingReason {
-        Api,
-        Microtask,
-        Other,
-    }
-
-    pub(crate) trait Host: GcFree {
-        fn has_frontend(&self) -> bool;
-        fn send(&self, message: &StringImpl);
-        fn dispatch(&self, cx: &mut Cx, id: i32, domain: Text<'_>, method: Text<'_>) -> bool;
-        fn run_while_paused(&self, cx: &mut Cx, is_done: &Cell<bool>);
-        fn frontend_initialized(&self);
-        fn subtype(&self, cx: &mut Cx, value: Value) -> Value;
-        fn internal_properties(&self, cx: &mut Cx, value: Value) -> JsResult<Option<Value>>;
-    }
-
-    pub(crate) struct Controller(Box<dyn Host>);
-
-    impl Controller {
-        pub(crate) fn new(_: &Cx, host: Box<dyn Host>) -> Rc<Controller> {
-            Rc::new(Controller(host))
-        }
-
-        pub(crate) fn did_connect_first_frontend(&self, _: &mut Cx) {}
-
-        pub(crate) fn will_disconnect_frontend(&self, _: &mut Cx) {}
-
-        pub(crate) fn did_disconnect_last_frontend(&self) {}
-
-        pub(crate) fn discard_values(&self) {}
-
-        pub(crate) fn dispatch(&self, _: &mut Cx, _message: Text<'_>) {}
-
-        pub(crate) fn console_message(
-            &self,
-            _: &mut Cx,
-            _: MessageType,
-            _: MessageLevel,
-            _: &[Value],
-        ) -> JsResult<()> {
-            Ok(())
-        }
-
-        pub(crate) fn console_profile(&self, _: &mut Cx, _title: &StringImpl) {}
-
-        pub(crate) fn console_profile_end(&self, _: &mut Cx, _title: &StringImpl) {}
-
-        pub(crate) fn is_interactively_debugging(&self) -> bool {
-            false
-        }
-
-        pub(crate) fn is_paused(&self) -> bool {
-            false
-        }
-
-        pub(crate) fn continue_program(&self) {}
-
-        pub(crate) fn did_schedule_async_call(
-            &self,
-            _: &mut Cx,
-            _: AsyncCallType,
-            _: u64,
-            _: bool,
-        ) {
-        }
-
-        pub(crate) fn did_cancel_async_call(&self, _: AsyncCallType, _: u64) {}
-
-        pub(crate) fn will_dispatch_async_call(&self, _: AsyncCallType, _: u64) {}
-
-        pub(crate) fn did_dispatch_async_call(&self, _: AsyncCallType, _: u64) {}
-
-        pub(crate) fn will_evaluate_script(&self) -> Option<f64> {
-            None
-        }
-
-        pub(crate) fn did_evaluate_script(&self, _start: f64, _: ProfilingReason) {}
-    }
 }

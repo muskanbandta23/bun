@@ -204,6 +204,13 @@ unsafe fn name_list_construct(
 }
 
 #[export]
+unsafe fn name_list_take(place: *mut PropertyNameList, other: &mut PropertyNameList) {
+    let empty = other.new_like();
+    // SAFETY: room for one.
+    unsafe { place.write(core::mem::replace(other, empty)) }
+}
+
+#[export]
 unsafe fn name_list_destroy(list: *mut PropertyNameList) {
     // SAFETY: constructed, and not used again.
     unsafe { list.drop_in_place() }

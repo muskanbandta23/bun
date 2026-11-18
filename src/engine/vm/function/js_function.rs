@@ -623,7 +623,7 @@ pub fn display_name(object: &JsObject) -> StringRef {
         .get_direct(names::displayName)
         .and_then(Value::downcast::<JsString>)
     {
-        return name.to_string_without_resolving();
+        return name.to_string_without_collecting();
     }
     if let Some(function) = object.downcast::<InternalFunction>() {
         return function.name();

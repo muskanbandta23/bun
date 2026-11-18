@@ -6,7 +6,6 @@
 #include <JavaScriptCore/JSGlobalObject.h>
 #include "napi_external.h"
 #include <JavaScriptCore/YarrFlags.h>
-#include <wtf/BumpPointerAllocator.h>
 #include "WriteBarrierList.h"
 #include <wtf/HashMap.h>
 

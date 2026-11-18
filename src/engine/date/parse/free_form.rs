@@ -3,47 +3,74 @@
 use bun_engine_text::CodeUnit;
 
 use super::Parsed;
-use super::cursor::{Cursor, Number, Spaces, Word, is_letter};
-use super::iso::{self, Attempt};
+use super::cursor::{Cursor, Number, Word, is_letter};
 use crate::civil::days_from_civil;
 
 const MAX_YEAR: u32 = 1_000_000;
 
+#[derive(Clone, Copy)]
 enum Keyword {
-    /// From 1.
-    Month(i32),
+    /// From 1. Any word that begins like one.
+    Month(u8),
     /// What it adds to an hour below 12.
-    HalfOfDay(i32),
+    HalfOfDay(u8),
     /// Hours behind UTC.
-    Zone(i32),
+    Zone(u8),
 }
 
+const KEYWORDS: [(&[u8; 3], Keyword); 26] = [
+    (b"jan", Keyword::Month(1)),
+    (b"feb", Keyword::Month(2)),
+    (b"mar", Keyword::Month(3)),
+    (b"apr", Keyword::Month(4)),
+    (b"may", Keyword::Month(5)),
+    (b"jun", Keyword::Month(6)),
+    (b"jul", Keyword::Month(7)),
+    (b"aug", Keyword::Month(8)),
+    (b"sep", Keyword::Month(9)),
+    (b"oct", Keyword::Month(10)),
+    (b"nov", Keyword::Month(11)),
+    (b"dec", Keyword::Month(12)),
+    (b"am\0", Keyword::HalfOfDay(0)),
+    (b"pm\0", Keyword::HalfOfDay(12)),
+    (b"z\0\0", Keyword::Zone(0)),
+    (b"ut\0", Keyword::Zone(0)),
+    (b"utc", Keyword::Zone(0)),
+    (b"gmt", Keyword::Zone(0)),
+    (b"edt", Keyword::Zone(4)),
+    (b"est", Keyword::Zone(5)),
+    (b"cdt", Keyword::Zone(5)),
+    (b"cst", Keyword::Zone(6)),
+    (b"mdt", Keyword::Zone(6)),
+    (b"mst", Keyword::Zone(7)),
+    (b"pdt", Keyword::Zone(7)),
+    (b"pst", Keyword::Zone(8)),
+];
+
+/// No two keywords have the same.
+const fn hash(prefix: u32) -> usize {
+    (prefix.wrapping_mul(0xb940_67ed) >> 26) as usize
+}
+
+static KEYWORDS_BY_HASH: [(u32, Keyword); 64] = {
+    // No word has the prefix zero.
+    let mut table = [(0, Keyword::Zone(0)); 64];
+    let mut index = 0;
+    while index < KEYWORDS.len() {
+        let (&[first, second, third], keyword) = KEYWORDS[index];
+        let prefix = u32::from_le_bytes([first, second, third, 0]);
+        assert!(table[hash(prefix)].0 == 0);
+        table[hash(prefix)] = (prefix, keyword);
+        index += 1;
+    }
+    table
+};
+
+#[inline(always)]
 fn keyword(word: &Word) -> Option<Keyword> {
-    let keyword = match &word.prefix {
-        b"jan" => Keyword::Month(1),
-        b"feb" => Keyword::Month(2),
-        b"mar" => Keyword::Month(3),
-        b"apr" => Keyword::Month(4),
-        b"may" => Keyword::Month(5),
-        b"jun" => Keyword::Month(6),
-        b"jul" => Keyword::Month(7),
-        b"aug" => Keyword::Month(8),
-        b"sep" => Keyword::Month(9),
-        b"oct" => Keyword::Month(10),
-        b"nov" => Keyword::Month(11),
-        b"dec" => Keyword::Month(12),
-        _ if word.is_longer => return None,
-        b"am\0" => Keyword::HalfOfDay(0),
-        b"pm\0" => Keyword::HalfOfDay(12),
-        b"z\0\0" | b"ut\0" | b"utc" | b"gmt" => Keyword::Zone(0),
-        b"edt" => Keyword::Zone(4),
-        b"est" | b"cdt" => Keyword::Zone(5),
-        b"cst" | b"mdt" => Keyword::Zone(6),
-        b"mst" | b"pdt" => Keyword::Zone(7),
-        b"pst" => Keyword::Zone(8),
-        _ => return None,
-    };
-    Some(keyword)
+    let (prefix, keyword) = KEYWORDS_BY_HASH[hash(word.prefix)];
+    let is_whole = !word.is_longer || matches!(keyword, Keyword::Month(_));
+    (prefix == word.prefix && is_whole).then_some(keyword)
 }
 
 struct Date {
@@ -133,10 +160,11 @@ struct Zone {
 
 impl Zone {
     /// From what follows the sign.
+    #[inline(always)]
     fn read<T: CodeUnit>(sign: i32, cursor: &mut Cursor<'_, T>) -> Option<Zone> {
         let (value, digits) = cursor.number().map_or((0, 0), |it| (it.value, it.digits));
         let (hours, minutes) = match digits {
-            _ if cursor.peek() == b':' => (value, None),
+            _ if cursor.is_at(b':') => (value, None),
             1 | 2 => (value, Some(0)),
             3 | 4 => (value / 100, Some(value % 100)),
             _ => return None,
@@ -161,8 +189,7 @@ impl Zone {
     }
 }
 
-struct Parser<'a, T> {
-    cursor: Cursor<'a, T>,
+struct Parts {
     date: Date,
     clock: Clock,
     zone: Option<Zone>,
@@ -170,64 +197,60 @@ struct Parser<'a, T> {
     has_number: bool,
 }
 
-pub(super) fn parse<T: CodeUnit>(text: &[T], spaces: Spaces) -> Option<Parsed> {
-    let mut cursor = Cursor::new(text, spaces);
-    match iso::parse(&mut cursor) {
-        Attempt::Complete(parsed) => Some(parsed),
-        Attempt::Invalid => None,
-        Attempt::Unfinished { numbers, count } => Parser {
-            cursor,
-            date: Date {
-                numbers,
-                count,
-                named_month: None,
-            },
-            clock: Clock::default(),
-            zone: None,
-            has_number: count != 0,
+/// `cursor` is after the first `count` numbers of the date.
+#[inline(always)]
+pub(super) fn parse<T: CodeUnit>(
+    mut cursor: Cursor<'_, T>,
+    numbers: [i32; 3],
+    count: usize,
+) -> Option<Parsed> {
+    let mut parts = Parts {
+        date: Date {
+            numbers,
+            count,
+            named_month: None,
+        },
+        clock: Clock::default(),
+        zone: None,
+        has_number: count != 0,
+    };
+    loop {
+        match cursor.peek() {
+            0 => break,
+            b'0'..=b'9' => parts.number(&mut cursor)?,
+            b'+' | b'-' => parts.sign(&mut cursor)?,
+            b'(' => cursor.skip_comment(),
+            b')' if parts.has_number => return None,
+            character if is_letter(character) => parts.word(&mut cursor)?,
+            _ => cursor.advance(1),
         }
-        .run(),
     }
+    let time = parts.date.days()? * 86_400_000 + parts.clock.milliseconds()?;
+    Some(match parts.zone {
+        Some(zone) => Parsed::Utc(time - zone.milliseconds()?),
+        None => Parsed::Local(time),
+    })
 }
 
-impl<T: CodeUnit> Parser<'_, T> {
-    fn run(mut self) -> Option<Parsed> {
-        loop {
-            match self.cursor.peek() {
-                0 => break,
-                b'0'..=b'9' => self.number()?,
-                b'+' | b'-' => self.sign()?,
-                b'(' => self.cursor.skip_comment(),
-                b')' if self.has_number => return None,
-                character if is_letter(character) => self.word()?,
-                _ => self.cursor.advance(),
-            }
-        }
-        let time = self.date.days()? * 86_400_000 + self.clock.milliseconds()?;
-        Some(match self.zone {
-            Some(zone) => Parsed::Utc(time - zone.milliseconds()?),
-            None => Parsed::Local(time),
-        })
-    }
-
+impl Parts {
     #[inline(always)]
-    fn number(&mut self) -> Option<()> {
-        let Number { value, .. } = self.cursor.number()?;
+    fn number<T: CodeUnit>(&mut self, cursor: &mut Cursor<'_, T>) -> Option<()> {
+        let Number { value, .. } = cursor.number()?;
         self.has_number = true;
-        if self.cursor.skip(b':') {
-            if self.cursor.skip(b':') {
+        if cursor.skip(b':') {
+            if cursor.skip(b':') {
                 (self.clock.count == 0).then_some(())?;
                 self.clock.push(value)?;
                 return self.clock.push(0);
             }
-            self.cursor.skip(b'.');
+            cursor.skip(b'.');
             return self.clock.push(value);
         }
 
         let continues_clock = self.clock.can_go_on_with(value);
-        if self.cursor.skip(b'.') && continues_clock {
+        if cursor.skip(b'.') && continues_clock {
             self.clock.push(value)?;
-            self.clock.push_last(self.cursor.number()?.milliseconds());
+            self.clock.push_last(cursor.number()?.milliseconds());
         } else if let Some(zone) = &mut self.zone
             && zone.minutes.is_none()
             && value <= 59
@@ -235,44 +258,44 @@ impl<T: CodeUnit> Parser<'_, T> {
             zone.minutes = Some(value);
         } else if continues_clock {
             self.clock.push_last(value);
-            let is_set_off = matches!(self.cursor.peek(), 0 | b'\t'..=b'\r' | b' ' | b'+' | b'-')
-                || self.cursor.is_at_letter(b'z');
+            let is_set_off = matches!(cursor.peek(), 0 | b'\t'..=b'\r' | b' ' | b'+' | b'-')
+                || cursor.is_at_letter(b'z');
             is_set_off.then_some(())?;
         } else {
             self.date.push(value)?;
-            self.cursor.skip(b'-');
+            cursor.skip(b'-');
         }
         Some(())
     }
 
     #[inline(always)]
-    fn word(&mut self) -> Option<()> {
-        match keyword(&self.cursor.word()) {
+    fn word<T: CodeUnit>(&mut self, cursor: &mut Cursor<'_, T>) -> Option<()> {
+        match keyword(&cursor.word()) {
             Some(Keyword::Month(month)) => {
-                self.date.named_month = Some(month);
-                self.cursor.skip(b'-');
+                self.date.named_month = Some(month.into());
+                cursor.skip(b'-');
             }
             Some(Keyword::HalfOfDay(half)) if self.clock.count != 0 => {
-                self.clock.half_of_day = Some(half);
+                self.clock.half_of_day = Some(half.into());
             }
             Some(Keyword::Zone(hours)) if self.has_number => {
                 self.zone = Some(Zone {
                     sign: -1,
-                    hours,
+                    hours: hours.into(),
                     minutes: Some(0),
                 });
             }
-            _ if self.has_number || self.cursor.peek().is_ascii_digit() => return None,
+            _ if self.has_number || cursor.is_at_digit() => return None,
             _ => {}
         }
         Some(())
     }
 
     #[inline(always)]
-    fn sign(&mut self) -> Option<()> {
-        let sign = self.cursor.sign()?;
+    fn sign<T: CodeUnit>(&mut self, cursor: &mut Cursor<'_, T>) -> Option<()> {
+        let sign = cursor.sign()?;
         if self.clock.count != 0 || self.zone.as_ref().is_some_and(Zone::is_utc) {
-            self.zone = Some(Zone::read(sign, &mut self.cursor)?);
+            self.zone = Some(Zone::read(sign, cursor)?);
             return Some(());
         }
         (!self.has_number).then_some(())

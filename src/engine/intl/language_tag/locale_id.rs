@@ -89,7 +89,8 @@ impl<'a> LocaleId<'a> {
             self.transformed_fields.try_reserve(1)?;
             self.transformed_fields.push((key, value));
         }
-        self.transformed_fields.sort_unstable();
+        // Those with the same key stay in the order of the text.
+        (self.transformed_fields).sort_unstable_by_key(|&(key, value)| (key, value.as_ptr()));
         Ok(self.has_transformed_extension())
     }
 

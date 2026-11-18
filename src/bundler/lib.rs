@@ -6,7 +6,7 @@
 #![warn(unused_must_use)]
 
 #[cfg(test)]
-use bun_aot_compiler as _;
+use bun_aot_absent as _;
 #[cfg(test)]
 use bun_sema_standalone as _;
 

@@ -5,12 +5,13 @@ use bun_icu::date_pattern::{Field, Pattern, PatternGenerator, Width};
 use bun_icu::{Buffer, CText};
 use smallvec::SmallVec;
 
-use super::writer::Writer;
-use super::{DateTimeFormat, Options, Purpose};
+use super::formats::Formats;
+use super::locale_data::{Keywords, LocaleData};
+use super::{Options, Purpose};
 use crate::recent::Recent;
 use crate::{KeywordValue, LanguageTag};
 
-/// The arguments that a format was made from.
+/// The arguments that formats were made from.
 struct Request {
     locales: SmallVec<[LanguageTag; 1]>,
     options: Options,
@@ -20,8 +21,8 @@ struct Request {
 #[derive(Default)]
 pub(crate) struct DateCache {
     generators: Recent<CText, Rc<RefCell<PatternGenerator>>, 2>,
-    writers: Recent<CText, Rc<Writer>, 4>,
-    formats: Recent<Request, DateTimeFormat, 8>,
+    locales: Recent<CText, Rc<LocaleData>, 4>,
+    formats: Recent<Request, Rc<Formats>, 16>,
 }
 
 impl DateCache {
@@ -48,26 +49,30 @@ impl DateCache {
         self.generator(locale)?.borrow().field_name(field, width)
     }
 
-    pub(super) fn writer(&self, locale: &CText) -> bun_icu::Result<Rc<Writer>> {
-        (self.writers).find_or_make(locale, || Writer::open(locale).map(Rc::new))
+    pub(super) fn locale_data(&self, locale: CText, keywords: Keywords) -> Rc<LocaleData> {
+        self.locales.find(|it| *it == locale).unwrap_or_else(|| {
+            let data = Rc::new(LocaleData::new(locale.clone(), keywords));
+            self.locales.insert(locale, Rc::clone(&data));
+            data
+        })
     }
 
-    pub(super) fn find_format(
+    pub(super) fn find_formats(
         &self,
         locales: &[LanguageTag],
         options: &Options,
         purpose: Purpose,
-    ) -> Option<DateTimeFormat> {
+    ) -> Option<Rc<Formats>> {
         (self.formats)
             .find(|it| it.purpose == purpose && it.options == *options && *it.locales == *locales)
     }
 
-    pub(super) fn keep_format(
+    pub(super) fn keep_formats(
         &self,
         locales: &[LanguageTag],
         options: &Options,
         purpose: Purpose,
-        format: &DateTimeFormat,
+        formats: &Rc<Formats>,
     ) {
         const MAX_TEXT_LENGTH: usize = 128;
 
@@ -82,7 +87,7 @@ impl DateCache {
                 options: options.clone(),
                 purpose,
             };
-            self.formats.insert(request, format.clone());
+            self.formats.insert(request, Rc::clone(formats));
         }
     }
 }

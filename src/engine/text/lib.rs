@@ -24,7 +24,7 @@ pub use static_names::{
     STATIC_ATOM_COUNT, find_private_name, find_well_known_symbol, names, private_names, symbols,
 };
 pub use string_impl::{FreeExternalBuffer, StaticString, StringImpl};
-pub use string_ref::{IsolatedString, SharedString, StringRef, StringWriter};
+pub use string_ref::{IsolatedString, ReverseStringWriter, SharedString, StringRef, StringWriter};
 pub use symbol::{
     OFFSET_OF_SYMBOL_FLAGS, OFFSET_OF_SYMBOL_HASH, StaticSymbol, SymbolFlags, SymbolRef,
 };

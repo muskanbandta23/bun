@@ -7,6 +7,7 @@
 #include "IsolatedModuleCache.h"
 #include "MessagePort.h"
 #include "helpers.h"
+#include "bun_dependency_versions.h"
 #include "JavaScriptCore/AOTHost.h"
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/JSCellButterfly.h"
@@ -263,20 +264,10 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
 Structure* createMemoryFootprintStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
 
-#ifndef BUN_WEBKIT_VERSION
-#ifndef ASSERT_ENABLED
-#warning "BUN_WEBKIT_VERSION is not defined. WebKit's cmakeconfig.h is supposed to define that. If you're building a release build locally, ignore this warning. If you're seeing this warning in CI, please file an issue."
-#endif
-
-#define WEBKIT_BYTECODE_CACHE_HASH_KEY __TIMESTAMP__
-#else
-#define WEBKIT_BYTECODE_CACHE_HASH_KEY BUN_WEBKIT_VERSION
-#endif
-static consteval unsigned getWebKitBytecodeCacheVersion()
+static consteval unsigned getBytecodeCacheVersion()
 {
-    return WTF::SuperFastHash::computeHash(WEBKIT_BYTECODE_CACHE_HASH_KEY);
+    return WTF::SuperFastHash::computeHash(BUN_VERSION_ENGINE);
 }
-#undef WEBKIT_BYTECODE_CACHE_HASH_KEY
 
 // Declare fuzzilli function registration from FuzzilliREPRL.cpp
 #ifdef FUZZILLI_ENABLED
@@ -431,7 +422,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // BUN_JSC_useWarmUpMarkedBlocks=1 re-enables it.
             JSC::Options::useWarmUpMarkedBlocks() = false;
 #endif
-            JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getWebKitBytecodeCacheVersion());
+            JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getBytecodeCacheVersion());
 
 #ifdef BUN_DEBUG
             JSC::Options::showPrivateScriptsInStackTraces() = true;

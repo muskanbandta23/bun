@@ -8,20 +8,37 @@ use std::env;
 use std::fs;
 use std::path::Path;
 
-/// The release that scripts/build/deps/icu.ts builds, for a check of a target whose headers are not here.
-const PINNED_MAJOR: u32 = 79;
+/// For a check of a target whose headers are not here: nothing is linked, so any suffix will do.
+const UNLINKED_MAJOR: &str = "0";
 
-fn major_in_headers(include: &Path) -> Option<u32> {
+fn major_in_headers(include: &Path) -> Option<String> {
     let header = include.join("unicode/uvernum.h");
     let text = fs::read_to_string(&header).ok()?;
     println!("cargo:rerun-if-changed={}", header.display());
     text.lines()
         .find_map(|line| line.strip_prefix("#define U_ICU_VERSION_MAJOR_NUM "))
-        .and_then(|major| major.trim().parse().ok())
+        .map(|major| major.trim().to_owned())
+}
+
+fn major() -> Option<String> {
+    // Set by scripts/build/rust.ts when the build compiles ICU.
+    if let Ok(major) = env::var("BUN_ICU_MAJOR_VERSION") {
+        return Some(major);
+    }
+    if let Some(root) = env::var_os("BUN_ICU_ROOT") {
+        return major_in_headers(&Path::new(&root).join("include"));
+    }
+    if env::var("HOST") != env::var("TARGET") {
+        return None;
+    }
+    ["/usr/local/include", "/usr/include"]
+        .into_iter()
+        .find_map(|include| major_in_headers(Path::new(include)))
 }
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-env-changed=BUN_ICU_MAJOR_VERSION");
     println!("cargo:rerun-if-env-changed=BUN_ICU_ROOT");
     println!("cargo:rustc-check-cfg=cfg(system_icucore)");
 
@@ -31,15 +48,8 @@ fn main() {
         println!("cargo:rustc-env=BUN_ICU_SYMBOL_SUFFIX=");
         return;
     }
-    let major = match env::var_os("BUN_ICU_ROOT") {
-        Some(root) => major_in_headers(&Path::new(&root).join("include")),
-        None if env::var("HOST") == env::var("TARGET") => {
-            major_in_headers(Path::new("/usr/include"))
-        }
-        None => None,
-    };
     println!(
         "cargo:rustc-env=BUN_ICU_SYMBOL_SUFFIX=_{}",
-        major.unwrap_or(PINNED_MAJOR)
+        major().as_deref().unwrap_or(UNLINKED_MAJOR)
     );
 }

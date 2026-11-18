@@ -8,6 +8,8 @@ mod plan;
 #[cfg_attr(target_arch = "aarch64", path = "stubs_aarch64.rs")]
 #[cfg_attr(target_arch = "x86_64", path = "stubs_x86_64.rs")]
 mod stubs;
+#[cfg(test)]
+mod tests;
 mod values;
 
 pub use plan::{jettison, tier_up};

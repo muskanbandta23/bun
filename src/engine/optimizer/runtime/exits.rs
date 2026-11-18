@@ -11,7 +11,7 @@ use smallvec::SmallVec;
 use super::code::Compiled;
 use super::machine::{Saved, Transfer};
 use super::values::{self, StateFrame};
-use crate::graph::{ARGUMENT_COUNT, FrameIndex};
+use crate::graph::{ARGUMENT_COUNT, FrameIndex, FrameInfo};
 use crate::lower::output::{EXIT_REGISTER, ExitRecord};
 
 /// How often code may leave for the tier below before it is thrown away. Each attempt lasts longer than the last.
@@ -105,16 +105,32 @@ struct Exit<'a> {
     counts: SmallVec<[u32; 6]>,
 }
 
-impl Exit<'_> {
-    /// The words of a frame from its pointer up: the header, `this` and the arguments.
-    fn top_words(state: &StateFrame<'_>) -> u32 {
-        let highest = state.registers.iter().map(|register| register.offset() + 1);
-        highest
-            .max()
-            .unwrap_or(0)
-            .max(Register::HEADER_WORDS as i32 + 1) as u32
-    }
+/// The words of a frame from its pointer up: the header, `this` and the arguments.
+fn top_words(state: &StateFrame<'_>) -> u32 {
+    let highest = state.registers.iter().map(|register| register.offset() + 1);
+    highest
+        .max()
+        .unwrap_or(0)
+        .max(Register::HEADER_WORDS as i32 + 1) as u32
+}
 
+/// Where the frame pointer of each frame of a state goes. The first is the frame that is on the stack; each of the
+/// others lies below the locals of its caller, in an even number of words.
+fn pointers(frames: &[FrameInfo], top: usize, states: &[StateFrame<'_>]) -> SmallVec<[usize; 6]> {
+    let mut pointer = top;
+    let mut pointers = SmallVec::new();
+    for (position, state) in states.iter().enumerate() {
+        if position != 0 {
+            let caller = frames[states[position - 1].frame.index()];
+            let words = caller.frame_words + 1 + top_words(state);
+            pointer -= words.next_multiple_of(2) as usize * 8;
+        }
+        pointers.push(pointer);
+    }
+    pointers
+}
+
+impl Exit<'_> {
     /// What a place has, in the form that the slot of the lower tier wants.
     fn value_of(&self, state: &StateFrame<'_>, position: usize) -> u64 {
         let value = state.values[position];
@@ -125,15 +141,11 @@ impl Exit<'_> {
 
     /// Reads every value out before anything is written over, and works out where the frames go.
     fn read(&mut self, states: &[StateFrame<'_>]) {
-        let mut pointer = self.frame.address();
+        let frames = &self.compiled.output.frames;
+        self.pointers = pointers(frames, self.frame.address(), states);
+        self.counts = SmallVec::from_elem(0, states.len());
         for (frame, state) in states.iter().enumerate() {
-            if frame != 0 {
-                let caller = self.compiled.frame_at(states[frame - 1].frame);
-                let words = caller.frame_words + 1 + Self::top_words(state);
-                pointer -= words.next_multiple_of(2) as usize * 8;
-            }
-            self.pointers.push(pointer);
-            self.counts.push(0);
+            let pointer = self.pointers[frame];
             for (position, &register) in state.registers.iter().enumerate() {
                 let bits = self.value_of(state, position);
                 if register == ARGUMENT_COUNT {

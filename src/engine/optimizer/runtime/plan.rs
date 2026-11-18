@@ -134,7 +134,7 @@ impl Watcher for Assumption {
 }
 
 /// A code block of its own for the optimized code, with the watchpoints that it dies by.
-fn replacement(
+pub(super) fn replacement(
     vm: &Vm,
     code_block: Gc<CodeBlock>,
     tier: Tier,
@@ -178,7 +178,12 @@ fn entry_of(code_block: Gc<CodeBlock>) -> usize {
 }
 
 /// Calls from now on run the optimized code.
-fn install(vm: &Vm, code_block: Gc<CodeBlock>, tier: Tier, compiled: (Output, Dependencies)) {
+pub(super) fn install(
+    vm: &Vm,
+    code_block: Gc<CodeBlock>,
+    tier: Tier,
+    compiled: (Output, Dependencies),
+) {
     let replacement = replacement(vm, code_block, tier, compiled);
     let specialization = code_block.specialization();
     // SAFETY: the code was made for that code block and is entered as a call of that kind.

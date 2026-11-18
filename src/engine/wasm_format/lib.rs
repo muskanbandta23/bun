@@ -1,7 +1,6 @@
 //! The binary format of WebAssembly: types, modules, instructions and their validation.
 
 #![forbid(unsafe_code)]
-#![allow(dead_code, unused_imports)]
 
 mod alloc;
 mod custom;
@@ -13,8 +12,10 @@ pub mod limits;
 mod module;
 pub mod opcode;
 mod ops;
+mod parse;
 mod reader;
 mod types;
+mod validate;
 mod visitor;
 
 pub use alloc::OutOfMemory;
@@ -34,10 +35,12 @@ pub use ops::{
     BrTable, Catch, Catches, FloatBinaryOp, FloatUnaryOp, Flow, IntBinaryOp, IntUnaryOp, LaneType,
     LoadOp, MemArg, StoreOp, VectorLoadOp,
 };
+pub use parse::{Bodies, Parser, UnvalidatedModule, ValidatedBodies};
 pub use types::{
     AbstractHeapType, ArrayType, BlockType, CanonicalType, CanonicalValType, Field, FieldType,
     FuncType, HeapType, RefType, Rtt, StorageType, StructType, TypeKind, Types, ValKind, ValType,
 };
+pub use validate::{Scratch, validate_function};
 pub use visitor::{
     Visit, VisitControl, VisitMemory, VisitNumeric, VisitReference, VisitVariable, VisitVector,
     Visitor,

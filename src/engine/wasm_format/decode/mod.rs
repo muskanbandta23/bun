@@ -46,6 +46,7 @@ use core::marker::PhantomData;
 use bun_engine_asm::{Cond, FloatCond, FloatWidth, Rounding, Shift, Sign, Size, Width};
 
 use self::immediates::Access;
+pub(crate) use self::vector::V128_CONST;
 use crate::error::{Error, Missing};
 use crate::module::{FunctionFlags, ModuleHeader};
 use crate::opcode::{self, *};
@@ -55,6 +56,8 @@ use crate::visitor::{
     Visit, VisitControl, VisitMemory, VisitNumeric, VisitReference, VisitVariable, VisitVector,
     Visitor,
 };
+
+pub(crate) const NO_OPCODE: &str = "can't decode opcode";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Purpose {
@@ -93,6 +96,7 @@ impl Mode for Check {
         match missing {
             Missing::OffsetAfterInstruction => error.set_offset(end),
             Missing::OffsetAfterOpcode => error.set_offset(reader.position()),
+            Missing::OffsetOfLastByte => error.set_offset(end - 1),
             Missing::OpcodeName => error.prefix_reason(opcode::name(bytes[start])),
             Missing::SecondOpcodeNumber => error.prefix_reason(&second.unwrap_or(0).to_string()),
         }
@@ -301,7 +305,7 @@ impl<'a, M: Mode> Decoder<'a, M> {
         use Width::{W32, W64};
 
         v.at(start as u32);
-        let op = read!(self, self.reader.u8(), "can't decode opcode");
+        let op = read!(self, self.reader.u8(), "{NO_OPCODE}");
         let nth = |first: u8| usize::from(op - first);
         match op {
             UNREACHABLE => self.transfer(|| v.unreachable())?,

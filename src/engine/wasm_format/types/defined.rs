@@ -287,10 +287,6 @@ impl TypesBuilder {
         self.types.len()
     }
 
-    pub(crate) fn group_start(&self) -> u32 {
-        self.group_start
-    }
-
     /// The kind of a type of the open group is filled in when the group ends.
     pub(crate) fn heap_type(&self, index: u32) -> HeapType {
         if index < self.group_start {

@@ -266,6 +266,8 @@ impl ValType {
     pub const ANYREF: Self = RefType::ANYREF.value_type();
     /// Below every type. Only the validator sees it, in unreachable code.
     pub(crate) const UNKNOWN: Self = Self(KIND_UNKNOWN);
+    /// No value has it.
+    pub(crate) const NONE: Self = Self(u32::MAX);
 
     #[inline]
     pub const fn int(width: Width) -> Self {

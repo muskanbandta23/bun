@@ -260,6 +260,34 @@ pub struct ImportCounts {
 }
 
 impl ModuleHeader {
+    pub(crate) fn new(features: Features) -> Self {
+        Self {
+            features,
+            types: Types::default(),
+            imports: Vec::new(),
+            funcs: Vec::new(),
+            tables: Vec::new(),
+            memories: Vec::new(),
+            globals: Vec::new(),
+            tags: Vec::new(),
+            imported: ImportCounts::default(),
+            exports: Vec::new(),
+            start: None,
+            elems: Vec::new(),
+            elem_items: Vec::new(),
+            data_count: None,
+            declared: Vec::new(),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn declare(&mut self, func: FuncIndex) {
+        if self.declared.is_empty() {
+            self.declared.resize(self.funcs.len().div_ceil(64), 0);
+        }
+        self.declared[func.usize() / 64] |= 1 << (func.0 % 64);
+    }
+
     #[inline]
     pub fn features(&self) -> Features {
         self.features

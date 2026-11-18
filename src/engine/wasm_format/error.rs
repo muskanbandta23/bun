@@ -32,6 +32,7 @@ struct Details {
 pub(crate) enum Missing {
     OffsetAfterInstruction,
     OffsetAfterOpcode,
+    OffsetOfLastByte,
     /// In front of the reason.
     OpcodeName,
     /// In front of the reason.

@@ -153,7 +153,7 @@ impl PropertySlot {
 
     #[inline(always)]
     pub fn is_cacheable(&self) -> bool {
-        self.is_unset() || self.is_cacheable
+        (self.is_unset() || self.is_cacheable) && !self.is_tainted_by_opaque_object
     }
 
     #[inline(always)]

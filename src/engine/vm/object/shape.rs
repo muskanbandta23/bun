@@ -742,6 +742,9 @@ impl Shape {
     }
 
     fn add_transition(&self, target: &Shape) {
+        if self.has(ShapeFlags::IS_CLAIMED) {
+            return;
+        }
         self.transitions.add(target);
         self.write_barrier_for_cell();
     }

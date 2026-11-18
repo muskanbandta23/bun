@@ -1,13 +1,15 @@
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 use core::mem::offset_of;
 use std::rc::Rc;
 
 use bun_engine_bytecode::{
     Code, Eval, FunctionKind, FunctionRef, Module, Origin, Script, Specialization, Visibility,
 };
-use bun_engine_macros::cell;
+use bun_engine_macros::{Trace, cell};
 use bun_engine_text::{StringRef, Text};
 
+use super::eval::EvalKey;
+use crate::heap::{OnceBox, Owned};
 use crate::{
     CellType, CodeBlock, Cx, Field, Gc, InlineWatchpointSet, Intrinsic, JsArray, JsCell,
     JsFunction, JsResult, JsString, NativeFunction, Shape, SourceCode, SourceProviderRef,
@@ -199,10 +201,25 @@ pub struct ScriptExecutable {
     base: Executable,
     provider: SourceProviderRef,
     top_level: Option<Gc<ScriptExecutable>>,
-    /// Of the top level: by where the template ends.
-    pub(crate) template_objects: TracedMap<u32, Gc<JsArray>>,
+    rare_data: OnceBox<RareData>,
     never_optimize: Cell<bool>,
+    never_fully_optimize: Cell<bool>,
     never_inline: Cell<bool>,
+}
+
+#[derive(Trace)]
+struct RareData {
+    template_objects: TracedMap<u32, Gc<JsArray>>,
+    evals: TracedMap<EvalKey, Gc<EvalExecutable>>,
+}
+
+impl Default for RareData {
+    fn default() -> RareData {
+        RareData {
+            template_objects: TracedMap::empty(),
+            evals: TracedMap::empty(),
+        }
+    }
 }
 
 impl ScriptExecutable {
@@ -216,7 +233,9 @@ impl ScriptExecutable {
             base: Executable::init(shape, call, construct),
             provider,
             top_level,
+            rare_data: OnceBox::new(),
             never_optimize: Cell::new(false),
+            never_fully_optimize: Cell::new(false),
             never_inline: Cell::new(false),
         }
     }
@@ -230,8 +249,30 @@ impl ScriptExecutable {
         self.top_level.unwrap_or_else(|| self.into())
     }
 
+    /// Of the top level: by where the template ends.
+    pub(crate) fn template_objects(&self) -> Owned<'_, TracedMap<u32, Gc<JsArray>>> {
+        // SAFETY: traced with the rare data.
+        unsafe { Owned::new(self, &self.rare_data.get_or_default().template_objects) }
+    }
+
+    /// What direct `eval` in this code has compiled.
+    pub(super) fn evals(&self) -> Owned<'_, TracedMap<EvalKey, Gc<EvalExecutable>>> {
+        // SAFETY: as above.
+        unsafe { Owned::new(self, &self.rare_data.get_or_default().evals) }
+    }
+
+    /// A built-in whose source is not for scripts and tools to see.
+    pub fn is_private_builtin(&self) -> bool {
+        let function = self.downcast::<FunctionExecutable>();
+        function.is_some_and(|it| it.info.origin().contains(Origin::NO_POSITIONS))
+    }
+
     pub fn never_optimize(&self) -> &Cell<bool> {
         &self.never_optimize
+    }
+
+    pub fn never_fully_optimize(&self) -> &Cell<bool> {
+        &self.never_fully_optimize
     }
 
     pub fn never_inline(&self) -> &Cell<bool> {
@@ -247,6 +288,25 @@ impl ScriptExecutable {
         // SAFETY: what it started with.
         unsafe { self.install(specialization, entry, None) }
     }
+
+    pub(crate) fn unlinked_code(
+        &self,
+        cx: &Cx,
+        specialization: Specialization,
+    ) -> JsResult<Rc<Code>> {
+        if let Some(function) = self.downcast::<FunctionExecutable>() {
+            return function.compile(cx, specialization);
+        }
+        Ok(
+            if let Some(program) = self.downcast::<ProgramExecutable>() {
+                Rc::clone(&program.unit().code)
+            } else if let Some(module) = self.downcast::<ModuleExecutable>() {
+                Rc::clone(&module.unit().code)
+            } else {
+                Rc::clone(&Gc::from(self).cast::<EvalExecutable>().unit().code)
+            },
+        )
+    }
 }
 
 macro_rules! top_level_executables {
@@ -255,7 +315,7 @@ macro_rules! top_level_executables {
         pub struct $name {
             base: ScriptExecutable,
             range: core::ops::Range<u32>,
-            unit: Rc<$unit>,
+            unit: RefCell<Option<Rc<$unit>>>,
         }
 
         impl $name {
@@ -263,12 +323,19 @@ macro_rules! top_level_executables {
                 vm.allocate::<$name>($init {
                     base: ScriptExecutable::init(vm.shapes.$shape(), source.provider.clone(), None),
                     range: source.range(),
-                    unit,
+                    unit: RefCell::new(Some(unit)),
                 })
             }
 
-            pub fn unit(&self) -> &Rc<$unit> {
-                &self.unit
+            /// Panics once the code is released.
+            pub fn unit(&self) -> Rc<$unit> {
+                self.unit.borrow().clone().expect("code that may still run")
+            }
+
+            /// For code that does not run again. Its functions keep the executable alive.
+            pub(crate) fn release_code(&self) {
+                self.clear_code(Specialization::Call);
+                self.unit.take();
             }
 
             pub fn range(&self) -> core::ops::Range<u32> {
@@ -365,7 +432,7 @@ impl FunctionExecutable {
         if let Some(text) = self.cached_source_text() {
             return Ok(text);
         }
-        let text = if self.is_builtin() && !self.info.kind().is_class_constructor() {
+        let text = if self.is_private_builtin() && !self.info.kind().is_class_constructor() {
             native_source_text(cx, self.name_text())?
         } else {
             let range = self.info.text_range();
@@ -374,17 +441,6 @@ impl FunctionExecutable {
         };
         self.set_cached_source_text(Some(text));
         Ok(text)
-    }
-
-    pub(crate) fn unlinked_code(
-        &self,
-        cx: &Cx,
-        specialization: Specialization,
-    ) -> JsResult<Rc<Code>> {
-        match self.info.code(specialization) {
-            Some(code) => Ok(code),
-            None => super::compile::compile_function(cx, self, specialization),
-        }
     }
 }
 

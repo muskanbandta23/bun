@@ -9,6 +9,10 @@ use crate::{
 };
 
 #[repr(transparent)]
+#[cfg_attr(
+    rootcheck,
+    rootcheck::allow("made empty, and filled through the owner")
+)]
 struct TracedStackTrace(UnsafeCell<StackTrace>);
 
 // SAFETY: replaced only under the lock of the exception, and the barrier follows.

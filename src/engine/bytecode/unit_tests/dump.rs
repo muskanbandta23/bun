@@ -14,7 +14,7 @@ fn instructions_and_tables() {
     a.add_coverage_block(CoverageBlock {
         start: -1,
         end: 0,
-        is_in_loop_header: true,
+        kind: CoverageKind::LoopHeader,
     });
     a.push_try(handler, HandlerKind::SynthesizedCatch);
     a.position(4, 2, 7);
@@ -90,7 +90,7 @@ spread masks
 suspend points
   0: Await at 39 ->43 saves [loc2, loc5]
 coverage
-  0: -1..0 in a loop header
+  0: LoopHeader -1..0
 constants
   0: [null, 0.5]
   1: /x+/g

@@ -121,6 +121,21 @@ SIMDUTFResult simdutf__base64_decode_from_binary(const char* input, size_t lengt
     return { .error = res.error, .count = res.count };
 }
 
+// `count` is the number of characters read. `output` has room for 3 bytes for every 4 characters, whole or not.
+SIMDUTFResult simdutf__base64_decode_whole_chunks(const char* input, size_t length, char* output, size_t* written, int is_urlsafe)
+{
+    auto res = simdutf::base64_to_binary_details(input, length, output, is_urlsafe ? simdutf::base64_url : simdutf::base64_default, simdutf::last_chunk_handling_options::only_full_chunks);
+    *written = res.output_count;
+    return { res.error, res.input_count };
+}
+
+SIMDUTFResult simdutf__base64_decode_whole_chunks16(const char16_t* input, size_t length, char* output, size_t* written, int is_urlsafe)
+{
+    auto res = simdutf::base64_to_binary_details(input, length, output, is_urlsafe ? simdutf::base64_url : simdutf::base64_default, simdutf::last_chunk_handling_options::only_full_chunks);
+    *written = res.output_count;
+    return { res.error, res.input_count };
+}
+
 // Lenient base64 decoding for Node.js Buffer semantics ("base64" and
 // "base64url"): both the standard and URL-safe alphabets are accepted,
 // whitespace and any other non-alphabet characters are skipped, and decoding

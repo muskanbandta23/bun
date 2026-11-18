@@ -2,6 +2,7 @@
 
 mod class;
 mod class_set;
+mod cursor;
 mod escape;
 mod group;
 mod names;
@@ -15,9 +16,11 @@ use smallvec::SmallVec;
 
 use crate::tree::Group;
 use crate::{Error, Flags};
+use cursor::Cursor;
+use escape::{ClassAtom, Context};
 use group::Level;
 use names::Names;
-use quantifier::Repeated;
+use quantifier::Atom;
 use scan::GroupTotals;
 pub(crate) use sink::{
     Assertion, ClassEscape, ClassKind, Discard, GroupKind, NameId, Quantifier, SetOperator, Sink,
@@ -39,6 +42,11 @@ impl Summary {
     }
 }
 
+/// False only if [`Summary::is_near_limits`] is.
+pub fn may_be_near_limits(pattern: Text<'_>) -> bool {
+    pattern.len() > MAX_DEPTH || pattern.contains_unit(b'{'.into())
+}
+
 /// The early errors of a literal.
 pub fn check_syntax(pattern: Text<'_>, flags: Text<'_>) -> Result<(), Error> {
     let flags = Flags::parse(flags).ok_or(Error::InvalidFlags)?;
@@ -49,12 +57,13 @@ pub fn summarize(pattern: Text<'_>, flags: Flags) -> Result<Summary, Error> {
     parse(pattern, flags, &mut Discard)
 }
 
-pub(crate) fn parse(
-    pattern: Text<'_>,
+pub(crate) fn parse<'a>(
+    pattern: Text<'a>,
     flags: Flags,
-    sink: &mut impl Sink,
+    sink: &'a mut impl Sink,
 ) -> Result<Summary, Error> {
-    with_text!(pattern, |units| Parser::new(units, flags, sink).pattern())
+    let parser = Parser::new(sink);
+    with_text!(pattern, |units| parser.pattern(Cursor::new(units, flags)))
 }
 
 const MAX_DEPTH: usize = 50_000;
@@ -76,6 +85,12 @@ enum Token {
 
 static TOKENS: [Token; 256] = {
     let mut tokens = [Token::Literal; 256];
+    tokens[b']' as usize] = Token::CloseBracket;
+    tokens[b'}' as usize] = Token::CloseBracket;
+    tokens[b'*' as usize] = Token::Quantifier;
+    tokens[b'+' as usize] = Token::Quantifier;
+    tokens[b'?' as usize] = Token::Quantifier;
+    tokens[b'{' as usize] = Token::Quantifier;
     tokens[b'|' as usize] = Token::Bar;
     tokens[b'(' as usize] = Token::OpenGroup;
     tokens[b')' as usize] = Token::CloseGroup;
@@ -83,13 +98,7 @@ static TOKENS: [Token; 256] = {
     tokens[b'$' as usize] = Token::End;
     tokens[b'.' as usize] = Token::Dot;
     tokens[b'[' as usize] = Token::OpenClass;
-    tokens[b']' as usize] = Token::CloseBracket;
-    tokens[b'}' as usize] = Token::CloseBracket;
     tokens[b'\\' as usize] = Token::Backslash;
-    tokens[b'*' as usize] = Token::Quantifier;
-    tokens[b'+' as usize] = Token::Quantifier;
-    tokens[b'?' as usize] = Token::Quantifier;
-    tokens[b'{' as usize] = Token::Quantifier;
     tokens
 };
 
@@ -99,12 +108,7 @@ fn token<C: CodeUnit>(unit: C) -> Token {
     known.copied().unwrap_or(Token::Literal)
 }
 
-struct Parser<'a, C, S: Sink> {
-    units: &'a [C],
-    at: usize,
-    /// With `u` or `v`.
-    is_unicode: bool,
-    has_class_sets: bool,
+struct Parser<'a, S: Sink> {
     sink: &'a mut S,
     level: Level,
     outer_levels: SmallVec<[(Level, S::Outer); 16]>,
@@ -112,22 +116,16 @@ struct Parser<'a, C, S: Sink> {
     is_too_deep: bool,
     group_count: Group,
     totals: Option<GroupTotals>,
-    names: Names<'a>,
+    names: Option<Names<'a>>,
     has_named_groups: bool,
-    /// An error if any group has a name.
-    has_escaped_k: bool,
     highest_reference: u32,
     sum_of_counts: u64,
 }
 
-impl<'a, C: CodeUnit, S: Sink> Parser<'a, C, S> {
-    #[inline]
-    fn new(units: &'a [C], flags: Flags, sink: &'a mut S) -> Self {
+impl<'a, S: Sink> Parser<'a, S> {
+    #[inline(always)]
+    fn new(sink: &'a mut S) -> Self {
         Parser {
-            units,
-            at: 0,
-            is_unicode: flags.is_unicode_aware(),
-            has_class_sets: flags.contains(Flags::UNICODE_SETS),
             sink,
             level: Level::PATTERN,
             outer_levels: SmallVec::new(),
@@ -135,149 +133,102 @@ impl<'a, C: CodeUnit, S: Sink> Parser<'a, C, S> {
             is_too_deep: false,
             group_count: 0,
             totals: None,
-            names: Names::default(),
+            names: None,
             has_named_groups: false,
-            has_escaped_k: false,
             highest_reference: 0,
             sum_of_counts: 0,
         }
     }
 
-    fn pattern(mut self) -> Result<Summary, Error> {
-        if scan::is_too_large(self.units, self.has_class_sets) {
+    #[inline(always)]
+    fn pattern<C: CodeUnit>(mut self, mut cursor: Cursor<'a, C>) -> Result<Summary, Error> {
+        let cursor = &mut cursor;
+        if scan::is_too_large(cursor.units, cursor.has_class_sets) {
             return Err(Error::PatternTooLarge);
         }
-        while let Some(&unit) = self.units.get(self.at) {
-            self.at += 1;
-            match token(unit) {
-                Token::Literal => self.text()?,
-                Token::Bar => self.next_alternative()?,
-                Token::OpenGroup => self.open_group()?,
-                Token::CloseGroup => self.close_group()?,
-                Token::Start => self.sink.assertion(Assertion::Start)?,
-                Token::End => self.sink.assertion(Assertion::End)?,
-                Token::Dot => {
-                    self.sink.dot()?;
-                    self.quantify()?;
-                }
-                Token::OpenClass if self.has_class_sets => self.class_set()?,
-                Token::OpenClass => self.class()?,
-                Token::CloseBracket if self.is_unicode => return Err(Error::LoneBracket),
-                Token::CloseBracket => self.text()?,
-                Token::Backslash => self.atom_escape()?,
-                Token::Quantifier => {
-                    self.at -= 1;
-                    self.quantifier(Repeated::Nothing)?;
-                    self.at += 1;
-                    self.text()?;
-                }
+        while let Some(&unit) = cursor.units.get(cursor.at) {
+            cursor.at += 1;
+            if let Some(atom) = self.term(cursor, token(unit))? {
+                self.quantify(cursor, atom)?;
             }
         }
         if !self.outer_levels.is_empty() {
             return Err(Error::UnterminatedGroup);
         }
-        self.check_references()?;
-        let counted_units = self.sum_of_counts.saturating_mul(2);
+        self.check_references(cursor.has_passed_escaped_k)?;
+        let most_units = self.sum_of_counts * 2 + cursor.units.len() as u64;
         Ok(Summary {
             group_count: self.group_count,
             has_named_groups: self.has_named_groups,
             is_too_deep: self.is_too_deep,
-            has_large_counts: counted_units > u64::from(u32::MAX) - self.units.len() as u64,
+            has_large_counts: most_units > u64::from(u32::MAX),
         })
     }
 
-    /// The unit before the cursor is the first.
-    #[inline]
-    fn text(&mut self) -> Result<(), Error> {
-        let start = self.at - 1;
-        let rest = self.units[self.at..].iter();
-        self.at += rest
-            .take_while(|&&unit| token(unit) == Token::Literal)
-            .count();
-        self.sink.text(&self.units[start..self.at])?;
-        self.quantify()
+    /// After the first unit.
+    #[inline(always)]
+    fn term<C: CodeUnit>(
+        &mut self,
+        cursor: &mut Cursor<'a, C>,
+        first: Token,
+    ) -> Result<Option<Atom<S::Outer>>, Error> {
+        let atom = match first {
+            Token::Bar => return self.next_alternative().map(|()| None),
+            Token::OpenGroup => return self.open_group(cursor).map(|()| None),
+            Token::Start => return self.sink.assertion(Assertion::Start).map(|()| None),
+            Token::End => return self.sink.assertion(Assertion::End).map(|()| None),
+            Token::Backslash => return self.atom_escape(cursor),
+            Token::CloseGroup => self.close_group()?,
+            Token::OpenClass if cursor.has_class_sets => cursor.apart(|it| self.class_set(it))?,
+            Token::OpenClass => self.class(cursor)?,
+            Token::Dot => {
+                self.sink.dot()?;
+                Atom::Complete
+            }
+            Token::CloseBracket if cursor.is_unicode => return Err(Error::LoneBracket),
+            Token::Quantifier if !cursor.is_after_literal_brace() => {
+                return Err(cursor.apart(Cursor::misplaced_quantifier));
+            }
+            Token::Literal | Token::CloseBracket | Token::Quantifier => {
+                let start = cursor.at - 1;
+                while let Some(&unit) = cursor.units.get(cursor.at)
+                    && token(unit) == Token::Literal
+                {
+                    cursor.at += 1;
+                }
+                self.sink.text(cursor.units_since(start))?;
+                Atom::Complete
+            }
+        };
+        Ok(Some(atom))
     }
 
-    /// An ASCII character as it is. The end and all other units are values above 0x7f.
+    /// After the backslash.
     #[inline(always)]
-    fn peek(&self) -> u8 {
-        self.peek_at(0)
-    }
-
-    #[inline(always)]
-    fn peek_at(&self, offset: usize) -> u8 {
-        let unit = self.units.get(self.at + offset);
-        unit.map_or(0xff, |unit| unit.to_u16().min(0xff) as u8)
-    }
-
-    #[inline(always)]
-    fn is_at_end(&self) -> bool {
-        self.at >= self.units.len()
-    }
-
-    #[inline(always)]
-    fn eat(&mut self, ascii: u8) -> bool {
-        let is_next = self.peek() == ascii;
-        self.at += usize::from(is_next);
-        is_next
-    }
-
-    #[inline(always)]
-    fn next_unit(&mut self) -> Option<u32> {
-        let unit = self.units.get(self.at)?;
-        self.at += 1;
-        Some(unit.to_u32())
-    }
-
-    /// Takes the second half if `unit`, which is before the cursor, starts a surrogate pair.
-    #[inline(always)]
-    fn complete_pair(&mut self, unit: u32) -> u32 {
-        if !C::IS_LATIN1
-            && is_lead_surrogate(unit)
-            && let Some(trail) = self.units.get(self.at).map(|it| it.to_u32())
-            && is_trail_surrogate(trail)
-        {
-            self.at += 1;
-            return join_surrogates(unit, trail);
+    fn atom_escape<C: CodeUnit>(
+        &mut self,
+        cursor: &mut Cursor<'a, C>,
+    ) -> Result<Option<Atom<S::Outer>>, Error> {
+        match cursor.peek() {
+            letter @ (b'b' | b'B') => {
+                cursor.at += 1;
+                let negated = letter == b'B';
+                self.sink.assertion(Assertion::WordBoundary { negated })?;
+                return Ok(None);
+            }
+            b'1'..=b'9' if cursor.apart(|it| self.back_reference(it))? => {}
+            b'k' if cursor.apart(|it| self.named_reference(it))? => {}
+            _ => match cursor.escape(Context::Atom)? {
+                ClassAtom::Character(c) => self.sink.character(c)?,
+                ClassAtom::Class(escape) if escape.has_strings() => {
+                    self.sink.class_member(escape)?;
+                    return Ok(Some(Atom::Class { negated: false }));
+                }
+                ClassAtom::Class(escape) => self.sink.class_escape(escape)?,
+            },
         }
-        unit
+        Ok(Some(Atom::Complete))
     }
-
-    /// The character that `unit`, which is before the cursor, starts.
-    #[inline(always)]
-    fn complete_character(&mut self, unit: u32) -> u32 {
-        match self.is_unicode {
-            true => self.complete_pair(unit),
-            false => unit,
-        }
-    }
-
-    /// Saturates.
-    fn decimal(&mut self) -> u64 {
-        let mut value = 0u64;
-        while let digit @ b'0'..=b'9' = self.peek() {
-            value = value
-                .saturating_mul(10)
-                .saturating_add(u64::from(digit - b'0'));
-            self.at += 1;
-        }
-        value
-    }
-}
-
-#[inline(always)]
-fn is_lead_surrogate(unit: u32) -> bool {
-    unit & !0x3ff == 0xd800
-}
-
-#[inline(always)]
-fn is_trail_surrogate(unit: u32) -> bool {
-    unit & !0x3ff == 0xdc00
-}
-
-#[inline(always)]
-fn join_surrogates(lead: u32, trail: u32) -> u32 {
-    0x10000 + ((lead - 0xd800) << 10) + (trail - 0xdc00)
 }
 
 #[inline]

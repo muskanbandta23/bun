@@ -49,6 +49,11 @@ pub(super) fn arithmetic_imm(
     Some((op, ArithmeticImm::new(value.unsigned_abs())?))
 }
 
+#[inline(always)]
+fn scale_fits(size: AccessSize, scale: Scale) -> bool {
+    scale == Scale::One || scale.log2() == size.log2_bytes()
+}
+
 impl MacroAssembler {
     #[inline]
     pub fn assembler(&mut self) -> &mut Assembler {
@@ -78,7 +83,7 @@ impl MacroAssembler {
     }
 
     #[inline(always)]
-    pub(super) fn move_constant(&mut self, width: Width, dst: Gpr, value: i64) {
+    pub fn move_constant(&mut self, width: Width, dst: Gpr, value: i64) {
         match u16::try_from(value) {
             Ok(short) => self
                 .asm
@@ -163,7 +168,7 @@ impl MacroAssembler {
 
     /// Leaves the flags and the first scratch register alone.
     #[inline(always)]
-    pub(super) fn add_constant(&mut self, width: Width, dst: Gpr, lhs: Gpr, value: i64) {
+    pub fn add_constant(&mut self, width: Width, dst: Gpr, lhs: Gpr, value: i64) {
         match arithmetic_imm(AddSub::Add, width, value) {
             Some((op, imm)) => self.asm.add_sub_imm(op, width, dst, lhs, imm),
             None => self.add_long_constant(width, dst, lhs, value),
@@ -234,7 +239,7 @@ impl MacroAssembler {
 
     /// May overwrite the second scratch register.
     #[inline(always)]
-    pub(super) fn mem(&mut self, size: impl Into<AccessSize>, memory: impl Into<Memory>) -> Mem {
+    pub fn mem(&mut self, size: impl Into<AccessSize>, memory: impl Into<Memory>) -> Mem {
         self.mem_through(size.into(), memory.into(), None)
     }
 
@@ -248,12 +253,15 @@ impl MacroAssembler {
     fn mem_through(&mut self, size: AccessSize, memory: Memory, temp: Option<Gpr>) -> Mem {
         match memory {
             Memory::Address(address) => {
-                if !address.has_index()
-                    && let Some(mem) = Mem::offset(size, address.base, address.offset.into())
-                {
+                if let Some((index, scale)) = address.index() {
+                    if address.offset == 0 && scale_fits(size, scale) {
+                        let scaled = scale != Scale::One;
+                        return Mem::indexed(size, address.base, index, IndexExtend::Lsl, scaled);
+                    }
+                } else if let Some(mem) = Mem::offset(size, address.base, address.offset.into()) {
                     return mem;
                 }
-                self.indexed_or_distant(size, address, temp)
+                self.in_steps(size, address, temp)
             }
             Memory::Absolute(address) => self.absolute(size, address, temp),
         }
@@ -270,16 +278,11 @@ impl MacroAssembler {
         mem
     }
 
-    fn indexed_or_distant(&mut self, size: AccessSize, address: Address, temp: Option<Gpr>) -> Mem {
+    fn in_steps(&mut self, size: AccessSize, address: Address, temp: Option<Gpr>) -> Mem {
         let Address {
             base, index, scale, ..
         } = address;
         let offset = i64::from(address.offset);
-        let scaled = scale != Scale::One;
-        let index_fits = !scaled || scale.log2() == size.log2_bytes();
-        if address.has_index() && index_fits && offset == 0 {
-            return Mem::indexed(size, base, index, IndexExtend::Lsl, scaled);
-        }
         let temp = match temp {
             Some(temp) if !address.uses(temp) => temp,
             _ => self.address_scratch(),
@@ -289,8 +292,9 @@ impl MacroAssembler {
         }
         let near = Mem::offset(size, temp, offset);
         let adds_at_once = arithmetic_imm(AddSub::Add, Width::W64, offset).is_some();
-        if index_fits && (adds_at_once || near.is_none()) {
+        if scale_fits(size, scale) && (adds_at_once || near.is_none()) {
             self.add_constant(Width::W64, temp, base, offset);
+            let scaled = scale != Scale::One;
             return Mem::indexed(size, temp, index, IndexExtend::Lsl, scaled);
         }
         if let Some(mem) = near {
@@ -330,10 +334,10 @@ impl MacroAssembler {
         {
             return mem;
         }
-        self.indexed_or_distant_pair(size, address)
+        self.pair_in_steps(size, address)
     }
 
-    fn indexed_or_distant_pair(&mut self, size: AccessSize, address: Address) -> PairMem {
+    fn pair_in_steps(&mut self, size: AccessSize, address: Address) -> PairMem {
         let temp = self.address_scratch();
         if let Some(mem) = PairMem::offset(size, temp, address.offset.into()) {
             self.add_index(temp, address.base, address.index, address.scale);
@@ -345,7 +349,7 @@ impl MacroAssembler {
 
     /// A register that holds the address, for the instructions that take no offset. It may be `sp` or the second
     /// scratch register.
-    pub(super) fn base_register(&mut self, address: Address) -> Gpr {
+    pub fn base_register(&mut self, address: Address) -> Gpr {
         if !address.has_index() && address.offset == 0 {
             return address.base;
         }

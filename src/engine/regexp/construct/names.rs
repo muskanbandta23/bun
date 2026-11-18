@@ -11,7 +11,11 @@ pub struct GroupNames {
     groups: Vec<Group>,
     /// In `units` and in `groups`.
     ends: Vec<(u32, u32)>,
+    /// The positions in the order of the names' text, if there are many.
+    sorted: Vec<u16>,
 }
+
+const NAMES_COMPARED_IN_TURN: usize = 8;
 
 impl GroupNames {
     #[inline]
@@ -24,16 +28,27 @@ impl GroupNames {
         self.ends.is_empty()
     }
 
+    fn get(&self, position: usize) -> (Text<'_>, &[Group]) {
+        let start = position.checked_sub(1).map_or((0, 0), |it| self.ends[it]);
+        let end = self.ends[position];
+        (
+            Text::Utf16(&self.units[start.0 as usize..end.0 as usize]),
+            &self.groups[start.1 as usize..end.1 as usize],
+        )
+    }
+
     /// Each with its groups, ascending. At most one of them takes part in a match.
     pub fn iter(&self) -> impl ExactSizeIterator<Item = (Text<'_>, &[Group])> {
-        let mut start = (0, 0);
-        self.ends.iter().map(move |&end| {
-            let (units, groups) = core::mem::replace(&mut start, end);
-            (
-                Text::Utf16(&self.units[units as usize..end.0 as usize]),
-                &self.groups[groups as usize..end.1 as usize],
-            )
-        })
+        (0..self.len()).map(|position| self.get(position))
+    }
+
+    pub fn find(&self, name: Text<'_>) -> Option<&[Group]> {
+        if self.sorted.is_empty() {
+            return self.iter().find(|it| it.0 == name).map(|it| it.1);
+        }
+        let get = |position: u16| self.get(position.into());
+        let found = self.sorted.binary_search_by(|&it| get(it).0.cmp(&name));
+        found.ok().map(|index| get(self.sorted[index]).1)
     }
 }
 
@@ -109,6 +124,11 @@ impl NamedGroups {
             names.ends[usize::from(position)].1 = index as u32 + 1;
         }
         names.groups = self.groups.iter().map(|&(_, group)| group).collect();
+        if names.len() > NAMES_COMPARED_IN_TURN {
+            let mut sorted: Vec<u16> = (0..names.len() as u16).collect();
+            sorted.sort_unstable_by_key(|&position| names.get(position.into()).0);
+            names.sorted = sorted;
+        }
         if self.references.is_empty() {
             return Ok(names);
         }

@@ -2,9 +2,9 @@
 //! so a trie that goes deeper before it accepts tries them in that order.
 
 use super::strings::Strings;
-use super::{Builder, NO_CAPTURES, Outer, PLAIN_GROUP};
+use super::{Builder, NO_CAPTURES, Outer};
 use crate::Error;
-use crate::parser::Sink;
+use crate::parser::{GroupKind, Sink};
 use crate::set::{Set, SetBuilder};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -183,7 +183,7 @@ impl Builder {
                     };
                     let accepts = trie.states[state as usize].accepts;
                     if accepts || first.target != last.target {
-                        steps.push(Step::Close(self.open(PLAIN_GROUP)?));
+                        steps.push(Step::Close(self.open(GroupKind::PLAIN)?));
                     }
                     if accepts {
                         steps.push(Step::NextAlternative);

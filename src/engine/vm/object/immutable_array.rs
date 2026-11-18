@@ -5,8 +5,9 @@ use bun_alloc::AllocError;
 
 use crate::heap::{barrier, visit_children_of};
 use crate::{
-    CellKind, CellType, CellTypeRange, Class, ClassOps, ElementKind, Extends, Gc, GcFree, JsCell,
-    Shape, Storage, TypeFlags, Value, Visitor, Vm, ascii_literal,
+    CellKind, CellType, CellTypeRange, Class, ClassOps, ElementKind, ElementWriter, Elements,
+    Extends, Gc, GcFree, HoleMode, JsCell, Shape, Storage, TypeFlags, Value, Visitor, Vm,
+    ascii_literal,
 };
 
 /// A list without holes that never changes. After the header it looks like a storage, so arrays can share it until
@@ -86,32 +87,35 @@ impl ImmutableArray {
         Self::OFFSET_OF_ELEMENTS + if length == 0 { 1 } else { length as usize } * size_of::<u64>()
     }
 
-    /// `element` gives the word for each index.
+    /// Panics unless `fill` writes `length` elements.
+    ///
+    /// # Safety
+    /// None is a hole, and no collection runs meanwhile.
     #[inline(always)]
-    fn try_create(
+    pub(crate) unsafe fn try_build(
         vm: &Vm,
         kind: ElementKind,
         length: usize,
-        mut element: impl FnMut(usize) -> u64,
+        fill: impl FnOnce(&mut ElementWriter<'_>),
     ) -> Result<Gc<ImmutableArray>, AllocError> {
         if length > Storage::MAX_VECTOR_LENGTH as usize {
             return Err(AllocError);
         }
-        let size = Self::allocation_size(length as u32);
+        let length = length as u32;
+        let size = Self::allocation_size(length);
         let address = vm.heap.cells.try_allocate(&vm.heap, size);
         if address == 0 {
             return Err(AllocError);
         }
-        let _defer = vm.heap.defer_collection();
         // SAFETY: a new cell of that size, which is complete before the next collection.
         unsafe {
             let array = Gc::<ImmutableArray>::from_address(address);
             JsCell::initialize(array.as_ptr().cast(), vm.shapes.immutable_array(kind));
             let storage = Storage::from_address(address + Self::OFFSET_OF_ELEMENTS);
-            storage.set_lengths(length as u32, length as u32);
-            for index in 0..length {
-                storage.elements_ptr().add(index).write(element(index));
-            }
+            storage.set_lengths(length, length);
+            let mut writer = ElementWriter::new(storage.uninitialized_elements(0, length), kind);
+            fill(&mut writer);
+            assert!(writer.remaining() == 0);
             barrier::publish_fence();
             Ok(array)
         }
@@ -119,7 +123,9 @@ impl ImmutableArray {
 
     #[inline]
     pub fn try_from_values(vm: &Vm, values: &[Value]) -> Result<Gc<ImmutableArray>, AllocError> {
-        Self::try_from_fn(vm, values.len(), |index| values[index])
+        let fill = |writer: &mut ElementWriter<'_>| writer.extend_from_slice(values);
+        // SAFETY: only copies values.
+        unsafe { Self::try_build(vm, ElementKind::Contiguous, values.len(), fill) }
     }
 
     /// No collection runs meanwhile.
@@ -129,24 +135,37 @@ impl ImmutableArray {
         length: usize,
         mut element: impl FnMut(usize) -> Value,
     ) -> Result<Gc<ImmutableArray>, AllocError> {
-        Self::try_create(vm, ElementKind::Contiguous, length, |index| {
-            element(index).to_bits()
-        })
+        let fill = |writer: &mut ElementWriter<'_>| {
+            let _defer = vm.heap.defer_collection();
+            (0..length).for_each(|index| writer.push(element(index)));
+        };
+        // SAFETY: values, with collection deferred.
+        unsafe { Self::try_build(vm, ElementKind::Contiguous, length, fill) }
     }
 
     pub fn try_from_int32s(vm: &Vm, values: &[i32]) -> Result<Gc<ImmutableArray>, AllocError> {
-        Self::try_create(vm, ElementKind::Int32, values.len(), |index| {
-            Value::int32(values[index]).to_bits()
-        })
+        let fill = |writer: &mut ElementWriter<'_>| {
+            values.iter().for_each(|&it| writer.push(Value::int32(it)));
+        };
+        // SAFETY: only copies values.
+        unsafe { Self::try_build(vm, ElementKind::Int32, values.len(), fill) }
     }
 
     pub fn try_from_doubles(vm: &Vm, values: &[f64]) -> Result<Gc<ImmutableArray>, AllocError> {
-        if values.iter().any(|value| value.is_nan()) {
+        let source = Elements::Double(values);
+        if source.has_holes() {
             return Self::try_from_fn(vm, values.len(), |index| Value::double(values[index]));
         }
-        Self::try_create(vm, ElementKind::Double, values.len(), |index| {
-            values[index].to_bits()
-        })
+        let fill = |writer: &mut ElementWriter<'_>| writer.extend(source, HoleMode::Keep);
+        // SAFETY: only copies, and none is NaN.
+        unsafe { Self::try_build(vm, ElementKind::Double, values.len(), fill) }
+    }
+
+    /// The same values in a kind that is at least as general.
+    pub fn try_generalized(&self, vm: &Vm, kind: ElementKind) -> Result<Gc<Self>, AllocError> {
+        let fill = |writer: &mut ElementWriter<'_>| writer.extend(self.elements(), HoleMode::Keep);
+        // SAFETY: only copies what has no holes.
+        unsafe { Self::try_build(vm, kind, self.len() as usize, fill) }
     }
 
     /// # Safety
@@ -198,6 +217,20 @@ impl ImmutableArray {
         // SAFETY: none is empty, none changes, and the slice is inside the cell.
         (self.kind() != ElementKind::Double)
             .then(|| unsafe { core::slice::from_raw_parts(elements, self.len() as usize) })
+    }
+
+    #[inline(always)]
+    pub fn elements(&self) -> Elements<'_> {
+        use core::slice::from_raw_parts;
+        let (first, length) = (self.storage().elements_ptr(), self.len() as usize);
+        // SAFETY: of that kind. None changes, and the slice is inside the cell.
+        unsafe {
+            match self.kind() {
+                ElementKind::Int32 => Elements::Int32(from_raw_parts(first.cast(), length)),
+                ElementKind::Double => Elements::Double(from_raw_parts(first.cast(), length)),
+                _ => Elements::Contiguous(from_raw_parts(first.cast(), length)),
+            }
+        }
     }
 
     pub fn iter(&self) -> impl Iterator<Item = Value> {

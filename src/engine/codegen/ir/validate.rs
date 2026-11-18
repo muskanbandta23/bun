@@ -164,7 +164,7 @@ fn fits_register(function: &Function, ty: Type, reg: Reg) -> bool {
 fn fits_boundary(function: &Function, ty: Type, boundary: Boundary) -> bool {
     match boundary {
         Boundary::Register(reg) => fits_register(function, ty, reg),
-        Boundary::Frame(offset) => offset % 8 == 0,
+        Boundary::Frame(offset) => offset % ty.bytes().min(8) as i32 == 0,
     }
 }
 

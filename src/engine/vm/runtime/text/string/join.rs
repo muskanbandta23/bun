@@ -6,8 +6,7 @@ use bun_engine_text::{CodeUnit, MAX_LENGTH, StringRef, Text};
 
 use super::joiner::{Separator, write_number};
 use crate::{
-    Cx, ElementKind, Elements, Gc, JsObject, JsResult, JsString, RopeBuilder,
-    StringJoiner, Value,
+    Cx, ElementKind, Elements, Gc, JsObject, JsResult, JsString, RopeBuilder, StringJoiner, Value,
 };
 
 #[inline(always)]

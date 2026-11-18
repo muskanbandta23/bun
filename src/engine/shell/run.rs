@@ -122,8 +122,8 @@ pub(crate) fn check_exception(cx: &mut Cx, exception: Option<Value>, is_last_scr
 }
 
 pub(crate) fn take_exception<T>(cx: &Cx, result: JsResult<T>) -> Option<Value> {
-    let exception = result.is_err().then(|| cx.clear_exception());
-    exception.flatten().map(|exception| exception.value())
+    let _ = result.err()?;
+    Some(cx.clear_exception()?.value())
 }
 
 #[native_abi]

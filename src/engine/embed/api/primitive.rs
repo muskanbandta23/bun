@@ -2,7 +2,8 @@ use bun_engine_bigint::LiteralRadix;
 use bun_engine_macros::export;
 use bun_engine_text::{PropertyName, StringImpl, StringRef, Text};
 use bun_engine_vm::{
-    Cx, Gc, JsBigInt, JsResult, JsRopeString, JsString, JsSymbol, PropertyKey, Value, Vm,
+    BooleanObject, Cx, Gc, JsBigInt, JsResult, JsRopeString, JsString, JsSymbol, PropertyKey,
+    Shape, Value, Vm,
 };
 
 #[export]
@@ -155,4 +156,9 @@ fn bigint_to_string(value: &JsBigInt, cx: &Cx, radix: u32) -> JsResult<StringRef
 #[export]
 fn bigint_compare_to_number(value: &JsBigInt, number: f64) -> i32 {
     value.value().cmp_number(number).map_or(0, |it| it as i32)
+}
+
+#[export]
+fn boolean_object_create(vm: &Vm, shape: Gc<Shape>) -> Gc<BooleanObject> {
+    BooleanObject::create(vm, shape, Value::FALSE)
 }

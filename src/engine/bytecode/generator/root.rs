@@ -111,6 +111,7 @@ impl Buffers {
     ) -> Result<(Rc<Code>, Declarations), Failure> {
         let mut generator = Generator::new(self, environment, ast, CodeKind::Eval, outer);
         generator.context = context;
+        (generator.origin).set(Origin::DEBUGGER, context.contains(EvalContext::BY_DEBUGGER));
         let declarations = generator.declarations();
         generator.script_code();
         Ok((generator.finish()?, declarations))
@@ -239,20 +240,7 @@ impl<'a> Generator<'a> {
         self.visibility = function.visibility;
         self.created_at = function.created_at;
         self.is_strict = function.is_strict();
-        self.context = function.context;
-        if kind != FunctionKind::Arrow {
-            self.context |= EvalContext::IN_FUNCTION;
-            let context = &mut self.context;
-            context.set(EvalContext::IN_METHOD, kind.has_home_object());
-            context.set(
-                EvalContext::IN_DERIVED_CONSTRUCTOR,
-                kind == FunctionKind::DerivedConstructor,
-            );
-            context.set(
-                EvalContext::IN_FIELD_INITIALIZER,
-                kind == FunctionKind::FieldInitializer,
-            );
-        }
+        self.context = function.eval_context();
         self.suspension = match (function.is_async(), function.is_generator()) {
             (false, false) => Suspension::None,
             (false, true) => Suspension::Generator,
@@ -378,7 +366,7 @@ impl<'a> Generator<'a> {
             let mut layout = Layout::new(if owns_variables {
                 ScopeKind::Function
             } else {
-                ScopeKind::Block
+                ScopeKind::Program
             });
             for is_variable in [true, false] {
                 for binding in owned() {

@@ -13,6 +13,7 @@ pub(super) enum BlockSource {
     Shapes,
 }
 
+#[unsafe(export_name = "engine_shape_base")]
 static SHAPE_BASE: AtomicUsize = AtomicUsize::new(0);
 static SHAPE_ID_LIMIT: AtomicUsize = AtomicUsize::new(0);
 

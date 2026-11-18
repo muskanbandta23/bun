@@ -1961,6 +1961,12 @@ export const fileOverrides: FileOverride[] = [
     desc: "Same as highway_json.cpp below: the kernels run over every byte of a PNG image.",
   },
   {
+    file: "src/jsc/bindings/highway_text.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run over every character of a long string.",
+  },
+  {
     file: "src/jsc/bindings/highway_webp_decoder.cpp",
     extraFlags: ["-O2"],
     when: c => c.debug,

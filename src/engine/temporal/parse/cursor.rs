@@ -93,14 +93,23 @@ impl<'a, T: CodeUnit> Cursor<'a, T> {
     /// An optional TemporalDecimalFraction, in units of 10^-9. The outer `None` is an error.
     #[inline]
     pub(super) fn fraction(&mut self) -> Option<Option<u32>> {
+        const SCALES: [u32; 9] = [
+            100_000_000,
+            10_000_000,
+            1_000_000,
+            100_000,
+            10_000,
+            1_000,
+            100,
+            10,
+            1,
+        ];
         if !self.eat_if(|next| next == b'.' || next == b',') {
             return Some(None);
         }
         let digits = self.take_while(|next| next.is_ascii_digit());
-        if digits.is_empty() || digits.len() > 9 {
-            return None;
-        }
+        let scale = SCALES.get(digits.len().checked_sub(1)?)?;
         let value = (digits.iter()).fold(0, |value, digit| value * 10 + (digit.to_u32() & 0xf));
-        Some(Some(value * 10u32.pow(9 - digits.len() as u32)))
+        Some(Some(value * scale))
     }
 }

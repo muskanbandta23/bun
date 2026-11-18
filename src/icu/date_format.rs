@@ -6,8 +6,9 @@ use core::ptr;
 use smallvec::{Array, SmallVec};
 
 use crate::Result;
+use crate::argument::{locale_id, pattern_length};
 use crate::calendar::{Calendar, UCalendar};
-use crate::date_pattern::{Pattern, pattern_length};
+use crate::date_pattern::Pattern;
 use crate::error::Status;
 use crate::ffi::{fill, open};
 use crate::formatted_value::{FieldPositions, UFieldPositionIterator};
@@ -118,13 +119,14 @@ icu_handle! {
 
 impl DateFormat {
     pub fn open(locale: &CStr, pattern: &[u16]) -> Result<DateFormat> {
+        let locale = locale_id(locale)?;
         let length = pattern_length(pattern)?;
         // SAFETY: `locale` is terminated, `pattern`, which is copied, has `length` units, and the zone is optional.
         open(|status| unsafe {
             udat_open(
                 UDAT_PATTERN,
                 UDAT_PATTERN,
-                locale.as_ptr(),
+                locale,
                 ptr::null(),
                 0,
                 pattern.as_ptr(),
@@ -187,13 +189,14 @@ impl DateFormat {
 
 /// The standard pattern of a locale for a date, a time or both.
 pub fn style_pattern(locale: &CStr, date: Option<Style>, time: Option<Style>) -> Result<Pattern> {
+    let locale = locale_id(locale)?;
     let code = |style: Option<Style>| style.map_or(UDAT_NONE, |style| style as i32);
     // SAFETY: `locale` is terminated, the zone is optional, and the pattern is not read.
     let format = open(|status| unsafe {
         udat_open(
             code(time),
             code(date),
-            locale.as_ptr(),
+            locale,
             ptr::null(),
             0,
             ptr::null(),

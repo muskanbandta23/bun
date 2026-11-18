@@ -75,9 +75,13 @@ pub(crate) unsafe fn borrowed<'a, T>(units: *const T, length: i32) -> &'a [T] {
     }
 }
 
+/// Below 2^30, so that ICU can add two lengths or double one.
 #[inline]
 pub(crate) fn length<T>(units: &[T]) -> Result<i32> {
-    i32::try_from(units.len()).map_err(|_| Error::INDEX_OUT_OF_BOUNDS)
+    match i32::try_from(units.len()) {
+        Ok(length) if length < 1 << 30 => Ok(length),
+        _ => Err(Error::MEMORY_ALLOCATION),
+    }
 }
 
 /// For a function that writes to a pointer and a capacity, and returns the length of the whole result even if it did not fit.

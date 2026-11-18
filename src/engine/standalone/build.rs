@@ -13,6 +13,7 @@ const KERNELS: &[&str] = &[
     "highway_strings.cpp",
     "highway_byte_set.cpp",
     "highway_elements.cpp",
+    "highway_text.cpp",
 ];
 const HEADERS: [&str; 2] = ["highway_dispatch.h", "BufferStringSearch.h"];
 
@@ -40,7 +41,7 @@ fn main() {
         .cpp(true)
         .compiler(env::var("CXX").unwrap_or_else(|_| "clang++".into()))
         .std("c++23")
-        .opt_level(2)
+        .opt_level(3)
         .warnings(false)
         .flag("-fno-exceptions")
         .flag("-fno-omit-frame-pointer")
@@ -61,6 +62,10 @@ fn main() {
         .files(HIGHWAY_SOURCES.map(|source| vendor.join("highway").join(source)))
         .file(vendor.join("simdutf/src/simdutf.cpp"))
         .file(repository.join("src/simdutf_sys/bun-simdutf.cpp"));
+
+    if env::var("CARGO_CFG_TARGET_ARCH").unwrap() == "x86_64" {
+        native.flag("-march=nehalem");
+    }
 
     // A kernel includes "root.h", which is looked for beside the source first: the copy finds this crate's.
     for name in KERNELS.iter().chain(&HEADERS) {

@@ -41,7 +41,9 @@ impl Lowering<'_> {
         let copies = min.saturating_sub(1) as usize;
         let cost = (self.graph.node_count() - nodes).saturating_mul(copies);
         let is_plain = matches!(node.kind, Kind::Steps(_) | Kind::CodePoint(_));
-        if is_plain || copies == 0 || cost > NODES_UNROLLED_AT_ONCE.min(self.nodes_to_unroll) {
+        let is_affordable = cost <= NODES_UNROLLED_AT_ONCE.min(self.nodes_to_unroll);
+        // A copy that fails leaves the captures of the one before it overwritten.
+        if is_plain || copies == 0 || !is_affordable || node.is(Traits::REFERENCED) {
             return self.repeat_lowered(body, min, max, greedy);
         }
         self.nodes_to_unroll -= cost;

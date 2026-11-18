@@ -107,7 +107,16 @@ impl Operands {
         has_address: bool,
         random: &mut Random,
     ) -> Self {
-        let fprs = distinct::<6>(Bank::Fpr, random).map(Fpr::new);
+        let mut fprs = distinct::<6>(Bank::Fpr, random);
+        // Some instructions take registers that follow each other. More scratch registers than needed may be there.
+        let (one, next) = [(0, 0), (1, 2), (2, 1), (4, 5), (5, 4)][random.below(5)];
+        let following = (fprs[one] + 1) % AVAILABLE.in_bank(Bank::Fpr).len() as u8;
+        if let Some(taken) = fprs.iter().position(|&number| number == following) {
+            fprs[taken] = fprs[next];
+        }
+        fprs[next] = following;
+        let offered = if one < 4 { needs.fprs } else { 2 };
+        let fprs = fprs.map(Fpr::new);
         let gprs = distinct::<6>(Bank::Gpr, random).map(Gpr::new);
         Self {
             fprs: aliasing.map(|first| fprs[first]),
@@ -118,8 +127,8 @@ impl Operands {
                     (needs.gprs > 1 || has_address).then_some(gprs[5]),
                 ],
                 fprs: [
-                    (needs.fprs > 0).then_some(fprs[4]),
-                    (needs.fprs > 1).then_some(fprs[5]),
+                    (offered > 0).then_some(fprs[4]),
+                    (offered > 1).then_some(fprs[5]),
                 ],
             },
         }

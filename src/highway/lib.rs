@@ -2,6 +2,7 @@
 // Per crate map: `bun.highway.*` → `bun_highway::*` (same C++ backing).
 
 pub mod elements;
+pub mod text;
 pub mod url;
 pub mod webp;
 

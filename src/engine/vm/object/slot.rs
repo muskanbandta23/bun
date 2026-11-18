@@ -1,4 +1,4 @@
-use bun_engine_macros::native_abi;
+use bun_engine_macros::{FieldOffsets, native_abi};
 use bun_engine_text::{Identifier, PropertyName};
 
 use crate::{
@@ -40,6 +40,7 @@ enum AdditionalData {
 }
 
 /// The result of looking a property up.
+#[derive(FieldOffsets)]
 #[repr(C)]
 pub struct PropertySlot {
     /// The value, or the `GetterSetter`.
@@ -319,6 +320,7 @@ pub enum PutContext {
 }
 
 /// The receiver and the mode of a store, and what it came to.
+#[derive(FieldOffsets)]
 #[repr(C)]
 pub struct PutPropertySlot {
     base: Option<Gc<JsObject>>,
@@ -465,6 +467,7 @@ pub enum DeleteKind {
     NonConfigurable,
 }
 
+#[derive(FieldOffsets)]
 #[repr(C)]
 pub struct DeletePropertySlot {
     offset: PropertyOffset,

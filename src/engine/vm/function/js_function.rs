@@ -55,7 +55,7 @@ impl JsCallee {
 const NAME_AND_LENGTH: Attributes = Attributes::DONT_ENUM.union(Attributes::READ_ONLY);
 const PROTOTYPE: Attributes = Attributes::DONT_ENUM.union(Attributes::DONT_DELETE);
 
-#[object_ops]
+#[object_ops(export = "engine_Function")]
 impl JsFunction {
     fn call_data(&self) -> CallData {
         CallData::of_function(self.into(), Specialization::Call)

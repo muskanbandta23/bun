@@ -5,10 +5,10 @@ use std::io::Write;
 use std::rc::Rc;
 
 use bun_engine_bytecode::{
-    Code, CodeFlags, Compiler, Dump, Eval, EvalContext, FunctionRef, Instrumentation, Module,
-    Origin, Request, Script, Specialization, StaticScope, verify,
+    Code, CodeFlags, Compiler, Dump, Eval, EvalContext, FunctionInfo, FunctionRef, Instrumentation,
+    Module, Origin, Request, Script, Specialization, StaticScope, verify,
 };
-use bun_engine_syntax::SourceCache;
+use bun_engine_syntax::{PausePosition, SourceCache};
 pub use bun_engine_syntax::{
     Error as CompileError, ErrorKind as CompileErrorKind, Recovery as CompileErrorRecovery,
 };
@@ -17,16 +17,22 @@ use bun_engine_text::StringRef;
 use super::cache::{CodeCache, Goal, Key, Unit};
 use crate::{
     Cx, ErrorInstance, ErrorType, FastHashMap, FunctionExecutable, Gc, GlobalObject, JsResult,
-    Message, SourceProvider, Thrown, Vm, options,
+    Message, SourceProvider, SourceType, Thrown, Vm, options,
 };
 
 #[derive(Default)]
 pub(super) struct Compilation {
     compiler: RefCell<Compiler>,
     /// By the address of the text.
-    source_caches: RefCell<FastHashMap<usize, (StringRef, SourceCache)>>,
+    source_caches: RefCell<FastHashMap<usize, KeptSourceCache>>,
     code_cache: RefCell<CodeCache>,
     covers: Cell<bool>,
+}
+
+struct KeptSourceCache {
+    _source: StringRef,
+    cache: SourceCache,
+    was_used: bool,
 }
 
 type Outer<'a> = Option<&'a Rc<StaticScope>>;
@@ -56,10 +62,19 @@ impl Vm {
             .code_cache
             .borrow_mut()
             .clear();
+        self.forget_static_builtins();
     }
 
     pub fn clear_source_caches(&self) {
         self.services.code.compilation.source_caches.take();
+    }
+
+    /// Of what has not been used for a while.
+    pub(super) fn prune_compilation_caches(&self) {
+        let state = &self.services.code.compilation;
+        let mut caches = state.source_caches.borrow_mut();
+        caches.retain(|_, kept| core::mem::take(&mut kept.was_used));
+        state.code_cache.borrow_mut().prune();
     }
 
     pub fn code_cache_max_entries(&self) -> usize {
@@ -73,9 +88,9 @@ impl Vm {
         cache.set_max_entries(count);
     }
 
-    pub(crate) fn forget_compiled_module(&self, provider: &SourceProvider, module: &Rc<Module>) {
-        let mut cache = self.services.code.compilation.code_cache.borrow_mut();
-        cache.remove_module(provider, module);
+    pub(super) fn cached_function_tables(&self) -> Vec<Rc<[FunctionInfo]>> {
+        let cache = self.services.code.compilation.code_cache.borrow();
+        cache.function_tables()
     }
 
     fn with_compiler<T>(
@@ -91,7 +106,10 @@ impl Vm {
         let request = Request {
             source,
             cache: Some(match caches.get_mut(&source.address()) {
-                Some((_, cache)) => cache,
+                Some(kept) => {
+                    kept.was_used = true;
+                    &mut kept.cache
+                }
                 None => &mut new_cache,
             }),
             host: self,
@@ -100,7 +118,12 @@ impl Vm {
         };
         let result = compile(&mut state.compiler.borrow_mut(), request);
         if !new_cache.is_empty() {
-            caches.insert(source.address(), (source.clone(), new_cache));
+            let kept = KeptSourceCache {
+                _source: source.clone(),
+                cache: new_cache,
+                was_used: true,
+            };
+            caches.insert(source.address(), kept);
         }
         result
     }
@@ -134,6 +157,18 @@ impl Vm {
         })
     }
 
+    /// Where a debugger can pause in a script or a module. None if the text is neither.
+    pub fn pause_positions(&self, provider: &SourceProvider) -> Vec<PausePosition> {
+        let is_module = match provider.source_type() {
+            SourceType::Program => false,
+            SourceType::Module | SourceType::AnalyzedModule => true,
+            _ => return Vec::new(),
+        };
+        self.with_compiler(provider, Instrumentation::empty(), |compiler, request| {
+            (compiler.pause_positions(&request, is_module)).unwrap_or_default()
+        })
+    }
+
     pub fn check_module_syntax(&self, provider: &SourceProvider) -> Result<(), CompileError> {
         self.with_compiler(provider, Instrumentation::empty(), |compiler, request| {
             compiler.check_syntax(request, true)
@@ -162,8 +197,8 @@ impl Cx {
     }
 
     fn did_parse<T>(&self, provider: &SourceProvider, result: &Result<T, CompileError>) {
-        if self.has_debugger() {
-            (self.hooks().debugger_did_parse)(self, provider, result.as_ref().err());
+        if let Some(debugger) = self.global().debugger() {
+            debugger.did_parse(self, provider, result.as_ref().err());
         }
     }
 
@@ -259,19 +294,18 @@ impl Cx {
 
 impl FunctionExecutable {
     pub(super) fn compile(&self, cx: &Cx, specialization: Specialization) -> JsResult<Rc<Code>> {
-        let (function, provider) = (self.info(), self.provider());
+        let this = crate::anchor!(self);
+        let (function, provider) = (this.info(), this.provider());
         let mut instrumentation = cx.global().instrumentation(cx);
         if function.origin().contains(Origin::NO_POSITIONS) {
             instrumentation = Instrumentation::empty();
         }
         if let Some(code) = function.code(specialization) {
             let flags = code.body.flags();
-            // Coroutines have saved its registers.
-            if flags.contains(CodeFlags::SUSPENDS)
-                || (flags.contains(CodeFlags::HAS_DEBUG_HOOKS)
-                    == instrumentation.contains(Instrumentation::DEBUGGER)
-                    && flags.contains(CodeFlags::HAS_COVERAGE)
-                        == instrumentation.contains(Instrumentation::COVERAGE))
+            if flags.contains(CodeFlags::HAS_DEBUG_HOOKS)
+                == instrumentation.contains(Instrumentation::DEBUGGER)
+                && flags.contains(CodeFlags::HAS_COVERAGE)
+                    == instrumentation.contains(Instrumentation::COVERAGE)
             {
                 return Ok(code);
             }

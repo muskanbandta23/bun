@@ -1,3 +1,4 @@
+/// Math.hypot of two, where an infinite argument wins over a NaN one.
 pub fn hypot(a: f64, b: f64) -> f64 {
     if a.is_infinite() || b.is_infinite() {
         return f64::INFINITY;
@@ -5,6 +6,7 @@ pub fn hypot(a: f64, b: f64) -> f64 {
     a.hypot(b)
 }
 
+/// The same, of three. The sum of squares is scaled by the largest, so that it neither overflows nor underflows.
 pub fn hypot3(a: f64, b: f64, c: f64) -> f64 {
     if a.is_infinite() || b.is_infinite() || c.is_infinite() {
         return f64::INFINITY;

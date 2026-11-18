@@ -463,6 +463,12 @@ impl JsObject {
             if is(RealmSlot::object_prototype_to_string) {
                 return self.to_tagged_string(cx).map(Into::into);
             }
+            if is(RealmSlot::array_prototype_to_string)
+                && let Some(array) = self.as_exact_array()
+                && array.has_default_join(cx)
+            {
+                return array.join_with_commas(cx).map(Into::into);
+            }
             if method.is_callable() {
                 let result = cx.call(method, self.as_value(), &[])?;
                 if !result.is_object() {

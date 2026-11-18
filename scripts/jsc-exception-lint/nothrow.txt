@@ -88,7 +88,6 @@ indirect:trustedScriptStructure
 # Virtual hooks resolved to the base declaration. Bun's overrides do not throw.
 JSC::TypedArrayController::registerWrapper
 JSC::SimpleTypedArrayController::registerWrapper
-WebCore::WebCoreTypedArrayController::registerWrapper
 
 # Microtask and promise plumbing that only enqueues work.
 JSC::JSGlobalObject::queueMicrotask

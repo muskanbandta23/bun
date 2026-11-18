@@ -2,10 +2,12 @@ use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 use core::marker::PhantomData;
 use core::ptr::NonNull;
+use core::sync::atomic::{AtomicUsize, Ordering, fence};
 
 use bun_engine_macros::FieldOffsets;
+use bun_threading::Guarded;
 
-use super::{Gc, GcFree, Scope, Survivors, Visitor, container};
+use super::{Gc, GcFree, Heap, Scope, Survivors, Visitor};
 use crate::{AsciiLiteral, CellKind, Vm};
 
 /// Decides whether the target of a weak handle lives on, and hears of its death.
@@ -29,7 +31,7 @@ enum State {
     Live = 0,
     Dead = 1,
     Finalized = 2,
-    /// Its holder has let go of it.
+    /// Its holder has let go of it, or it has none yet.
     Deallocated = 3,
 }
 
@@ -38,15 +40,17 @@ const STATE_MASK: usize = 3;
 #[derive(FieldOffsets)]
 #[repr(C)]
 pub struct WeakImpl {
+    /// In a handle that waits to be allocated, the address of the next one.
     cell: Cell<usize>,
-    owner_and_state: Cell<usize>,
+    /// Its holder may let go of it on another thread.
+    owner_and_state: AtomicUsize,
     context: Cell<*mut c_void>,
 }
 
 impl WeakImpl {
     #[inline(always)]
     fn state(&self) -> State {
-        match self.owner_and_state.get() & STATE_MASK {
+        match self.owner_and_state.load(Ordering::Relaxed) & STATE_MASK {
             0 => State::Live,
             1 => State::Dead,
             2 => State::Finalized,
@@ -54,13 +58,17 @@ impl WeakImpl {
         }
     }
 
-    fn set_state(&self, state: State) {
+    /// False if it was in another state.
+    fn change_state(&self, from: State, to: State) -> bool {
+        let owner = self.owner_and_state.load(Ordering::Relaxed) & !STATE_MASK;
+        let (from, to) = (owner | from as usize, owner | to as usize);
         self.owner_and_state
-            .update(|word| word & !STATE_MASK | state as usize);
+            .compare_exchange(from, to, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
     }
 
     fn owner(&self) -> Option<&WeakOwner> {
-        let address = self.owner_and_state.get() & !STATE_MASK;
+        let address = self.owner_and_state.load(Ordering::Relaxed) & !STATE_MASK;
         // SAFETY: an owner outlives its handles.
         unsafe { core::ptr::with_exposed_provenance::<WeakOwner>(address).as_ref() }
     }
@@ -70,142 +78,217 @@ impl WeakImpl {
         self.cell.get()
     }
 
-    /// The memory is reclaimed by the next collection that looks at the handle.
+    /// The memory is reclaimed later.
     #[inline]
     pub fn deallocate(&self) {
-        self.set_state(State::Deallocated);
+        self.owner_and_state
+            .store(State::Deallocated as usize, Ordering::Release);
+    }
+
+    /// On any thread.
+    pub(super) fn visit(&self, visitor: &mut Visitor) {
+        let (State::Live, Some(owner)) = (self.state(), self.owner()) else {
+            return;
+        };
+        if visitor.is_address_marked(self.target()) {
+            return;
+        }
+        let mut reason = AsciiLiteral::NULL;
+        let wants_reason = visitor.analyzer().is_some();
+        // SAFETY: the target has not been destroyed.
+        let is_reachable = unsafe {
+            (owner.is_reachable_from_opaque_roots)(
+                owner,
+                self,
+                self.context.get(),
+                visitor,
+                wants_reason.then_some(&mut reason),
+            )
+        };
+        if is_reachable {
+            // SAFETY: as above.
+            unsafe { visitor.append_word(self.target() as u64) };
+            if let Some(analyzer) = visitor.analyzer() {
+                analyzer.opaque_root_reason(self.target(), reason);
+            }
+        }
+    }
+
+    /// Whether `finalize` has to follow.
+    fn did_die(&self) -> bool {
+        if self.owner().is_none() {
+            self.change_state(State::Live, State::Finalized);
+            return false;
+        }
+        self.change_state(State::Live, State::Dead)
+    }
+
+    fn finalize(&self) {
+        if let Some(owner) = self.owner()
+            && self.change_state(State::Dead, State::Finalized)
+            // SAFETY: nothing has been swept since the target died.
+            && unsafe { (owner.finalize)(owner, self, self.context.get()) }
+        {
+            self.deallocate();
+        }
     }
 }
 
-const HANDLES_PER_CHUNK: usize = 168;
+const HANDLES_PER_CHUNK: usize = 170;
 
 struct Chunk([WeakImpl; HANDLES_PER_CHUNK]);
 
+impl Chunk {
+    fn deallocated(&self) -> impl DoubleEndedIterator<Item = &WeakImpl> {
+        self.0.iter().filter(|it| it.state() == State::Deallocated)
+    }
+}
+
+/// Owns the chunk, but hands out references that outlive a borrow.
+struct ChunkBox(NonNull<Chunk>);
+
+// SAFETY: one that leaves its thread has no live handle, and only the states are looked at.
+unsafe impl Send for ChunkBox {}
+
+impl ChunkBox {
+    fn new() -> ChunkBox {
+        let handles = [const {
+            WeakImpl {
+                cell: Cell::new(0),
+                owner_and_state: AtomicUsize::new(State::Deallocated as usize),
+                context: Cell::new(core::ptr::null_mut()),
+            }
+        }; HANDLES_PER_CHUNK];
+        ChunkBox(NonNull::from(Box::leak(Box::new(Chunk(handles)))))
+    }
+
+    fn get(&self) -> &'static Chunk {
+        // SAFETY: freed only when no handle is held, and no list of the set has one.
+        unsafe { self.0.as_ref() }
+    }
+
+    fn is_unused(&self) -> bool {
+        self.get().deallocated().count() == HANDLES_PER_CHUNK
+    }
+}
+
+impl Drop for ChunkBox {
+    fn drop(&mut self) {
+        assert!(self.is_unused());
+        fence(Ordering::Acquire);
+        // SAFETY: leaked by `new`, and those who held the handles have let go.
+        drop(unsafe { Box::from_raw(self.0.as_ptr()) });
+    }
+}
+
+/// Those with handles that were still held when their heap went.
+static ORPHANS: Guarded<Vec<ChunkBox>> = Guarded::new(Vec::new());
+
 #[derive(Default)]
 pub(super) struct WeakSet {
-    chunks: RefCell<Vec<NonNull<Chunk>>>,
-    free: RefCell<Vec<&'static WeakImpl>>,
-    /// Made since the last collection.
-    young: RefCell<Vec<&'static WeakImpl>>,
-    old: RefCell<Vec<&'static WeakImpl>>,
-    /// Have an owner, and a target that marking has not reached.
-    undecided: RefCell<Vec<&'static WeakImpl>>,
+    first_free: Cell<usize>,
+    /// Allocated from since the last collection. The free handles are in the last one.
+    young: RefCell<Vec<ChunkBox>>,
+    /// Had room when a collection last looked.
+    available: RefCell<Vec<ChunkBox>>,
+    full: RefCell<Vec<ChunkBox>>,
+    /// What the collection in progress looks at. Nothing is allocated from them meanwhile.
+    examined: RefCell<Vec<ChunkBox>>,
     dead: RefCell<Vec<&'static WeakImpl>>,
 }
 
 impl WeakSet {
+    /// With fewer free handles than that, a chunk counts as full.
+    const MIN_FREE: usize = HANDLES_PER_CHUNK / 8;
+
+    #[inline]
     pub(super) fn allocate(
         &self,
+        heap: &Heap,
         cell: usize,
         owner: *const WeakOwner,
         context: *mut c_void,
     ) -> &'static WeakImpl {
-        let handle = self.free.borrow_mut().pop();
-        let handle = handle.unwrap_or_else(|| self.grow());
-        handle.cell.set(cell);
-        handle
-            .owner_and_state
-            .set(owner.expose_provenance() | State::Live as usize);
+        if self.first_free.get() == 0 {
+            self.refill(heap);
+        }
+        // SAFETY: chained by `refill`.
+        let handle: &WeakImpl =
+            unsafe { &*core::ptr::with_exposed_provenance(self.first_free.get()) };
+        self.first_free.set(handle.cell.replace(cell));
         handle.context.set(context);
-        self.young.borrow_mut().push(handle);
+        let word = owner.expose_provenance() | State::Live as usize;
+        handle.owner_and_state.store(word, Ordering::Relaxed);
         handle
     }
 
-    #[cold]
-    fn grow(&self) -> &'static WeakImpl {
-        let chunk: &'static Chunk = Box::leak(Box::new(Chunk(
-            [const {
-                WeakImpl {
-                    cell: Cell::new(0),
-                    owner_and_state: Cell::new(State::Deallocated as usize),
-                    context: Cell::new(core::ptr::null_mut()),
-                }
-            }; HANDLES_PER_CHUNK],
-        )));
-        self.chunks.borrow_mut().push(NonNull::from(chunk));
-        self.free.borrow_mut().extend(chunk.0[1..].iter().rev());
-        &chunk.0[0]
+    #[inline(never)]
+    fn refill(&self, heap: &Heap) {
+        let mut young = self.young.borrow_mut();
+        // Many handles do not last.
+        if young
+            .last()
+            .is_none_or(|chunk| chunk.get().deallocated().count() < Self::MIN_FREE)
+        {
+            young.push(self.available.borrow_mut().pop().unwrap_or_else(|| {
+                heap.did_allocate(size_of::<Chunk>());
+                ChunkBox::new()
+            }));
+        }
+        fence(Ordering::Acquire);
+        for handle in young[young.len() - 1].get().deallocated().rev() {
+            let address = core::ptr::from_ref(handle).expose_provenance();
+            handle.cell.set(self.first_free.replace(address));
+        }
     }
 
     pub(super) fn begin_marking(&self, scope: Scope) {
+        self.first_free.set(0);
+        let mut examined = self.examined.borrow_mut();
+        examined.append(&mut self.young.borrow_mut());
         if scope == Scope::Full {
-            let mut old = self.old.borrow_mut();
-            old.append(&mut self.young.borrow_mut());
-            core::mem::swap(&mut *old, &mut self.young.borrow_mut());
+            examined.append(&mut self.available.borrow_mut());
+            examined.append(&mut self.full.borrow_mut());
         }
-        let young = self.young.borrow();
-        let has_owner =
-            |handle: &&&WeakImpl| handle.state() == State::Live && handle.owner().is_some();
-        self.undecided
-            .borrow_mut()
-            .extend(young.iter().filter(has_owner));
     }
 
-    pub(super) fn visit(&self, visitor: &mut Visitor) {
-        self.undecided.borrow_mut().retain(|handle| {
-            let (State::Live, Some(owner)) = (handle.state(), handle.owner()) else {
-                return false;
-            };
-            if visitor.is_address_marked(handle.target()) {
-                return false;
-            }
-            let mut reason = AsciiLiteral::NULL;
-            let wants_reason = visitor.analyzer().is_some();
-            // SAFETY: the target has not been destroyed.
-            let is_reachable = unsafe {
-                (owner.is_reachable_from_opaque_roots)(
-                    owner,
-                    handle,
-                    handle.context.get(),
-                    visitor,
-                    wants_reason.then_some(&mut reason),
-                )
-            };
-            if is_reachable {
-                // SAFETY: as above.
-                unsafe { visitor.append_word(handle.target() as u64) };
-                if let Some(analyzer) = visitor.analyzer() {
-                    analyzer.opaque_root_reason(handle.target(), reason);
-                }
-            }
-            !is_reachable
-        });
+    fn live_handles(chunks: &[ChunkBox]) -> impl Iterator<Item = &'static WeakImpl> {
+        let handles = chunks.iter().flat_map(|chunk| &chunk.get().0);
+        handles.filter(|handle| handle.state() == State::Live)
     }
 
-    pub(super) fn reap(&self, _: &Survivors) {
-        self.undecided.borrow_mut().clear();
-        let (mut old, mut free) = (self.old.borrow_mut(), self.free.borrow_mut());
-        let mut dead = self.dead.borrow_mut();
-        for handle in self.young.borrow_mut().drain(..) {
-            match handle.state() {
-                State::Deallocated => free.push(handle),
-                State::Live if !container::of(handle.target()).is_marked(handle.target()) => {
-                    handle.set_state(State::Dead);
-                    dead.push(handle);
-                }
-                _ => old.push(handle),
-            }
+    /// Of those that a collection of that scope looks at.
+    pub(super) fn handles_with_owner(&self, scope: Scope) -> Vec<&'static WeakImpl> {
+        let mut handles = Vec::new();
+        let mut add = |chunks: &RefCell<Vec<ChunkBox>>| {
+            handles.extend(Self::live_handles(&chunks.borrow()).filter(|it| it.owner().is_some()));
+        };
+        add(&self.examined);
+        if scope == Scope::Full {
+            add(&self.available);
+            add(&self.full);
         }
+        handles
+    }
+
+    pub(super) fn reap(&self, survivors: &Survivors) {
+        let examined = self.examined.borrow();
+        let dead = Self::live_handles(&examined)
+            .filter(|handle| !survivors.contains_address(handle.target()) && handle.did_die());
+        self.dead.borrow_mut().extend(dead);
     }
 
     pub(super) fn finalize_dead(&self) {
-        loop {
-            let Some(handle) = self.dead.borrow_mut().pop() else {
-                return;
-            };
-            if handle.state() == State::Dead {
-                handle.set_state(State::Finalized);
-                if let Some(owner) = handle.owner()
-                    // SAFETY: nothing has been swept since the target died.
-                    && unsafe { (owner.finalize)(owner, handle, handle.context.get()) }
-                {
-                    handle.deallocate();
-                }
-            }
-            if handle.state() == State::Deallocated {
-                self.free.borrow_mut().push(handle);
-            } else {
-                self.old.borrow_mut().push(handle);
+        for handle in self.dead.take() {
+            handle.finalize();
+        }
+        const SPARE_CHUNKS: usize = 4;
+        let (mut available, mut full) = (self.available.borrow_mut(), self.full.borrow_mut());
+        for chunk in self.examined.take() {
+            match chunk.get().deallocated().count() {
+                HANDLES_PER_CHUNK if available.len() >= SPARE_CHUNKS => drop(chunk),
+                ..Self::MIN_FREE => full.push(chunk),
+                _ => available.push(chunk),
             }
         }
     }
@@ -213,35 +296,26 @@ impl WeakSet {
     /// The heap is going away with everything in it.
     pub(super) fn finalize_all(&self) {
         loop {
-            let mut handles = self.young.take();
-            handles.append(&mut self.old.borrow_mut());
-            handles.retain(|handle| handle.state() != State::Deallocated);
-            let (live, rest): (Vec<_>, Vec<_>) = handles
-                .into_iter()
-                .partition(|handle| handle.state() == State::Live);
-            self.old.borrow_mut().extend(rest);
-            if live.is_empty() {
+            self.begin_marking(Scope::Full);
+            let examined = self.examined.borrow();
+            let dead = Self::live_handles(&examined).filter(|handle| handle.did_die());
+            self.dead.borrow_mut().extend(dead);
+            drop(examined);
+            self.finalize_dead();
+            if self.young.borrow().is_empty() {
                 return;
             }
-            live.iter().for_each(|handle| handle.set_state(State::Dead));
-            self.dead.borrow_mut().extend(live);
-            self.finalize_dead();
         }
     }
 }
 
 impl Drop for WeakSet {
-    /// A chunk stays for the handles that are still held.
     fn drop(&mut self) {
-        for chunk in self.chunks.get_mut().drain(..) {
-            // SAFETY: leaked by `grow`, and the lists are not read again.
-            unsafe {
-                let handles = &chunk.as_ref().0;
-                if handles.iter().all(|it| it.state() == State::Deallocated) {
-                    drop(Box::from_raw(chunk.as_ptr()));
-                }
-            }
+        let mut orphans = ORPHANS.lock();
+        for chunks in [&mut self.young, &mut self.available, &mut self.full] {
+            orphans.append(chunks.get_mut());
         }
+        orphans.retain(|chunk| !chunk.is_unused());
     }
 }
 
@@ -271,7 +345,7 @@ impl<T: CellKind> Weak<T> {
         context: *mut c_void,
     ) -> Weak<T> {
         Weak {
-            handle: vm.heap.weak_set.allocate(cell.address(), owner, context),
+            handle: (vm.heap.weak_set).allocate(&vm.heap, cell.address(), owner, context),
             target: PhantomData,
         }
     }

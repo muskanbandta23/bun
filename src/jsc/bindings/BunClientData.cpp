@@ -11,13 +11,10 @@
 #include <JavaScriptCore/SimpleMarkingConstraint.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/VM.h>
-#include <JavaScriptCore/CachedTypes.h>
-#include <JavaScriptCore/PrelinkedModuleGraph.h>
 #include <wtf/MainThread.h>
 
 #include "JSDOMConstructorBase.h"
 
-#include "WebCoreTypedArrayController.h"
 #include <JavaScriptCore/JSCInlines.h>
 
 #include "JSDOMWrapper.h"
@@ -29,13 +26,10 @@
 namespace WebCore {
 using namespace JSC;
 
-RefPtr<JSC::SourceProvider> createBuiltinsSourceProvider();
-
-JSVMClientData::JSVMClientData(VM& vm, RefPtr<JSC::SourceProvider> sourceProvider)
+JSVMClientData::JSVMClientData(VM& vm)
     : commonStrings(vm)
     , schemaStrings(vm)
     , m_builtinNames(vm)
-    , m_builtinFunctions(makeUnique<JSBuiltinFunctions>(vm, sourceProvider, m_builtinNames))
     , m_consoleClient(makeUniqueRef<Bun::ConsoleObject>())
     , m_clientSubspaces(makeUnique<ExtendedDOMClientIsoSubspaces>())
     , m_heapSizeAfterLastCollection(vm.heap)
@@ -57,8 +51,7 @@ JSVMClientData::~JSVMClientData()
 }
 void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
 {
-    auto provider = WebCore::createBuiltinsSourceProvider();
-    JSVMClientData* clientData = new JSVMClientData(*vm, provider);
+    JSVMClientData* clientData = new JSVMClientData(*vm);
     clientData->bunVM = bunVM;
     clientData->m_isWorkerVM = !!worker;
     clientData->m_isNodeWorkerVM = worker && worker->options().kind == WorkerOptions::Kind::Node;
@@ -73,6 +66,11 @@ void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
     vm->deferredWorkTimer->onCancelPendingWork = [clientData](JSC::DeferredWorkTimer::Ticket& ticket) -> void {
         Bun::JSCTaskScheduler::onCancelPendingWork(clientData, ticket);
     };
+    vm->deferredWorkTimer->onSetTimer = [clientData](std::optional<Seconds> delay) -> void {
+        clientData->deferredWorkTimer.setTimer(delay);
+    };
+    clientData->deferredWorkTimer.createTimer(*vm);
+    vm->deferredWorkTimer->start(*vm);
 
     vm->clientData = clientData; // ~VM deletes this pointer.
     clientData->m_normalWorld = DOMWrapperWorld::create(*vm);
@@ -129,9 +127,6 @@ void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
             clientData->schemaStrings.visit(visitor);
         })),
         JSC::ConstraintVolatility::GreyedByExecution));
-
-    vm->m_typedArrayController = adoptRef(new WebCoreTypedArrayController(true));
-    clientData->builtinFunctions().exportNames();
 }
 
 JSC::GCClient::IsoSubspace* subspaceForImplSlow(JSC::VM& vm, SubspaceSlots slots, size_t cellSize, void (*destroy)(JSC::JSCell*), bool hasOutputConstraints)
@@ -180,40 +175,9 @@ void* allocatePlainObjectCell(JSC::VM& vm, size_t size)
 
 namespace WebCore {
 
-void JSVMClientData::reconcileWeakReferencesAtGCEnd(JSC::VM& vm, JSC::CollectionScope)
+void JSVMClientData::reportErrorOfMicrotask(JSC::JSGlobalObject* globalObject, JSC::Exception* exception)
 {
-    Bun::JSCTaskScheduler::cancelWorkOfDeadRealms(this, vm);
-}
-
-void JSVMClientData::setDecoderStringTable(std::span<const uint8_t> bytes)
-{
-    if (m_decoderStringTable)
-        return; // slots may already hold cells this VM visits; never replace
-    m_decoderStringTable = makeUnique<JSC::DecoderStringTable>(bytes);
-}
-
-extern "C" bool Bun__standalonePrelinkedModuleGraph(const uint8_t** blob, size_t* blobLength, const uint8_t** slotTable, size_t* slotTableLength);
-
-JSC::PrelinkedModuleGraph* JSVMClientData::prelinkedModuleGraph(JSC::VM& vm)
-{
-    if (!m_prelinkedModuleGraphChecked) [[unlikely]] {
-        if (!m_decoderStringTable)
-            return nullptr; // not installed (yet): a later call may still build the graph
-        m_prelinkedModuleGraphChecked = true;
-        const uint8_t* blob = nullptr;
-        size_t blobLength = 0;
-        const uint8_t* slotTable = nullptr;
-        size_t slotTableLength = 0;
-        if (Bun__standalonePrelinkedModuleGraph(&blob, &blobLength, &slotTable, &slotTableLength) && slotTableLength >= sizeof(uint32_t)) {
-            // ModuleInfoSlotTable: u32 count, then `count` u32 slots (4-byte aligned in the mapped section).
-            ASSERT(!(reinterpret_cast<uintptr_t>(slotTable) % alignof(uint32_t)));
-            uint32_t count = 0;
-            memcpy(&count, slotTable, sizeof(count));
-            if (count <= (slotTableLength - sizeof(uint32_t)) / sizeof(uint32_t))
-                m_prelinkedModuleGraph = JSC::PrelinkedModuleGraph::tryCreate(vm, *m_decoderStringTable, { blob, blobLength }, { reinterpret_cast<const uint32_t*>(slotTable + sizeof(uint32_t)), count });
-        }
-    }
-    return m_prelinkedModuleGraph.get();
+    Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
 }
 
 } // namespace WebCore

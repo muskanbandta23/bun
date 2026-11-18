@@ -438,6 +438,9 @@ enumerations! {
         WillExecuteExpression,
         WillAwait,
         DidAwait,
+        WillYield,
+        DidYield,
+        DidReturnFromTailCall,
     }
 
     /// The storage that the elements known at generation fit in.

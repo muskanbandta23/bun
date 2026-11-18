@@ -10,22 +10,16 @@ class JSGlobalObjectInspectorController;
 
 namespace JSC {
 
-class JSGlobalObjectDebuggable;
 class JSModuleRecord;
 class WebAssemblyCompileOptions;
 enum class ArrayBufferSharingMode : bool;
 enum class CodeGenerationMode : uint8_t;
 enum class QueuedTaskResult : uint8_t;
-enum class ScriptFetchParametersType : uint8_t;
 enum TypedArrayType : uint8_t;
 class ScriptFetchParameters;
 
 namespace AOT {
 struct ModuleHost;
-}
-
-namespace FFI {
-class FFIContext;
 }
 
 class RuntimeFlags {};
@@ -121,6 +115,7 @@ public:
     };
 
     static void destroy(JSCell* cell) { static_cast<JSGlobalObject*>(cell)->~JSGlobalObject(); }
+    static void analyzeHeap(JSCell*, HeapAnalyzer&) ENGINE_SYMBOL(engine_GlobalObject_analyze_heap);
     static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&) ENGINE_SYMBOL(engine_GlobalObject_put);
     static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&) ENGINE_SYMBOL(engine_GlobalObject_delete_property);
     using JSObject::deleteProperty;
@@ -146,8 +141,6 @@ public:
 
     JSObject* globalThis() const { return m_globalThis.get(); }
     JSScope* globalScope() { return this; }
-    JSScope* globalScopeExtension() const { return m_scopeExtension.get(); }
-    void setGlobalScopeExtension(JSScope* scope) { m_scopeExtension.setMayBeNull(vm(), this, scope); }
     void addStaticGlobals(std::span<GlobalPropertyInfo> globals)
     {
         for (auto& global : globals)
@@ -202,8 +195,6 @@ public:
     ENGINE_LAZY_SLOT(Structure, setIteratorStructure, set_iterator_shape)
     ENGINE_LAZY_SLOT(Structure, weakMapStructure, weak_map_shape)
     ENGINE_LAZY_SLOT(Structure, weakSetStructure, weak_set_shape)
-    ENGINE_LAZY_SLOT(Structure, moduleRecordStructure, module_record_shape)
-    ENGINE_LAZY_SLOT(Structure, syntheticModuleRecordStructure, synthetic_module_record_shape)
     ENGINE_LAZY_SLOT(Structure, promiseStructure, promise_shape)
     ENGINE_LAZY_SLOT(Structure, regExpStructure, regexp_shape)
 #undef ENGINE_EAGER_SLOT
@@ -220,10 +211,6 @@ public:
     Structure* typedArrayStructure(TypedArrayType, bool isResizableOrGrowableShared) const;
     template<TypedArrayType type> Structure* typedArrayStructureWithTypedArrayType() const { return typedArrayStructure(type, false); }
     template<TypedArrayType type> Structure* resizableOrGrowableSharedTypedArrayStructureWithTypedArrayType() const { return typedArrayStructure(type, true); }
-    Structure* webAssemblyMemoryStructure() const;
-    Structure* webAssemblyModuleStructure() const;
-    Structure* ffiFunctionStructure() const;
-    FFI::FFIContext& ffiContext();
 
     InlineWatchpointSet promiseSpeciesWatchpointSet() { return { this, Engine::RealmWatchpoint::PromiseSpecies }; }
     InlineWatchpointSet promiseThenWatchpointSet() { return { this, Engine::RealmWatchpoint::PromiseThen }; }
@@ -234,7 +221,6 @@ public:
     void setMicrotaskRunnability(QueuedTaskResult);
     bool isAsyncContextTrackingEnabled() const;
     void setAsyncContextTrackingEnabled(bool);
-    void clearWeakTickets();
 
     void setEvalEnabled(bool enabled, const String& errorMessage = {}) { Engine::global_set_eval_enabled(this, enabled, errorMessage); }
     void setWebAssemblyEnabled(bool enabled, const String& errorMessage = {}) { Engine::global_set_webassembly_enabled(this, enabled, errorMessage); }
@@ -249,12 +235,11 @@ public:
     ConsoleClient* consoleClient() const { return m_consoleClient; }
     void setConsoleClient(ConsoleClient* client) { m_consoleClient = client; }
     OptionSet<CodeGenerationMode> defaultCodeGenerationMode() const;
-    Debugger* debugger() const;
-    bool hasDebugger() const { return debugger(); }
-    bool inspectable() const;
-    void setInspectable(bool);
-    Inspector::JSGlobalObjectInspectorController& inspectorController() const;
-    JSGlobalObjectDebuggable& inspectorDebuggable();
+    bool hasDebugger() const { return m_inspectorController && Engine::global_has_debugger(this); }
+    bool inspectable() const { return m_isInspectable; }
+    void setInspectable(bool isInspectable) { m_isInspectable = isInspectable; }
+    bool hasInspectorController() const { return !!m_inspectorController; }
+    Inspector::JSGlobalObjectInspectorController& inspectorController();
 
     static constexpr RealmClass<Engine::RealmSlot::error_shape, Engine::RealmSlot::error_constructor> m_errorStructure {};
     static constexpr RealmClass<Engine::RealmSlot::eval_error_shape, Engine::RealmSlot::eval_error_constructor> m_evalErrorStructure {};
@@ -301,10 +286,11 @@ public:
 private:
     Engine::Opaque<(Engine::RealmSlot::COUNT - namedSlotCount) * sizeof(JSCell*) + Engine::Layout::globalObjectSizeAfterSlots> m_rest;
 
-public:
     // From here on, what only C++ has.
+    // For a class that wants another than the default.
+    LazyProperty<JSGlobalObject, Structure> m_moduleNamespaceObjectStructure;
     std::unique_ptr<Inspector::JSGlobalObjectInspectorController> m_inspectorController;
-    RefPtr<JSGlobalObjectDebuggable> m_inspectorDebuggable;
+    bool m_isInspectable { false };
 };
 ENGINE_CLASS_HAS_TYPE(JSGlobalObject, GlobalObjectType);
 

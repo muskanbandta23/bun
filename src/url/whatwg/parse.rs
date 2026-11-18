@@ -98,11 +98,17 @@ impl<'a> Parser<'a> {
                     return Ok(Record { text, parts });
                 }
                 Ok(()) => return self.finish(),
-                Err(Error::Invalid) if !self.lacks_scheme && self.source.has_tab_or_newline() => {}
+                Err(Error::Invalid) if self.should_retry() => {}
                 Err(error) => return Err(error),
             }
         }
         parse_cleaned_up(self.source, base.as_ref(), self.punycode)
+    }
+
+    /// After a failure.
+    #[inline]
+    fn should_retry(&self) -> bool {
+        !self.failure_is_final && self.source.has_tab_or_newline()
     }
 
     #[inline(always)]
@@ -137,7 +143,7 @@ fn can_parse_in_full(
     match parser.head(Step::Start, base) {
         Ok(Step::Segments(at) | Step::OpaquePath(at))
             if matches!(source.bytes.get(at as usize), Some(b'\t' | b'\n' | b'\r')) => {}
-        Err(Error::Invalid) if !parser.lacks_scheme && source.has_tab_or_newline() => {}
+        Err(Error::Invalid) if parser.should_retry() => {}
         outcome => return outcome.is_ok(),
     }
     source

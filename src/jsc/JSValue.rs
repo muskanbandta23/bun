@@ -10,7 +10,6 @@ use core::ffi::c_void;
 use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 
-use crate::array_buffer::MarkedArrayBuffer_deallocator;
 use crate::{
     AnyPromise, ArrayBuffer, BuiltinName, JSArrayIterator, JSGlobalObject, JSInternalPromise,
     JSObject, JSPromise, JSString, JSStringView, JSType, JsClass, JsError, JsResult,
@@ -545,21 +544,15 @@ impl JSValue {
     }
     /// A Node `Buffer` that owns `bytes`. Fails like any JS allocation: OOM, or a termination.
     pub fn create_buffer(global: &JSGlobalObject, bytes: Vec<u8>) -> JsResult<JSValue> {
-        let is_allocated = bytes.capacity() > 0;
-        let bytes = bytes.leak();
-        // SAFETY: a block of the default allocator, which the deallocator frees, or nothing at all.
+        // C++ does not take a buffer with nothing in it.
+        let bytes = if bytes.is_empty() {
+            &mut []
+        } else {
+            bytes.leak()
+        };
+        // SAFETY: a block of the default allocator, whose ownership transfers to JS.
         host_fn::from_js_host_call(global, || unsafe {
-            JSBuffer__bufferFromPointerAndLengthAndDeinit(
-                global,
-                bytes.as_mut_ptr(),
-                bytes.len(),
-                core::ptr::null_mut(),
-                if is_allocated {
-                    Some(MarkedArrayBuffer_deallocator)
-                } else {
-                    None
-                },
-            )
+            JSBuffer__fromDefaultAllocator(global, bytes.as_mut_ptr(), bytes.len())
         })
     }
     pub fn create_buffer_from_box(global: &JSGlobalObject, bytes: Box<[u8]>) -> JsResult<JSValue> {
@@ -835,15 +828,13 @@ impl JSValue {
     /// source attached rather than throwing. See `JSC__JSValue__pinArrayBuffer`
     /// in bindings.cpp for why. Release the pin with `ArrayBuffer::unpin`.
     pub fn as_pinned_arraybuffer(self, global: &JSGlobalObject) -> Option<ArrayBuffer> {
-        let kind = JSC__JSValue__pinArrayBuffer(self);
-        if kind == 0 {
+        if !JSC__JSValue__pinArrayBuffer(self) {
             return None;
         }
         let mut buffer = self.as_array_buffer(global);
         match &mut buffer {
-            Some(buffer) => buffer.pinned = kind == 1,
-            None if kind == 1 => self.unpin_array_buffer(),
-            None => {}
+            Some(buffer) => buffer.pinned = true,
+            None => self.unpin_array_buffer(),
         }
         buffer
     }
@@ -1873,6 +1864,11 @@ unsafe extern "C" {
         value2: JSValue,
     ) -> JSValue;
     safe fn JSC__JSValue__createEmptyArray(global: &JSGlobalObject, len: usize) -> JSValue;
+    fn JSBuffer__fromDefaultAllocator(
+        global: &JSGlobalObject,
+        ptr: *mut u8,
+        len: usize,
+    ) -> JSValue;
     fn JSBuffer__bufferFromPointerAndLengthAndDeinit(
         global: *const JSGlobalObject,
         ptr: *mut u8,
@@ -1996,7 +1992,7 @@ unsafe extern "C" {
         out: &mut ArrayBuffer,
     ) -> bool;
     /// 0 = nothing to pin, 1 = pinned an ArrayBuffer (unpin later), 2 = held a bufferless view (nothing to unpin).
-    safe fn JSC__JSValue__pinArrayBuffer(this: JSValue) -> u8;
+    safe fn JSC__JSValue__pinArrayBuffer(this: JSValue) -> bool;
     safe fn JSC__JSValue__asPromise(this: JSValue) -> *mut JSPromise;
     safe fn JSC__JSValue__asInternalPromise(this: JSValue) -> *mut JSInternalPromise;
     safe fn Bun__attachAsyncStackFromPromise(

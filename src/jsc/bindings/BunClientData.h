@@ -48,7 +48,6 @@ inline bool Bun__VmHandle__scriptAllowedInline(const unsigned char* state)
 namespace WebCore {
 
 class ExtendedDOMClientIsoSubspaces;
-class JSBuiltinFunctions;
 
 class DOMWrapperWorld;
 }
@@ -134,8 +133,6 @@ private:
 
 namespace JSC {
 struct HashTableValue;
-class DecoderStringTable;
-class PrelinkedModuleGraph;
 }
 
 namespace Bun {
@@ -176,7 +173,7 @@ class JSVMClientData : public JSC::VM::ClientData {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(JSVMClientData, JSVMClientData);
 
 public:
-    explicit JSVMClientData(JSC::VM&, RefPtr<JSC::SourceProvider>);
+    explicit JSVMClientData(JSC::VM&);
 
     virtual ~JSVMClientData();
 
@@ -184,7 +181,6 @@ public:
     static void create(JSC::VM*, void* bunVM, WorkerMessagingProxy* worker);
 
     BunBuiltinNames& builtinNames() { return m_builtinNames; }
-    JSBuiltinFunctions& builtinFunctions() { return *m_builtinFunctions; }
 
     WebCore::DOMWrapperWorld& normalWorld() { return *m_normalWorld; }
 
@@ -239,6 +235,8 @@ public:
     // filled on first use so each name is atomized once however many chunks
     // import or export it (BunAnalyzeTranspiledModule.cpp).
     Vector<JSC::Identifier> sharedModuleInfoIdentifiers;
+    // What they are made from. See ZigSourceProvider.cpp.
+    std::span<const uint8_t> moduleInfoStrings;
 
     // "process", "stdout" and "stderr", atomized by the first jsFunctionIsStandardOutputStream.
     std::array<JSC::Identifier, 3> standardOutputStreamNames;
@@ -264,23 +262,12 @@ public:
     WTF::UncheckedKeyHashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
     Vector<Bun::IsolatedInternalModule> isolationInternalModules;
 
-    void reconcileWeakReferencesAtGCEnd(JSC::VM&, JSC::CollectionScope) final;
-
-    JSC::DecoderStringTable* decoderStringTable() final { return m_decoderStringTable.get(); }
-    void setDecoderStringTable(std::span<const uint8_t>);
-
-    // The executable's pre-resolved module graph for this VM, created on first use over decoderStringTable() from the
-    // standalone module graph; null when there is none (or it does not validate).
-    JSC::PrelinkedModuleGraph* prelinkedModuleGraph(JSC::VM&);
+    void reportErrorOfMicrotask(JSC::JSGlobalObject*, JSC::Exception*) final;
 
 private:
     bool isWebCoreJSClientData() const final { return true; }
-    std::unique_ptr<JSC::DecoderStringTable> m_decoderStringTable;
-    RefPtr<JSC::PrelinkedModuleGraph> m_prelinkedModuleGraph;
-    bool m_prelinkedModuleGraphChecked { false };
 
     BunBuiltinNames m_builtinNames;
-    std::unique_ptr<JSBuiltinFunctions> m_builtinFunctions;
 
     // Owns the per-VM `JSHeapData`. Declared *before* the client `IsoSubspace`
     // members below so it is destroyed *after* them (members destruct in

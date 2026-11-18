@@ -2,7 +2,10 @@
 
 use core::cell::Cell;
 
-use super::{BLOCK_SIZE, DeferCollection, Heap, JsCell, MutatorState, Scope, barrier};
+use bun_engine_platform::{clock, machine};
+
+use super::collector::log;
+use super::{BLOCK_SIZE, CellState, DeferCollection, Heap, JsCell, MutatorState, Scope};
 use crate::options;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -39,6 +42,11 @@ pub(super) struct Policy {
     should_collect_fully: Cell<bool>,
     is_safe_to_collect: Cell<bool>,
     sizes: Cell<HeapSizes>,
+    /// The process has taken most of the memory that it can get.
+    is_critical: Cell<bool>,
+    checks_since_measurement: Cell<u32>,
+    last_collection_end: Cell<f64>,
+    stress_count: Cell<u32>,
 }
 
 fn min_heap_size(kind: HeapKind) -> usize {
@@ -52,10 +60,11 @@ fn min_heap_size(kind: HeapKind) -> usize {
     }
 }
 
-fn proportional_heap_size(heap_size: usize) -> usize {
+fn proportional_heap_size(heap_size: usize, footprint: Option<usize>) -> usize {
     const GROWTH_FUNCTION_THRESHOLD: usize = 16 << 30;
     let options = options();
     let (size, ram) = (heap_size as f64, options.ram_size as f64);
+    let footprint = footprint.unwrap_or(heap_size) as f64;
     let factor = if options.force_mini_vm_mode {
         options.mini_vm_heap_growth_factor
     } else if options.ram_size >= GROWTH_FUNCTION_THRESHOLD
@@ -63,9 +72,9 @@ fn proportional_heap_size(heap_size: usize) -> usize {
     {
         let steepness = options.heap_growth_steepness_factor;
         options.heap_growth_max_increase * (-steepness * size.min(ram) / ram).exp() + 1.0
-    } else if size < ram * options.small_heap_ram_fraction {
+    } else if footprint < ram * options.small_heap_ram_fraction {
         options.small_heap_growth_factor
-    } else if size < ram * options.medium_heap_ram_fraction {
+    } else if footprint < ram * options.medium_heap_ram_fraction {
         options.medium_heap_growth_factor
     } else {
         options.large_heap_growth_factor
@@ -89,22 +98,63 @@ impl Policy {
             should_collect_fully: Cell::new(false),
             is_safe_to_collect: Cell::new(false),
             sizes: Cell::default(),
+            is_critical: Cell::new(false),
+            checks_since_measurement: Cell::new(0),
+            last_collection_end: Cell::new(clock::monotonic_seconds()),
+            stress_count: Cell::new(0),
         }
     }
 
+    fn measure_footprint(&self) -> Option<usize> {
+        let footprint = machine::memory_footprint();
+        let threshold = machine::ram_size() as f64 * options().critical_gc_memory_threshold;
+        self.is_critical
+            .set(footprint.is_some_and(|it| it as f64 > threshold));
+        self.checks_since_measurement.set(0);
+        footprint
+    }
+
+    pub(super) fn is_critical(&self) -> bool {
+        self.is_critical.get()
+    }
+
+    /// In this cycle.
+    fn allowed(&self) -> usize {
+        let allowed = self.max_heap_size.get() - self.sizes.get().after_last;
+        if !self.is_critical() {
+            return allowed;
+        }
+        let above_threshold = 1.0 - options().critical_gc_memory_threshold;
+        allowed.min((options().ram_size as f64 * above_threshold) as usize / 4)
+    }
+
+    pub(super) fn remaining(&self) -> usize {
+        self.allowed().saturating_sub(self.allocated())
+    }
+
+    pub(super) fn allocated(&self) -> usize {
+        self.allocated.get()
+    }
+
     fn is_due(&self) -> bool {
-        let allocated = self.allocated.get();
-        let limit = options().gc_max_heap_size;
-        if limit != 0 && allocated > limit {
+        const CHECKS_BETWEEN_MEASUREMENTS: u32 = 100;
+        const CONTINUOUS_PERIOD: f64 = 0.001;
+        self.checks_since_measurement.update(|checks| checks + 1);
+        if self.checks_since_measurement.get() >= CHECKS_BETWEEN_MEASUREMENTS {
+            self.measure_footprint();
+        }
+        let (allocated, limit) = (self.allocated(), options().gc_max_heap_size);
+        if (limit != 0 && allocated > limit)
+            || (options().collect_continuously
+                && clock::monotonic_seconds() - self.last_collection_end.get() > CONTINUOUS_PERIOD)
+        {
             return true;
         }
         // A large allocation that has just been made is alive, and says little about the rest.
         allocated > self.allowed()
-            && (self.kind != HeapKind::Large || self.last_oversized.get() <= allocated / 3)
-    }
-
-    fn allowed(&self) -> usize {
-        self.max_heap_size.get() - self.sizes.get().after_last
+            && (self.is_critical()
+                || self.kind != HeapKind::Large
+                || self.last_oversized.get() <= allocated / 3)
     }
 
     /// Whether a collection would become due before so much more is allocated, and has something to find now.
@@ -153,7 +203,7 @@ impl Policy {
         match scope {
             Scope::Full => {
                 let max = min_heap_size(self.kind)
-                    .max(proportional_heap_size(size))
+                    .max(proportional_heap_size(size, self.measure_footprint()))
                     .max(size.saturating_add(BLOCK_SIZE));
                 self.max_heap_size.set(max);
                 self.max_eden_size.set(max - size);
@@ -174,6 +224,11 @@ impl Policy {
         self.sizes.set(sizes);
         self.allocated.set(0);
         self.last_oversized.set(0);
+        self.last_collection_end.set(clock::monotonic_seconds());
+    }
+
+    pub(super) fn did_grow_old_cell(&self, bytes: usize) {
+        self.old_cell_bytes.update(|total| total + bytes);
     }
 
     fn extra_memory_size(&self) -> usize {
@@ -182,15 +237,12 @@ impl Policy {
             .saturating_add(self.untracked_extra_memory.get())
             .saturating_add(self.array_buffer_bytes.get())
     }
-
-    pub(super) fn max_eden_size(&self) -> usize {
-        self.max_eden_size.get()
-    }
 }
 
 impl Heap {
     pub(crate) fn notify_is_safe_to_collect(&self) {
         self.policy.is_safe_to_collect.set(true);
+        log!(self, "starting ]");
     }
 
     pub(super) fn can_collect(&self) -> bool {
@@ -210,13 +262,13 @@ impl Heap {
     }
 
     pub fn collect_if_necessary(&self) {
-        if !self.policy.is_due() || !self.can_collect() {
+        if !self.can_collect() {
             return;
         }
-        if self.is_deferred() {
-            self.did_defer_collection.set(true);
-        } else {
+        if self.policy.is_due() {
             self.collect(None);
+        } else {
+            self.schedule_eden_collection();
         }
     }
 
@@ -234,18 +286,38 @@ impl Heap {
         self.defer_collection()
     }
 
-    #[cfg(debug_assertions)]
+    pub(super) fn will_allocate_slowly(&self) {
+        assert!(
+            !self.is_destroying_cells.get() && self.mutator_state() != MutatorState::Collecting,
+            "an allocation while the collector is at work"
+        );
+        #[cfg(not(debug_assertions))]
+        self.collect_if_stressed();
+        self.collect_if_necessary();
+    }
+
     pub(super) fn collect_if_stressed(&self) {
         let period = options().collect_every_n_allocations;
         if period == 0 || !self.can_collect() || self.is_deferred() {
             return;
         }
-        let count = self.stress_countdown.get() + 1;
-        self.stress_countdown.set(count);
+        let count = self.policy.stress_count.get().wrapping_add(1);
+        self.policy.stress_count.set(count);
         if count.is_multiple_of(period) {
-            let is_full = count.is_multiple_of(period.saturating_mul(4));
-            self.collect(Some(if is_full { Scope::Full } else { Scope::Eden }));
+            let is_full = count.is_multiple_of(period.saturating_mul(4))
+                && !options().use_only_eden_collections_under_stress;
+            self.collect_and_sweep(Some(if is_full { Scope::Full } else { Scope::Eden }));
         }
+    }
+
+    /// Whether it is worth trying again.
+    #[cold]
+    pub(super) fn collect_for_lack_of_memory(&self) -> bool {
+        if !self.can_collect() || self.is_deferred() {
+            return false;
+        }
+        self.collect_and_sweep(Some(Scope::Full));
+        true
     }
 
     /// `cell` has come to own that much more memory outside the heap. May collect.
@@ -273,7 +345,7 @@ impl Heap {
             .extra_since_check
             .update(|total| total.saturating_add(bytes));
         // An old cell is not visited for the first time again before the next full collection.
-        if cell.state() == barrier::BLACK_THRESHOLD {
+        if cell.state() != CellState::DefinitelyWhite as u8 {
             self.policy
                 .extra_memory
                 .update(|total| total.saturating_add(bytes));
@@ -316,6 +388,7 @@ impl Heap {
         if self.last_collection_scope().is_none() && bytes > self.policy.max_eden_size.get() {
             self.policy.max_eden_size.set(bytes);
             self.policy.max_heap_size.set(bytes);
+            self.activity.suspend_until_next_collection();
         }
     }
 
@@ -333,37 +406,5 @@ impl Heap {
 
     pub fn extra_memory_size(&self) -> usize {
         self.policy.extra_memory_size()
-    }
-
-    pub fn block_bytes(&self) -> usize {
-        self.blocks.borrow().len() * BLOCK_SIZE + self.precise_bytes.get()
-    }
-
-    pub fn capacity(&self) -> usize {
-        self.block_bytes().saturating_add(self.extra_memory_size())
-    }
-
-    /// The count and the bytes of what the last collection marked.
-    fn marked(&self) -> (usize, usize) {
-        let (mut count, mut bytes) = (0, 0);
-        self.for_each_directory(|directory| {
-            for block in directory.blocks_with_marks() {
-                count += block.marked_cell_count();
-                bytes += block.marked_cell_count() * block.cell_size();
-            }
-        });
-        for allocation in self.precise.borrow().iter().filter(|it| it.is_marked()) {
-            count += 1;
-            bytes += allocation.cell_size();
-        }
-        (count, bytes)
-    }
-
-    pub fn size(&self) -> usize {
-        self.marked().1.saturating_add(self.extra_memory_size())
-    }
-
-    pub fn object_count(&self) -> usize {
-        self.marked().0
     }
 }

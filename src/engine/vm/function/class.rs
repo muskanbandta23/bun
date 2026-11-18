@@ -2,7 +2,7 @@ use bun_engine_text::names;
 
 use crate::{
     Attributes, Cx, FunctionExecutable, Gc, JsCell, JsFinalObject, JsFunction, JsObject, JsResult,
-    Shape, ShapeSpec, Value, errors,
+    Shape, ShapeSpec, Value, WatchpointState, errors,
 };
 
 /// `new_class`: the part of ClassDefinitionEvaluation that comes before the elements. Returns the constructor and the
@@ -34,12 +34,17 @@ pub unsafe fn new_class(
             parent
         }
     };
+    // Most definitions are evaluated once, and nothing would share the shapes on the way to the last method.
+    let prototype = if executable.singleton_watchpoints().state() == WatchpointState::Clear {
+        let capacity = JsFinalObject::DEFAULT_INLINE_CAPACITY;
+        let spec = ShapeSpec::of::<JsFinalObject>().with_inline_capacity(capacity);
+        let shape = Shape::create_dictionary(cx, Some(global), parent, spec);
+        JsFinalObject::create(cx, shape).upcast()
+    } else {
+        cx.new_object_with_prototype(parent.as_object())
+    };
     // SAFETY: the caller's.
     let constructor = unsafe { JsFunction::create_with_shape(cx, executable, scope, shape) };
-    let capacity = JsFinalObject::DEFAULT_INLINE_CAPACITY;
-    let spec = ShapeSpec::of::<JsFinalObject>().with_inline_capacity(capacity);
-    let shape = Shape::create_dictionary(cx, Some(global), parent, spec);
-    let prototype: Gc<JsObject> = JsFinalObject::create(cx, shape).upcast();
     let attributes = Attributes::DONT_ENUM;
     prototype.put_direct(cx, names::constructor, constructor.into(), attributes);
     constructor.put_direct(cx, names::prototype, prototype.into(), Attributes::CONSTANT);

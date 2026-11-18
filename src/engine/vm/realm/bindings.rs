@@ -3,6 +3,7 @@ use core::mem::offset_of;
 
 use bun_engine_text::{Identifier, PropertyName};
 
+use crate::heap::HeapAnalyzer;
 use crate::{
     Attributes, FastHashMap, Field, GlobalObject, InlineWatchpointSet, Trace, Value, Visitor, Vm,
     WatchpointState,
@@ -80,7 +81,8 @@ unsafe impl Trace for GlobalBindings {
                 .iter()
                 .flat_map(|it| &**it)
             {
-                binding.value.trace(visitor);
+                // SAFETY: the owner keeps it alive.
+                unsafe { visitor.append_hidden_word(binding.value.word_concurrently()) };
             }
         });
     }
@@ -105,6 +107,14 @@ impl GlobalBindings {
 
     pub fn names(&self) -> Vec<Identifier> {
         self.names.borrow().clone()
+    }
+
+    pub(super) fn analyze(&self, owner: &GlobalObject, analyzer: &mut HeapAnalyzer) {
+        for (index, name) in self.names.borrow().iter().enumerate() {
+            if let Some(value) = self.at(index).get().and_then(Value::as_cell) {
+                analyzer.variable_edge(owner.as_cell().into(), value, name.name());
+            }
+        }
     }
 
     /// There is none of that name yet.

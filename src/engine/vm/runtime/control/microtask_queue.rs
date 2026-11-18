@@ -147,7 +147,8 @@ impl MicrotaskQueue {
 
     pub(super) fn visit(&self, visitor: &mut Visitor) {
         let mut first = self.start.get();
-        if self.visited_epoch.replace(visitor.epoch()) == visitor.epoch() {
+        if !visitor.is_verifying() && self.visited_epoch.replace(visitor.epoch()) == visitor.epoch()
+        {
             first = first.max(self.visited_end.get());
         }
         for position in first..self.end.get() {
@@ -208,22 +209,19 @@ fn report(cx: &mut Cx, thrown: Thrown) -> JsResult<()> {
     ignore_exception(cx)
 }
 
-fn notify_debugger(cx: &mut Cx, event: MicrotaskEvent, task: &QueuedTask) -> JsResult<()> {
-    if cx.has_debugger()
-        && let Some(id) = task.tracking_id()
-    {
-        let _defer = cx.defer_termination();
-        (cx.hooks().debugger_microtask_event)(cx, &cx.global(), event, id);
+fn notify_debugger(vm: &Vm, event: MicrotaskEvent, task: &QueuedTask) {
+    if let Some((debugger, id)) = task.global().debugger().zip(task.tracking_id()) {
+        debugger.microtask_event(vm, event, task.job(), id);
     }
-    ignore_exception(cx)
 }
 
 #[cold]
 #[inline(never)]
 fn run_tracked(cx: &mut Cx, task: &QueuedTask) -> JsResult<()> {
-    notify_debugger(cx, MicrotaskEvent::WillRun, task)?;
-    jobs::run_out_of_line(cx, task).or_else(|thrown| report(cx, thrown))?;
-    notify_debugger(cx, MicrotaskEvent::DidRun, task)
+    notify_debugger(cx, MicrotaskEvent::WillRun, task);
+    let result = jobs::run_out_of_line(cx, task).or_else(|thrown| report(cx, thrown));
+    notify_debugger(cx, MicrotaskEvent::DidRun, task);
+    result
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -249,6 +247,12 @@ impl MicrotaskQueueRef {
         let queue = Self::unregistered();
         queue.register(vm);
         queue
+    }
+
+    /// # Safety
+    /// The address of one that has been forgotten, whose count this takes over.
+    pub unsafe fn from_raw(queue: NonNull<MicrotaskQueue>) -> MicrotaskQueueRef {
+        MicrotaskQueueRef(queue)
     }
 
     pub(crate) fn unregistered() -> MicrotaskQueueRef {
@@ -387,14 +391,14 @@ impl GlobalObject {
 #[inline(never)]
 pub(super) fn queue_tracked(vm: &Vm, task: &QueuedTask) {
     let global = task.global();
-    if !vm.has_debugger() {
+    if global.debugger().is_none() {
         return global.realm_microtask_queue().enqueue(*task);
     }
     let last_id = &vm.services.control.last_microtask_id;
     last_id.update(|id| id + 1);
     let task = task.tracked(vm, last_id.get());
     global.realm_microtask_queue().enqueue(task);
-    (vm.hooks().debugger_microtask_event)(vm, &global, MicrotaskEvent::DidQueue, last_id.get());
+    notify_debugger(vm, MicrotaskEvent::DidQueue, &task);
 }
 
 impl Vm {

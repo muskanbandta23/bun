@@ -39,6 +39,7 @@ inherited! {
     "engine_Function_visit_children" = JsFunction.visit_children(&mut Visitor);
     "engine_InternalFunction_visit_children" = InternalFunction.visit_children(&mut Visitor);
     "engine_GlobalObject_visit_children" = GlobalObject.visit_children(&mut Visitor);
+    "engine_GlobalObject_analyze_heap" = GlobalObject.analyze_heap(&mut HeapAnalyzer);
 }
 
 #[export]
@@ -95,6 +96,16 @@ unsafe fn move_words(source: *const u64, target: *mut u64, count: usize) {
 #[export]
 fn heap_collect(heap: &Heap, scope: Option<&Scope>) {
     heap.collect(scope.copied());
+}
+
+#[export]
+fn heap_collect_when_idle(heap: &Heap) {
+    heap.collect_when_idle();
+}
+
+#[export]
+fn heap_report_abandoned_object_graph(heap: &Heap) {
+    heap.report_abandoned_object_graph();
 }
 
 #[export]
@@ -320,20 +331,20 @@ fn analyzer_property_edge(
     to: Gc<JsCell>,
     name: PropertyName<'_>,
 ) {
-    analyzer.sink.property_edge(from, to, name);
+    analyzer.property_edge(from, to, name);
 }
 
 #[export]
 fn analyzer_index_edge(analyzer: &mut HeapAnalyzer, from: Gc<JsCell>, to: Gc<JsCell>, index: u32) {
-    analyzer.sink.index_edge(from, to, index);
+    analyzer.index_edge(from, to, index);
 }
 
 #[export]
 fn analyzer_label(analyzer: &mut HeapAnalyzer, cell: Gc<JsCell>, label: &StringImpl) {
-    analyzer.sink.label(cell, label);
+    analyzer.label(cell, label);
 }
 
 #[export]
 fn analyzer_wrapped_object(analyzer: &mut HeapAnalyzer, cell: Gc<JsCell>, wrapped: *const c_void) {
-    analyzer.sink.wrapped_object(cell, wrapped);
+    analyzer.wrapped_object(cell, wrapped);
 }

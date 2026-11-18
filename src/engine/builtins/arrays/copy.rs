@@ -95,7 +95,7 @@ fn try_is_concat_spreadable(cx: &Cx, value: Value) -> Option<bool> {
         return Some(false);
     };
     let (global, name) = (object.realm()?, symbols::isConcatSpreadable);
-    let array = object.downcast::<JsArray>();
+    let array = object.as_exact_array();
     let inherits = match array {
         Some(array) => array.inherits_from_array_prototype(&global, name),
         None => {
@@ -118,6 +118,9 @@ fn is_concat_spreadable(cx: &mut Cx, value: Value) -> JsResult<bool> {
     }
 }
 
+/// Of an array that has nothing else. More may make the result sparse.
+const MAX_COPIED_HOLES: u64 = 1000;
+
 fn try_concat(cx: &mut Cx, first: Value, rest: &[Value]) -> JsResult<Option<Gc<JsArray>>> {
     let parts = || core::iter::once(&first).chain(rest).copied();
     let (mut kind, mut length) = (ElementKind::Undecided, 0);
@@ -133,7 +136,9 @@ fn try_concat(cx: &mut Cx, first: Value, rest: &[Value]) -> JsResult<Option<Gc<J
         }
         let array = part.cast::<JsArray>();
         let count = u64::from(array.length());
-        if array.plain_elements(&cx.no_gc(), 0..count).is_none() {
+        if array.plain_elements(&cx.no_gc(), 0..count).is_none()
+            || (array.element_kind() == ElementKind::Undecided && count > MAX_COPIED_HOLES)
+        {
             return Ok(None);
         }
         if count != 0 {
@@ -150,7 +155,7 @@ fn try_concat(cx: &mut Cx, first: Value, rest: &[Value]) -> JsResult<Option<Gc<J
     }
     JsArray::build(cx, kind, length as usize, |writer, no_gc| {
         for part in parts() {
-            match part.downcast::<JsArray>() {
+            match part.as_exact_array() {
                 Some(array) if array.length() == 0 => {}
                 Some(array) => writer.extend(array.dense_elements(no_gc), HoleMode::Keep),
                 None => writer.push(part),
@@ -180,7 +185,7 @@ pub(super) fn concat(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
         if length + count > MAX_LENGTH {
             return Err(cx.throw_type_error(errors::LENGTH_EXCEEDS_MAXIMUM));
         }
-        match (source, result.downcast::<JsArray>()) {
+        match (source, result.as_exact_array()) {
             (None, _) => result
                 .create_data_index(cx, length, part, true)
                 .map(|_| ())?,
@@ -295,13 +300,12 @@ impl Extent {
         match elements {
             Elements::Contiguous(values) if depth != 0 => {
                 for &value in values.iter().flatten() {
-                    if let Some(array) = value.downcast::<JsArray>() {
+                    if let Some(array) = value.as_exact_array() {
                         let inner = array.plain_elements(no_gc, 0..array.length().into())?;
                         self.add(no_gc, inner, depth - 1, nesting.checked_sub(1)?)?;
-                    } else if value
-                        .as_cell()
-                        .is_some_and(|it| it.cell_type() == CellType::Proxy)
-                    {
+                    } else if value.as_cell().is_some_and(|it| {
+                        matches!(it.cell_type(), CellType::Proxy | CellType::DerivedArray)
+                    }) {
                         return None;
                     } else {
                         self.kind = self.kind.generalized_for([value]);
@@ -328,7 +332,7 @@ fn write_flattened(
     match elements {
         Elements::Contiguous(values) if depth != 0 => {
             for &value in values.iter().flatten() {
-                match value.downcast::<JsArray>() {
+                match value.as_exact_array() {
                     Some(array) => {
                         write_flattened(writer, no_gc, array.dense_elements(no_gc), depth - 1);
                     }

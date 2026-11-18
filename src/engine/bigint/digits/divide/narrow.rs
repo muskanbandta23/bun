@@ -73,7 +73,6 @@ impl DivisorTop {
 
 /// Brings `next` in below `left`, which is less than `divisor` before and after. Returns the digit of the quotient.
 #[inline(always)]
-#[expect(unused_assignments, reason = "the last carry of an unrolled run")]
 fn step<const N: usize>(
     left: &mut [u64; N],
     next: u64,
@@ -84,12 +83,15 @@ fn step<const N: usize>(
     unroll!(i in 1, N => {
         lower[i] = left[i - 1];
     });
-    if top.is(left[N - 1], left[N - 2]) {
+    let is_largest = top.is(left[N - 1], left[N - 2]);
+    let (quotient, upper) = if is_largest {
         cold_path();
-        *left = subtract_largest_multiple(lower, divisor);
-        return u64::MAX;
-    }
-    let (quotient, upper) = top.step(left[N - 1], lower[N - 1], lower[N - 2]);
+        // The carry out of this sum cancels the borrow below.
+        let top = join(top.low, top.high);
+        (u64::MAX, top.wrapping_add(u128::from(lower[N - 2])))
+    } else {
+        top.step(left[N - 1], lower[N - 1], lower[N - 2])
+    };
     let (mut low, mut high) = ([0; N], [0; N]);
     unroll!(i in 0, N - 2 => {
         (low[i], high[i + 1]) = divisor[i].carrying_mul(quotient, 0);
@@ -103,23 +105,12 @@ fn step<const N: usize>(
     unroll!(i in 0, N => {
         (left[i], flag) = subtract_with_flag(lower[i], low[i], flag);
     });
-    if flag != NO_BORROW {
+    if flag != NO_BORROW && !is_largest {
         cold_path();
         *left = add_arrays(left, divisor, false).0;
         return quotient - 1;
     }
     quotient
-}
-
-/// The low digits of `lower - divisor * (2^64 - 1)`.
-#[cold]
-fn subtract_largest_multiple<const N: usize>(lower: [u64; N], divisor: &[u64; N]) -> [u64; N] {
-    let mut difference = add_arrays(&lower, divisor, false).0;
-    let mut borrow = false;
-    for i in 1..N {
-        (difference[i], borrow) = difference[i].borrowing_sub(divisor[i - 1], borrow);
-    }
-    difference
 }
 
 macro_rules! for_each_length {
@@ -192,21 +183,27 @@ fn divide_by_array<const N: usize>(
     unroll!(i in 1, N => {
         left[i - 1] = upper[i].funnel_shl(upper[i - 1], shift);
     });
-    let mut steps = a.len() - N + 1;
-    let shifted = |index: usize| {
-        let below = if index == 0 { 0 } else { a[index - 1] };
-        a[index].funnel_shl(below, shift)
+    let mut rest = &a[..=a.len() - N];
+    let mut take = || {
+        let (&digit, below) = rest.split_last()?;
+        rest = below;
+        let next = digit.funnel_shl(below.last().copied().unwrap_or(0), shift);
+        Some((below.len(), next))
     };
-    if left[N - 1] == 0 && left[N - 2] < divisor[N - 1] {
-        steps -= 1;
-        if let Some(out) = quotient.get_mut(steps) {
+    if left[N - 1] == 0
+        && left[N - 2] < divisor[N - 1]
+        && let Some((index, next)) = take()
+    {
+        unroll!(i in 1, N => {
+            left[N - i] = left[N - i - 1];
+        });
+        left[0] = next;
+        if let Some(out) = quotient.get_mut(index) {
             *out = 0;
         }
-        left.copy_within(..N - 1, 1);
-        left[0] = shifted(steps);
     }
-    for index in (0..steps).rev() {
-        let digit = step(&mut left, shifted(index), &divisor, top);
+    while let Some((index, next)) = take() {
+        let digit = step(&mut left, next, &divisor, top);
         if let Some(out) = quotient.get_mut(index) {
             *out = digit;
         }

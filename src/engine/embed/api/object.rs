@@ -7,16 +7,18 @@ use bun_engine_vm::call::native_not_a_constructor;
 use bun_engine_vm::{
     Attributes, CellType, Class, CustomGetter, CustomGetterSetter, CustomSetter, Cx, DontEnumMode,
     Gc, GetterSetter, GlobalObject, IndexingMode, IntegrityLevel, InternalFieldTuple,
-    InternalMethod, Intrinsic, JsFinalObject, JsFunction, JsObject, JsResult, NativeFunction,
-    Properties, PropertyDescriptor, PropertyEntry, PropertyNameList, PropertyNameMode,
-    PropertyOffset, PropertySlot, PutDirectIndexMode, PutPropertySlot, Shape, ShapeSpec,
-    StaticProperty, StaticTable, TypeFlags, Value, Vm, function_name,
+    InternalMethod, Intrinsic, JsArray, JsFinalObject, JsFunction, JsObject, JsObjectInit,
+    JsResult, JsString, NativeFunction, Properties, PropertyDescriptor, PropertyEntry,
+    PropertyNameList, PropertyNameMode, PropertyOffset, PropertySlot, PutDirectIndexMode,
+    PutPropertySlot, Shape, ShapeSpec, StaticProperty, StaticTable, Storage, TypeFlags, Value, Vm,
+    function_name,
 };
 
 use crate::abi::returned_by_value;
 
 returned_by_value! {
     PropertyOffset = PropertyOffset::INVALID,
+    Storage = Storage::NONE,
 }
 
 /// For the functions that C++ calls without a realm.
@@ -225,6 +227,11 @@ fn name_list_first(list: &PropertyNameList) -> *mut c_void {
 #[export]
 fn name_list_length(list: &PropertyNameList) -> usize {
     list.len()
+}
+
+#[export]
+fn storage_create(vm: &Vm, shape: Gc<Shape>) -> Storage {
+    JsObjectInit::new(vm, shape).storage()
 }
 
 #[export]
@@ -666,4 +673,29 @@ fn object_store_element(object: &JsObject, vm: &Vm, index: u32, value: Value) {
 #[export]
 fn object_holes_must_forward_to_prototype(object: &JsObject) -> bool {
     object.holes_must_forward_to_prototype()
+}
+
+#[export]
+fn object_values(cx: &mut Cx, value: Value) -> JsResult<Value> {
+    Ok(value.to_object(cx)?.enumerable_own_values(cx)?.into())
+}
+
+#[export]
+fn object_own_keys(
+    object: &JsObject,
+    cx: &mut Cx,
+    kinds: PropertyNameMode,
+    mode: DontEnumMode,
+) -> JsResult<Gc<JsArray>> {
+    object.own_keys_array(cx, kinds, mode)
+}
+
+#[export]
+fn value_to_tagged_string(value: Value, cx: &mut Cx) -> JsResult<Gc<JsString>> {
+    value.to_tagged_string(cx)
+}
+
+#[export]
+fn object_builtin_tagged_string(object: &JsObject, cx: &Cx) -> JsResult<Gc<JsString>> {
+    Ok(JsString::from_name(cx, object.builtin_tagged_string(cx)?))
 }

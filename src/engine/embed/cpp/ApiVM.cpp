@@ -2,11 +2,10 @@
 
 namespace JSC {
 
-VM::VM(RunLoop& runLoop)
+VM::VM()
     : deferredWorkTimer(DeferredWorkTimer::create())
     , m_ownerThread(currentThreadID())
     , m_identifier(VMIdentifier::generate())
-    , m_runLoop(runLoop)
     , m_hardStackLimit(Engine::vm_hard_stack_limit(*this))
 {
 }
@@ -16,22 +15,21 @@ VM::~VM()
     delete clientData;
 }
 
-RefPtr<VM> VM::tryCreate(HeapType heapType, RunLoop* runLoop)
+RefPtr<VM> VM::tryCreate(HeapType heapType)
 {
     Options::freeze();
     void* memory = Engine::vm_create(heapType, Engine::StaticAtom::COUNT, Engine::RealmSlot::COUNT);
-    return adoptRef(new (memory) VM(runLoop ? *runLoop : RunLoop::currentSingleton()));
+    auto* vm = new (memory) VM;
+    if (Options::useControlFlowProfiler()) [[unlikely]]
+        vm->enableControlFlowProfiler();
+    if (Options::useSamplingProfiler()) [[unlikely]]
+        vm->ensureSamplingProfiler().start();
+    return adoptRef(vm);
 }
 
 extern "C" void engine_host_destroy_vm_members(VM* vm)
 {
     vm->~VM();
-}
-
-extern "C" void engine_host_reconcile_weak_references(VM* vm, CollectionScope scope)
-{
-    if (vm->clientData)
-        vm->clientData->reconcileWeakReferencesAtGCEnd(*vm, scope);
 }
 
 void VM::whenIdle(Function<void()>&& task)

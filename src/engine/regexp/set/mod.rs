@@ -1,6 +1,7 @@
 //! Sets of characters.
 
 mod builder;
+mod find;
 mod latin1;
 mod ranges;
 mod shared;
@@ -10,6 +11,7 @@ use bun_engine_text::AllocError;
 use bun_engine_unicode::MAX_CODE_POINT;
 
 pub use builder::SetBuilder;
+pub use find::{find_member, find_non_member};
 pub use latin1::Latin1Set;
 pub use shared::SharedSet;
 pub use table::LookupTable;
@@ -93,6 +95,7 @@ const fn latin1_ranges(ranges: &[(u8, u8)]) -> Latin1Set {
     set
 }
 
+const DIGIT: Latin1Set = latin1_ranges(&[(b'0', b'9')]);
 const WORD: Latin1Set = latin1_ranges(&[(b'0', b'9'), (b'A', b'Z'), (b'_', b'_'), (b'a', b'z')]);
 const LINE_TERMINATOR: Latin1Set = Latin1Set::of(b"\n\r");
 
@@ -102,8 +105,16 @@ impl Set {
         latin1: Latin1Set::ALL,
         above: Above::ALL,
     };
-    pub const DIGIT: Set = Set::from_latin1(latin1_ranges(&[(b'0', b'9')]));
+    pub const DIGIT: Set = Set::from_latin1(DIGIT);
+    pub(crate) const NOT_DIGIT: Set = Set {
+        latin1: DIGIT.complement(),
+        above: Above::ALL,
+    };
     pub const WORD: Set = Set::from_latin1(WORD);
+    pub(crate) const NOT_WORD: Set = Set {
+        latin1: WORD.complement(),
+        above: Above::ALL,
+    };
     /// WordCharacters of ECMA-262 where case is ignored among code points.
     pub const WORD_IGNORING_CASE: Set = Set {
         latin1: WORD,
@@ -125,7 +136,7 @@ impl Set {
     };
 
     pub fn space() -> Set {
-        shared::SPACE.to_set()
+        SharedSet::space().to_set()
     }
 
     #[inline]
@@ -210,6 +221,7 @@ impl Set {
     }
 
     /// The only member.
+    #[inline]
     pub fn single(&self) -> Option<u32> {
         match (self.latin1.len(), self.above()) {
             (1, []) => self.latin1.iter().next().map(u32::from),
@@ -246,7 +258,7 @@ impl Set {
         } else if self.above().is_empty() {
             other.above.try_clone()?
         } else {
-            Above::from_slice(ranges::union(self.above(), other.above())?.as_slice())?
+            Above::from_slice(&ranges::union(self.above(), other.above())?)?
         };
         Ok(Set {
             latin1: self.latin1 | other.latin1,
@@ -260,7 +272,7 @@ impl Set {
         } else if self.has_all_above() {
             other.above.try_clone()?
         } else {
-            Above::from_slice(ranges::intersection(self.above(), other.above())?.as_slice())?
+            Above::from_slice(&ranges::intersection(self.above(), other.above())?)?
         };
         Ok(Set {
             latin1: self.latin1 & other.latin1,
@@ -272,7 +284,7 @@ impl Set {
         let above = if other.above().is_empty() {
             self.above.try_clone()?
         } else {
-            Above::from_slice(ranges::difference(self.above(), other.above())?.as_slice())?
+            Above::from_slice(&ranges::difference(self.above(), other.above())?)?
         };
         Ok(Set {
             latin1: self.latin1 - other.latin1,
@@ -280,16 +292,23 @@ impl Set {
         })
     }
 
+    #[inline]
     pub fn complement(&self) -> Result<Set, AllocError> {
         let above = match self.above {
             Above::Inline(0, _) => Above::ALL,
-            Above::Shared(shared) => Above::from_shared(shared.complement()),
-            _ => Above::from_slice(ranges::complement(self.above())?.as_slice())?,
+            _ => self.complement_above()?,
         };
         Ok(Set {
             latin1: !self.latin1,
             above,
         })
+    }
+
+    fn complement_above(&self) -> Result<Above, AllocError> {
+        match self.above {
+            Above::Shared(shared) => Ok(Above::from_shared(shared.complement())),
+            _ => Above::from_slice(&ranges::complement(self.above())?),
+        }
     }
 
     /// A table of its own, for the characters up to `max`. That of [`Set::shared`] costs nothing.

@@ -22,7 +22,7 @@ enum Complement {
 
 const FIXED_SIZE: &str = "memory for character data";
 
-pub(super) static SPACE: SharedSet = SharedSet::new(
+static SPACE: SharedSet = SharedSet::new(
     Latin1Set::of(b"\t\n\x0b\x0c\r \xa0"),
     Cow::Borrowed(&[
         CharRange::single(0x1680),
@@ -53,6 +53,11 @@ impl SharedSet {
         Box::new(SharedSet::new(set.latin1, set.above().to_vec().into()))
     }
 
+    #[inline]
+    pub fn space() -> &'static SharedSet {
+        &SPACE
+    }
+
     /// The members that are single characters.
     pub fn of_property(property: Property) -> &'static SharedSet {
         PROPERTIES[property.index()].get_or_init(|| {
@@ -72,10 +77,15 @@ impl SharedSet {
                 let above = ranges::complement(&self.above).expect(FIXED_SIZE);
                 Box::new(SharedSet {
                     complement: Complement::Origin(self),
-                    ..SharedSet::new(!self.latin1, above.as_slice().to_vec().into())
+                    ..SharedSet::new(!self.latin1, above.to_vec().into())
                 })
             }),
         }
+    }
+
+    pub(super) fn is_complement_of(&self, other: &SharedSet) -> bool {
+        let is_origin_of = |a: &SharedSet, b: &SharedSet| matches!(b.complement, Complement::Origin(origin) if core::ptr::eq(origin, a));
+        is_origin_of(self, other) || is_origin_of(other, self)
     }
 
     /// With all that simple case folding makes equal to a member.

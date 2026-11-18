@@ -66,6 +66,7 @@
 #ifdef __cplusplus
 #if OS(LINUX)
 #include <limits>
+#include <mutex>
 #endif
 #include <wtf/PlatformCallingConventions.h>
 #include <JavaScriptCore/JSCJSValue.h>

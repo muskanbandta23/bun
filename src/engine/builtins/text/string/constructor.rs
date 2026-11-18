@@ -147,5 +147,5 @@ fn raw(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
             builder.push(cx, substitution)?;
         }
     }
-    builder.finish(cx).map(Into::into)
+    Ok(builder.finish(cx).into())
 }

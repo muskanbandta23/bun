@@ -89,7 +89,7 @@ impl JsObject {
         unsafe {
             if mode.is_copy_on_write() {
                 let array = ImmutableArray::from_storage(storage);
-                visitor.append_hidden_word(array.address() as u64);
+                visitor.append(array);
                 return Some(max_offset);
             }
             let mut base = storage.base(capacity);
@@ -101,7 +101,7 @@ impl JsObject {
             match mode.kind() {
                 ElementKind::Contiguous => {
                     let length = storage.public_length_concurrently();
-                    append_hidden(storage.values(length), visitor);
+                    visitor.append_hidden_words(storage.elements_ptr(), length as usize);
                 }
                 ElementKind::Sparse => {
                     visitor.append_word(storage.value_at(0).word_concurrently());
@@ -116,19 +116,22 @@ impl JsObject {
         let this = Gc::from(self.as_cell());
         for (name, offset, _) in self.shape().properties().iter() {
             if let Some(cell) = self.get_direct_at(offset).as_cell() {
-                analyzer.sink.property_edge(this, cell, name);
+                analyzer.property_edge(this, cell, name);
             }
         }
         if self.element_kind() == ElementKind::Contiguous {
             for index in 0..self.public_length() {
                 if let Some(cell) = self.try_get_dense(index).and_then(Value::as_cell) {
-                    analyzer.sink.index_edge(this, cell, index);
+                    analyzer.index_edge(this, cell, index);
                 }
             }
         }
     }
 
     pub(crate) fn storage_size(&self) -> usize {
+        if self.indexing_mode().is_copy_on_write() {
+            return 0;
+        }
         let has_elements = self.indexing_mode().has_elements();
         // SAFETY: it has elements.
         let words = has_elements.then(|| unsafe { self.element_words() });

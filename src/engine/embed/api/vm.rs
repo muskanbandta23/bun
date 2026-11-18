@@ -74,8 +74,9 @@ fn vm_delete_all_code(vm: &Vm) {
 }
 
 #[export]
-fn throw_value(cx: &Cx, value: Value) -> Option<Gc<Exception>> {
+fn throw_value(cx: &mut Cx, value: Value) -> Option<Gc<Exception>> {
     let _ = cx.throw(value);
+    cx.notify_debugger_of_exception();
     cx.exception()
 }
 

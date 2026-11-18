@@ -1,15 +1,21 @@
 //! Division by halves, which leaves most of the work to multiplication.
 //! Burnikel and Ziegler, Fast recursive division.
 
+use super::blocks::{self, Reciprocal};
 use super::narrow::{self, DivisorTop};
+use super::newton::{self, LongDivisor};
 use crate::digits::{
     MAX_WIDTH, add_assign_same_length, compare_same_length, decrement, multiply,
     multiply_subtract_digit, subtract_assign_same_length,
 };
 use crate::{Error, Work};
 
+/// The longest divisor that is divided by in blocks.
+pub(super) const MAX_BLOCKS_LENGTH: usize = 32;
+
 pub(super) struct Division<'a, 'w> {
     pub(super) top: DivisorTop,
+    pub(super) reciprocal: Option<Reciprocal>,
     /// As long as the divisor.
     pub(super) product: &'a mut [u64],
     pub(super) work: &'a mut Work<'w>,
@@ -25,9 +31,22 @@ impl Division<'_, '_> {
         divisor: &[u64],
     ) -> Result<(), Error> {
         let length = divisor.len();
+        if let Some(reciprocal) = &self.reciprocal
+            && (Reciprocal::DIVISOR_LENGTH..=MAX_BLOCKS_LENGTH).contains(&length)
+        {
+            blocks::divide_in_place(quotient, a, divisor, reciprocal);
+            return self.work.spend(quotient.len() * length);
+        }
         if length <= MAX_WIDTH {
             narrow::divide_in_place(quotient, a, divisor, &self.top);
             return self.work.spend(quotient.len() * 2 * MAX_WIDTH);
+        }
+        if newton::is_suitable(quotient.len(), length, 1) {
+            return LongDivisor::new(divisor, quotient.len(), 1, self.work)?
+                .divide_in_place(quotient, a, true, self.work);
+        }
+        if newton::is_suitable(quotient.len(), quotient.len(), 1) && quotient.len() < length {
+            return self.divide_part(quotient, a, divisor);
         }
         let part_length = length.div_ceil(2);
         let mut end = quotient.len();
@@ -97,6 +116,12 @@ impl Division<'_, '_> {
         mut divisor: &[u64],
     ) -> Result<(), Error> {
         loop {
+            if let Some(reciprocal) = &self.reciprocal
+                && quotient.len() <= MAX_WIDTH
+            {
+                blocks::estimate_block(quotient, a, reciprocal);
+                return Ok(());
+            }
             let unused = divisor.len().saturating_sub(quotient.len() + 1);
             (a, divisor) = (&mut a[unused..], &divisor[unused..]);
             if a[quotient.len()..] == *divisor {
@@ -105,6 +130,10 @@ impl Division<'_, '_> {
             }
             if divisor.len() <= MAX_WIDTH {
                 return self.divide(quotient, a, divisor);
+            }
+            if newton::is_suitable(quotient.len(), divisor.len(), 1) {
+                return LongDivisor::new(divisor, quotient.len(), 1, self.work)?
+                    .divide_in_place(quotient, a, false, self.work);
             }
             let low_length = quotient.len().min(divisor.len()) / 2;
             let (low, high) = quotient.split_at_mut(low_length);

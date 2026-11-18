@@ -12,7 +12,7 @@ use crate::services::Service;
 use crate::vm::Root;
 use crate::{
     CellKind, CellType, CellTypeRange, Class, ClassOps, Cx, ErrorType, Extends, Gc, GcFree, JsCell,
-    JsResult, JsString, Shape, Thrown, Trap, TypeFlags, Visitor, Vm, ascii_literal,
+    JsResult, JsString, Shape, Thrown, TypeFlags, Visitor, Vm, ascii_literal,
 };
 
 /// The digits of the magnitude follow, the least significant first. The last is not zero.
@@ -318,10 +318,7 @@ impl JsBigInt {
             ErrorKind::RangeError => cx.throw_range_error(error.message()),
             ErrorKind::SyntaxError => cx.throw_error(ErrorType::SyntaxError, error.message()),
             ErrorKind::OutOfMemoryError => cx.throw_out_of_memory_with(error.message()),
-            ErrorKind::Interruption => {
-                cx.traps().clear(Trap::TERMINATION);
-                cx.throw_termination()
-            }
+            ErrorKind::Interruption => cx.throw_termination(),
         }
     }
 

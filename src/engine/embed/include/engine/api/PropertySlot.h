@@ -333,6 +333,7 @@ public:
     ~PropertyNameArrayBuilder() { Engine::name_list_destroy(this); }
 
     void add(const Identifier& name) { Engine::name_list_add(*this, name); }
+    void add(UniquedStringImpl* name) { Engine::name_list_add(*this, name); }
     void clear() { Engine::name_list_clear(*this); }
 
     size_t size() const { return Engine::name_list_length(*this); }

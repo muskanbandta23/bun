@@ -1,8 +1,11 @@
 use bun_engine_text::{CodeUnit, Text, with_text};
 use bun_engine_unicode::is_str_white_space;
 
-use crate::radix::{CHUNKS, log2_rounded_down};
-use crate::{Error, Fill, Filled, MAX_BITS, New, Poll, SmallBigInt, Work, digits};
+use super::powers::Halving;
+use super::radix::{CHUNKS, log2_rounded_down};
+use super::{bit_groups, decimal};
+use crate::digits::{self, Multiplier};
+use crate::{Error, Fill, Filled, MAX_BITS, New, Poll, Scratch, SmallBigInt, Work};
 
 /// The radices that integer literals are written in.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -103,13 +106,10 @@ fn literal<T: CodeUnit>(
         units = rest;
     }
     if units.len() <= radix.max_small_characters() {
-        let magnitude = units.iter().try_fold(0u128, |value, unit| {
-            Some(value * radix as u128 + u128::from(unit.digit_value(radix as u32)?))
-        });
-        return match magnitude {
-            Some(magnitude) => Ok(New::Small(SmallBigInt::new(is_negative, magnitude))),
-            None => Err(Error::InvalidText),
-        };
+        return Ok(New::Small(SmallBigInt::new(
+            is_negative,
+            read_small(units, radix)?,
+        )));
     }
     if units.len() > radix.max_characters() {
         return Err(Error::TooBig);
@@ -122,6 +122,21 @@ fn literal<T: CodeUnit>(
         radix,
         is_negative,
     }))
+}
+
+fn read_small<T: CodeUnit>(units: &[T], radix: LiteralRadix) -> Result<u128, Error> {
+    if radix != LiteralRadix::Decimal {
+        let mut value = [0; 2];
+        bit_groups::read(&mut value, units, (radix as u32).ilog2())?;
+        return Ok(digits::join(value[0], value[1]));
+    }
+    let (high, low) = units.split_at(units.len().saturating_sub(decimal::CHUNK_LENGTH));
+    match (decimal::read_chunk(high), decimal::read_chunk(low)) {
+        (Some(high), Some(low)) => {
+            Ok(u128::from(high) * u128::from(CHUNKS[10].power) + u128::from(low))
+        }
+        _ => Err(Error::InvalidText),
+    }
 }
 
 struct Literal<'a> {
@@ -140,51 +155,60 @@ impl Fill for Literal<'_> {
     fn fill(self, out: &mut [u64], poll: Poll<'_>) -> Result<Filled, Error> {
         let out = &mut out[..self.digit_count()];
         with_text!(self.characters, |units| match self.radix {
-            LiteralRadix::Decimal => read_decimal(units, out, &mut Work::new(poll)),
-            radix => read_bit_groups(units, radix as u32, out),
+            LiteralRadix::Decimal => read_decimal(out, units, &mut Work::new(poll)),
+            radix => bit_groups::read(out, units, (radix as u32).ilog2()),
         })?;
         Filled::whole_or_one_less(self.is_negative, out)
     }
 }
 
-fn read_bit_groups<T: CodeUnit>(units: &[T], radix: u32, out: &mut [u64]) -> Result<(), Error> {
-    let bits = radix.ilog2();
-    let mut out = out.iter_mut();
-    let (mut pending, mut pending_bits) = (0u128, 0);
-    for unit in units.iter().rev() {
-        let value = unit.digit_value(radix).ok_or(Error::InvalidText)?;
-        pending |= u128::from(value) << pending_bits;
-        pending_bits += bits;
-        if pending_bits >= 64
-            && let Some(out) = out.next()
-        {
-            *out = pending as u64;
-            pending >>= 64;
-            pending_bits -= 64;
+fn read_decimal<T: CodeUnit>(
+    out: &mut [u64],
+    units: &[T],
+    work: &mut Work<'_>,
+) -> Result<(), Error> {
+    const MAX_WHOLE_LENGTH: usize = 104;
+    const MAX_PIECE_LENGTH: usize = 56;
+    let chunks = units.len().div_ceil(decimal::CHUNK_LENGTH);
+    if chunks <= MAX_WHOLE_LENGTH {
+        return read_piece(out, units);
+    }
+    let halving = Halving::new(chunks, MAX_PIECE_LENGTH);
+    let mut scratch = Scratch::<u64, 256>::new();
+    let (pieces, product) = scratch
+        .filled(0, 2 * halving.length())?
+        .split_at_mut(halving.length());
+    let texts = units.rchunks(halving.piece_length * decimal::CHUNK_LENGTH);
+    for (piece, text) in pieces.chunks_exact_mut(halving.piece_length).zip(texts) {
+        work.spend(piece.len() * piece.len())?;
+        read_piece(piece, text)?;
+    }
+    let mut scratch = Scratch::<u64, 128>::new();
+    for power in halving.powers(CHUNKS[10].power, &mut scratch, work)? {
+        let uses = pieces.len() / (2 * power.half);
+        let mut by_power = Multiplier::new(power.digits, power.half, uses, work)?;
+        for number in pieces.chunks_exact_mut(2 * power.half) {
+            let high = digits::trim(&number[power.half..]);
+            if !high.is_empty() {
+                let product = &mut product[..high.len() + power.digits.len()];
+                by_power.multiply(product, high, work)?;
+                number[power.half..].fill(0);
+                digits::add_assign(&mut number[power.zeros..], product);
+            }
         }
     }
-    if let Some(out) = out.next() {
-        *out = pending as u64;
-    }
+    out.copy_from_slice(&pieces[..out.len()]);
     Ok(())
 }
 
-fn read_decimal<T: CodeUnit>(
-    units: &[T],
-    out: &mut [u64],
-    work: &mut Work<'_>,
-) -> Result<(), Error> {
-    let chunk = CHUNKS[10];
-    let mut length = 0;
-    for part in units.rchunks(chunk.characters).rev() {
-        work.spend(length)?;
-        let value = part
-            .iter()
-            .try_fold(0, |value, unit| {
-                Some(value * 10 + u64::from(unit.digit_value(10)?))
-            })
-            .ok_or(Error::InvalidText)?;
-        let top = digits::multiply_assign_digit(&mut out[..length], chunk.power, value);
+/// The value fits in `out`.
+fn read_piece<T: CodeUnit>(out: &mut [u64], units: &[T]) -> Result<(), Error> {
+    let (first, chunks) = units.as_rchunks::<{ decimal::CHUNK_LENGTH }>();
+    out[0] = decimal::read_chunk(first).ok_or(Error::InvalidText)?;
+    let mut length = 1;
+    for chunk in chunks {
+        let value = decimal::read_chunk(chunk).ok_or(Error::InvalidText)?;
+        let top = digits::multiply_assign_digit(&mut out[..length], CHUNKS[10].power, value);
         if top != 0 {
             out[length] = top;
             length += 1;

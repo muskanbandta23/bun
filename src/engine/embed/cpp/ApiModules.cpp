@@ -24,6 +24,7 @@ const ScriptFetchParameters::Attributes JSModuleRecord::declaredAttributes(Modul
 auto AbstractModuleRecord::requestedModules() const -> const Vector<ModuleRequest>
 {
     Vector<ModuleRequest> requests;
+    requests.reserveInitialCapacity(requestedModuleCount());
     Engine::module_for_each_request(this, &requests, [](void* requests, UniquedStringImpl* specifier, ScriptFetchParameters* parameters, bool isDeferred) {
         specifier->ref();
         static_cast<Vector<ModuleRequest>*>(requests)->append({ Identifier::adopt(specifier), parameters, isDeferred ? ModulePhase::Defer : ModulePhase::Evaluation });

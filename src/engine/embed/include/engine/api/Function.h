@@ -228,6 +228,7 @@ protected:
     {
     }
 
+    DECLARE_DEFAULT_FINISH_CREATION;
     void finishCreation(VM& vm, unsigned length, const String& name, PropertyAdditionMode mode = PropertyAdditionMode::WithStructureTransition) { Engine::internal_function_finish_creation(this, vm, length, name, mode == PropertyAdditionMode::WithStructureTransition); }
 
 private:

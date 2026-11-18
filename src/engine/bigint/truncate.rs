@@ -2,7 +2,7 @@ use crate::bitwise::{TwosComplement, low_bits};
 use crate::{BigIntRef, Error, Fill, Filled, MAX_BITS, Outcome, Poll, digits};
 
 /// BigInt.asIntN
-#[inline]
+#[inline(always)]
 pub fn as_int_n(bits: u64, x: BigIntRef<'_>) -> Outcome<impl Fill + '_> {
     if bits == 64 {
         if x.to_i64().is_some() {
@@ -28,7 +28,7 @@ pub fn as_int_n(bits: u64, x: BigIntRef<'_>) -> Outcome<impl Fill + '_> {
 }
 
 /// BigInt.asUintN
-#[inline]
+#[inline(always)]
 pub fn as_uint_n(bits: u64, x: BigIntRef<'_>) -> Result<Outcome<impl Fill + '_>, Error> {
     if bits == 64 {
         if x.to_u64().is_some() {
@@ -50,25 +50,31 @@ pub fn as_uint_n(bits: u64, x: BigIntRef<'_>) -> Result<Outcome<impl Fill + '_>,
 }
 
 /// The magnitude of the result is that of `x` modulo `2^bits`, negated first if the sign changes.
+#[inline(always)]
 fn truncate(bits: usize, x: BigIntRef<'_>, is_negative: bool) -> Outcome<Truncation<'_>> {
-    let source = TwosComplement::new(BigIntRef::new(is_negative != x.is_negative, x.digits));
+    let negates = is_negative != x.is_negative;
+    let source = TwosComplement::new(BigIntRef::new(negates, x.digits));
     let top = (bits - 1) / 64;
-    let top_mask = u64::MAX >> (63 - (bits - 1) % 64);
-    let (length, top_mask) = if source.digit(top) & top_mask != 0 {
-        (top + 1, top_mask)
-    } else {
-        match (0..top).rfind(|&index| source.digit(index) != 0) {
-            Some(index) => (index + 1, u64::MAX),
-            None => return Outcome::ZERO,
+    let (mut length, mut top_mask) = (top + 1, u64::MAX >> (63 - (bits - 1) % 64));
+    if source.digit(top) & top_mask == 0 {
+        (length, top_mask) = (length_below(&source, top), u64::MAX);
+        if length == 0 {
+            return Outcome::ZERO;
         }
-    };
+    }
     Outcome::large(Truncation {
         length,
         top_mask,
         magnitude: x.digits,
-        negates: is_negative != x.is_negative,
+        negates,
         is_negative,
     })
+}
+
+fn length_below(source: &TwosComplement<'_>, end: usize) -> usize {
+    (0..end)
+        .rfind(|&index| source.digit(index) != 0)
+        .map_or(0, |top| top + 1)
 }
 
 struct Truncation<'a> {
@@ -85,19 +91,25 @@ impl Fill for Truncation<'_> {
         self.length
     }
 
+    #[inline(always)]
     fn fill(self, out: &mut [u64], _: Poll<'_>) -> Result<Filled, Error> {
         let out = &mut out[..self.length];
         if self.negates {
-            let (low, above) = out.split_at_mut(self.length.min(self.magnitude.len()));
-            for (out, &digit) in low.iter_mut().zip(self.magnitude) {
-                *out = !digit;
-            }
-            above.fill(u64::MAX);
-            digits::increment(out);
+            negate(out, self.magnitude);
         } else {
-            out.copy_from_slice(&self.magnitude[..self.length]);
+            digits::copy(out, self.magnitude);
         }
         out[self.length - 1] &= self.top_mask;
         Ok(Filled::whole(self.is_negative, out))
     }
+}
+
+/// `out = -a`, cut to its length.
+fn negate(out: &mut [u64], a: &[u64]) {
+    let (low, above) = out.split_at_mut(out.len().min(a.len()));
+    for (out, &digit) in low.iter_mut().zip(a) {
+        *out = !digit;
+    }
+    above.fill(u64::MAX);
+    digits::increment(out);
 }

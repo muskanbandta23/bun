@@ -495,6 +495,7 @@ impl ErrorInstance {
             return;
         }
         let needs_text = !self.has(Flags::STACK_IS_PROVIDED);
+        let _defer = vm.heap.defer_collection();
         // SAFETY: nothing else makes a reference to the list meanwhile.
         let frames = unsafe { &mut *self.frames.0.get() }.take();
         match vm.embedder().errors.format_frames.get() {

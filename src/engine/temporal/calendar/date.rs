@@ -1,4 +1,5 @@
 use bun_engine_date::{days_in_month, days_in_year, is_leap_year};
+use bun_engine_text::PropertyName;
 
 use super::systems::{Layout, System};
 use super::year::YearMonth;
@@ -21,8 +22,8 @@ pub struct CalendarDate {
 
 impl CalendarDate {
     #[inline]
-    pub fn month_code(&self) -> &'static str {
-        self.month_code.as_str()
+    pub fn month_code(&self) -> PropertyName<'static> {
+        self.month_code.name()
     }
 
     #[inline(always)]

@@ -1,5 +1,6 @@
 //! Making nodes, and folding constants on the way.
 
+use bun_engine_number::math::{pow, remainder};
 use bun_engine_number::{exact_int32, to_int32, to_uint32};
 
 use super::{Class, Expression, PauseKind, PausePosition, Session, Statement, nothing};
@@ -110,7 +111,8 @@ fn fold(operator: BinaryOperator, a: f64, b: f64, are_integers: bool) -> Option<
                 quotient.abs() < 9_223_372_036_854_775_808.0 && quotient as i64 as f64 == quotient;
             (quotient, are_integers && is_whole)
         }
-        Remainder => (a % b, true),
+        Remainder => (remainder(a, b), true),
+        Exponentiate => (pow(a, b), are_integers),
         BitAnd => (f64::from(to_int32(a) & to_int32(b)), true),
         BitOr => (f64::from(to_int32(a) | to_int32(b)), true),
         BitXor => (f64::from(to_int32(a) ^ to_int32(b)), true),

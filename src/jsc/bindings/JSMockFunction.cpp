@@ -132,38 +132,6 @@ JSC_DECLARE_HOST_FUNCTION(jsMockFunctionThrowThis);
 
 uint64_t JSMockModule::s_nextInvocationId = 0;
 
-// This is taken from JSWeakSet
-// We only want to hold onto the list of active spies which haven't already been collected
-// So we use a WeakSet
-// Unlike using WeakSet from JS, we are able to iterate through the WeakSet.
-class ActiveSpySet final : public WeakMapImpl<WeakMapBucket<WeakMapBucketDataKey>> {
-public:
-    using Base = WeakMapImpl<WeakMapBucket<WeakMapBucketDataKey>>;
-
-    DECLARE_EXPORT_INFO;
-
-    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSWeakSetType, StructureFlags), info());
-    }
-
-    static ActiveSpySet* create(VM& vm, Structure* structure)
-    {
-        ActiveSpySet* instance = new (NotNull, allocateCell<ActiveSpySet>(vm)) ActiveSpySet(vm, structure);
-        instance->finishCreation(vm);
-        return instance;
-    }
-
-private:
-    ActiveSpySet(VM& vm, Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-};
-
-static_assert(std::is_final<ActiveSpySet>::value, "Required for JSType based casting");
-const ClassInfo ActiveSpySet::s_info = { "ActiveSpySet"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ActiveSpySet) };
-
 class JSMockImplementation final : public JSNonFinalObject {
 public:
     enum class Kind : uint8_t {
@@ -941,8 +909,8 @@ private:
         auto& vm = this->vm();
         auto& set = setOf(mockModule(), list);
         if (!set)
-            set.set(vm, globalObject(), ActiveSpySet::create(vm, mockModule().activeSpySetStructure.getInitializedOnMainThread(globalObject())));
-        uncheckedDowncast<ActiveSpySet>(set.get())->add(vm, this, this);
+            set.set(vm, globalObject(), JSWeakSet::create(vm, globalObject()->weakSetStructure()));
+        uncheckedDowncast<JSWeakSet>(set.get())->add(vm, this);
         m_lists |= static_cast<uint8_t>(list);
     }
 
@@ -1178,7 +1146,7 @@ void JSMockFunction::forEachIn(Zig::GlobalObject* globalObject, List list, const
         return;
 
     MarkedArgumentBuffer mocks;
-    uncheckedDowncast<ActiveSpySet>(set.get())->takeSnapshot(mocks);
+    uncheckedDowncast<JSWeakSet>(set.get())->takeSnapshot(globalObject, mocks);
     set.clear();
     JSC::Exception* firstException = nullptr;
     for (size_t i = 0; i < mocks.size(); ++i) {
@@ -1320,10 +1288,6 @@ JSMockModule JSMockModule::create(JSC::JSGlobalObject* globalObject)
 
             init.set(structure);
         });
-    mock.activeSpySetStructure.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
-        Structure* implementation = ActiveSpySet::createStructure(init.vm, init.owner, jsNull());
-        init.set(implementation);
-    });
 
     mock.mockModuleStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
@@ -2585,7 +2549,7 @@ AutomockKind Automocker::kindOf(JSValue value)
         // A Symbol.toStringTag getter may throw when it's read on the prototype itself. Treat that as no tag.
         if (!scope.tryClearException())
             return AutomockKind::Keep;
-        tag = std::get<JSString*>(JSC::inferBuiltinTag(globalObject, asObject(value)));
+        tag = JSC::objectPrototypeToStringWithBuiltinTag(globalObject, asObject(value));
         RETURN_IF_EXCEPTION(scope, AutomockKind::Keep);
     }
     auto tagView = tag->view(globalObject);

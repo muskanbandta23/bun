@@ -696,11 +696,8 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeZone, (JSGlobalObject * globalObject, Ca
             makeString("Invalid timezone: \""_s, timeZoneName, "\""_s));
         return {};
     }
-    Bun::resetDateCachesAfterTimeZoneChange(vm);
-    WTF::Vector<char16_t, 32> buffer;
-    WTF::getTimeZoneOverride(buffer);
-    WTF::String timeZoneString(buffer.span());
-    return JSValue::encode(jsString(vm, timeZoneString));
+    vm.dateCache.clearForTimeZoneChange();
+    return JSValue::encode(jsString(vm, WTF::canonicalTimeZone(timeZoneName)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, CallFrame* callFrame))

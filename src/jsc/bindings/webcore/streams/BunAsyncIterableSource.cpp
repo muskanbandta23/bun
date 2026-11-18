@@ -496,10 +496,6 @@ using WebCore::JSStreamsRuntime;
 // readableStreamFromAsyncIterator both accept one and start it eagerly.
 bool isNonHostAsyncGeneratorFunction(JSObject* object)
 {
-#if ENABLE(AOT)
-    if (object->vm().hasCompiledCode() && JSC::AOT::declaredAs(object) == JSC::AOT::DeclaredAs::AsyncGeneratorFunction)
-        return true;
-#endif
     auto* function = dynamicDowncast<JSFunction>(object);
     return function && !function->isHostFunction() && function->jsExecutable() && function->jsExecutable()->isAsyncGenerator();
 }

@@ -141,6 +141,7 @@ fn cookie_dates() {
         "3 Feb 2022 13:05 +9960",
         "3 Feb 275761 GMT",
         "3 Feb 2147483647 GMT",
+        "3 Feb 2022 GMT+0:2147483647",
         "3 Feb 99999999999999999999 GMT",
     ] {
         assert_eq!(parse_cookie_date(text.as_bytes()), None, "{text}");

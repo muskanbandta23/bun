@@ -4,6 +4,7 @@ use crate::decimal_scanner::{finish_decimal, scan_whole_digits};
 use crate::double::with_sign;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+/// What a number of JSON is worth, as the kinds of value that a script sees.
 pub enum JsonNumber {
     Int32(i32),
     /// May be an integer too.
@@ -11,6 +12,7 @@ pub enum JsonNumber {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Why the text is no number of JSON.
 pub enum JsonNumberError {
     NoDigits,
     NoDigitsAfterPoint,

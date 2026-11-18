@@ -186,6 +186,7 @@ pub(crate) struct Assembler {
     mask: Vec<u32>,
     suspend_kinds: Vec<SuspendKind>,
     coverage_blocks: Vec<CoverageBlock>,
+    scope_registers: Vec<(u32, Register)>,
     encoder: finish::Encoder,
 }
 
@@ -214,6 +215,7 @@ impl Default for Assembler {
             mask: Vec::new(),
             suspend_kinds: Vec::new(),
             coverage_blocks: Vec::new(),
+            scope_registers: Vec::new(),
             encoder: finish::Encoder::default(),
         }
     }
@@ -285,6 +287,7 @@ impl Assembler {
         self.spread_masks.clear();
         self.suspend_kinds.clear();
         self.coverage_blocks.clear();
+        self.scope_registers.clear();
     }
 
     /// Returns where the operands go.
@@ -641,6 +644,11 @@ impl Assembler {
     pub(crate) fn add_suspend_point(&mut self, kind: SuspendKind) -> SuspendPointIndex {
         self.suspend_kinds.push(kind);
         SuspendPointIndex(self.suspend_kinds.len() as u32 - 1)
+    }
+
+    /// From the next instruction on.
+    pub(crate) fn set_scope_register(&mut self, register: Register) {
+        self.scope_registers.push((self.len, register));
     }
 
     pub(crate) fn add_coverage_block(&mut self, block: CoverageBlock) -> CoverageBlockIndex {

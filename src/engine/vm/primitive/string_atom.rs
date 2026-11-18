@@ -105,7 +105,7 @@ impl JsString {
         for &part in parts {
             builder.push(cx, part)?;
         }
-        let string = builder.finish(cx)?;
+        let string = builder.finish(cx);
         string.to_property_key(cx)?;
         Ok(string)
     }

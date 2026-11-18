@@ -10,6 +10,7 @@ use crate::{Radix, exact_int52, is_integer, write_f64};
 /// A sign and 64 binary digits.
 pub const RADIX_INTEGER_CAPACITY: usize = 65;
 
+/// The digits of an integer in `radix`, with a sign if it is negative.
 pub fn integer_to_radix(
     number: i64,
     radix: Radix,

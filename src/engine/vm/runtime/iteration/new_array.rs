@@ -139,7 +139,7 @@ pub fn array_species_create(
     original: &JsObject,
     length: u64,
 ) -> JsResult<Option<Gc<JsObject>>> {
-    if let Some(array) = original.downcast::<JsArray>()
+    if let Some(array) = original.as_exact_array()
         && array.has_default_species(cx)
     {
         return Ok(None);

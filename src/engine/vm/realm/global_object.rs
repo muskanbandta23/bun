@@ -1,29 +1,34 @@
-use core::any::Any;
-use core::cell::{Cell, OnceCell, RefCell};
+use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 use core::mem::offset_of;
+use std::rc::Rc;
 
-use bun_engine_macros::{cell, object_ops};
+use bun_engine_macros::{cell, native_abi, object_ops};
 use bun_engine_number::Random;
 use bun_engine_text::{PropertyName, StringRef, names};
 
 use super::watchpoints::RealmWatchpoints;
 use crate::runtime::control::RealmMicrotaskQueue;
 use crate::{
-    Attributes, Cx, DeferredFire, DeletePropertySlot, DontEnumMode, ElementKind, Environment,
-    Field, FieldArray, Gc, GcFree, GlobalBinding, GlobalBindings, GlobalProxy, IndexingMode,
-    JsArray, JsCell, JsDestructibleObject, JsFinalObject, JsObject, JsObjectInit, JsResult,
-    MicrotaskQueueRef, PropertyDescriptor, PropertyNameList, PropertySlot, PutPropertySlot,
-    RealmHooks, RealmSlot, RealmWatchpoint, RegExpGlobalState, Shape, ShapeFlags, ShapeSpec,
-    StaticProperty, TracedVec, TransitionKind, TypeFlags, Value, Vm, errors, static_table,
-    validate_property_descriptor,
+    Attributes, CustomGetterSetter, Cx, Debugger, DeferredFire, DeletePropertySlot, DontEnumMode,
+    ElementKind, Environment, Field, FieldArray, Gc, GcFree, GlobalBinding, GlobalBindings,
+    GlobalProxy, IndexingMode, JsArray, JsCell, JsDestructibleObject, JsFinalObject, JsObject,
+    JsObjectInit, JsResult, MicrotaskQueueRef, PropertyDescriptor, PropertyNameList, PropertySlot,
+    PutPropertySlot, RealmHooks, RealmSlot, RealmWatchpoint, RegExpGlobalState, Shape, ShapeFlags,
+    ShapeSpec, StaticProperty, TracedVec, TransitionKind, TypeFlags, Value, Vm, errors, options,
+    static_table, validate_property_descriptor,
 };
 
 macro_rules! global_properties {
-    ($($name:ident = $slot:ident,)*) => {
-        static_table!(static GLOBAL_PROPERTIES = [
-            $(StaticProperty::realm_slot(names::$name, RealmSlot::$slot),)*
-        ]);
+    ($($name:ident = $slot:ident $(if $option:ident)?,)*) => {
+        static_table!(static GLOBAL_PROPERTIES = [$(global_properties!(@ $name $slot $($option)?),)*]);
+    };
+    (@ $name:ident $slot:ident) => { StaticProperty::realm_slot(names::$name, RealmSlot::$slot) };
+    (@ $name:ident $slot:ident $option:ident) => {
+        StaticProperty::made(names::$name, |vm, global| match options().$option {
+            true => global.as_object().cast::<GlobalObject>().$slot(vm).into(),
+            false => Value::UNDEFINED,
+        })
     };
 }
 
@@ -54,7 +59,7 @@ global_properties! {
     JSON = json_object,
     Math = math_object,
     Atomics = atomics_object,
-    WebAssembly = webassembly_object,
+    WebAssembly = webassembly_object if use_wasm,
     console = console_object,
     Int8Array = int8_array_constructor,
     Int16Array = int16_array_constructor,
@@ -92,8 +97,17 @@ global_properties! {
     BigInt = bigint_constructor,
     Symbol = symbol_constructor,
     Intl = intl_object,
-    Temporal = temporal_object,
-    ShadowRealm = shadow_realm_constructor,
+}
+
+/// For a property that not every process has, and that therefore is in no static table.
+#[native_abi]
+fn get_optional_property(cx: &mut Cx, global: Value, name: PropertyName<'_>) -> JsResult<Value> {
+    let value = match name == names::Temporal {
+        true => cx.temporal_object(),
+        false => cx.shadow_realm_constructor(),
+    };
+    (global.cast::<JsObject>()).put_direct(cx, name, value.into(), Attributes::DONT_ENUM);
+    Ok(value.into())
 }
 
 /// Indexed by the bits of the kind and of copy on write.
@@ -133,10 +147,14 @@ pub struct GlobalObject {
     random: Cell<Random>,
     eval_disabled_message: RefCell<Option<StringRef>>,
     webassembly_disabled_message: RefCell<Option<StringRef>>,
-    inspector: OnceCell<Box<dyn InspectorState>>,
+    debugger: DebuggerSlot,
 }
 
-pub trait InspectorState: Any + GcFree {}
+#[derive(Default)]
+struct DebuggerSlot(RefCell<Option<Rc<dyn Debugger>>>);
+
+// SAFETY: a supertrait.
+unsafe impl GcFree for DebuggerSlot {}
 
 #[object_ops(export = "engine_GlobalObject")]
 impl GlobalObject {
@@ -272,7 +290,7 @@ impl GlobalObject {
             eval_disabled_message: RefCell::new(None),
             webassembly_disabled_message: RefCell::new(None),
             console_client: Cell::new(core::ptr::null_mut()),
-            inspector: OnceCell::new(),
+            debugger: DebuggerSlot::default(),
         }
     }
 
@@ -306,6 +324,15 @@ impl GlobalObject {
             (names::Infinity, Value::double(f64::INFINITY)),
         ] {
             self.add_static_global(vm, name, value, Attributes::CONSTANT);
+        }
+        let optional = CustomGetterSetter::create(vm, Some(get_optional_property), None, None);
+        for (name, is_enabled) in [
+            (names::Temporal, options().use_temporal),
+            (names::ShadowRealm, options().use_shadow_realm),
+        ] {
+            if is_enabled {
+                self.put_direct_custom(vm, name, optional, Attributes::DONT_ENUM);
+            }
         }
         let last = self.chain_direct().last().unwrap_or(self.as_object());
         if last != self.object_prototype() {
@@ -548,7 +575,8 @@ impl GlobalObject {
         &self.console_client
     }
 
-    pub fn inspector(&self) -> &OnceCell<Box<dyn InspectorState>> {
-        &self.inspector
+    #[inline(always)]
+    pub(crate) fn debugger_slot(&self) -> &RefCell<Option<Rc<dyn Debugger>>> {
+        &self.debugger.0
     }
 }

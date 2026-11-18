@@ -18,7 +18,7 @@ use super::profile::ValueProfile;
 use crate::heap::Survivors;
 use crate::{
     Attributes, Cx, Field, FunctionExecutable, Gc, GcFree, GlobalObject, ImmutableArray,
-    IntegrityLevel, JsArray, JsBigInt, JsCell, JsResult, JsString, LineColumn, RealmSlot, RegExp,
+    IntegrityLevel, JsArray, JsBigInt, JsCell, JsResult, JsString, RealmSlot, RegExp,
     ScopeTemplate, ScriptExecutable, SourceProviderRef, TypeFlags, Value, ValueVec, Visitor, Vm,
 };
 
@@ -109,7 +109,7 @@ impl Drop for Words {
 }
 
 /// Code linked to a realm. Optimized code has one of its own, whose `alternative` has the profiles.
-#[cell(cell_type = CodeBlock, flags = TypeFlags::SHAPE_IS_IMMORTAL,
+#[cell(cell_type = CodeBlock, flags = TypeFlags::SHAPE_IS_IMMORTAL, export = "engine_class_CodeBlock",
     visit_children, visit_output_constraints, reconcile_weak_references, estimated_size)]
 pub struct CodeBlock {
     base: JsCell,
@@ -128,6 +128,8 @@ pub struct CodeBlock {
     tier: Cell<Tier>,
     is_jettisoned: Cell<bool>,
     saved_words: u32,
+    /// How many breakpoints may be hit in the code.
+    debugger_requests: Cell<u32>,
     alternative: Option<Gc<CodeBlock>>,
     code: Rc<Code>,
     words: Words,
@@ -149,6 +151,7 @@ impl CodeBlock {
     pub const OFFSET_OF_FUNCTIONS: usize = offset_of!(CodeBlock, functions);
     pub const OFFSET_OF_SCOPES: usize = offset_of!(CodeBlock, scopes);
     pub const OFFSET_OF_EXECUTION_COUNTER: usize = offset_of!(CodeBlock, execution_counter);
+    pub const OFFSET_OF_DEBUGGER_REQUESTS: usize = offset_of!(CodeBlock, debugger_requests);
 
     /// In the realm of `cx`.
     pub fn link(
@@ -183,6 +186,7 @@ impl CodeBlock {
             tier: Cell::new(Tier::Interpreter),
             is_jettisoned: Cell::new(false),
             saved_words: code.body.saved_words(),
+            debugger_requests: Cell::new(0),
             alternative: None,
             code,
             words,
@@ -223,6 +227,7 @@ impl CodeBlock {
             tier: Cell::new(tier),
             is_jettisoned: Cell::new(false),
             saved_words: self.saved_words,
+            debugger_requests: Cell::new(0),
             alternative: Some(self.baseline()),
             code: Rc::clone(&self.code),
             words: Words::zeroed(0).unwrap_or_else(|| bun_alloc::out_of_memory()),
@@ -428,6 +433,11 @@ impl CodeBlock {
         &self.execution_counter
     }
 
+    #[inline(always)]
+    pub fn debugger_requests(&self) -> &Cell<u32> {
+        &self.debugger_requests
+    }
+
     pub fn compiled(&self) -> Option<Rc<dyn CompiledCode>> {
         self.compiled.borrow().clone()
     }
@@ -506,6 +516,9 @@ impl CodeBlock {
         let slot: &Field<Option<_>> = unsafe { &*self.scopes.add(index.index()).cast() };
         slot.get().unwrap_or_else(|| {
             let template = ScopeTemplate::create(vm, Rc::clone(&self.code.scopes[index.index()]));
+            if self.has_debug_hooks() {
+                template.set_owner(Some(self.executable));
+            }
             // SAFETY: as above.
             unsafe { slot.set(&self.baseline(), Some(template)) };
             template
@@ -527,15 +540,7 @@ impl CodeBlock {
     }
 
     pub fn source_provider(&self) -> SourceProviderRef {
-        match self.executable.downcast::<FunctionExecutable>() {
-            Some(function) => function.code_provider(),
-            None => self.executable.provider().clone(),
-        }
-    }
-
-    pub fn line_column(&self, bytecode_offset: u32) -> LineColumn {
-        let divot = self.position(bytecode_offset).divot;
-        self.source_provider().position_in_document(divot)
+        self.executable.code_provider()
     }
 
     fn visit_children(&self, visitor: &mut Visitor) {

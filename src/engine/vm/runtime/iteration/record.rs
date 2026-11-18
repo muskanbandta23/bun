@@ -166,7 +166,7 @@ impl IteratorRecord {
     #[inline(always)]
     fn of_builtin_kind(cx: &Cx, iterable: Value, method: Value) -> Option<IteratorRecord> {
         let cell = iterable.as_cell()?;
-        if cell.is::<JsArray>() {
+        if cell.cell_type() == CellType::Array {
             let global = cx.global();
             return (method == global.array_prototype_values().into()
                 && global.array_iterator_protocol_is_pristine())
@@ -184,7 +184,7 @@ impl IteratorRecord {
             CellType::ArrayIterator => {
                 let iterator = cell.cast::<JsArrayIterator>();
                 // Compiled code does better with the method for anything else.
-                (iterator.iterated_object().is::<JsArray>()
+                (iterator.iterated_object().cell_type() == CellType::Array
                     && is_slot(cx, RealmSlot::iterator_prototype_iterator, method))
                 .then(|| mode_of_iterator(cx, cell))?
             }
@@ -623,7 +623,7 @@ impl IteratorRecord {
 
 /// The length that an array iterator goes by, if getting it runs no script and throws nothing.
 pub(super) fn plain_length(object: &JsObject) -> Option<u64> {
-    if let Some(array) = object.downcast::<JsArray>() {
+    if let Some(array) = object.as_exact_array() {
         Some(array.length().into())
     } else if let Some(array) = object.downcast::<JsTypedArray>() {
         array.checked_length().map(|length| length as u64)

@@ -7,7 +7,7 @@ use std::rc::Rc;
 use bun_engine_syntax::{EvalContext, FieldSource, FunctionFlags, FunctionKind, Name};
 use bun_engine_text::{Identifier, Text};
 
-use crate::code::{Code, CodeFlags};
+use crate::code::Code;
 use crate::scope::StaticScope;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -36,6 +36,8 @@ bitflags::bitflags! {
         const DEFAULT_CONSTRUCTOR = 1 << 2;
         /// Errors say nothing of where in the source they come from.
         const NO_POSITIONS = 1 << 3;
+        /// In code that a debugger has evaluated in a frame.
+        const DEBUGGER = 1 << 4;
     }
 }
 
@@ -96,6 +98,11 @@ impl FunctionInfo {
         self.flags.contains(FunctionFlags::GENERATOR)
     }
 
+    /// Whether it has an `await` of its own. Of a built-in that has been described, it is not known.
+    pub fn awaits(&self) -> bool {
+        self.flags.contains(FunctionFlags::AWAITS)
+    }
+
     pub fn is_constructor(&self) -> bool {
         match self.kind {
             FunctionKind::Normal => !self.is_async() && !self.is_generator(),
@@ -133,6 +140,29 @@ impl FunctionInfo {
 
     pub fn visibility(&self) -> Visibility {
         self.visibility
+    }
+
+    /// What a direct `eval` at the top level of the function may do.
+    pub fn eval_context(&self) -> EvalContext {
+        let (kind, mut context) = (self.kind, self.context);
+        if kind != FunctionKind::Arrow {
+            context |= EvalContext::IN_FUNCTION;
+            context.set(EvalContext::IN_METHOD, kind.has_home_object());
+            context.set(
+                EvalContext::IN_DERIVED_CONSTRUCTOR,
+                kind == FunctionKind::DerivedConstructor,
+            );
+            context.set(
+                EvalContext::IN_FIELD_INITIALIZER,
+                kind == FunctionKind::FieldInitializer,
+            );
+        }
+        context.set(EvalContext::STRICT, self.is_strict());
+        context.set(
+            EvalContext::BY_DEBUGGER,
+            self.origin.contains(Origin::DEBUGGER),
+        );
+        context
     }
 
     /// Without the `get` or `set` of an accessor. Empty if it has none or it is computed.
@@ -196,11 +226,8 @@ impl FunctionInfo {
         code
     }
 
-    /// Code that suspends stays, for those that have saved its registers.
     pub fn set_code(&self, specialization: Specialization, code: Option<Rc<Code>>) {
-        let cell = &self.code[specialization as usize];
-        let kept = (cell.take()).filter(|it| it.body.flags().contains(CodeFlags::SUSPENDS));
-        cell.set(kept.or(code));
+        self.code[specialization as usize].set(code);
     }
 }
 

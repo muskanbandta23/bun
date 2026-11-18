@@ -1,17 +1,41 @@
 //! The order of `sort` without a comparator: that of the code units of the elements as strings.
 
 use bun_engine_text::{AllocError, Text, with_text};
+use smallvec::SmallVec;
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct Entry {
-    /// The next units of the text, and in the low byte how many it has left, as far as that matters.
-    key: u64,
-    index: u32,
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) struct Entry {
+    pub(super) key: u64,
+    pub(super) index: u32,
 }
 
-/// Up to here, comparing whole texts is cheaper than another round of keys.
-const SMALL_GROUP: usize = 6;
+pub(super) type List<T> = SmallVec<[T; 16]>;
+pub(super) type Entries = List<Entry>;
 
+#[inline(always)]
+pub(super) fn try_collect<T>(
+    items: impl ExactSizeIterator<Item = T>,
+) -> Result<List<T>, AllocError> {
+    let mut list = List::new();
+    list.try_reserve_exact(items.len())
+        .map_err(|_| AllocError)?;
+    list.extend(items);
+    Ok(list)
+}
+
+/// There are fewer than 2^32 keys.
+#[inline(always)]
+pub(super) fn entries_for(keys: impl ExactSizeIterator<Item = u64>) -> Result<Entries, AllocError> {
+    try_collect(keys.enumerate().map(|(index, key)| Entry {
+        key,
+        index: index as u32,
+    }))
+}
+
+/// Up to here, comparing whole texts is cheaper than a round of keys.
+const SMALL_GROUP: usize = 5;
+
+/// The next units of the text, and in the low byte how many it has left, as far as that matters.
 #[inline(always)]
 fn key<const UNIT_BITS: usize>(text: Text<'_>, depth: usize) -> u64 {
     let units_in_key = 56 / UNIT_BITS;
@@ -29,55 +53,65 @@ fn key<const UNIT_BITS: usize>(text: Text<'_>, depth: usize) -> u64 {
     })
 }
 
-fn sort_entries<'a, const UNIT_BITS: usize>(entries: &mut [Entry], text: impl Fn(u32) -> Text<'a>) {
+fn insertion_sort(group: &mut [Entry], texts: &[Text<'_>], depth: usize) {
+    let rest = |entry: Entry| texts[entry.index as usize].slice_from(depth);
+    for next in 1..group.len() {
+        let (entry, mut place) = (group[next], next);
+        let text = rest(entry);
+        while place != 0 && text < rest(group[place - 1]) {
+            group[place] = group[place - 1];
+            place -= 1;
+        }
+        group[place] = entry;
+    }
+}
+
+fn sort_entries<const UNIT_BITS: usize>(entries: &mut [Entry], texts: &[Text<'_>]) {
     let units_in_key = 56 / UNIT_BITS;
-    // Groups of entries whose texts are the same up to a depth.
-    let mut pending = vec![(0..entries.len(), 0)];
+    // Groups of entries whose texts are the same up to a depth, and whose indices ascend.
+    let mut pending = SmallVec::<[_; 8]>::new();
+    pending.push((0..entries.len(), 0));
     while let Some((range, mut depth)) = pending.pop() {
         let start = range.start;
         let group = &mut entries[range];
-        if group.len() <= SMALL_GROUP {
-            let rest = |entry: &Entry| (text(entry.index).slice_from(depth), entry.index);
-            group.sort_unstable_by(|a, b| rest(a).cmp(&rest(b)));
-            continue;
-        }
-        let mut shared = text(group[0].index).slice_from(depth);
+        let text = |entry: &Entry| texts[entry.index as usize];
+        let mut shared = text(&group[0]).slice_from(depth);
         for entry in &group[1..] {
             if shared.is_empty() {
                 break;
             }
-            let other = text(entry.index).slice_from(depth);
-            shared = shared.slice(0..shared.common_prefix_len(other));
+            shared = shared.slice(0..shared.common_prefix_len(text(entry).slice_from(depth)));
         }
         depth += shared.len();
         for entry in &mut *group {
-            entry.key = key::<UNIT_BITS>(text(entry.index), depth);
+            entry.key = key::<UNIT_BITS>(text(entry), depth);
         }
         group.sort_unstable();
         let mut offset = start;
-        for ties in group.chunk_by(|a, b| a.key == b.key) {
+        for ties in group.chunk_by_mut(|a, b| a.key == b.key) {
             if ties.len() > 1 && usize::from(ties[0].key as u8) > units_in_key {
-                pending.push((offset..offset + ties.len(), depth + units_in_key));
+                if ties.len() <= SMALL_GROUP {
+                    insertion_sort(ties, texts, depth + units_in_key);
+                } else {
+                    pending.push((offset..offset + ties.len(), depth + units_in_key));
+                }
             }
             offset += ties.len();
         }
     }
 }
 
-/// The indices below `count` in the order of their texts. Those of equal texts ascend.
-pub(super) fn sorted_indices<'a>(
-    count: u32,
-    text: impl Fn(u32) -> Text<'a>,
-) -> Result<impl Iterator<Item = u32>, AllocError> {
-    let mut entries = Vec::new();
-    (entries.try_reserve_exact(count as usize)).map_err(|_| AllocError)?;
-    entries.extend((0..count).map(|index| Entry { key: 0, index }));
-    if (0..count).all(|index| text(index).is_latin1()) {
-        sort_entries::<8>(&mut entries, text);
+/// An entry for each text, in their order. The indices of equal texts ascend.
+pub(super) fn sort_texts(texts: &[Text<'_>]) -> Result<Entries, AllocError> {
+    let mut entries = entries_for(texts.iter().map(|_| 0))?;
+    if texts.len() <= SMALL_GROUP {
+        insertion_sort(&mut entries, texts, 0);
+    } else if texts.iter().all(|text| text.is_latin1()) {
+        sort_entries::<8>(&mut entries, texts);
     } else {
-        sort_entries::<16>(&mut entries, text);
+        sort_entries::<16>(&mut entries, texts);
     }
-    Ok(entries.into_iter().map(|entry| entry.index))
+    Ok(entries)
 }
 
 const MAX_DIGITS: usize = 10;

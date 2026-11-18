@@ -22,7 +22,7 @@ use bun_engine_temporal::{CalendarId, ZonedDateTime};
 use bun_engine_text::StringRef;
 use bun_icu::calendar::Calendar;
 use bun_icu::date_format::DateFormat;
-use bun_icu::date_interval_format::FormattedDateInterval;
+use bun_icu::date_interval_format::{DateIntervalFormat, FormattedDateInterval};
 use bun_icu::formatted_value::FormattedValue;
 
 pub(crate) use cache::DateCache;
@@ -198,13 +198,12 @@ impl DateTimeFormat {
     fn fill(
         &self,
         template: &Template,
-        layout: &Layout,
         moment: &Moment,
         text: &mut DateText,
         each_part: impl FnMut(PartKind, &[u16]) -> Result<()>,
     ) -> Result<()> {
         let mut zone_name = DateText::new();
-        if let Some(field) = layout.time_zone_field() {
+        if let Some(field) = template.time_zone_field() {
             self.prepare(field, moment)
                 .and_then(|(format, mut calendar)| format.format(&mut calendar, &mut zone_name))
                 .or_type_error(FORMAT_FAILURE)?;
@@ -220,7 +219,7 @@ impl DateTimeFormat {
             return layout.string(&format, &mut calendar);
         };
         let mut text = DateText::new();
-        self.fill(template, layout, moment, &mut text, |_, _| Ok(()))?;
+        self.fill(template, moment, &mut text, |_, _| Ok(()))?;
         new_string(&text)
     }
 
@@ -231,7 +230,7 @@ impl DateTimeFormat {
             return layout.parts(&format, &mut calendar, source);
         };
         let (mut text, mut parts) = (DateText::new(), Parts::default());
-        self.fill(template, layout, moment, &mut text, |kind, value| {
+        self.fill(template, moment, &mut text, |kind, value| {
             let unit = None;
             parts.push(Part { kind, unit, source }, value)
         })?;
@@ -240,11 +239,10 @@ impl DateTimeFormat {
 
     fn range(
         &self,
-        layout: &Layout,
+        format: &DateIntervalFormat,
         start: &Moment,
         end: &Moment,
     ) -> Result<FormattedDateInterval> {
-        let format = self.formats.range_format(layout)?;
         let range = self.calendars(start).and_then(|calendars| {
             let mut second = calendars.second()?.borrow_mut();
             let mut first = calendars.first.borrow_mut();
@@ -273,7 +271,7 @@ impl DateTimeFormat {
         if start.time.is_nan() || end.time.is_nan() {
             return Err(Error::Range("Passed date is out of range"));
         }
-        let range = self.range(layout, &start, &end)?;
+        let range = self.range(self.formats.range_format(cache, layout)?, &start, &end)?;
         let value = range.value().or_type_error(RANGE_FAILURE)?;
         if range::shows_both_ends(value)? {
             write_range(value)

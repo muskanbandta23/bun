@@ -40,6 +40,19 @@ impl Unit {
         Unit::Nanosecond,
     ];
 
+    pub const ALPHABETICAL: [Unit; 10] = [
+        Unit::Day,
+        Unit::Hour,
+        Unit::Microsecond,
+        Unit::Millisecond,
+        Unit::Minute,
+        Unit::Month,
+        Unit::Nanosecond,
+        Unit::Second,
+        Unit::Week,
+        Unit::Year,
+    ];
+
     pub const fn singular(self) -> &'static str {
         match self {
             Unit::Year => "year",

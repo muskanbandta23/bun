@@ -135,6 +135,7 @@ fn unary() {
 #[test]
 fn moves() {
     let mut h = Harness::new();
+    h.use_first_scratch_for_operands();
     for width in WIDTHS {
         for _ in 0..4 {
             for ([dst], src) in h.registers_or_constants() {

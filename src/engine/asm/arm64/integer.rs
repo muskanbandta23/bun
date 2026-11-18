@@ -2,7 +2,7 @@ use super::abi;
 use super::assembler::Assembler;
 use super::immediate::BitmaskImm;
 use super::load_store::{Mem, PairMem};
-use super::macro_assembler::{MacroAssembler, all_ones, arithmetic_imm, signed, unsigned};
+use super::macro_assembler::{MacroAssembler, all_ones, unsigned};
 use super::neon_opcode::{Arrangement, NeonAcross, NeonUnary};
 use super::opcode::{
     AddSub, AtomicUpdate, Barrier, Bitfield, Cc, Extend, IndexExtend, Logical, MoveWide,
@@ -54,7 +54,7 @@ impl MacroAssembler {
     #[inline(always)]
     fn add_sub_setting_flags(&mut self, op: AddSub, width: Width, dst: Gpr, lhs: Gpr, rhs: Src) {
         if let Src::Imm(rhs) | Src::Untrusted(rhs) = rhs
-            && let Some((op, imm)) = arithmetic_imm(op, width, rhs)
+            && let Some((op, imm)) = op.with_constant(width, rhs)
         {
             return self.asm.add_sub_imm(op, width, dst, lhs, imm);
         }
@@ -112,7 +112,6 @@ impl MacroAssembler {
     }
 
     fn multiply_by_constant(&mut self, width: Width, dst: Gpr, lhs: Gpr, rhs: i64) {
-        let rhs = signed(width, rhs);
         let log2 = |value: i64| {
             let value = unsigned(width, value);
             value
@@ -164,22 +163,20 @@ impl MacroAssembler {
         let (width, above) = (size.width(), 64 - size.bits());
         let (data, mut mem) = (self.data_scratch(), self.mem(size, dst));
         self.asm.ldr(data, mem);
-        let is_done = match op {
-            Update::AddSub(op) => arithmetic_imm(op, width, src << above >> above)
-                .map(|(op, imm)| self.asm.add_sub_imm(op, width, data, data, imm)),
-            Update::Logical(op) => {
-                let stored_bits = u64::MAX >> above;
-                let repeated = (src as u64 & stored_bits) * (u64::MAX / stored_bits);
-                BitmaskImm::new(width, repeated)
-                    .map(|imm| self.asm.logical_imm(op, data, data, imm))
-            }
-        };
-        if is_done.is_none() {
-            let src = self.constant_beside(data, width, (src as u64 & u64::MAX >> above) as i64);
+        let stored_bits = u64::MAX >> above;
+        let src = src as u64 & stored_bits;
+        if let Update::AddSub(op) = op
+            && let Some((op, imm)) = op.with_constant(width, (src as i64) << above >> above)
+        {
+            self.asm.add_sub_imm(op, width, data, data, imm);
+        } else if let Update::Logical(op) = op
+            && let Some(imm) = BitmaskImm::new(width, src * (u64::MAX / stored_bits))
+        {
+            self.asm.logical_imm(op, data, data, imm);
+        } else {
+            let src = self.constant_beside(data, width, src as i64);
             self.update_with_register(op, width, data, src);
-            if src != ZR {
-                mem = self.mem(size, dst);
-            }
+            mem = self.mem(size, dst);
         }
         self.asm.str(data, mem);
     }
@@ -635,7 +632,7 @@ impl MacroAssembly for MacroAssembler {
         };
         self.asm.multiply_high(sign, first, lhs, rhs);
         self.asm.mul(Width::W64, low, lhs, rhs);
-        self.copy(Width::W64, high, first);
+        self.move64(high, first);
     }
 
     fn add128(&mut self, dst: [Gpr; 2], lhs: [Gpr; 2], rhs: [Gpr; 2]) {
@@ -1004,7 +1001,7 @@ impl MacroAssembly for MacroAssembler {
         assert!(![dst, expected, replacement].contains(&temp) && !address.uses(temp));
         let (base, width) = (self.base_register(address), size.width());
         if self.asm.has(Arm64Features::LSE) {
-            self.copy(width, dst, expected);
+            self.move64(dst, expected);
             return self.asm.casal(size, dst, replacement, base);
         }
         let old = if dst == expected { temp } else { dst };
@@ -1023,7 +1020,7 @@ impl MacroAssembly for MacroAssembler {
         self.asm.stlxr(size, status, replacement, base);
         self.asm.cbnz(Width::W32, status, again);
         self.bind(done);
-        self.copy(width, dst, old);
+        self.move64(dst, old);
     }
 
     fn memory_fence(&mut self) {

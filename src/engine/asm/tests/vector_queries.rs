@@ -1,10 +1,10 @@
 //! What the macro assemblers say about scratch registers and destinations is exactly so.
 
-#![allow(dead_code)]
-
+#[allow(dead_code)]
 #[path = "support/shuffles.rs"]
 mod shuffles;
 mod support;
+#[allow(dead_code)]
 #[path = "support/vectors.rs"]
 mod vectors;
 
@@ -148,6 +148,7 @@ fn cases<M: VectorAssembly>(features: M::Features) -> Vec<Case<M>> {
     let random = &mut vectors::Random(1);
     let patterns = [
         shuffles::with_names(),
+        shuffles::prepared_lanes(),
         shuffles::of_wide_lanes().into_iter().step_by(11).collect(),
         shuffles::near_names(300, random),
         shuffles::random(300, random),
@@ -211,6 +212,7 @@ fn check_scratch<M: VectorAssembly>(features: M::Features, case: &Case<M>) {
         }
     }
     let ScratchNeeds { gprs, fprs } = case.needs;
+    assert!(gprs <= 1 && fprs <= 2, "{}", case.name);
     let declared = [gprs > 0, gprs > 1, fprs > 0, fprs > 1];
     assert_eq!(used, declared, "{}", case.name);
 }

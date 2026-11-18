@@ -43,4 +43,4 @@ pub use call::{Argument, CallAssembly};
 pub use float::FloatAssembly;
 pub use integer::{MacroAssembly, Options, Scratch, ScratchNeeds};
 pub use value::ValueAssembly;
-pub use vector::VectorAssembly;
+pub use vector::{Reuse, VectorAssembly};

@@ -821,6 +821,7 @@ setIterator = Set Iterator
 starDefaultText = *default*
 stopBeforePartial = stop-before-partial
 stringIteratorTag = String Iterator
+notEqual = not-equal
 timedOut = timed-out
 useStrict = use strict
 @@asyncDispose

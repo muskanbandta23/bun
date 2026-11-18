@@ -16,6 +16,7 @@ mod string_view;
 mod symbol;
 
 pub use bigint::JsBigInt;
+pub(crate) use bigint::Never;
 pub(crate) use bigint::State as BigIntState;
 pub use concat::RopeBuilder;
 pub use number_cache::{NumberStringEntry, NumberStrings};

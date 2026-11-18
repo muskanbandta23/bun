@@ -218,6 +218,19 @@ impl Class {
         }
     }
 
+    /// Of cells of that size that start with a `T` and behave as one.
+    pub(crate) const fn extending<T: CellKind>(name: AsciiLiteral, size: usize) -> Class {
+        Class {
+            name,
+            parent: Some(T::CLASS),
+            static_table: None,
+            reserved: core::ptr::null(),
+            types: CellTypeRange::NONE,
+            size: size as u32,
+            ops: T::OPS,
+        }
+    }
+
     pub fn name(&self) -> &'static str {
         self.name.as_str()
     }

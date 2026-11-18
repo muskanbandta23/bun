@@ -13,6 +13,7 @@ workspace = true
 bun_engine_unicode.workspace = true
 bun_engine_regexp.workspace = true
 bun_engine_asm.workspace = true
+smallvec.workspace = true
 
 [dev-dependencies]
 bun_engine_exec_memory.workspace = true

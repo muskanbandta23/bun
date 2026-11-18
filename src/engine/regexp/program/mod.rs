@@ -10,8 +10,8 @@ use bun_engine_unicode::IgnoreCase;
 
 pub(crate) use op::split_halves;
 pub use op::{
-    ClassId, Comparison, Direction, Filter, LoopId, Op, Pairs, Place, ScanId, ScopeId, Slot, Stride,
-    SwitchId, Target, UNBOUNDED, UNSET, join_halves,
+    ClassId, Comparison, Direction, Filter, LoopId, Op, Pairs, Place, ScanId, ScopeId, Slot,
+    Stride, SwitchId, Target, UNBOUNDED, UNSET, join_halves,
 };
 pub use scan::{Probe, RowProbe, Scan};
 pub use verify::Verified;

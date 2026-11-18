@@ -92,7 +92,11 @@ fn class_of(graph: &mut Graph, column: &Column) -> Result<ClassId, Error> {
 fn choose_probes(columns: &[Column]) -> (SmallVec<[usize; Scan::MAX_PROBES]>, f32, f32) {
     let (mut chosen, mut share, mut fixed) = (SmallVec::new(), 1.0, COST_OF_LOOP);
     while chosen.len() < Scan::MAX_PROBES {
-        let floor = if chosen.is_empty() { 0.0 } else { LEAST_SHARE_OF_LATER_PROBE };
+        let floor = if chosen.is_empty() {
+            0.0
+        } else {
+            LEAST_SHARE_OF_LATER_PROBE
+        };
         let after = |column: &Column| share * column.share.max(floor);
         let total = |column: &Column| column.cost + after(column) * COST_OF_STOP;
         let left = (0..columns.len()).filter(|index| !chosen.contains(index));
@@ -141,7 +145,9 @@ impl Planner<'_> {
         }
         let mut cells = self.cells_at(offset);
         let class = match cells.next() {
-            Some(first @ Cell::Step(Step::Class(class))) if cells.all(|it| it == first) => Some(class),
+            Some(first @ Cell::Step(Step::Class(class))) if cells.all(|it| it == first) => {
+                Some(class)
+            }
             _ => None,
         };
         let share = match &few {
@@ -166,9 +172,13 @@ impl Planner<'_> {
             Some(())
         };
         match cell {
-            Cell::Step(Step::Unit { value, mask }) => masked_units(value, mask).try_for_each(add)?,
+            Cell::Step(Step::Unit { value, mask }) => {
+                masked_units(value, mask).try_for_each(add)?
+            }
             Cell::Step(Step::Class(class)) => {
-                let ranges = self.graph[class].ranges().take_while(|it| it.first <= 0xffff);
+                let ranges = self.graph[class]
+                    .ranges()
+                    .take_while(|it| it.first <= 0xffff);
                 let mut members = ranges.flat_map(|it| it.first..=it.last.min(0xffff));
                 members.try_for_each(|c| add(c as u16))?;
             }
@@ -258,7 +268,8 @@ impl Planner<'_> {
         let sum = |shares: &[f32; MAX_ROWS]| shares.iter().sum::<f32>();
         while chosen.len() < Scan::MAX_ROW_PROBES {
             let total = |it: &Candidate| it.cost + sum(&it.after(&shares)) * COST_OF_STOP;
-            let is_left = |it: &&Candidate| chosen.iter().all(|taken| taken.offset != it.probe.offset);
+            let is_left =
+                |it: &&Candidate| chosen.iter().all(|taken| taken.offset != it.probe.offset);
             let left = candidates.iter().filter(is_left);
             let best = left.min_by(|a, b| total(a).total_cmp(&total(b)));
             match best.filter(|&best| total(best) < sum(&shares) * COST_OF_STOP) {
@@ -294,7 +305,9 @@ impl Candidate {
     }
 
     fn after(&self, shares: &[f32; MAX_ROWS]) -> [f32; MAX_ROWS] {
-        core::array::from_fn(|row| shares[row] * self.shares[row].max(LEAST_SHARE_OF_LATER_PROBE / 4.0))
+        core::array::from_fn(|row| {
+            shares[row] * self.shares[row].max(LEAST_SHARE_OF_LATER_PROBE / 4.0)
+        })
     }
 }
 

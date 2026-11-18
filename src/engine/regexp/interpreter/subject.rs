@@ -175,14 +175,19 @@ impl<'a, U: CodeUnit> Subject<'a, U> {
         let end = (self.len() + 1).saturating_sub(scan.need() as usize);
         let (first, class) = (scan.first(), program.class(scan.first().class));
         while *position < end {
-            let units = self.units.get(at(*position, first.offset)..at(end, first.offset));
+            let units = self
+                .units
+                .get(at(*position, first.offset)..at(end, first.offset));
             let Some(skipped) = find_member(units.unwrap_or_default(), class) else {
                 *position = end;
                 return false;
             };
             *position += skipped;
             let passes = |it: &Probe| self.is_in(at(*position, it.offset), program.class(it.class));
-            let rows = |it: &RowProbe| self.unit(at(*position, it.offset)).map_or(0, |unit| it.rows(unit));
+            let rows = |it: &RowProbe| {
+                self.unit(at(*position, it.offset))
+                    .map_or(0, |unit| it.rows(unit))
+            };
             if scan.others().iter().all(passes)
                 && scan.rows().iter().fold(u8::MAX, |all, it| all & rows(it)) != 0
             {

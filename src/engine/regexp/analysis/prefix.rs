@@ -100,11 +100,15 @@ impl Walk<'_> {
     }
 
     fn push(&mut self, start: usize, cell: Cell) {
-        self.found.rows[start..].iter_mut().for_each(|row| row.push(cell));
+        self.found.rows[start..]
+            .iter_mut()
+            .for_each(|row| row.push(cell));
     }
 
     fn close(&mut self, start: usize) {
-        self.found.rows[start..].iter_mut().for_each(|row| row.is_open = false);
+        self.found.rows[start..]
+            .iter_mut()
+            .for_each(|row| row.is_open = false);
     }
 
     fn remove_open(&mut self, start: usize) {
@@ -234,7 +238,10 @@ impl Walk<'_> {
 
     fn alternation(&mut self, children: Span, start: usize, depth: u32) {
         let end = self.found.rows.len();
-        let replaced = self.found.rows[start..].iter().filter(|row| row.is_open).count();
+        let replaced = self.found.rows[start..]
+            .iter()
+            .filter(|row| row.is_open)
+            .count();
         for &child in self.graph.children_of(children) {
             let copies = self.copy_open(start, end);
             self.visit(child, copies, depth + 1);
@@ -252,10 +259,13 @@ impl Walk<'_> {
         while self.found.rows.len() > (MAX_ROWS + spare).max(start + 1) {
             let rows = &self.found.rows;
             let starts_alike = |&index: &usize| rows[index].cells[0] == rows[index - 1].cells[0];
-            let second = (start + 1..rows.len()).rfind(starts_alike).unwrap_or_else(|| {
-                let shortest = (start + 1..rows.len()).min_by_key(|&index| self.width(index - 1) + self.width(index));
-                shortest.unwrap_or(rows.len() - 1)
-            });
+            let second = (start + 1..rows.len())
+                .rfind(starts_alike)
+                .unwrap_or_else(|| {
+                    let shortest = (start + 1..rows.len())
+                        .min_by_key(|&index| self.width(index - 1) + self.width(index));
+                    shortest.unwrap_or(rows.len() - 1)
+                });
             let removed = self.found.rows.remove(second);
             self.join(second - 1, &removed);
         }
@@ -264,7 +274,9 @@ impl Walk<'_> {
     /// The number of characters that the row can start with.
     fn width(&self, row: usize) -> u32 {
         let first = self.found.rows[row].cells().first();
-        first.map_or(256, |&cell| self.found.units(self.graph, cell).latin1().len())
+        first.map_or(256, |&cell| {
+            self.found.units(self.graph, cell).latin1().len()
+        })
     }
 
     fn join(&mut self, index: usize, other: &Row) {

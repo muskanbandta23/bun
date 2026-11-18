@@ -4,9 +4,9 @@ use super::output::{Label, Output, ROOT, Section};
 use super::state::{Fail, Spot, State};
 use super::{Captures, Emitter, Turn};
 use crate::Error;
+use crate::analysis::{Frequencies, Prefixes, plan_scan};
 use crate::compile::Mode;
 use crate::compile::Options;
-use crate::analysis::{Frequencies, Prefixes, plan_scan};
 use crate::compile::graph::{Form, Id, Kind, MAX_REACH, Node, Traits};
 use crate::compile::lower::Lowered;
 use crate::compile::memory::{StackLimit, push};
@@ -134,7 +134,12 @@ impl Emitter<'_> {
         self.node(root, 0, fail).map(drop)
     }
 
-    fn attempt_at_start(&mut self, root: Id, reads_pairs: bool, no_match: Fail) -> Result<(), Error> {
+    fn attempt_at_start(
+        &mut self,
+        root: Id,
+        reads_pairs: bool,
+        no_match: Fail,
+    ) -> Result<(), Error> {
         self.leave_pair(reads_pairs)?;
         self.need(self.graph[root].min, no_match)?;
         let slot = self.plan_scope(1, ScopeKind::Position(self.state.room))?;
@@ -169,8 +174,11 @@ impl Emitter<'_> {
             true => None,
             false => plan_scan(self.graph, prefixes, &self.frequencies)?,
         };
-        let looks_behind = scan.as_ref().is_some_and(|it| it.offsets().any(|it| it < 0));
+        let looks_behind = scan
+            .as_ref()
+            .is_some_and(|it| it.offsets().any(|it| it < 0));
         let skips = scan.is_some() || prefixes.rows.is_empty();
+        let unscanned_tail = prefixes.longest_at_end.max((min == 0).then_some(0));
         let unscanned = self.output.label()?;
         let has_unscanned_start = skips && (prefixes.some_are_at_start || looks_behind);
         if has_unscanned_start {
@@ -188,7 +196,7 @@ impl Emitter<'_> {
         let behind = Room::NONE.with(Direction::Backward, has_unscanned_start.into());
         self.bind_settled(labels.search, behind, ROOT)?;
         let probe = match scan {
-            Some(scan) => Some(self.scan(scan, min, prefixes.longest_at_end, unscanned, give_up)?),
+            Some(scan) => self.scan(scan, min, unscanned_tail, unscanned, give_up)?,
             None => {
                 if let Some(length) = prefixes.longest_at_end.filter(|_| skips) {
                     self.op(Op::SkipToTail { length })?;
@@ -204,9 +212,10 @@ impl Emitter<'_> {
             fail: give_up,
         };
         self.output.op(Section::Cold, check)?;
-        self.output.op(Section::Cold, Op::Jump { to: labels.attempt })?;
+        self.output
+            .op(Section::Cold, Op::Jump { to: labels.attempt })?;
 
-        let always_scans = !has_unscanned_start && prefixes.longest_at_end.is_none();
+        let always_scans = !has_unscanned_start && unscanned_tail.is_none();
         match probe.filter(|_| always_scans) {
             Some(probe) => {
                 self.bind(labels.attempt)?;
@@ -226,25 +235,26 @@ impl Emitter<'_> {
         self.attempt(root, attempt_fails)
     }
 
-    /// Returns the probe that holds afterwards.
+    /// Returns a probe that holds afterwards.
     fn scan(
         &mut self,
         mut scan: Scan,
         min: u32,
-        longest_at_end: Option<u32>,
+        unscanned_tail: Option<u32>,
         unscanned: Label,
         give_up: Label,
-    ) -> Result<Probe, Error> {
+    ) -> Result<Option<Probe>, Error> {
         scan.need = scan.need.max(min);
         let mut fail = give_up;
-        if let Some(length) = longest_at_end {
+        if let Some(length) = unscanned_tail {
             scan.need = scan.need.max(length + 1);
             fail = self.output.label()?;
             self.output.bind(fail, Section::Cold, Room::NONE, ROOT);
             self.output.op(Section::Cold, Op::SkipToTail { length })?;
             self.output.op(Section::Cold, Op::Jump { to: unscanned })?;
         }
-        let (id, first) = (ScanId(self.output.scans.len() as u32), scan.first);
+        let id = ScanId(self.output.scans.len() as u32);
+        let first = scan.rows.is_empty().then_some(scan.first);
         self.state.room.ahead = scan.need;
         push(&mut self.output.scans, scan)?;
         self.op(Op::Scan { id, fail })?;
@@ -288,7 +298,9 @@ impl Emitter<'_> {
             }
         }
         let terms = self.graph.terms(&repeated);
-        let before = terms.iter().take_while(|&&it| self.graph[it].is(Traits::RIGID));
+        let before = terms
+            .iter()
+            .take_while(|&&it| self.graph[it].is(Traits::RIGID));
         let (count, mut distance) = before.fold((0, 0u32), |(count, sum), &it| {
             (count + 1, sum.saturating_add(self.graph[it].min))
         });
@@ -308,7 +320,11 @@ impl Emitter<'_> {
             }
             _ => return Ok(()),
         }
-        if distance > MAX_REACH || after.iter().all(|&it| self.graph[it].is(Traits::CANNOT_FAIL)) {
+        if distance > MAX_REACH
+            || after
+                .iter()
+                .all(|&it| self.graph[it].is(Traits::CANNOT_FAIL))
+        {
             return Ok(());
         }
         let restart = match distance {
@@ -334,7 +350,8 @@ impl Emitter<'_> {
         }
         let by = 1 - distance as i32;
         self.output.op(Section::Cold, Op::Advance { by })?;
-        self.output.op(Section::Cold, Op::Jump { to: labels.search })?;
+        self.output
+            .op(Section::Cold, Op::Jump { to: labels.search })?;
         Ok(restart)
     }
 }

@@ -31,7 +31,7 @@ impl RowProbe {
 pub struct Scan {
     /// The units that follow such a position, at least.
     pub(crate) need: u32,
-    /// Holds where the scan stops. The others need not.
+    /// Holds where the scan stops, unless there are rows. The others need not.
     pub(crate) first: Probe,
     pub(crate) others: SmallVec<[Probe; 3]>,
     pub(crate) rows: Vec<RowProbe>,

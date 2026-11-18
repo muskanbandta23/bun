@@ -3,8 +3,8 @@
 use core::ops::Deref;
 
 use super::{
-    Join, LoopId, MAX_LENGTH, Op, Pairs, Place, Program, Room, Scan, Scope, ScopeId, ScopeKind, Slot,
-    Target, Width,
+    Join, LoopId, MAX_LENGTH, Op, Pairs, Place, Program, Room, Scan, Scope, ScopeId, ScopeKind,
+    Slot, Target, Width,
 };
 
 /// A program that can run without checks of its own.
@@ -315,7 +315,10 @@ impl<'a> Verifier<'a> {
             Op::Scan { id, fail } => {
                 let scan = program.scans.get(id.index())?;
                 require(scan.need != 0 && scan.need <= MAX_LENGTH)?;
-                require(scan.others.len() <= Scan::MAX_PROBES && scan.rows.len() <= Scan::MAX_ROW_PROBES)?;
+                require(
+                    scan.others.len() <= Scan::MAX_PROBES
+                        && scan.rows.len() <= Scan::MAX_ROW_PROBES,
+                )?;
                 has_class(scan.first.class)?;
                 scan.others.iter().try_for_each(|it| has_class(it.class))?;
                 state.room.ahead = 0;

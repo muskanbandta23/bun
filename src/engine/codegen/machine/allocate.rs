@@ -8,7 +8,7 @@ use bun_engine_asm::{Bank, Reg, RegisterSet};
 
 use super::code::{AT_HOME, Class, Code, Home, LOCAL, Operand, Place, Registers, Role, Site, VReg};
 use super::liveness::{BEYOND_LOOP, Distance, FARTHEST, Liveness};
-use super::moves::{Move, Sequencer, Spot};
+use super::moves::{Move, MoveKind, Sequencer, Spot, SpotKind};
 use super::slots::Slots;
 use crate::analysis::{Cfg, Frequencies, Loop};
 use crate::bitset;
@@ -63,9 +63,9 @@ pub(super) struct Snapshot {
 
 /// An instruction of the current block that takes registers for itself.
 #[derive(Clone, Copy)]
-pub(super) struct Claim {
-    pub(super) position: u32,
-    pub(super) registers: Mask,
+struct Claim {
+    position: u32,
+    registers: Mask,
 }
 
 /// The result, and tables to use again.
@@ -89,12 +89,12 @@ pub(crate) struct Allocation {
     /// For each operand in the current block, last instruction first: what `next` becomes after it.
     next_uses: Vec<Distance>,
     /// Descending by position.
-    pub(super) claims: Vec<Claim>,
+    claims: Vec<Claim>,
     /// Values whose last use is in the state of the instruction at a position. Descending.
     state_deaths: Vec<(u32, VReg)>,
     scanned_states: Table<State, Block>,
     /// Values that have left the register in which the current instruction found them.
-    displaced: Vec<(VReg, u8)>,
+    pub(super) displaced: Vec<(VReg, u8)>,
 }
 
 impl Allocation {
@@ -106,6 +106,23 @@ impl Allocation {
     #[inline]
     pub(crate) fn entry_register(&self, param: VReg) -> u8 {
         self.statuses[param].entry_reg
+    }
+
+    fn drop_spills_of_what_is_stored_already(&mut self) {
+        let statuses = &self.statuses;
+        let is_needed = |step: &Move| match (step.kind, step.to.kind()) {
+            (MoveKind::Spill, SpotKind::Home(vreg)) => statuses[vreg].stored == Stored::OnDemand,
+            _ => true,
+        };
+        self.moves.retain(|(_, step)| is_needed(step));
+        for span in self.edge_moves.values_mut().filter(|span| !span.is_empty()) {
+            let (moves, mut kept) = (&mut self.move_lists[*span], 0);
+            for index in 0..moves.len() {
+                moves[kept] = moves[index];
+                kept += usize::from(is_needed(&moves[index]));
+            }
+            span.truncate(kept);
+        }
     }
 
     #[inline]
@@ -148,6 +165,8 @@ struct Taken {
     read: Mask,
     /// Not for results.
     held: Mask,
+    /// Hold operands that can be read at home if others need the room.
+    yielding: Mask,
 }
 
 impl Taken {
@@ -164,7 +183,7 @@ impl Taken {
 
 const CLAIMS_LOOKED_AT: usize = 4;
 /// A value that can be read from memory is loaded if it is wanted again within this distance.
-const SOON: Distance = 64;
+pub(super) const SOON: Distance = 64;
 
 pub(crate) fn allocate(
     function: &Function,
@@ -227,6 +246,7 @@ pub(crate) fn allocate(
     for &block in cfg.order() {
         allocator.allocate_block(block);
     }
+    out.drop_spills_of_what_is_stored_already();
 }
 
 impl Allocator<'_> {
@@ -244,6 +264,9 @@ impl Allocator<'_> {
         self.epoch += 1;
         for position in data.first..data.end {
             self.position = position;
+            if position + 1 == data.end {
+                self.anticipate_loop_header();
+            }
             self.allocate_instruction();
         }
         self.leave();
@@ -417,7 +440,8 @@ impl Allocator<'_> {
     pub(super) fn try_to_store_at_definition(&mut self, vreg: VReg, frequency: f32) -> bool {
         self.out.slots.note_use(vreg);
         let data = &self.code.vregs[vreg];
-        let ends_block = data.start == self.code.blocks[data.block].exit();
+        let last = self.code.blocks[data.block].end - 1;
+        let ends_block = data.start / 2 == last && !self.code.heads[last as usize].site.is_none();
         let is_cheaper = !ends_block && self.frequencies.of_block(data.block) <= frequency;
         if is_cheaper {
             self.out.statuses[vreg].stored = Stored::AtDefinition;
@@ -434,20 +458,20 @@ impl Allocator<'_> {
         }
     }
 
-    fn note_origin(&mut self, vreg: VReg) {
+    pub(super) fn note_origin(&mut self, vreg: VReg) {
         self.epoch += 1;
         if !self.out.displaced.iter().any(|&(known, _)| known == vreg) {
             self.out.displaced.push((vreg, self.out.statuses[vreg].reg));
         }
     }
 
-    fn make_clean(&mut self, reg: u8) {
+    pub(super) fn make_clean(&mut self, reg: u8) {
         if !self.is_clean(reg) {
             let vreg = self.value[usize::from(reg & 63)];
             if !self.try_to_store_at_definition(vreg, self.frequencies.of_block(self.block)) {
-                self.out.pending.push(Move::new(
+                self.out.pending.push(Move::spill(
                     self.origin(vreg),
-                    self.home(vreg),
+                    vreg,
                     self.code.vregs[vreg].class,
                 ));
             }
@@ -462,7 +486,7 @@ impl Allocator<'_> {
     }
 
     /// Adds a move from where the value was, in place of any other move to the register.
-    fn fetch(&mut self, vreg: VReg, reg: u8) {
+    pub(super) fn fetch(&mut self, vreg: VReg, reg: u8) {
         let (from, to) = (self.origin(vreg), Spot::register(reg));
         self.out.pending.retain(|step| step.to != to);
         if from != to {
@@ -484,9 +508,9 @@ impl Allocator<'_> {
                 .pending
                 .retain(|step| step.to != Spot::register(former));
         } else if let Stored::OnDemand = self.out.statuses[vreg].stored {
-            let home = self.home(vreg);
+            let is_spilled = |step: &Move| step.to == Spot::home(vreg);
             is_clean =
-                self.origin(vreg) == home || self.out.pending.iter().any(|step| step.to == home);
+                self.origin(vreg) == self.home(vreg) || self.out.pending.iter().any(is_spilled);
         }
         self.fetch(vreg, reg);
         self.occupy(reg, vreg, is_clean);
@@ -579,16 +603,72 @@ impl Allocator<'_> {
     }
 
     /// Frees one of `allowed` if none is free.
-    fn free_among(&mut self, allowed: Mask) -> Mask {
+    #[inline]
+    fn free_for_result(&mut self, allowed: Mask, taken: &Taken) -> Mask {
         let free = allowed & !self.occupied;
         if free != 0 {
             return free;
         }
-        let victim = self
-            .victim(allowed)
-            .expect("an instruction needs more registers than there are");
+        let victim = self.victim(allowed & !taken.yielding).unwrap_or_else(|| {
+            let victim = self
+                .victim(allowed)
+                .expect("an instruction needs more registers than there are");
+            self.reassign_uses(victim, AT_HOME, |operand| operand.role == Role::LateUse);
+            victim
+        });
         self.evict(victim);
         bit(victim)
+    }
+
+    /// Frees one of `suitable` if none is free, for what is there when the instruction starts.
+    fn free_at_start(&mut self, suitable: Mask, taken: &mut Taken) -> Mask {
+        let allowed = suitable & !taken.blocked_early & !taken.read & !taken.held;
+        let free = allowed & !self.occupied;
+        if free != 0 {
+            return free;
+        }
+        if allowed == 0 {
+            return self.move_early_use_aside(suitable, taken);
+        }
+        let victim = self.victim(allowed & !taken.yielding).unwrap_or_else(|| {
+            let victim = self.victim(allowed).unwrap();
+            self.reassign_uses(victim, AT_HOME, |_| true);
+            victim
+        });
+        self.evict(victim);
+        bit(victim)
+    }
+
+    /// What is read at the start can make do with a register that is overwritten later.
+    #[cold]
+    fn move_early_use_aside(&mut self, suitable: Mask, taken: &mut Taken) -> Mask {
+        let movable = suitable & taken.read & !taken.held & !taken.blocked_early;
+        assert!(
+            movable != 0,
+            "an instruction needs more registers than there are"
+        );
+        let former = movable.trailing_zeros() as u8;
+        let vreg = self.value[usize::from(former)];
+        let reg = self
+            .free_at_start(self.bank_of(vreg) & !suitable & !taken.read, taken)
+            .trailing_zeros() as u8;
+        self.make_clean(former);
+        self.bring(vreg, reg);
+        self.reassign_uses(former, reg, |_| true);
+        taken.read = taken.read & !bit(former) | bit(reg);
+        bit(former)
+    }
+
+    fn reassign_uses(&mut self, from: u8, to: u8, applies: impl Fn(Operand) -> bool) {
+        for operand in &mut self.code.operands[self.code.heads[self.position as usize].operands()] {
+            if operand.is_use()
+                && operand.place != Place::Fixed
+                && operand.assigned() == from
+                && applies(*operand)
+            {
+                operand.assign(to);
+            }
+        }
     }
 
     // Instructions
@@ -604,7 +684,7 @@ impl Allocator<'_> {
 
         let (mut has_absent_uses, mut has_temps) = (false, false);
         for index in operands.clone() {
-            let operand = &mut self.code.operands[index];
+            let operand = self.code.operands[index];
             match (operand.role, operand.place) {
                 (_, Place::Given | Place::Fixed) | (Role::Def, _) => {}
                 (Role::EarlyDef | Role::Temp, _) => has_temps = true,
@@ -616,12 +696,9 @@ impl Allocator<'_> {
                             && taken.overwritten(self.code.vregs[operand.vreg].class) & bit(reg)
                                 != 0
                     {
-                        operand.assign(AT_HOME);
                         has_absent_uses = true;
                     } else {
-                        operand.assign(reg);
-                        taken.read |= bit(reg);
-                        taken.held |= if is_late { bit(reg) } else { 0 };
+                        self.assign_use(index, reg, &mut taken);
                     }
                 }
             }
@@ -656,7 +733,7 @@ impl Allocator<'_> {
             match operand.role {
                 Role::Def => {
                     self.out.statuses[operand.vreg].next = self.out.next_uses[next_index];
-                    let reg = self.register_for_result(operand, operands.start, &taken, results);
+                    let reg = self.register_for_result(operand, &operands, &taken, results);
                     self.code.operands[index].assign(reg);
                     self.occupy(reg, operand.vreg, false);
                     results |= bit(reg);
@@ -696,7 +773,7 @@ impl Allocator<'_> {
         }
     }
 
-    fn flush_moves(&mut self) {
+    pub(super) fn flush_moves(&mut self) {
         let Allocation {
             sequencer,
             pending,
@@ -805,6 +882,23 @@ impl Allocator<'_> {
         }
     }
 
+    #[inline]
+    fn assign_use(&mut self, index: usize, reg: u8, taken: &mut Taken) {
+        let operand = self.code.operands[index];
+        self.code.operands[index].assign(reg);
+        if self.can_be_read_at_home(operand) {
+            taken.yielding |= bit(reg);
+        } else {
+            taken.read |= bit(reg);
+            taken.held |= if operand.role == Role::LateUse {
+                bit(reg)
+            } else {
+                0
+            };
+        }
+    }
+
+    #[inline]
     fn can_be_read_at_home(&self, operand: Operand) -> bool {
         let data = &self.code.vregs[operand.vreg];
         match operand.place {
@@ -833,37 +927,43 @@ impl Allocator<'_> {
                     continue;
                 }
                 let is_late = operand.role == Role::LateUse;
-                let overwritten = taken.overwritten(self.code.vregs[operand.vreg].class);
-                let mut reg = self.out.statuses[operand.vreg].reg;
-                if reg == AT_HOME || is_late && overwritten & bit(reg) != 0 {
-                    let allowed = self.bank_of(operand.vreg) & !taken.blocked_early & !taken.read;
-                    let lasting = allowed & !overwritten;
-                    let free = if needs_register {
-                        let has_choice =
-                            !is_late && (operand.dies() || lasting & !self.occupied == 0);
-                        self.free_among(if has_choice { allowed } else { lasting })
-                    } else {
-                        let wanted_in = self.out.next_uses[next_index] - self.position;
-                        let is_wanted_soon = operand.place != Place::ColdAnywhere
-                            && !operand.dies()
-                            && wanted_in < SOON;
-                        if !is_wanted_soon || lasting & !self.occupied == 0 {
-                            if reg != AT_HOME {
-                                self.make_clean(reg);
-                            }
-                            continue;
-                        }
-                        lasting & !self.occupied
-                    };
-                    reg = self.choose(operand.vreg, free);
-                    self.bring(operand.vreg, reg);
-                    if !operand.dies() && overwritten & bit(reg) != 0 {
-                        self.make_clean(reg);
-                    }
+                let (bank, overwritten) = (
+                    self.bank_of(operand.vreg),
+                    taken.overwritten(self.code.vregs[operand.vreg].class),
+                );
+                let former = self.out.statuses[operand.vreg].reg;
+                if former != AT_HOME && !(is_late && overwritten & bit(former) != 0) {
+                    self.assign_use(index, former, taken);
+                    continue;
                 }
-                self.code.operands[index].assign(reg);
-                taken.read |= bit(reg);
-                taken.held |= if is_late { bit(reg) } else { 0 };
+                let lasting = bank & !overwritten;
+                let free_and_lasting =
+                    lasting & !taken.blocked_early & !taken.read & !self.occupied;
+                let free = if needs_register {
+                    let has_choice = !is_late && (operand.dies() || free_and_lasting == 0);
+                    self.free_at_start(if has_choice { bank } else { lasting }, taken)
+                } else {
+                    let wanted_in = self.out.next_uses[next_index] - self.position;
+                    if operand.place == Place::ColdAnywhere
+                        || operand.dies()
+                        || wanted_in >= SOON
+                        || free_and_lasting == 0
+                    {
+                        continue;
+                    }
+                    free_and_lasting
+                };
+                let reg = self.choose(operand.vreg, free);
+                let former = self.out.statuses[operand.vreg].reg;
+                self.bring(operand.vreg, reg);
+                if former != AT_HOME {
+                    self.reassign_uses(former, reg, |_| true);
+                    taken.read &= !bit(former) | taken.blocked_early;
+                }
+                if !operand.dies() && overwritten & bit(reg) != 0 {
+                    self.make_clean(reg);
+                }
+                self.assign_use(index, reg, taken);
             }
         }
     }
@@ -875,13 +975,10 @@ impl Allocator<'_> {
             {
                 continue;
             }
-            let unavailable = taken.blocked_early
-                | taken.blocked_late
-                | taken.upper_halves
-                | taken.read
-                | taken.held;
+            let lasting = !taken.blocked_late & !taken.upper_halves;
             let reg = if operand.role == Role::Temp {
-                let free = self.free_among(self.banks[operand.temp_bank() as usize] & !unavailable);
+                let free =
+                    self.free_at_start(self.banks[operand.temp_bank() as usize] & lasting, taken);
                 let unwanted = self.registers.kept_by_calls.bits();
                 (if free & !unwanted != 0 {
                     free & !unwanted
@@ -890,7 +987,7 @@ impl Allocator<'_> {
                 })
                 .trailing_zeros() as u8
             } else {
-                let free = self.free_among(self.bank_of(operand.vreg) & !unavailable);
+                let free = self.free_at_start(self.bank_of(operand.vreg) & lasting, taken);
                 let reg = self.choose(operand.vreg, free);
                 self.settle_preference(operand.vreg, reg);
                 self.occupy(reg, operand.vreg, false);
@@ -946,7 +1043,7 @@ impl Allocator<'_> {
     fn register_for_result(
         &mut self,
         operand: Operand,
-        first_operand: usize,
+        operands: &core::ops::Range<usize>,
         taken: &Taken,
         results: Mask,
     ) -> u8 {
@@ -958,8 +1055,8 @@ impl Allocator<'_> {
             & !taken.upper_halves
             & !taken.held
             & !results;
-        for tie in operand.ties() {
-            let reg = self.code.operands[first_operand + tie].assigned();
+        for tie in operand.ties().filter(|&tie| tie < operands.len()) {
+            let reg = self.code.operands[operands.start + tie].assigned();
             if usize::from(reg) < Reg::COUNT && allowed & !self.occupied & bit(reg) != 0 {
                 if self.out.claims.is_empty() || self.contested(operand.vreg).0 & bit(reg) == 0 {
                     self.settle_preference(operand.vreg, reg);
@@ -967,7 +1064,7 @@ impl Allocator<'_> {
                 }
             }
         }
-        let free = self.free_among(allowed);
+        let free = self.free_for_result(allowed, taken);
         let reg = self.choose(operand.vreg, free);
         self.settle_preference(operand.vreg, reg);
         reg

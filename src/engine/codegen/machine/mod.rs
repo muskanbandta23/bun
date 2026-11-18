@@ -10,12 +10,14 @@ mod lower;
 mod moves;
 mod shared;
 mod slots;
+mod vector;
 
 pub(crate) use code::{Class, Place, Registers, Role};
 pub use emit::Emitted;
 pub(crate) use emit::{Emitter, Isa, Operands};
 pub(crate) use lower::{Instruction, Lowering};
 pub(crate) use shared::{Shared, SharesInstructions};
+pub(crate) use vector::VectorInstruction;
 
 use bun_engine_asm::MacroAssembly;
 
@@ -69,7 +71,7 @@ impl<I: Isa> Machine<I> {
                 .next_multiple_of(slot.alignment.max(8));
             slot_offsets.push(-(taken as i32));
         }
-        let features = masm.features();
+        let (features, registers) = (masm.features(), I::registers(function));
         let Self {
             instructions,
             code,
@@ -83,6 +85,7 @@ impl<I: Isa> Machine<I> {
             cfg,
             frequencies,
             features,
+            registers.allocatable,
             &slot_offsets,
             code,
             instructions,
@@ -94,7 +97,7 @@ impl<I: Isa> Machine<I> {
             cfg,
             frequencies,
             liveness,
-            I::registers(function),
+            registers,
             code,
             allocation,
         );

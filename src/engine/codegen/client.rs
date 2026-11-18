@@ -57,7 +57,7 @@ pub struct CallSite<'a> {
 }
 
 /// The scratch registers of the macro assembler are set to those that the code may overwrite: what is never
-/// allocated, and the usual ones where a patchpoint clobbers them early.
+/// allocated, and the usual ones where a patchpoint clobbers them both early and late.
 pub trait Client<Masm> {
     /// Enters the frame and moves the stack pointer down by its size. Keeps the parameters.
     fn prologue(&mut self, masm: &mut Masm, entry: usize, frame: &Frame);

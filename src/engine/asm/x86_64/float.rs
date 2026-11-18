@@ -503,7 +503,10 @@ impl FloatAssembly for MacroAssembler {
     fn truncate_float(&mut self, from: FloatWidth, sign: Sign, to: Width, dst: Gpr, src: Fpr) {
         match (sign, to) {
             (Sign::Signed, _) => self.asm.cvtts2si(from, to, dst, src),
-            (Sign::Unsigned, Width::W32) => self.asm.cvtts2si(from, Width::W64, dst, src),
+            (Sign::Unsigned, Width::W32) => {
+                self.asm.cvtts2si(from, Width::W64, dst, src);
+                self.asm.mov(Width::W32, dst, dst);
+            }
             (Sign::Unsigned, Width::W64) => {
                 let done = self.new_label();
                 self.truncate_or_skip_if_below_two_to_the_63(from, dst, src, done);

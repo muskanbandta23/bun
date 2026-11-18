@@ -116,6 +116,7 @@ public:
     };
 
     static void destroy(JSCell* cell) { static_cast<JSGlobalObject*>(cell)->~JSGlobalObject(); }
+    static void analyzeHeap(JSCell*, HeapAnalyzer&) ENGINE_SYMBOL(engine_GlobalObject_analyze_heap);
     static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&) ENGINE_SYMBOL(engine_GlobalObject_put);
     static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&) ENGINE_SYMBOL(engine_GlobalObject_delete_property);
     using JSObject::deleteProperty;
@@ -223,7 +224,6 @@ public:
     void setMicrotaskRunnability(QueuedTaskResult);
     bool isAsyncContextTrackingEnabled() const;
     void setAsyncContextTrackingEnabled(bool);
-    void clearWeakTickets();
 
     void setEvalEnabled(bool enabled, const String& errorMessage = {}) { Engine::global_set_eval_enabled(this, enabled, errorMessage); }
     void setWebAssemblyEnabled(bool enabled, const String& errorMessage = {}) { Engine::global_set_webassembly_enabled(this, enabled, errorMessage); }

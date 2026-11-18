@@ -13,7 +13,9 @@ use bun_engine_macros::FieldOffsets;
 use crate::code::NativeExecutableKey;
 use crate::function::CustomAccessorKey;
 use crate::heap::stack::{self, StackBounds, stack_pointer};
-use crate::heap::{Heap, HeapKind, IsoSpace, Scope, Survivors, WeakValueMap, barrier};
+use crate::heap::{
+    FieldValue, Heap, HeapKind, IsoSpace, RootReason, Scope, Survivors, WeakValueMap, barrier,
+};
 use crate::object::ShapeCache;
 use crate::primitive::{StringCaches, WeaklyHeldSymbols};
 use crate::services::Service;
@@ -133,7 +135,6 @@ impl VmShapes {
 pub struct Embedder {
     pub debugger_break: Cell<Option<fn(&mut Cx)>>,
     pub shell_timeout_check: Cell<Option<fn(&mut Cx)>>,
-    pub reconcile_weak_references: Cell<Option<fn(&Vm, &Survivors)>>,
     /// After the last cell.
     pub destroy_members: Cell<Option<fn(&Vm)>>,
     /// AgentCanSuspend is false.
@@ -495,14 +496,18 @@ impl Vm {
 
     /// State that another crate keeps for the `Vm`.
     pub fn extension<T: Default + GcFree + 'static>(&self) -> Rc<T> {
+        self.existing_extension().unwrap_or_else(|| {
+            let new = Rc::new(T::default());
+            let mut extensions = self.extensions.borrow_mut();
+            extensions.insert(TypeId::of::<T>(), Rc::<T>::clone(&new));
+            new
+        })
+    }
+
+    /// `None` if nothing has asked for it.
+    pub fn existing_extension<T: 'static>(&self) -> Option<Rc<T>> {
         let existing = self.extensions.borrow().get(&TypeId::of::<T>()).cloned();
-        if let Some(Ok(existing)) = existing.map(Rc::downcast) {
-            return existing;
-        }
-        let new = Rc::new(T::default());
-        let mut extensions = self.extensions.borrow_mut();
-        extensions.insert(TypeId::of::<T>(), Rc::<T>::clone(&new));
-        new
+        existing?.downcast().ok()
     }
 
     pub fn random_seed(&self) -> u64 {
@@ -796,10 +801,13 @@ impl Vm {
     }
 
     pub(crate) fn visit_roots(&self, visitor: &mut Visitor) {
+        visitor.replace_root_reason(RootReason::Exceptions);
         self.exception.visit(visitor);
         self.last_exception.visit(visitor);
         self.termination_exception.visit(visitor);
-        self.entry_global.visit(visitor);
+        visitor.replace_root_reason(RootReason::StrongReferences);
+        // SAFETY: zero or a root. It stands for a reference on the stack.
+        unsafe { visitor.append_hidden_word(self.entry_global.get().to_word()) };
         self.internal_function_executable.visit(visitor);
         self.bound_function_executable.visit(visitor);
         self.shapes.visit(visitor);
@@ -811,6 +819,7 @@ impl Vm {
             unsafe { visitor.append_word(shape as u64) };
         }
         self.services.visit(visitor);
+        visitor.replace_root_reason(RootReason::Debugger);
         (self.hooks.visit_roots)(self, visitor);
     }
 
@@ -832,9 +841,6 @@ impl Vm {
         self.custom_accessor_functions.prune(survivors);
         self.services.reconcile_weak_references(self, survivors);
         (self.hooks.reconcile_weak_references)(self, survivors);
-        if let Some(reconcile) = self.embedder.reconcile_weak_references.get() {
-            reconcile(self, survivors);
-        }
     }
 
     pub(crate) fn did_collect(&self, scope: Scope, cells_on_stack: &[usize]) {

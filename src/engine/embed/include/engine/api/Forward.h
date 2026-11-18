@@ -2,8 +2,9 @@
 
 // Names and small types that the other headers share.
 
-#include "EngineConstants.h"
 #include "engine/Support.h"
+
+#include "EngineConstants.h"
 #include "engine/api/Layout.h"
 
 #define ENGINE_STRINGIFY_EXPANDED(text) #text
@@ -265,6 +266,8 @@ enum class ScriptFetchParametersType : uint8_t {
     HostDefined = Engine::ModuleType::HostDefined,
     CSS = Engine::ModuleType::Css,
 };
+
+enum class InternalMicrotask : uint8_t;
 
 enum class SubspaceAccess { OnMainThread,
     Concurrently };

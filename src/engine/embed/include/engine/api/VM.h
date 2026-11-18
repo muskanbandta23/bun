@@ -130,7 +130,7 @@ public:
     struct ClientData {
         virtual ~ClientData() = default;
         virtual bool isWebCoreJSClientData() const { return false; }
-        virtual void reconcileWeakReferencesAtGCEnd(VM&, CollectionScope) {}
+        virtual void reportErrorOfMicrotask(JSGlobalObject*, Exception*) {}
     };
 
     enum class DeletePropertyMode : bool { Default,
@@ -155,30 +155,15 @@ public:
         KeepCodeInUse = 1 << 1,
     };
 
-    // While it lives, the steps of the module loader wait for JSModuleLoader::drainSynchronousModuleQueue() only.
-    class SynchronousModuleQueueScope {
-        WTF_MAKE_NONCOPYABLE(SynchronousModuleQueueScope);
+    class SynchronousModuleQueueScope;
 
-    public:
-        explicit SynchronousModuleQueueScope(VM& vm)
-            : m_vm(vm)
-        {
-            Engine::vm_open_synchronous_module_queue(vm);
-        }
-        ~SynchronousModuleQueueScope() { Engine::vm_close_synchronous_module_queue(m_vm); }
-
-    private:
-        VM& m_vm;
-    };
-
-    static RefPtr<VM> tryCreate(HeapType = HeapType::Small, RunLoop* = nullptr);
+    static RefPtr<VM> tryCreate(HeapType = HeapType::Small);
     void ref() const { m_refCount.fetch_add(1, std::memory_order_relaxed); }
     void deref() const { Engine::vm_release(this); }
     void refSuppressingSaferCPPChecking() const { ref(); }
     void derefSuppressingSaferCPPChecking() const { deref(); }
 
     VMIdentifier identifier() const { return m_identifier; }
-    RunLoop& runLoop() const { return m_runLoop.get(); }
     JSLock& apiLock() { return m_apiLock; }
     bool currentThreadIsHoldingAPILock() const { return m_ownerThread == currentThreadID(); }
     bool isCollectorBusyOnCurrentThread() const { return !currentThreadIsHoldingAPILock() || heap.mutatorState() != MutatorState::Running; }
@@ -254,9 +239,15 @@ public:
     MicrotaskQueue& defaultMicrotaskQueue();
     void queueMicrotask(QueuedTask&&);
     void drainMicrotasks();
-    void setOnEachMicrotaskTick(Function<void(VM&)>&&);
+    void setOnEachMicrotaskTick(void (*callback)(VM&))
+    {
+        m_onEachMicrotaskTick = callback;
+        Engine::vm_set_calls_back_after_microtasks(*this, callback);
+    }
+    void callOnEachMicrotaskTick() { m_onEachMicrotaskTick(*this); }
     bool isAsyncContextTrackingEnabled() const { return m_isAsyncContextTracked; }
-    bool hasSynchronousModuleQueue() const { return Engine::vm_has_synchronous_module_queue(*this); }
+    // Whether there is one.
+    bool synchronousModuleQueue() const;
 
     Function<void(VM&, SourceProvider*, LineColumn&, String&)>& computeLineColumnWithSourcemap() { return m_computeLineColumnWithSourcemap; }
     void setComputeLineColumnWithSourcemap(Function<void(VM&, SourceProvider*, LineColumn&, String&)>&& function) { m_computeLineColumnWithSourcemap = WTF::move(function); }
@@ -292,7 +283,7 @@ private:
     friend class TopExceptionScope;
     friend class Engine::MayThrow;
 
-    explicit VM(RunLoop&);
+    VM();
     static void checkLayout();
 
     Exception* m_exception;
@@ -331,19 +322,17 @@ private:
     bool m_needsExceptionCheck { false };
     const uint32_t m_ownerThread;
     const VMIdentifier m_identifier;
-    const Ref<RunLoop> m_runLoop;
     void* const m_hardStackLimit;
     Function<void(VM&, SourceProvider*, LineColumn&, String&)> m_computeLineColumnWithSourcemap;
     ErrorInfoFunction m_onComputeErrorInfo;
     ErrorInfoFunctionJSValue m_onComputeErrorInfoJSValue;
-    Function<void(VM&)> m_onEachMicrotaskTick;
+    void (*m_onEachMicrotaskTick)(VM&) { nullptr };
     ExceptionScope* m_topExceptionScope { nullptr };
     ExceptionEventLocation m_simulatedThrowLocation;
     IsoSubspace* m_nativeStdFunctionSpace { nullptr };
-    Engine::Opaque<136> m_unused;
 
 public:
-    Heap heap;
+    alignas(Engine::Layout::Vm_embedder_members) Heap heap;
     SmallStrings smallStrings;
 };
 

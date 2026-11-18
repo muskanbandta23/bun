@@ -72,6 +72,11 @@ void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
     vm->deferredWorkTimer->onCancelPendingWork = [clientData](JSC::DeferredWorkTimer::Ticket& ticket) -> void {
         Bun::JSCTaskScheduler::onCancelPendingWork(clientData, ticket);
     };
+    vm->deferredWorkTimer->onSetTimer = [clientData](std::optional<Seconds> delay) -> void {
+        clientData->deferredWorkTimer.setTimer(delay);
+    };
+    clientData->deferredWorkTimer.createTimer(*vm);
+    vm->deferredWorkTimer->start(*vm);
 
     vm->clientData = clientData; // ~VM deletes this pointer.
     clientData->m_normalWorld = DOMWrapperWorld::create(*vm);
@@ -178,9 +183,9 @@ void* allocatePlainObjectCell(JSC::VM& vm, size_t size)
 
 namespace WebCore {
 
-void JSVMClientData::reconcileWeakReferencesAtGCEnd(JSC::VM& vm, JSC::CollectionScope)
+void JSVMClientData::reportErrorOfMicrotask(JSC::JSGlobalObject* globalObject, JSC::Exception* exception)
 {
-    Bun::JSCTaskScheduler::cancelWorkOfDeadRealms(this, vm);
+    Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
 }
 
 void JSVMClientData::setDecoderStringTable(std::span<const uint8_t> bytes)

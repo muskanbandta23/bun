@@ -22,7 +22,7 @@ use crate::{
 };
 
 /// What the instances of a scope that one code block makes have in common.
-#[cell(cell_type = ScopeTemplate, flags = TypeFlags::SHAPE_IS_IMMORTAL,
+#[cell(name = "SymbolTable", cell_type = ScopeTemplate, flags = TypeFlags::SHAPE_IS_IMMORTAL,
     export = "engine_class_ScopeTemplate")]
 pub struct ScopeTemplate {
     base: JsCell,
@@ -127,10 +127,13 @@ pub enum Never {}
 unsafe extern "C" fn analyze_heap(cell: &JsCell, analyzer: &mut HeapAnalyzer) {
     let environment = Gc::from(cell).cast::<Environment>();
     let scope = environment.template.scope();
-    for slot in scope.slots() {
-        if let Some(value) = environment.get(slot.index).and_then(Value::as_cell) {
-            let name = scope.name_of(slot);
-            analyzer.sink.variable_edge(cell.into(), value, name.name());
+    for (index, field) in (0..).zip(environment.fields()) {
+        let Some(value) = field.get().and_then(Value::as_cell) else {
+            continue;
+        };
+        match scope.slot_at(index).filter(|it| it.kind != SlotKind::Import) {
+            Some(slot) => analyzer.variable_edge(cell.into(), value, scope.name_of(slot).name()),
+            None => analyzer.edge(cell.into(), value),
         }
     }
 }

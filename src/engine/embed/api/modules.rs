@@ -704,23 +704,3 @@ fn load_and_evaluate_module(
 ) -> JsResult<Gc<JsPromise>> {
     bun_engine_vm::load_and_evaluate_module(cx, name, parameters.map(Rc::from))
 }
-
-#[export]
-fn vm_open_synchronous_module_queue(vm: &Vm) {
-    vm.open_synchronous_module_queue();
-}
-
-#[export]
-fn vm_close_synchronous_module_queue(vm: &Vm) {
-    vm.close_synchronous_module_queue();
-}
-
-#[export]
-fn vm_has_synchronous_module_queue(vm: &Vm) -> bool {
-    vm.has_synchronous_module_queue()
-}
-
-#[export]
-fn drain_synchronous_module_queue(cx: &mut Cx) -> JsResult<()> {
-    cx.drain_synchronous_module_queue()
-}

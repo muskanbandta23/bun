@@ -493,8 +493,6 @@ pub struct InitializeOptions {
     pub short_lived_globals: bool,
     pub runs_compiled_code: bool,
     pub locks_builtins: bool,
-    /// This process is `bun compile`: a release build of Bun takes no B3, Air or macro assembler option from `BUN_JSC_*`.
-    pub is_compiler: bool,
 }
 
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
@@ -518,7 +516,6 @@ pub fn initialize(options: InitializeOptions) {
             options.short_lived_globals,
             options.runs_compiled_code,
             options.locks_builtins,
-            options.is_compiler,
         )
     };
 }
@@ -1479,7 +1476,6 @@ unsafe extern "C" {
         short_lived_globals: bool,
         runs_compiled_code: bool,
         locks_builtins: bool,
-        is_compiler: bool,
     );
     fn JSC__useOptionsForVMPerThread(env: *const *const c_char, count: usize);
 }

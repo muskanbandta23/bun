@@ -127,3 +127,4 @@ cell    JsPromise class JSC::JSPromise
 # Modules, scopes and cached bytecode
 
 # Inspector, profilers and options
+opaque  Options struct Engine::Options

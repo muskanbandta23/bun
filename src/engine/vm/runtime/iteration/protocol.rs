@@ -2,7 +2,7 @@
 
 use bun_engine_text::{names, symbols};
 
-use crate::{Cx, Gc, JsObject, JsResult, PropertyOffset, Thrown, Value, errors};
+use crate::{Cx, Gc, JsObject, JsResult, PropertyOffset, RepeatedCall, Thrown, Value, errors};
 
 pub const ITERATOR_RESULT_VALUE_OFFSET: PropertyOffset = PropertyOffset::new(0);
 pub const ITERATOR_RESULT_DONE_OFFSET: PropertyOffset = PropertyOffset::new(1);
@@ -16,26 +16,26 @@ pub(super) enum Caller {
 
 impl Caller {
     #[inline(always)]
-    pub(super) fn call(
+    pub(super) fn call<const COUNT: usize>(
         self,
         cx: &mut Cx,
         method: Value,
         this: Value,
-        arguments: &[Value],
+        arguments: [Value; COUNT],
     ) -> JsResult<Value> {
         if self == Caller::Library && !method.is_callable() {
             return Err(cx.throw_type_error(errors::TYPE_ERROR));
         }
-        cx.call(method, this, arguments)
+        RepeatedCall::new(cx, method)?.call(cx, this, arguments)
     }
 
     #[inline(always)]
-    pub(super) fn next(
+    pub(super) fn next<const COUNT: usize>(
         self,
         cx: &mut Cx,
         iterator: Value,
         next: Value,
-        arguments: &[Value],
+        arguments: [Value; COUNT],
     ) -> JsResult<Gc<JsObject>> {
         let result = self.call(cx, next, iterator, arguments)?;
         result
@@ -46,7 +46,7 @@ impl Caller {
     pub(super) fn close(self, cx: &mut Cx, iterator: Value) -> JsResult<()> {
         let method = iterator.get(cx, names::r#return)?;
         if !method.is_undefined_or_null() {
-            self.next(cx, iterator, method, &[])?;
+            self.next(cx, iterator, method, [])?;
         }
         Ok(())
     }
@@ -78,7 +78,10 @@ pub fn iterator_next(
     next: Value,
     argument: Option<Value>,
 ) -> JsResult<Gc<JsObject>> {
-    Caller::Library.next(cx, iterator, next, argument.as_slice())
+    match argument {
+        Some(argument) => Caller::Library.next(cx, iterator, next, [argument]),
+        None => Caller::Library.next(cx, iterator, next, []),
+    }
 }
 
 /// IteratorComplete

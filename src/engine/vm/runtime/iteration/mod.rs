@@ -9,6 +9,7 @@ mod mode;
 mod new_array;
 mod protocol;
 mod record;
+mod sort_keys;
 mod spread;
 mod string_iterator;
 
@@ -30,6 +31,7 @@ pub use protocol::{
     iterator_next, iterator_value, throw_not_iterable,
 };
 pub use record::{IteratorRecord, for_each_in_iterable};
+pub use sort_keys::find_sort_keys;
 pub use spread::{spread, try_spread_directly};
 pub use string_iterator::JsStringIterator;
 

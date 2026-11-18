@@ -186,15 +186,11 @@ impl<'a> Validator<'a> {
         self.declare_locals(ty, &mut reader)?;
         let code_offset = reader.position() as u32;
 
-        let mut cx = Context::new(self.header);
-        let mut decoder = Decoder::new(reader, &mut cx);
         self.enter(FrameKind::Body, BlockType::Func(ty));
-        self.run(&mut decoder)?;
-        if decoder.reader.remaining() != 0 {
-            return Err(Error::parse(
-                decoder.reader.position(),
-                format_args!("function body size doesn't match the expected size"),
-            ));
+        let (end, cx) = self.run(body, reader.position())?;
+        if end != body.len() {
+            let reason = format_args!("function body size doesn't match the expected size");
+            return Err(Error::parse(end, reason));
         }
 
         let mut flags = cx.flags;
@@ -212,23 +208,28 @@ impl<'a> Validator<'a> {
         })
     }
 
+    /// Returns where the code ends.
     #[inline(never)]
-    fn run(&mut self, decoder: &mut Decoder<'_, '_, Check>) -> Checked {
-        decoder
-            .run(self)
-            .map_err(|error| self.first_error(error, decoder))
+    fn run<'b>(&mut self, bytes: &'b [u8], start: usize) -> Result<(usize, Context<'b>), Error>
+    where
+        'a: 'b,
+    {
+        let mut cx = Context::new(self.header);
+        let mut decoder = Decoder::<Check>::new(Reader::new(bytes, start), &mut cx);
+        match decoder.run(self) {
+            Ok(()) => Ok((decoder.reader.position(), cx)),
+            Err(error) => Err(self.first_error(error, bytes, cx)),
+        }
     }
 
     /// Some instructions have operands checked before all their immediates are read.
     #[cold]
-    fn first_error(&mut self, mut error: Error, decoder: &mut Decoder<'_, '_, Check>) -> Error {
-        let (Some(Missing::OperandCheck(start)), 0) = (error.take_missing(), decoder.cx.dead)
-        else {
+    fn first_error<'b>(&mut self, mut error: Error, bytes: &'b [u8], mut cx: Context<'b>) -> Error {
+        let (Some(Missing::OperandCheck(start)), 0) = (error.take_missing(), cx.dead) else {
             return error;
         };
-        let bytes = decoder.reader.bytes();
         let (first, second, immediates) = opcodes_at(bytes, start);
-        decoder.reader.set_position(immediates);
+        let mut decoder = Decoder::<Check>::new(Reader::new(bytes, immediates), &mut cx);
         let has_simd = self.header.features.contains(Features::SIMD);
         let mut lane_access = |name, size| {
             self.pop_lane_vector(name)?;

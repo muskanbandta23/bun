@@ -116,12 +116,14 @@ impl<'a> Driver<'a> {
         if self.cx.depth == 0 {
             return Ok(());
         }
-        let mut decoder = Decoder::<Run<V::Error>>::new(self.reader, &mut self.cx);
+        let mut cx = self.cx;
+        let mut decoder = Decoder::<Run<V::Error>>::new(self.reader, &mut cx);
         if decoder.cx.dead != 0 {
             decoder.skip_dead_code();
         }
         let result = decoder.run(visitor);
         self.reader = decoder.reader;
+        self.cx = cx;
         result
     }
 }

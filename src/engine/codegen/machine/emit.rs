@@ -13,7 +13,7 @@ use crate::analysis::{Cfg, Frequencies};
 use crate::client::{CallSite, Client, ExitSite, Frame, PatchpointSite};
 use crate::ir::{
     Action, Bits64, Block, Edge, Function, Input, Location, Op, Origin, Output, PatchpointFlags,
-    Table, Value,
+    Table, Type, Value,
 };
 
 pub(crate) trait Isa: Instruction {
@@ -667,6 +667,13 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
         }
         self.masm.set_scratch(own_scratch);
         if returns_to_first && function.successors(self.block).len() != 0 {
+            if data.flags.contains(PatchpointFlags::UNEXTENDED_RESULTS) {
+                for (&(ty, _), result) in outputs.iter().zip(&self.tables.locations) {
+                    if ty == Type::I32 {
+                        self.masm.zero_extend32(result.gpr(), result.gpr());
+                    }
+                }
+            }
             self.jump();
         }
     }

@@ -426,11 +426,10 @@ impl<I: Instruction> Lowering<'_, I> {
                     });
                 }
                 Op::Patchpoint(patchpoint) => {
-                    return !self
-                        .function
-                        .patchpoint(patchpoint)
-                        .flags
-                        .contains(PatchpointFlags::UNEXTENDED_RESULTS);
+                    let data = self.function.patchpoint(patchpoint);
+                    // No instruction can follow a call that ends a block, so the emitter extends what it returns.
+                    return !data.flags.contains(PatchpointFlags::UNEXTENDED_RESULTS)
+                        || data.effects.has(EffectFlags::ENDS_BLOCK);
                 }
                 _ => return true,
             }

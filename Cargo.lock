@@ -813,6 +813,7 @@ name = "bun_engine_regexp_jit"
 version = "0.0.0"
 dependencies = [
  "bun_engine_asm",
+ "bun_engine_exec_memory",
  "bun_engine_regexp",
  "bun_engine_standalone",
  "bun_engine_text",

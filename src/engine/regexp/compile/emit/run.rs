@@ -5,7 +5,7 @@ use super::output::{Label, Section};
 use super::state::Fail;
 use crate::Error;
 use crate::compile::graph::{Id, Kind, Traits};
-use crate::program::{ClassId, Comparison, Direction, Op, Place, Stride, UNBOUNDED};
+use crate::program::{ClassId, Comparison, Direction, MAX_LENGTH, Op, Place, Stride, UNBOUNDED};
 use crate::set::CharRange;
 
 impl Emitter<'_> {
@@ -22,6 +22,9 @@ impl Emitter<'_> {
         else {
             unreachable!("the node is a run")
         };
+        if rest >= MAX_LENGTH {
+            return Ok(fail);
+        }
         if !greedy {
             return self.lazy_run(class, max, code_points, filter, rest, fail);
         }

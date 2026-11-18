@@ -119,26 +119,54 @@ pub(super) fn vector(random: &mut Random) -> u128 {
     }
 }
 
-/// The lower the temper, the likelier it is that arithmetic does not overflow and that indices are in range.
-fn tempered_integer(ty: Type, temper: usize, random: &mut Random) -> i64 {
-    match temper {
+#[derive(Clone, Copy)]
+pub(super) struct Temper<'a> {
+    /// The lower it is, the likelier it is that arithmetic does not overflow and that indices are in range.
+    pub(super) level: usize,
+    pub(super) remarkable: &'a [i64],
+}
+
+fn tempered_integer(ty: Type, temper: Temper<'_>, random: &mut Random) -> i64 {
+    match temper.level {
         0 => random.between(0, 12),
         1 if !random.one_in(4) => random.between(-20, 300),
         2 if random.flip() => random.next() as i64,
+        3 if !random.one_in(4) => {
+            let (number, other) = (
+                random.pick(temper.remarkable),
+                random.pick(temper.remarkable),
+            );
+            let related = [
+                number,
+                number,
+                number.wrapping_neg(),
+                number.wrapping_sub(other),
+                number ^ other,
+            ];
+            random
+                .pick(&related)
+                .wrapping_add(random.pick(&[0, 0, -1, 1]))
+        }
         _ => integer(ty, random),
     }
 }
 
-fn tempered_float(ty: Type, temper: usize, random: &mut Random) -> u64 {
-    let number = random.between(-100, 100) as f64 / 8.0;
-    match ty {
-        Type::F32 if temper == 0 => (number as f32).to_bits().into(),
-        Type::F64 if temper == 0 => number.to_bits(),
-        _ => float(ty, random),
+fn tempered_float(ty: Type, temper: Temper<'_>, random: &mut Random) -> u64 {
+    let number = match temper.level {
+        0 => random.between(-100, 100) as f64 / 8.0,
+        3 if random.flip() => {
+            random.pick(temper.remarkable) as f64 + random.pick(&[0.0, 0.5, -1.0])
+        }
+        _ => return float(ty, random),
+    };
+    if ty == Type::F32 {
+        (number as f32).to_bits().into()
+    } else {
+        number.to_bits()
     }
 }
 
-pub(super) fn word(temper: usize, random: &mut Random) -> u64 {
+pub(super) fn word(temper: Temper<'_>, random: &mut Random) -> u64 {
     let half = |random: &mut Random| match random.below(3) {
         0 => tempered_float(Type::F32, temper, random),
         _ => (tempered_integer(Type::I32, temper, random) as u32).into(),
@@ -150,11 +178,16 @@ pub(super) fn word(temper: usize, random: &mut Random) -> u64 {
     }
 }
 
-pub(super) fn argument(class: Class, temper: usize, layout: &Layout, random: &mut Random) -> u128 {
+pub(super) fn argument(
+    class: Class,
+    temper: Temper<'_>,
+    layout: &Layout,
+    random: &mut Random,
+) -> u128 {
     let bits = |ty, value: i64| u128::from(value as u64) & all_bits(ty);
     match class {
-        Class::Data(Type::V128) if temper == 0 => {
-            u128::from(word(0, random)) << 64 | u128::from(word(0, random))
+        Class::Data(Type::V128) if temper.level == 0 => {
+            u128::from(word(temper, random)) << 64 | u128::from(word(temper, random))
         }
         Class::Data(Type::V128) => vector(random),
         Class::Data(ty) if ty.is_float() => tempered_float(ty, temper, random).into(),

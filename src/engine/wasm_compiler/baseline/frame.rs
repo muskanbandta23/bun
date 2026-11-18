@@ -16,7 +16,7 @@ pub struct Frame {
 }
 
 const ALIGNMENT: i32 = 16;
-const CALLEE_WORDS_SIZE: u32 = (frame::ARGUMENTS - frame::INSTANCE) as u32;
+pub(super) const CALLEE_WORDS_SIZE: u32 = (frame::ARGUMENTS - frame::INSTANCE) as u32;
 
 impl Frame {
     /// Calls `local` with the type and the offset of each local, parameters first.
@@ -84,7 +84,7 @@ impl Frame {
     }
 
     /// Covers the locals that are not parameters. Both ends are multiples of 16.
-    pub fn declared_locals(&self) -> core::ops::Range<i32> {
+    pub(super) fn declared_locals(&self) -> core::ops::Range<i32> {
         self.locals_end..(self.params_end + ALIGNMENT - 1) & -ALIGNMENT
     }
 }

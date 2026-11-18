@@ -1,6 +1,7 @@
 //! What compiled code, the stubs and the run time agree on: registers, frames and the layout of data.
 
 use core::mem::offset_of;
+use core::slice;
 use core::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, AtomicUsize};
 
 use bun_engine_asm::{Fpr, Gpr, Reg, abi};
@@ -81,18 +82,45 @@ pub struct Signature {
     pub stack_bytes: u32,
 }
 
+/// Those that are left for the arguments or the results of a function.
+pub struct Registers {
+    gprs: slice::Iter<'static, Gpr>,
+    fprs: slice::Iter<'static, Fpr>,
+}
+
+impl Registers {
+    #[inline]
+    pub fn for_arguments() -> Self {
+        Self {
+            gprs: ARGUMENT_GPRS.iter(),
+            fprs: ARGUMENT_FPRS.iter(),
+        }
+    }
+
+    #[inline]
+    pub fn for_results() -> Self {
+        Self {
+            gprs: RESULT_GPRS.iter(),
+            fprs: RESULT_FPRS.iter(),
+        }
+    }
+
+    #[inline]
+    pub fn next(&mut self, kind: ValKind) -> Option<Reg> {
+        match kind {
+            ValKind::F32 | ValKind::F64 | ValKind::V128 => self.fprs.next().map(|&reg| reg.into()),
+            _ => self.gprs.next().map(|&reg| reg.into()),
+        }
+    }
+}
+
 fn assign<A: smallvec::Array<Item = Place>>(
     types: &[ValType],
-    gprs: &[Gpr],
-    fprs: &[Fpr],
+    mut registers: Registers,
 ) -> (SmallVec<A>, u32) {
-    let (mut gprs, mut fprs, mut bytes) = (gprs.iter(), fprs.iter(), 0u32);
+    let mut bytes = 0u32;
     let places = types.iter().map(|ty| {
-        let register = match ty.kind() {
-            ValKind::F32 | ValKind::F64 | ValKind::V128 => fprs.next().map(|&reg| Reg::from(reg)),
-            _ => gprs.next().map(|&reg| Reg::from(reg)),
-        };
-        register.map_or_else(
+        registers.next(ty.kind()).map_or_else(
             || {
                 let size = ty.size_in_bytes().max(8);
                 let start = bytes.next_multiple_of(size);
@@ -107,9 +135,9 @@ fn assign<A: smallvec::Array<Item = Place>>(
 
 impl Signature {
     pub fn new(ty: FuncType<'_>) -> Self {
-        let (params, param_bytes) = assign(ty.params, ARGUMENT_GPRS, ARGUMENT_FPRS);
+        let (params, param_bytes) = assign(ty.params, Registers::for_arguments());
         let (mut results, result_bytes): (SmallVec<_>, _) =
-            assign(ty.results, RESULT_GPRS, RESULT_FPRS);
+            assign(ty.results, Registers::for_results());
         let stack_bytes = param_bytes.max(result_bytes);
         for place in &mut results {
             if let Place::Stack(offset) = place {

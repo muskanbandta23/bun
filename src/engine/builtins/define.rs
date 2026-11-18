@@ -54,4 +54,35 @@ macro_rules! define_constructor {
     };
 }
 
+/// `define_builtin_constructor!(Name, TABLE, js::file::function)` is for one that is written in JavaScript.
+/// `Name::create(cx, parent, prototype)` makes the function and links it with the prototype.
+#[allow(unused_macros)]
+macro_rules! define_builtin_constructor {
+    ($name:ident, $table:ident, $id:expr) => {
+        #[bun_engine_macros::cell(name = "Function", static_table = $table)]
+        pub(crate) struct $name {
+            base: bun_engine_vm::JsFunction,
+        }
+
+        impl $name {
+            pub(crate) fn create(
+                cx: &bun_engine_vm::Cx,
+                parent: bun_engine_vm::Gc<bun_engine_vm::JsObject>,
+                prototype: &bun_engine_vm::JsObject,
+            ) -> bun_engine_vm::Gc<bun_engine_vm::JsObject> {
+                use bun_engine_vm::{CellKind, JsFunction, Shape, ShapeSpec};
+                let spec = ShapeSpec::of::<$name>();
+                let shape = Shape::create_dictionary(cx, Some(cx.global()), parent.into(), spec);
+                let base = JsFunction::builtin_init(cx, shape, cx.builtin_executable($id));
+                type Init = <$name as CellKind>::Init;
+                let constructor = cx.allocate::<$name>(Init { base });
+                constructor.finish_builtin_constructor(cx, prototype);
+                constructor.upcast()
+            }
+        }
+    };
+}
+
+#[allow(unused_imports)]
+pub(crate) use define_builtin_constructor;
 pub(crate) use {define_constructor, define_object};

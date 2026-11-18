@@ -1,7 +1,7 @@
 use bun_engine_vm::{Environment, InternalFieldTuple, RealmSlot};
 
 use crate::prelude::*;
-use crate::{arrays, buffers, collections, control, functions, fundamental, numbers, text};
+use crate::{arrays, buffers, collections, control, functions, fundamental, js, numbers, text};
 
 pub fn initialize_realm(cx: &Cx) {
     fundamental::object::initialize_prototype(cx);
@@ -22,7 +22,8 @@ pub fn initialize_slot(cx: &Cx, slot: RealmSlot) -> bool {
         global.init_internal_field_tuple_shape(shape);
         return true;
     }
-    arrays::initialize_slot(cx, slot)
+    js::initialize_slot(cx, slot)
+        || arrays::initialize_slot(cx, slot)
         || buffers::initialize_slot(cx, slot)
         || collections::initialize_slot(cx, slot)
         || control::initialize_slot(cx, slot)

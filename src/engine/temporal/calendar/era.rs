@@ -138,6 +138,7 @@ impl CalendarId {
     }
 
     /// CalendarDateEra and CalendarDateEraYear. `year` is the arithmetic year of `date`.
+    #[inline]
     pub(super) fn era_year(self, year: i32, date: IsoDate) -> Option<EraYear> {
         let [positive, other] = self.eras_around_epoch()?;
         let era = match self.mid_year_eras().iter().find(|it| date >= it.1) {

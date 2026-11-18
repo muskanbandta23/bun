@@ -1,23 +1,54 @@
 //! Source text, what it compiles to, and the state that running code keeps.
 
+mod builtin;
+mod builtin_values;
+mod cache;
 mod code_block;
 mod compile;
+mod dynamic_function;
+mod eval;
 mod executable;
 pub mod metadata;
+mod profile;
+mod script;
 mod source;
+mod speculation;
 
+pub use builtin::{BuiltinOutline, describe_builtin};
 pub use code_block::{CodeBlock, CodeOrigin, CompiledCode, InlineFrame, Tier};
-pub use compile::{evaluate_script, throw_compile_error};
+pub use compile::{
+    CompileError, CompileErrorKind, CompileErrorRecovery, create_compile_error,
+    create_compile_error_in, throw_compile_error,
+};
+pub use dynamic_function::{DynamicFunctionKind, create_dynamic_function};
+pub use eval::{
+    direct_eval, execute_indirect_eval, indirect_eval, origin_of_caller, prepare_indirect_eval,
+};
 pub use executable::{
     EvalExecutable, Executable, FunctionExecutable, ModuleExecutable, NativeExecutable,
     ProgramExecutable, ScriptExecutable,
 };
 pub(crate) use executable::{NativeExecutableKey, native_source_text};
+pub use profile::{Arithmetic, ArithmeticProfile, ArrayModes, ArrayProfile, ValueProfile};
+pub use script::{evaluate_compiled_script, evaluate_script, evaluate_script_in_scope};
+pub use speculation::SpeculatedType;
 pub use source::{
     LineColumn, SourceCode, SourceProvider, SourceProviderBuilder, SourceProviderRef, SourceType,
 };
 
-#[derive(Default)]
-pub(crate) struct State {}
+use crate::Vm;
+use crate::heap::Scope;
 
-impl crate::services::Service for State {}
+#[derive(Default)]
+pub(crate) struct State {
+    compilation: compile::Compilation,
+    builtins: builtin::Builtins,
+}
+
+impl crate::services::Service for State {
+    fn did_collect(&self, vm: &Vm, scope: Scope) {
+        if scope == Scope::Full {
+            vm.clear_source_caches();
+        }
+    }
+}

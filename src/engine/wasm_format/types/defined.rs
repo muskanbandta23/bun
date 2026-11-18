@@ -38,6 +38,9 @@ pub struct ArrayType {
     pub element: FieldType,
 }
 
+/// Up to this many steps from a type to its supertype take less than looking at the display.
+const SHORT_WALK: u32 = 2;
+
 #[derive(Clone, Copy)]
 struct Definition {
     /// With the first index that has this type.
@@ -179,6 +182,10 @@ impl Types {
     }
 
     fn is_defined_subtype(&self, mut sub: TypeIndex, sup: TypeIndex) -> bool {
+        let has_rtt = |index| (self.definition(index).group as usize) < self.groups.len();
+        if self.depth(sub) > self.depth(sup) + SHORT_WALK && has_rtt(sub) && has_rtt(sup) {
+            return self.rtt(sub).is_subtype_of(self.rtt(sup));
+        }
         for _ in self.depth(sup)..self.depth(sub) {
             sub = TypeIndex(self.definition(sub).supertype);
         }

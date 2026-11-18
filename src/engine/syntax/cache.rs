@@ -13,6 +13,12 @@ pub struct SourceCache {
     pub(crate) narrowed: Vec<u8>,
 }
 
+impl SourceCache {
+    pub fn is_empty(&self) -> bool {
+        self.functions.entries.is_empty() && self.narrowed.is_empty()
+    }
+}
+
 bitflags::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq, Default)]
     pub(crate) struct Traits: u8 {

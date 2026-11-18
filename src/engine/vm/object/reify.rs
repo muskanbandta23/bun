@@ -196,7 +196,7 @@ impl JsObject {
                 .is_some_and(|it| core::ptr::fn_addr_eq(it.function(), native)),
             StaticValue::EngineBuiltin(id) => function
                 .and_then(|it| it.script_executable())
-                .is_some_and(|it| it == cx.builtin_executable(id)),
+                .is_some_and(|it| it.is_for_builtin(cx, id)),
             StaticValue::RealmSlot(slot) => self
                 .realm()
                 .is_some_and(|global| value == global.slot(cx, slot).into()),

@@ -129,7 +129,7 @@ fn function_executable_declared_name(executable: &FunctionExecutable) -> StringR
 
 #[export]
 fn function_executable_name(executable: &FunctionExecutable) -> StringRef {
-    executable.display_name()
+    executable.name().clone()
 }
 
 #[export]

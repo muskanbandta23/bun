@@ -25,6 +25,7 @@ bun_highway.workspace = true
 bun_simdutf_sys.workspace = true
 bun_threading.workspace = true
 bitflags.workspace = true
+getrandom.workspace = true
 libc.workspace = true
 smallvec.workspace = true
 hashbrown.workspace = true

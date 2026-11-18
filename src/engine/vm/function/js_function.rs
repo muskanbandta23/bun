@@ -1,0 +1,570 @@
+use core::mem::offset_of;
+
+use bun_engine_bytecode::{FunctionKind, Specialization, Visibility};
+use bun_engine_macros::{cell, object_ops};
+use bun_engine_text::{PropertyName, StringRef, Text, names, private_names};
+
+use crate::call::native_not_a_constructor;
+use crate::code::native_source_text;
+use crate::{
+    Attributes, CallData, CellType, Cx, DeletePropertySlot, DontEnumMode, Executable, Field,
+    FunctionExecutable, FunctionRareData, Gc, GlobalObject, InternalFunction, Intrinsic,
+    JsBoundFunction, JsCell, JsObject, JsObjectInit, JsResult, JsString, JsSymbol,
+    NativeExecutable, NativeFunction, PropertyDescriptor, PropertyNameList, PropertySlot,
+    PutPropertySlot, ScriptExecutable, Shape, ShapeFlags, TypeFlags, Value, Vm,
+    scope::realm_of_scope,
+};
+
+/// `length`, `name` and `prototype` are defined when something asks for them.
+#[cell(name = "Function", cell_type = Function, ops, export = "engine_class_Function",
+    flags = TypeFlags::IMPLEMENTS_HAS_INSTANCE.union(TypeFlags::IMPLEMENTS_DEFAULT_HAS_INSTANCE))]
+pub struct JsFunction {
+    base: JsObject,
+    /// Of a native function, the global object.
+    scope: Gc<JsCell>,
+    pub(super) target: Field<Gc<Executable>>,
+}
+
+/// What the frame of a script, a module or `eval` code has for a callee.
+#[cell(name = "Callee", cell_type = Callee)]
+pub struct JsCallee {
+    base: JsObject,
+    scope: Gc<JsCell>,
+    target: Gc<Executable>,
+}
+
+const _: () = {
+    assert!(offset_of!(JsCallee, scope) == JsFunction::OFFSET_OF_SCOPE);
+    assert!(offset_of!(JsCallee, target) == JsFunction::OFFSET_OF_EXECUTABLE);
+};
+
+impl JsCallee {
+    pub(crate) fn create(
+        cx: &Cx,
+        executable: Gc<ScriptExecutable>,
+        scope: Gc<JsCell>,
+    ) -> Gc<JsCallee> {
+        cx.allocate::<JsCallee>(JsCalleeInit {
+            base: JsObjectInit::new(cx, cx.global().callee_shape()),
+            scope,
+            target: executable.upcast(),
+        })
+    }
+}
+
+const NAME_AND_LENGTH: Attributes = Attributes::DONT_ENUM.union(Attributes::READ_ONLY);
+const PROTOTYPE: Attributes = Attributes::DONT_ENUM.union(Attributes::DONT_DELETE);
+
+#[object_ops]
+impl JsFunction {
+    fn call_data(&self) -> CallData {
+        CallData::of_function(self.into(), Specialization::Call)
+    }
+
+    fn construct_data(&self) -> CallData {
+        CallData::of_function(self.into(), Specialization::Construct)
+    }
+
+    fn get_own_property_slot(
+        &self,
+        cx: &mut Cx,
+        name: PropertyName<'_>,
+        slot: &mut PropertySlot,
+    ) -> JsResult<bool> {
+        self.reify_lazy_property(cx, name)?;
+        self.ordinary_get_own_property_slot(cx, name, slot)
+    }
+
+    fn own_special_property_names(
+        &self,
+        cx: &mut Cx,
+        list: &mut PropertyNameList,
+        mode: DontEnumMode,
+    ) -> JsResult<()> {
+        for name in [names::length, names::name, names::prototype] {
+            self.reify_lazy_property(cx, name)?;
+            let is_first = name != names::prototype || self.has_prototype_by_kind();
+            let found = self.shape().get(name);
+            if is_first && found.is_some_and(|(_, attributes)| mode.includes(attributes)) {
+                list.add(name);
+            }
+        }
+        Ok(())
+    }
+
+    fn put(
+        &self,
+        cx: &mut Cx,
+        name: PropertyName<'_>,
+        value: Value,
+        slot: &mut PutPropertySlot,
+    ) -> JsResult<bool> {
+        if name == names::prototype {
+            slot.disable_caching();
+            self.will_change_prototype_property(cx);
+            if self.has_lazy_prototype() && slot.is_receiver(self) {
+                self.put_direct(cx, name, value, PROTOTYPE);
+                return Ok(true);
+            }
+        }
+        if self.reify_lazy_property(cx, name)? {
+            slot.disable_caching();
+        }
+        self.ordinary_put(cx, name, value, slot)
+    }
+
+    fn delete_property(
+        &self,
+        cx: &mut Cx,
+        name: PropertyName<'_>,
+        slot: &mut DeletePropertySlot,
+    ) -> JsResult<bool> {
+        if self.reify_lazy_property(cx, name)? {
+            slot.disable_caching();
+        }
+        if name == names::prototype {
+            self.will_change_prototype_property(cx);
+        }
+        self.ordinary_delete_property(cx, name, slot)
+    }
+
+    fn define_own_property(
+        &self,
+        cx: &mut Cx,
+        name: PropertyName<'_>,
+        descriptor: &PropertyDescriptor,
+        should_throw: bool,
+    ) -> JsResult<bool> {
+        if name == names::prototype {
+            self.will_change_prototype_property(cx);
+        }
+        self.reify_lazy_property(cx, name)?;
+        self.ordinary_define_own_property(cx, name, descriptor, should_throw)
+    }
+
+    fn prevent_extensions(&self, cx: &mut Cx) -> JsResult<bool> {
+        for name in [names::length, names::name, names::prototype] {
+            self.reify_lazy_property(cx, name)?;
+        }
+        self.ordinary_prevent_extensions(cx);
+        Ok(true)
+    }
+}
+
+impl JsFunction {
+    pub const OFFSET_OF_SCOPE: usize = offset_of!(JsFunction, scope);
+    pub const OFFSET_OF_EXECUTABLE: usize = offset_of!(JsFunction, target);
+
+    /// For a type that extends this one.
+    pub fn native_init(
+        cx: &Cx,
+        shape: Gc<Shape>,
+        executable: Gc<NativeExecutable>,
+    ) -> JsFunctionInit {
+        JsFunctionInit {
+            base: JsObjectInit::new(cx, shape),
+            scope: cx.global().cell(),
+            target: executable.upcast(),
+        }
+    }
+
+    pub fn shape_for(vm: &Vm, global: &GlobalObject, executable: &FunctionExecutable) -> Gc<Shape> {
+        let info = executable.info();
+        match (info.is_async(), info.is_generator()) {
+            (true, true) => global.async_generator_function_shape(vm),
+            (true, false) => global.async_function_shape(vm),
+            (false, true) => global.generator_function_shape(vm),
+            _ if executable.is_builtin() => global.builtin_function_shape(),
+            _ if executable.has_prototype_property() => global.function_shape(),
+            _ => global.method_shape(),
+        }
+    }
+
+    /// # Safety
+    /// `scope` is an instance of the scope that the code was written in.
+    #[inline]
+    pub unsafe fn create(
+        cx: &Cx,
+        executable: Gc<FunctionExecutable>,
+        scope: Gc<JsCell>,
+    ) -> Gc<JsFunction> {
+        let shape = Self::shape_for(cx, &cx.global(), &executable);
+        // SAFETY: the caller's.
+        unsafe { Self::create_with_shape(cx, executable, scope, shape) }
+    }
+
+    /// # Safety
+    /// As for `create`.
+    #[inline(always)]
+    pub unsafe fn create_with_shape(
+        vm: &Vm,
+        executable: Gc<FunctionExecutable>,
+        scope: Gc<JsCell>,
+        shape: Gc<Shape>,
+    ) -> Gc<JsFunction> {
+        let function = vm.allocate::<JsFunction>(JsFunctionInit {
+            base: JsObjectInit::new(vm, shape),
+            scope,
+            target: executable.upcast(),
+        });
+        executable.did_create(vm, function);
+        function
+    }
+
+    /// A function of the library that is written in JavaScript.
+    pub fn builtin(cx: &Cx, executable: Gc<FunctionExecutable>) -> Gc<JsFunction> {
+        assert!(executable.info().has_no_outer_scope());
+        // SAFETY: it refers to nothing but globals.
+        unsafe { Self::create(cx, executable, cx.global().cell()) }
+    }
+
+    pub fn native(
+        cx: &Cx,
+        length: u32,
+        name: &StringRef,
+        function: NativeFunction,
+    ) -> Gc<JsFunction> {
+        Self::native_with_intrinsic(cx, length, name, function, Intrinsic::None)
+    }
+
+    pub fn native_with_intrinsic(
+        cx: &Cx,
+        length: u32,
+        name: &StringRef,
+        function: NativeFunction,
+        intrinsic: Intrinsic,
+    ) -> Gc<JsFunction> {
+        let (constructor, visibility) = (native_not_a_constructor, Visibility::Public);
+        Self::native_with(
+            cx,
+            length,
+            name,
+            function,
+            constructor,
+            intrinsic,
+            visibility,
+        )
+    }
+
+    pub fn native_with(
+        cx: &Cx,
+        length: u32,
+        name: &StringRef,
+        function: NativeFunction,
+        constructor: NativeFunction,
+        intrinsic: Intrinsic,
+        visibility: Visibility,
+    ) -> Gc<JsFunction> {
+        let name = name.clone();
+        let executable = NativeExecutable::shared(
+            cx,
+            length,
+            name,
+            function,
+            constructor,
+            intrinsic,
+            visibility,
+        );
+        let shape = cx.global().native_function_shape();
+        cx.allocate::<JsFunction>(Self::native_init(cx, shape, executable))
+    }
+
+    /// # Safety
+    /// A `JsFunction`, an `InternalFunction` or a `JsCallee`.
+    #[inline(always)]
+    pub unsafe fn executable_or_rare_data(callee: Gc<JsCell>) -> Gc<Executable> {
+        // SAFETY: all have it at the same offset.
+        unsafe { callee.cast_unchecked::<JsFunction>() }.target()
+    }
+
+    /// # Safety
+    /// As above.
+    #[inline(always)]
+    pub unsafe fn executable_of(callee: Gc<JsCell>) -> Gc<Executable> {
+        // SAFETY: as above.
+        unsafe { callee.cast_unchecked::<JsFunction>() }.executable()
+    }
+
+    /// # Safety
+    /// As above.
+    #[inline(always)]
+    pub unsafe fn scope_of(callee: Gc<JsCell>) -> Gc<JsCell> {
+        // SAFETY: as above.
+        unsafe { callee.cast_unchecked::<JsFunction>() }.scope
+    }
+
+    #[inline(always)]
+    pub fn scope(&self) -> Gc<JsCell> {
+        self.scope
+    }
+
+    /// `[[Realm]]`
+    #[inline]
+    pub fn function_realm(&self) -> Gc<GlobalObject> {
+        realm_of_scope(self.scope)
+    }
+
+    #[inline(always)]
+    pub fn rare_data(&self) -> Option<Gc<FunctionRareData>> {
+        self.target().downcast()
+    }
+
+    pub fn ensure_rare_data(&self, vm: &Vm) -> Gc<FunctionRareData> {
+        self.rare_data().unwrap_or_else(|| {
+            let rare_data = FunctionRareData::create(vm, self.target());
+            self.set_target(rare_data.upcast());
+            rare_data
+        })
+    }
+
+    #[inline(always)]
+    pub fn executable(&self) -> Gc<Executable> {
+        match self.rare_data() {
+            Some(rare_data) => rare_data.executable(),
+            None => self.target(),
+        }
+    }
+
+    #[inline(always)]
+    pub fn script_executable(&self) -> Option<Gc<FunctionExecutable>> {
+        self.executable().downcast()
+    }
+
+    #[inline(always)]
+    pub fn native_executable(&self) -> Option<Gc<NativeExecutable>> {
+        self.executable().downcast()
+    }
+
+    pub fn is_native(&self) -> bool {
+        self.executable().is_native()
+    }
+
+    pub fn is_native_or_builtin(&self) -> bool {
+        self.script_executable().is_none_or(|it| it.is_builtin())
+    }
+
+    pub fn is_class_constructor(&self) -> bool {
+        self.script_executable()
+            .is_some_and(|it| it.info().kind().is_class_constructor())
+    }
+
+    pub fn intrinsic(&self) -> Intrinsic {
+        self.executable().intrinsic()
+    }
+
+    fn has_prototype_by_kind(&self) -> bool {
+        self.script_executable()
+            .is_some_and(|it| !it.is_builtin() && it.has_prototype_property())
+    }
+
+    fn has_lazy_prototype(&self) -> bool {
+        self.has_prototype_by_kind() && self.shape().get(names::prototype).is_none()
+    }
+
+    fn will_change_prototype_property(&self, vm: &Vm) {
+        if let Some(rare_data) = self.rare_data() {
+            rare_data.clear(vm);
+        }
+    }
+
+    pub fn has_reified_length(&self) -> bool {
+        self.shape().has(ShapeFlags::HAS_REIFIED_LENGTH)
+    }
+
+    pub fn has_reified_name(&self) -> bool {
+        self.shape().has(ShapeFlags::HAS_REIFIED_NAME)
+    }
+
+    /// Whether it has just been defined.
+    #[inline(always)]
+    fn reify_lazy_property(&self, cx: &Cx, name: PropertyName<'_>) -> JsResult<bool> {
+        if name == names::prototype || name == names::length || name == names::name {
+            return self.reify_lazy_property_slow(cx, name);
+        }
+        Ok(false)
+    }
+
+    #[inline(never)]
+    fn reify_lazy_property_slow(&self, cx: &Cx, name: PropertyName<'_>) -> JsResult<bool> {
+        if name == names::prototype && self.has_lazy_prototype() {
+            self.put_direct(cx, name, self.create_prototype(cx).into(), PROTOTYPE);
+        } else if name == names::length && !self.has_reified_length() {
+            self.put_direct(cx, name, self.original_length().into(), NAME_AND_LENGTH);
+        } else if name == names::name && !self.has_reified_name() {
+            self.put_direct(cx, name, self.original_name(cx)?.into(), NAME_AND_LENGTH);
+        } else {
+            return Ok(false);
+        }
+        Ok(true)
+    }
+
+    /// What instances inherit from if `prototype` is no object.
+    pub fn default_prototype_for_instances(&self, vm: &Vm) -> Gc<JsObject> {
+        let global = self.function_realm();
+        match self.script_executable() {
+            Some(it) if it.info().is_generator() && it.info().is_async() => {
+                global.async_generator_prototype(vm)
+            }
+            Some(it) if it.info().is_generator() => global.generator_prototype(vm),
+            _ => global.object_prototype(),
+        }
+    }
+
+    fn create_prototype(&self, vm: &Vm) -> Gc<JsObject> {
+        let global = self.function_realm();
+        let parent = self.default_prototype_for_instances(vm);
+        let prototype = global.new_object_with_prototype(vm, parent);
+        if parent == global.object_prototype() {
+            let this = self.as_value();
+            prototype.put_direct(vm, names::constructor, this, Attributes::DONT_ENUM);
+        }
+        prototype
+    }
+
+    pub fn original_length(&self) -> f64 {
+        if let Some(bound) = self.downcast::<JsBoundFunction>() {
+            return bound.bound_length();
+        }
+        f64::from(match self.script_executable() {
+            Some(executable) => executable.info().length(),
+            None => self.executable().cast::<NativeExecutable>().length(),
+        })
+    }
+
+    pub fn original_name(&self, cx: &Cx) -> JsResult<Gc<JsString>> {
+        if let Some(bound) = self.downcast::<JsBoundFunction>() {
+            let prefix = JsString::from_name(cx, names::boundPrefix);
+            return JsString::concat(cx, prefix, bound.target_name(cx)?);
+        }
+        match self.script_executable() {
+            Some(executable) => self.prefixed_name(cx, &[specified_name(&executable)]),
+            None => {
+                let executable = self.executable().cast::<NativeExecutable>();
+                Ok(JsString::from_impl_cached(cx, executable.name()))
+            }
+        }
+    }
+
+    fn prefixed_name(&self, cx: &Cx, parts: &[Text<'_>]) -> JsResult<Gc<JsString>> {
+        let prefix = match self.script_executable().map(|it| it.info().kind()) {
+            Some(FunctionKind::Getter) => "get ",
+            Some(FunctionKind::Setter) => "set ",
+            _ => "",
+        };
+        let mut all = smallvec::SmallVec::<[Text<'_>; 4]>::new();
+        all.push(Text::from_ascii(prefix));
+        all.extend_from_slice(parts);
+        cx.new_string_from_parts(&all)
+    }
+
+    /// SetFunctionName, unless it has a `name` already. `name` is a string or a symbol.
+    pub fn set_function_name(&self, cx: &Cx, name: Value) -> JsResult<()> {
+        if self.has_reified_name() {
+            return Ok(());
+        }
+        let string = if let Some(symbol) = name.downcast::<JsSymbol>() {
+            let (open, close) = (Text::from_ascii("["), Text::from_ascii("]"));
+            match symbol.symbol().description() {
+                Some(text) if symbol.name().is_private() => self.prefixed_name(cx, &[text])?,
+                Some(text) => self.prefixed_name(cx, &[open, text, close])?,
+                None => self.prefixed_name(cx, &[])?,
+            }
+        } else {
+            self.prefixed_name(cx, &[name.cast::<JsString>().view(cx)?.text()])?
+        };
+        self.put_direct(cx, names::name, string.into(), NAME_AND_LENGTH);
+        Ok(())
+    }
+
+    /// The name that it was made with. Allocates nothing in the heap.
+    pub fn name(&self) -> StringRef {
+        if let Some(bound) = self.downcast::<JsBoundFunction>() {
+            return bound.name_without_allocating();
+        }
+        match self.script_executable() {
+            Some(it) if it.info().has_own_name() => StringRef::from_text(it.name_text()),
+            Some(_) => StringRef::empty(),
+            None => self.executable().cast::<NativeExecutable>().name().clone(),
+        }
+    }
+
+    /// `Function.prototype.toString`
+    pub fn source_text(&self, cx: &Cx) -> JsResult<Gc<JsString>> {
+        match self.script_executable() {
+            Some(executable) => executable.source_text(cx),
+            None => native_source_text(cx, self.name().text()),
+        }
+    }
+
+    /// Whether `prototype` cannot change without `will_change_prototype_property`, and reading it runs no code.
+    pub fn can_use_allocation_profile(&self) -> bool {
+        let Some(executable) = self.script_executable() else {
+            return false;
+        };
+        executable.has_prototype_property()
+            && (!executable.is_builtin()
+                || self
+                    .shape()
+                    .get(names::prototype)
+                    .is_some_and(|found| !found.1.intersects(Attributes::ANY_ACCESSOR)))
+    }
+
+    /// `can_use_allocation_profile` holds.
+    pub(crate) fn prototype_for_construction(&self, vm: &Vm) -> Gc<JsObject> {
+        if self.has_lazy_prototype() {
+            let prototype = self.create_prototype(vm).into();
+            self.put_direct(vm, names::prototype, prototype, PROTOTYPE);
+        }
+        self.get_direct(names::prototype)
+            .and_then(Value::as_object)
+            .unwrap_or_else(|| self.default_prototype_for_instances(vm))
+    }
+}
+
+fn specified_name(executable: &FunctionExecutable) -> Text<'_> {
+    let name = executable.name_text();
+    if name == names::starDefaultText.text() || name == private_names::starDefault.text() {
+        names::default.text()
+    } else {
+        name
+    }
+}
+
+/// What a stack trace calls a function. Allocates nothing in the heap and runs no code.
+pub fn display_name(object: &JsObject) -> StringRef {
+    if !CellType::FUNCTIONS.contains(object.cell_type()) {
+        return StringRef::empty();
+    }
+    if let Some(name) = object
+        .get_direct(names::displayName)
+        .and_then(Value::downcast::<JsString>)
+    {
+        return name.to_string_without_resolving();
+    }
+    if let Some(function) = object.downcast::<InternalFunction>() {
+        return function.name();
+    }
+    let function = object.as_object().cast::<JsFunction>();
+    match function.script_executable() {
+        Some(executable) => StringRef::from_text(executable.name_text()),
+        None => function.name(),
+    }
+}
+
+impl JsObject {
+    /// Defines a method.
+    pub fn put_direct_native_function(
+        &self,
+        cx: &Cx,
+        name: PropertyName<'_>,
+        length: u32,
+        function: NativeFunction,
+        intrinsic: Intrinsic,
+        attributes: Attributes,
+    ) -> Gc<JsFunction> {
+        let text = crate::object::function_name("", name);
+        let function = JsFunction::native_with_intrinsic(cx, length, &text, function, intrinsic);
+        self.put_direct(cx, name, function.into(), attributes);
+        function
+    }
+}

@@ -85,7 +85,8 @@ fn or_to_memory() {
 #[test]
 fn the_first_scratch_register_as_an_operand() {
     let mut h = Harness::new();
-    let scratch = Harness::default_scratch().gprs[0].unwrap();
+    let scratch = Harness::default_scratch();
+    let (scratch, float) = (scratch.gprs[0].unwrap(), scratch.fprs[0].unwrap());
     for ([reg], address) in h.addresses(&[scratch], ALL_OFFSETS) {
         let size = h.random.pick(&SIZES);
         let case = Case::new(op!(load(size, reg, address)), move |m| {
@@ -100,11 +101,41 @@ fn the_first_scratch_register_as_an_operand() {
             m.set64(reg, m.address(address) as u64);
         });
         h.add(case.keeps_first_scratch());
-        let fpr = h.any_fpr();
-        let case = Case::new(op!(load_f64(fpr, address)), move |m| {
-            m.set_vector(fpr, m.load(Size::S64, address).into());
+        let case = Case::new(op!(load_signed(size, Width::W64, reg, address)), move |m| {
+            m.set64(reg, sign_extend(size, m.load(size, address)) as u64);
         });
         h.add(case.accesses(address).keeps_first_scratch());
+        let case = Case::new(op!(load_f64(float, address)), move |m| {
+            m.set_vector(float, m.load(Size::S64, address).into());
+        });
+        h.add(case.accesses(address).keeps_first_scratch());
+        let case = Case::new(op!(store_f32(address, float)), move |m| {
+            m.store(Size::S32, address, m.vector(float) as u64);
+        });
+        h.add(case.accesses(address).keeps_first_scratch());
+        let case = Case::new(op!(load_vector(float, address)), move |m| {
+            m.set_vector(float, m.load_vector(address));
+        });
+        h.add(case.accesses(address).keeps_first_scratch());
+        let case = Case::new(op!(store_vector(address, float)), move |m| {
+            m.store_vector(address, m.vector(float));
+        });
+        h.add(case.accesses(address).keeps_first_scratch());
+    }
+    for ([low, high], address) in h.addresses(&[scratch], 4) {
+        let case = Case::new(op!(store_pair64(address, low, high)), move |m| {
+            m.store(Size::S64, address, m.get64(low));
+            m.store(Size::S64, address.plus(8), m.get64(high));
+        });
+        h.add(case.accesses(address).keeps_first_scratch());
+        if low != high {
+            let case = Case::new(op!(load_pair64(low, high, address)), move |m| {
+                let both = [address, address.plus(8)].map(|src| m.load(Size::S64, src));
+                m.set64(low, both[0]);
+                m.set64(high, both[1]);
+            });
+            h.add(case.accesses(address).keeps_first_scratch());
+        }
     }
 }
 
@@ -128,6 +159,15 @@ fn integers_are_loaded_from_an_absolute_address_without_scratch_registers() {
             let case = Case::new(operation, move |m| m.set64(dst, m.load(size, src)));
             h.add(case.accesses(src));
         }
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn absolute_addresses_are_of_all_lengths() {
+    let addresses = Harness::new().absolute_addresses();
+    for range in [0..1 << 31, 1 << 31..1 << 32, 1 << 32..usize::MAX] {
+        assert!(addresses.iter().any(|address| range.contains(&address.0)));
     }
 }
 

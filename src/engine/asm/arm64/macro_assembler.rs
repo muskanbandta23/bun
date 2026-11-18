@@ -2,7 +2,7 @@
 
 use super::assembler::Assembler;
 use super::constant::ConstantMove;
-use super::immediate::ArithmeticImm;
+use super::immediate::{ArithmeticImm, signed};
 use super::load_store::{AccessSize, Mem, PairMem};
 use super::opcode::{AddSub, Extend, IndexExtend, MoveWide, ShiftOp};
 use super::registers::{SP, ZR};
@@ -25,28 +25,8 @@ pub(super) fn unsigned(width: Width, value: i64) -> u64 {
 }
 
 #[inline(always)]
-pub(super) fn signed(width: Width, value: i64) -> i64 {
-    match width {
-        Width::W32 => (value as i32).into(),
-        Width::W64 => value,
-    }
-}
-
-#[inline(always)]
 pub(super) fn all_ones(width: Width) -> u64 {
     unsigned(width, -1)
-}
-
-/// `op` with `value`, or the opposite with its negative.
-#[inline(always)]
-pub(super) fn arithmetic_imm(
-    op: AddSub,
-    width: Width,
-    value: i64,
-) -> Option<(AddSub, ArithmeticImm)> {
-    let value = signed(width, value);
-    let op = if value < 0 { op.opposite() } else { op };
-    Some((op, ArithmeticImm::new(value.unsigned_abs())?))
 }
 
 #[inline(always)]
@@ -73,13 +53,6 @@ impl MacroAssembler {
     #[inline]
     pub(super) fn scratch_fpr(&self, index: usize) -> Fpr {
         self.scratch.fprs[index].expect("the operation needs a scratch register")
-    }
-
-    #[inline]
-    pub(super) fn copy(&mut self, width: Width, dst: Gpr, src: Gpr) {
-        if dst != src {
-            self.asm.mov(width, dst, src);
-        }
     }
 
     #[inline(always)]
@@ -169,7 +142,7 @@ impl MacroAssembler {
     /// Leaves the flags and the first scratch register alone.
     #[inline(always)]
     pub(super) fn add_constant(&mut self, width: Width, dst: Gpr, lhs: Gpr, value: i64) {
-        match arithmetic_imm(AddSub::Add, width, value) {
+        match AddSub::Add.with_constant(width, value) {
             Some((op, imm)) => self.asm.add_sub_imm(op, width, dst, lhs, imm),
             None => self.add_long_constant(width, dst, lhs, value),
         }
@@ -291,7 +264,7 @@ impl MacroAssembler {
             return self.distant(size, base, offset, temp);
         }
         let near = Mem::offset(size, temp, offset);
-        let adds_at_once = arithmetic_imm(AddSub::Add, Width::W64, offset).is_some();
+        let adds_at_once = AddSub::Add.with_constant(Width::W64, offset).is_some();
         if scale_fits(size, scale) && (adds_at_once || near.is_none()) {
             self.add_constant(Width::W64, temp, base, offset);
             let scaled = scale != Scale::One;
@@ -302,7 +275,7 @@ impl MacroAssembler {
             return mem;
         }
         if let Some(mem) = Mem::offset(size, temp, offset & 0xfff)
-            && let Some((op, rest)) = arithmetic_imm(AddSub::Add, Width::W64, offset & !0xfff)
+            && let Some((op, rest)) = AddSub::Add.with_constant(Width::W64, offset & !0xfff)
         {
             self.add_index(temp, base, index, scale);
             self.asm.add_sub_imm(op, Width::W64, temp, temp, rest);
@@ -316,7 +289,7 @@ impl MacroAssembler {
         let constant = ConstantMove::new(Width::W64, offset as u64);
         if constant.instructions() > 1
             && let Some(mem) = Mem::offset(size, temp, offset & 0xfff)
-            && let Some((op, rest)) = arithmetic_imm(AddSub::Add, Width::W64, offset & !0xfff)
+            && let Some((op, rest)) = AddSub::Add.with_constant(Width::W64, offset & !0xfff)
         {
             self.asm.add_sub_imm(op, Width::W64, temp, base, rest);
             return mem;

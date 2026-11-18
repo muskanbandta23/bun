@@ -209,6 +209,8 @@ fn floats() {
             => "movi v1.2s, #0x80, lsl #24; bsl v1.16b, v3.16b, v2.16b",
         select_float_test(Width::W32, TestCond::Zero, V1, X1, -1, V2, V3)
             => "tst w1, w1; fcsel d1, d2, d3, eq",
+        convert_f64_to_f16_bits(X1, V1) => "fcvt h31, d1; fmov w1, s31",
+        convert_f16_bits_to_f64(V1, X1) => "fmov s1, w1; fcvt d1, h1",
         truncate_f64_to_int32_modular(X1, V1, t)
             => "fcvtzs x1, d1; cmn x1, #1; ccmp x1, #1, #1, vc; b.vs #-12; mov w1, w1",
         truncate_float_or_branch(double, Sign::Unsigned, Width::W32, X1, V1, t)
@@ -224,6 +226,14 @@ fn floats() {
         convert_f64_to_int_exact(Width::W64, X1, V1, accept, t)
             => "fcvtzs x1, d1; frint64z d31, d1; fcmp d1, d31; b.ne #-12",
     }
+}
+
+#[test]
+fn half_precision_is_supported_where_there_are_instructions() {
+    assert!(assembler::<MacroAssembler>(Arm64Features::empty()).supports_f16());
+    let on_x64 = |features| assembler::<x64::MacroAssembler>(features).supports_f16();
+    assert!(on_x64(X64Features::AVX | X64Features::F16C));
+    assert!(!on_x64(X64Features::all() - X64Features::F16C));
 }
 
 #[test]

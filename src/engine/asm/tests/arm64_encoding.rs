@@ -184,6 +184,15 @@ fn arithmetic_immediates_are_twelve_bits() {
     for value in (0..1 << 16).chain(shifted).chain([u64::MAX]) {
         assert_eq!(ArithmeticImm::new(value).is_some(), fits(value), "{value}");
     }
+    let five = ArithmeticImm::new(5).unwrap();
+    for (&op, opposite) in AddSub::ALL.iter().zip(AddSub::ALL.iter().cycle().skip(2)) {
+        assert_eq!(op.with_constant(Width::W64, 5), Some((op, five)));
+        assert_eq!(op.with_constant(Width::W64, -5), Some((*opposite, five)));
+        assert_eq!(op.with_constant(Width::W64, 0xffff_fffb), None);
+        assert_eq!(op.with_constant(Width::W64, i64::MIN), None);
+        let low_half = op.with_constant(Width::W32, 0xffff_fffb);
+        assert_eq!(low_half, Some((*opposite, five)));
+    }
     assert_eq!(ArithmeticImm::new(0), Some(ArithmeticImm::ZERO));
     assert_eq!(ArithmeticImm::new(1), Some(ArithmeticImm::ONE));
 }

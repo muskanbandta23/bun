@@ -330,6 +330,11 @@ impl Harness {
         Self::assembler(Features::empty(), false, 0).scratch()
     }
 
+    /// For the operations that leave these registers alone.
+    pub(crate) fn use_first_scratch_for_operands(&mut self) {
+        self.operand_registers |= self.first_scratch;
+    }
+
     pub(crate) fn stack_pointer(&self) -> usize {
         self.stack_pointer
     }

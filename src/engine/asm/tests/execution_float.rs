@@ -164,6 +164,7 @@ fn roots_rounding_and_changes_of_width() {
 #[test]
 fn moves() {
     let mut h = Harness::new();
+    h.use_first_scratch_for_operands();
     for _ in 0..40 {
         for [dst, src] in h.fprs() {
             let case = Case::new(op!(move_float(dst, src)), move |m| {
@@ -192,6 +193,7 @@ fn moves() {
 #[test]
 fn constants() {
     let mut h = Harness::new();
+    h.use_first_scratch_for_operands();
     let boundaries = Boundaries::new();
     for width in FLOAT_WIDTHS {
         let short = (-600..600).map(|n| machine::values::float_bits(width, f64::from(n) / 16.0));
@@ -217,6 +219,7 @@ fn constants() {
 #[test]
 fn pairs() {
     let mut h = Harness::new();
+    h.use_first_scratch_for_operands();
     for ([], address) in h.addresses(&[], OFFSETS.len()) {
         for [low, high] in h.fprs() {
             let case = Case::new(op!(store_pair_f64(address, low, high)), move |m| {

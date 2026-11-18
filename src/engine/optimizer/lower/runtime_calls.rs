@@ -12,6 +12,13 @@ use super::sites::Site;
 
 type Inputs = SmallVec<[(Ssa, Input); 6]>;
 
+fn results_of(result: Type) -> SmallVec<[Type; 1]> {
+    (result != Type::Void)
+        .then_some(result)
+        .into_iter()
+        .collect()
+}
+
 /// What a run-time function may do to the heap and to the frame.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Call {
@@ -25,11 +32,11 @@ pub(super) enum Call {
 struct Prepared {
     data: PatchpointData,
     operands: Inputs,
-    results: SmallVec<[(Type, Output); 1]>,
+    results: SmallVec<[(Type, Output); 2]>,
 }
 
 impl Lowering<'_> {
-    fn prepare(&mut self, target: usize, args: &[Ssa], result: Type, call: Call) -> Prepared {
+    fn prepare(&mut self, target: usize, args: &[Ssa], results: &[Type], call: Call) -> Prepared {
         let (effects, site) = match call {
             Call::Leaf => (
                 Effects::with_flags(EffectFlags::CONTROL_DEPENDENT),
@@ -60,14 +67,18 @@ impl Lowering<'_> {
                 (arg, Input::Fixed(place))
             })
             .collect();
-        let place = if result.is_float() {
-            abi::RETURN_FPR.into()
-        } else {
-            abi::RETURN_GPRS[0].into()
-        };
-        let results = (result != Type::Void)
-            .then_some((result, Output::Fixed(place)))
-            .into_iter()
+        let mut given = 0;
+        let results = results
+            .iter()
+            .map(|&result| {
+                let place = if result.is_float() {
+                    abi::RETURN_FPR.into()
+                } else {
+                    given += 1;
+                    abi::RETURN_GPRS[given - 1].into()
+                };
+                (result, Output::Fixed(place))
+            })
             .collect();
         Prepared {
             data,
@@ -84,7 +95,18 @@ impl Lowering<'_> {
         result: Type,
         call: Call,
     ) -> Ssa {
-        let it = self.prepare(target, args, result, call);
+        self.call_giving(target, args, &results_of(result), call)
+    }
+
+    /// The same, for a function whose answer takes more than one register.
+    pub(super) fn call_giving(
+        &mut self,
+        target: usize,
+        args: &[Ssa],
+        results: &[Type],
+        call: Call,
+    ) -> Ssa {
+        let it = self.prepare(target, args, results, call);
         self.ir().patchpoint(&it.data, &it.operands, &it.results)
     }
 
@@ -97,7 +119,7 @@ impl Lowering<'_> {
         result: Type,
         call: Call,
     ) -> Ssa {
-        let it = self.prepare(target, args, result, call);
+        let it = self.prepare(target, args, &results_of(result), call);
         self.at_end(block)
             .patchpoint(&it.data, &it.operands, &it.results)
     }

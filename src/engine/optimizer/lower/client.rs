@@ -294,8 +294,11 @@ impl Client<MacroAssembler> for Emitter<'_> {
 
     fn before_call(&mut self, masm: &mut MacroAssembler, token: Token, _: Origin) {
         if let Site::Operation | Site::Call(_) = self.sites.at(token) {
+            // Whatever the call does may walk the stack or throw, so this frame has to be the one it finds.
             let site = self.tables.calls.len() as u32;
             masm.store32(in_frame(CallFrame::OFFSET_OF_CALL_SITE as i32), site as i32);
+            let top = Address::new(abi::VM, Vm::OFFSET_OF_TOP_CALL_FRAME as i32);
+            masm.store64(top, abi::FRAME_POINTER);
         }
     }
 

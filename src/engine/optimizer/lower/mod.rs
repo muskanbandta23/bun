@@ -75,6 +75,8 @@ struct Lowering<'a> {
     at: Ssa,
     origin: Origin,
     state: State,
+    /// The frame slots that stand in for the frame of an inlined function.
+    shadow: Option<ir::Slot>,
 }
 
 /// Turns every node of the graph into instructions that the back end knows.
@@ -85,6 +87,7 @@ fn run(graph: &mut Graph, sites: &mut Sites) -> Built {
         at: Ssa::NONE,
         origin: Origin::default(),
         state: State::NONE,
+        shadow: None,
     };
     let mut index = 0;
     while index < lowering.graph.function.block_count() {
@@ -117,6 +120,16 @@ impl Lowering<'_> {
     }
 
     fn lower(&mut self, kind: Kind, data: u32) -> Built {
+        if kind.effects().has(ir::EffectFlags::EXITS) {
+            debug_assert!(
+                !self.state.is_none(),
+                "{kind:?} may exit with nothing to exit to"
+            );
+        }
+        debug_assert!(
+            (self.origin.0 as usize) < self.graph.sites.len(),
+            "{kind:?} comes from no instruction"
+        );
         let replacement = match kind {
             // Places
             Kind::Checkpoint | Kind::Refine => return self.erase(kind),
@@ -150,6 +163,12 @@ impl Lowering<'_> {
             Kind::IsCellOfType => self.is_cell_of_type(data)?,
             Kind::GenericEqualNull => self.generic_equal_null(),
             Kind::AtomEqual => self.atom_equal(),
+            Kind::GenericToBoolean => return self.generic_to_boolean(),
+            Kind::StringEqual => return self.string_equal(),
+            Kind::PrimitiveCompare => return self.primitive_compare(data),
+            Kind::QuietLooseEqual => return self.quiet_loose_equal(),
+            Kind::GenericStrictEqual => return self.generic_strict_equal(),
+            Kind::DoubleRemainder => return self.double_remainder(),
 
             // Objects
             Kind::LoadShapeId => {
@@ -162,8 +181,13 @@ impl Lowering<'_> {
             Kind::NewFunction => return self.new_function(data),
 
             // Strings
-            Kind::StringLength => self.string_length(),
-            Kind::StringUnitAt => self.string_unit_at(),
+            Kind::StringLength => return self.string_length(),
+            Kind::StringUnitAt => return self.string_unit_at(),
+            Kind::ResolveRope => return self.resolve_rope(),
+            Kind::StringFromUnit => return self.string_from_unit(),
+            Kind::Concatenate => return self.concatenate(),
+            Kind::StoreElementGrowing => return self.store_element_growing(data),
+            Kind::GrowSlots => return Err(Refusal::Unsupported),
 
             // The interpreter
             Kind::ShadowFrame => self.shadow_frame(),

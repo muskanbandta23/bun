@@ -179,7 +179,7 @@ impl VectorOp {
     }
 }
 
-impl<M: Mode> Decoder<'_, M> {
+impl<M: Mode> Decoder<'_, '_, M> {
     #[inline(never)]
     pub(super) fn vector<V: Visitor<Error = M::Error>>(
         &mut self,
@@ -187,7 +187,7 @@ impl<M: Mode> Decoder<'_, M> {
     ) -> Result<(), M::Error> {
         ensure!(
             self,
-            self.header.features.contains(Features::SIMD),
+            self.cx.header.features.contains(Features::SIMD),
             parse,
             "wasm-simd is not enabled"
         );

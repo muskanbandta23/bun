@@ -4,7 +4,7 @@ use bun_engine_asm::Width;
 
 use super::{Checked, FrameKind, Scratch, Validator};
 use crate::alloc::TryPush;
-use crate::decode::{Check, Decoder, NO_OPCODE, Progress};
+use crate::decode::{Check, Context, Decoder, NO_OPCODE};
 use crate::error::Error;
 use crate::index::{FuncIndex, GlobalIndex, TypeIndex};
 use crate::module::ModuleHeader;
@@ -26,7 +26,9 @@ pub(crate) fn validate_const_expr(
     funcs: &mut Vec<FuncIndex>,
 ) -> Result<usize, Error> {
     Validator::with(header, scratch, |validator| {
-        let mut decoder = validator.start_constant(bytes, expected);
+        validator.start_constant(expected);
+        let mut cx = Context::new(header);
+        let mut decoder = Decoder::<Check>::new(Reader::new(bytes, 0), &mut cx);
         let mut constant = Constant {
             validator,
             funcs,
@@ -60,21 +62,18 @@ pub(crate) fn validate_const_expr(
     })
 }
 
-impl<'a> Validator<'a> {
-    fn start_constant<'b>(&mut self, bytes: &'b [u8], expected: ValType) -> Decoder<'b, Check>
-    where
-        'a: 'b,
-    {
+impl Validator<'_> {
+    fn start_constant(&mut self, expected: ValType) {
         self.locals.start(&[], 0);
         self.enter(FrameKind::Constant, BlockType::Value(expected));
-        Decoder::new(self.header, Reader::new(bytes, 0), Progress::START)
     }
 
     /// What would be wrong with the last instruction in a function comes before its not being constant.
     #[cold]
     fn error_anywhere(&mut self, bytes: &[u8], expected: ValType) -> Option<Error> {
-        let mut decoder = self.start_constant(bytes, expected);
-        let result = self.run(&mut decoder);
+        self.start_constant(expected);
+        let mut cx = Context::new(self.header);
+        let result = self.run(&mut Decoder::new(Reader::new(bytes, 0), &mut cx));
         self.reset();
         result.err().filter(|error| error.reason() != NO_OPCODE)
     }

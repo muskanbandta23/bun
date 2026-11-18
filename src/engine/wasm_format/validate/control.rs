@@ -77,7 +77,7 @@ impl<'a> Validator<'a> {
     fn check_results(&mut self, ty: BlockType) -> Checked {
         let is_exact = match ty {
             BlockType::Empty => self.available() == 0,
-            BlockType::Value(result) => self.available() == 1 && self.values[self.base] == result,
+            BlockType::Value(result) => self.available() == 1 && self.top() == Some(&mut [result]),
             BlockType::Func(_) => false,
         };
         if is_exact {
@@ -110,7 +110,7 @@ impl<'a> Validator<'a> {
         self.check_results(frame.ty)?;
         self.innermost().kind = kind;
         self.locals.forget_initializations(frame.initialized_height);
-        self.height = self.base;
+        self.height = self.base as usize;
         self.is_unreachable = false;
         self.push_all(values)
     }
@@ -136,7 +136,7 @@ impl<'a> Validator<'a> {
         self.frames.pop();
         self.locals.forget_initializations(frame.initialized_height);
         self.is_unreachable = frame.outer_is_unreachable;
-        self.base = self.frames.last().map_or(0, |outer| outer.base as usize);
+        self.base = self.frames.last().map_or(0, |outer| outer.base);
         Ok(())
     }
 
@@ -492,9 +492,11 @@ impl VisitControl for Validator<'_> {
 
     #[inline(always)]
     fn call(&mut self, func: FuncIndex, _: u32) -> Checked {
-        let ty = self.header.func_type_index(func);
-        self.pop_arguments(self.types().func_type(ty).params, Callee::Func(func))?;
-        self.push_results(ty)
+        let index = self.header.func_type_index(func);
+        let ty = self.types().func_type(index);
+        self.uses_simd |= self.types().signature_has_v128(index);
+        self.pop_arguments(ty.params, Callee::Func(func))?;
+        self.push_all(ty.results)
     }
 
     #[inline(never)]

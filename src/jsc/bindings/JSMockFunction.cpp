@@ -495,7 +495,7 @@ public:
             nameToUse = fn->name(vm);
             // `const f = () => {}` and `{ f: () => {} }` only have an ecmaName().
             if (nameToUse.isEmpty() && !fn->isHostFunction())
-                nameToUse = fn->jsExecutable()->ecmaName().string();
+                nameToUse = fn->jsExecutable()->ecmaName();
             // `{ [symbol]() {} }` only has the `name` property.
             if (nameToUse.isEmpty()) {
                 useNameProperty(fn);

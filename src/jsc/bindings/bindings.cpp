@@ -1778,12 +1778,6 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             // Vitest compares the causes only if the expected error has one, and the `errors` of an AggregateError.
             bool isLikeVitest = mode.enableAsymmetricMatchers && Bun__VM__isRunningVitestEntry(bunVM(globalObject));
 
-            if (mode.isStrict && !isLikeVitest) {
-                if (left->runtimeTypeForCause() != right->runtimeTypeForCause()) {
-                    return false;
-                }
-            }
-
             VM& vm = JSC::getVM(globalObject);
 
             // `.cause` is non-enumerable, so it must be checked explicitly.
@@ -3400,8 +3394,7 @@ bool JSC__JSFunction__getSourceCode(JSC::EncodedJSValue JSValue0, BunString* out
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     if (JSC::JSFunction* func = dynamicDowncast<JSC::JSFunction>(value)) {
-        auto* sourceCode = func->sourceCode();
-        if (sourceCode != nullptr) { // native functions have no source code
+        if (auto sourceCode = func->sourceCode()) { // native functions have no source code
             *outSourceCode = Bun::toStringRef(sourceCode->view().toString()).leak();
             return true;
         }
@@ -5364,7 +5357,7 @@ BunString JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlo
             return toStringAdopt(WTF::move(actualName));
         }
 
-        return Bun::toStringRef(function->jsExecutable()->name().string()).leak();
+        return Bun::toStringRef(function->jsExecutable()->name()).leak();
     }
 
     if (JSC::InternalFunction* function = dynamicDowncast<JSC::InternalFunction>(obj)) {

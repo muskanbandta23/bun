@@ -455,6 +455,18 @@ impl JsObject {
         }
     }
 
+    /// Makes the caches miss that go by the shape.
+    pub(crate) fn change_shape_id(&self, vm: &Vm) {
+        let (shape, mut deferred) = (self.shape(), DeferredFire::new(vm));
+        let new = if shape.is_dictionary() {
+            shape.to_dictionary(vm, shape.flags() & ShapeFlags::DICTIONARY, &mut deferred)
+        } else {
+            shape.clone_for_watching(vm, &mut deferred)
+        };
+        // SAFETY: the same slots and elements.
+        unsafe { self.set_shape(&new) };
+    }
+
     /// False if it stays a dictionary, having gone back to being one before.
     pub fn try_flatten_for_caching(&self, vm: &Vm) -> bool {
         let shape = self.shape();

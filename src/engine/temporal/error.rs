@@ -143,7 +143,6 @@ errors! {
         DateTimesInDifferentCalendars = "cannot compute difference between date-times with different calendars",
         YearMonthsInDifferentCalendars = "cannot compute difference between year-months with different calendars",
         ZonedDateTimesInDifferentCalendars = "cannot compute difference between ZonedDateTimes with different calendars",
-        CalendarDiffersFromLocale = "ZonedDateTime calendar does not match locale calendar",
 
         DurationFieldNotInteger = "Temporal.Duration properties must be integers",
         InvalidDuration = "Temporal.Duration properties must be finite and of consistent sign",
@@ -163,7 +162,6 @@ errors! {
         AddingDaysToInstant = "Adding days not supported by Temporal.Instant. Try Temporal.ZonedDateTime instead",
         InstantSumOutOfRange = "Addition is outside of supported range for Temporal.Instant",
         InstantRemainderOutOfRange = "Subtraction is outside of supported range for Temporal.Instant",
-        InvalidTimeValue = "Invalid integer number of Epoch Millseconds",
 
         LocalTimeOutOfRange = "Epoch nanoseconds out of valid Temporal range",
         LocalTimeRepeated = "ambiguous instant: use a 'disambiguation' option to resolve",

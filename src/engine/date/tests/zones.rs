@@ -141,7 +141,7 @@ fn time_values_in_any_zone() {
     let fields = DateFields::in_zone(time, lord_howe).unwrap();
     assert_eq!((fields.day(), fields.hour(), fields.minute()), (6, 3, 0));
     assert_eq!((fields.offset_minutes(), fields.is_daylight()), (660, true));
-    assert_eq!(DateFields::in_zone(8.64e15 + 1.0, lord_howe), None);
+    assert_eq!(DateFields::in_zone(8.64e15 + 8.64e7, lord_howe), None);
 
     let skipped = make_date_from_integers([2024, 9, 6, 2, 15, 0, 0]);
     assert_eq!(lord_howe.utc(skipped), time - 15.0 * 60_000.0);

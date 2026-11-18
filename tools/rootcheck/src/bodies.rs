@@ -219,7 +219,7 @@ impl<'a, 'tcx> Uses<'a, 'tcx> {
                     && frame.is_ours()
                     && object.is_trait()
                     && !cell.is_trait()
-                    && frame.cx.is_cell(*cell)
+                    && frame.cx.is_cell(frame.env, *cell)
                 {
                     let message = format!("`{to}` does not tell that it refers to a cell");
                     self.report("erased", span, message, "make the trait object from a `&Gc<T>`");
@@ -485,7 +485,9 @@ pub fn deferred_blocks<'tcx>(cx: &Types<'tcx>, body: &Body<'tcx>) -> DenseBitSet
 
     impl Visitor<'_> for Ends {
         fn visit_local(&mut self, local: Local, context: PlaceContext, _: Location) {
-            self.1 |= local == self.0 && !context.is_place_assignment() && !context.is_borrow();
+            let is_move = context == PlaceContext::NonMutatingUse(NonMutatingUseContext::Move);
+            self.1 |=
+                local == self.0 && (is_move || context.is_drop() || context.is_storage_marker());
         }
     }
 

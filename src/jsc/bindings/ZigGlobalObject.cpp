@@ -229,10 +229,6 @@
 #include "JSBunRequest.h"
 #include "ServerRouteList.h"
 
-#if ENABLE(REMOTE_INSPECTOR)
-#include "JavaScriptCore/RemoteInspectorServer.h"
-#endif
-
 #include "NodeFSStatBinding.h"
 #include "NodeFSStatFSBinding.h"
 #include "NodeDirent.h"
@@ -1445,7 +1441,6 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, const JSC::Gl
     , m_bunVM(Bun__getVM())
     , m_constructors(makeUnique<WebCore::DOMConstructors>())
     , m_world(static_cast<JSVMClientData*>(vm.clientData)->normalWorld())
-    , m_builtinInternalFunctions(makeUnique<WebCore::JSBuiltinInternalFunctions>(vm))
     , globalEventScope(Bun::GlobalEventScope::create())
     , m_scriptExecutionContext(adoptRef(*new WebCore::ScriptExecutionContext(&vm, this)))
 {
@@ -1458,7 +1453,6 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
     , m_bunVM(Bun__getVM())
     , m_constructors(makeUnique<WebCore::DOMConstructors>())
     , m_world(static_cast<JSVMClientData*>(vm.clientData)->normalWorld())
-    , m_builtinInternalFunctions(makeUnique<WebCore::JSBuiltinInternalFunctions>(vm))
     , globalEventScope(Bun::GlobalEventScope::create())
     , m_scriptExecutionContext(adoptRef(*new WebCore::ScriptExecutionContext(&vm, this, contextId)))
 {
@@ -1940,9 +1934,7 @@ extern "C" JSC::EncodedJSValue Bun__makeArrayBufferWithBytesNoCopy(JSC::JSGlobal
     if (Bun::rejectBytesNoCopyAboveArrayBufferLimit(globalObject, scope, ptr, len, deallocator, deallocatorContext)) [[unlikely]]
         return {};
 
-    auto buffer = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), len }, createSharedTask<void(void*)>([=](void* p) {
-        if (deallocator) deallocator(p, deallocatorContext);
-    }));
+    auto buffer = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), len }, deallocator, deallocatorContext);
 
     JSArrayBuffer* jsBuffer = JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Default), WTF::move(buffer));
     RETURN_IF_EXCEPTION(scope, {});
@@ -1957,14 +1949,7 @@ extern "C" JSC::EncodedJSValue Bun__makeTypedArrayWithBytesNoCopy(JSC::JSGlobalO
     if (Bun::rejectBytesNoCopyAboveArrayBufferLimit(globalObject, scope, ptr, len, deallocator, deallocatorContext)) [[unlikely]]
         return {};
 
-    auto buffer_ = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), len }, createSharedTask<void(void*)>([=](void* p) {
-        if (deallocator) deallocator(p, deallocatorContext);
-    }));
-    RefPtr<ArrayBuffer>&& buffer = WTF::move(buffer_);
-    if (!buffer) {
-        throwOutOfMemoryError(globalObject, scope);
-        return {};
-    }
+    RefPtr<ArrayBuffer> buffer = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), len }, deallocator, deallocatorContext);
 
     unsigned elementByteSize = elementSize(ty);
     size_t offset = 0;
@@ -2497,7 +2482,7 @@ void GlobalObject::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
-    setConsoleClient(WebCore::clientData(vm)->consoleClient());
+    setConsoleClient(&WebCore::clientData(vm)->consoleClient());
 
     if (Bun::codeGenerationFromStrings() != Bun::CodeGenerationFromStrings::Allowed) [[unlikely]]
         setEvalEnabled(false, Bun::codeGenerationFromStringsDisallowedMessage());
@@ -3149,10 +3134,6 @@ void GlobalObject::finishCreation(VM& vm)
 
     configureNodeVM(vm, this);
 
-#if ENABLE(REMOTE_INSPECTOR)
-    setInspectable(false);
-#endif
-
     addBuiltinGlobals(vm);
     // hostDidCreateRealm() runs lazy property builders, which ask for the thread's default global object. The first one of a thread is recorded by its creator only after this returns.
     if (!defaultGlobalObject())
@@ -3261,6 +3242,7 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleStderr, (JSGlobalObject * globalObject, Encod
 BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getRequireESMBuiltin, commonJSRequireESMCodeGenerator, PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly)
 BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getLoadEsmIntoCjsBuiltin, commonJSLoadEsmIntoCjsCodeGenerator, PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly)
 BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getInternalRequireBuiltin, commonJSInternalRequireCodeGenerator, PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly)
+BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getCreateFIFOBuiltin, fifoCreateFIFOCodeGenerator, PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly)
 #undef BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -3451,8 +3433,6 @@ private:
 void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    m_builtinInternalFunctions->initialize(*this);
-
     auto clientData = WebCore::clientData(vm);
     auto& builtinNames = WebCore::builtinNames(vm);
 
@@ -3506,7 +3486,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     // TODO: most/all of these private properties can be made as static globals.
     // i've noticed doing it as is will work somewhat but getDirect() wont be able to find them
 
-    putDirectBuiltinFunction(vm, this, builtinNames.createFIFOPrivateName(), fifoCreateFIFOCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    putDirectCustomAccessor(vm, builtinNames.createFIFOPrivateName(), JSC::CustomGetterSetter::create(vm, getCreateFIFOBuiltin, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
     // These three are CommonJS-only and never reached on an ESM startup path; install
     // lazy getters so their source isn't parsed during global object construction.
     // (See getRequireESMBuiltin / getLoadEsmIntoCjsBuiltin / getInternalRequireBuiltin above.)
@@ -3779,7 +3759,7 @@ template<class Visitor, class T> static void visitGlobalObjectMember(Visitor& vi
 
 template<class Visitor, class T> static void visitGlobalObjectMember(Visitor& visitor, std::unique_ptr<T>& ptr)
 {
-    // The two unique_ptr members (m_builtinInternalFunctions, m_constructors) are
+    // The unique_ptr member (m_constructors) is
     // populated in the constructor initializer list, so in steady state this is
     // never null. The guard exists because the concurrent marker can visit a
     // Zig::GlobalObject picked up via conservative stack scan while its own
@@ -3847,7 +3827,7 @@ extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, c
     auto& vm = JSC::getVM(globalObject);
 
     if (WTF::setTimeZoneOverride(Zig::toString(*timeZone))) {
-        Bun::resetDateCachesAfterTimeZoneChange(vm);
+        vm.dateCache.clearForTimeZoneChange();
         return true;
     }
 

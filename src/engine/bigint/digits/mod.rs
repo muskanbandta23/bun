@@ -26,6 +26,16 @@ pub(crate) fn trim(mut digits: &[u64]) -> &[u64] {
     digits
 }
 
+/// The low digits of `a`, as many as `out` has.
+#[inline(always)]
+pub(crate) fn copy(out: &mut [u64], a: &[u64]) {
+    for_short_length!(
+        out.len(),
+        |N| out.copy_from_slice(array::<N>(a)),
+        _ => out.copy_from_slice(&a[..out.len()])
+    );
+}
+
 #[inline]
 pub(crate) fn low_zero_count(digits: &[u64]) -> usize {
     digits.iter().take_while(|&&digit| digit == 0).count()

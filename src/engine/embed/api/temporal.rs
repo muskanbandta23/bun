@@ -95,7 +95,7 @@ fn temporal_offset_nanoseconds(object: &JsObject) -> i64 {
 fn temporal_plain_value_to_string(object: &JsObject) -> StringRef {
     let text = match TemporalValue::of(object) {
         Some(TemporalValue::PlainDateTime(it)) => {
-            (it.to_text(Precision::AUTO, ShowCalendar::Never)).expect("not rounded")
+            it.to_text(Precision::AUTO, ShowCalendar::Never)
         }
         Some(TemporalValue::PlainDate(it)) => it.to_text(ShowCalendar::Never),
         Some(TemporalValue::PlainTime(it)) => it.to_text(Precision::AUTO),

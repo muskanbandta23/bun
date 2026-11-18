@@ -10,9 +10,9 @@ use super::string_iterator::code_point_string_at;
 use crate::{
     CellType, ClonedArguments, Cx, ElementKind, Gc, HoleMode, IterationKind, IterationMode,
     JsArray, JsArrayIterator, JsCell, JsMap, JsMapIterator, JsObject, JsResult,
-    JsSet, JsSetIterator, JsString, JsStringIterator, JsTypedArray, MapKind, MappedArguments, OrderedCursor,
-    RealmSlot, RealmWatchpoint, SetKind, TableKind, Thrown, Value, errors, iterator_complete,
-    iterator_value, throw_not_iterable,
+    JsSet, JsSetIterator, JsString, JsStringIterator, JsTypedArray, MapKind, MappedArguments,
+    OrderedCursor, RealmSlot, RealmWatchpoint, SetKind, TableKind, Thrown, Value, errors,
+    iterator_complete, iterator_value, throw_not_iterable,
 };
 
 /// The Iterator Record of ECMA-262. Where nothing can tell the difference it has no iterator, or does not call its
@@ -202,15 +202,12 @@ impl IteratorRecord {
                     && cx.holds(RealmWatchpoint::SetIteratorProtocol))
                 .then(|| Self::at(cell.cast::<JsSet>().cursor().parts(), IterationMode::Set));
             }
-            _ => {
-                let array = cell.downcast::<JsTypedArray>()?;
-                (is_slot(cx, RealmSlot::typed_array_prototype_values, method)
-                    && cx.global().array_iterator_protocol_is_pristine()
-                    && !array.is_resizable_or_growable()
-                    && !array.is_detached()
-                    && array.known_length() < u32::MAX as usize)
-                    .then_some(IterationMode::TypedArray)
-            }
+            _ => (is_slot(cx, RealmSlot::typed_array_prototype_values, method)
+                && cx.global().array_iterator_protocol_is_pristine()
+                && (cell.downcast::<JsTypedArray>()).is_some_and(|it| {
+                    !it.is_out_of_bounds() && it.max_length() < u32::MAX as usize
+                }))
+            .then_some(IterationMode::TypedArray),
         }?;
         Some(Self::new(cell.into(), mode.marker()))
     }

@@ -261,7 +261,10 @@ Structure* createMemoryFootprintStructure(JSC::VM& vm, JSC::JSGlobalObject* glob
 
 static consteval unsigned getBytecodeCacheVersion()
 {
-    return WTF::SuperFastHash::computeHash(BUN_VERSION_ENGINE);
+    unsigned hash = 2166136261; // FNV-1a
+    for (char character : std::string_view(BUN_VERSION_ENGINE))
+        hash = (hash ^ character) * 16777619;
+    return hash;
 }
 
 // Declare fuzzilli function registration from FuzzilliREPRL.cpp
@@ -457,33 +460,12 @@ extern "C" JSC::EncodedJSValue BunObject__createBunStdin(JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue BunObject__createBunStderr(JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue BunObject__createBunStdout(JSC::JSGlobalObject*);
 
-namespace Bun {
-bool waitsForMicrotasksThatBeganWithoutAsyncContextTracking();
-void didFinishMicrotaskThatMayHaveBegunWithoutAsyncContextTracking(JSC::VM&, Zig::GlobalObject*);
-void updateOnEachMicrotaskTick(JSC::VM&);
-}
-
-static thread_local bool newNextTickQueueWaitsForMicrotaskToEnd;
-
 static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
 {
+    vm.setOnEachMicrotaskTick(nullptr);
     auto* globalObject = defaultGlobalObject();
-    Bun::didFinishMicrotaskThatMayHaveBegunWithoutAsyncContextTracking(vm, globalObject);
-    bool drainsNextTickQueue = std::exchange(newNextTickQueueWaitsForMicrotaskToEnd, false);
-    if (!Bun::waitsForMicrotasksThatBeganWithoutAsyncContextTracking())
-        globalObject->resetOnEachMicrotaskTick();
-    if (!drainsNextTickQueue)
-        return;
     if (auto queue = globalObject->m_nextTickQueue.get())
         queue->drain(vm, globalObject);
-}
-
-void Bun::updateOnEachMicrotaskTick(JSC::VM& vm)
-{
-    if (newNextTickQueueWaitsForMicrotaskToEnd || waitsForMicrotasksThatBeganWithoutAsyncContextTracking())
-        vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
-    else
-        vm.setOnEachMicrotaskTick(nullptr);
 }
 
 GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure)
@@ -521,14 +503,8 @@ JSC::Structure* GlobalObject::createStructure(JSC::VM& vm)
     return structure;
 }
 
-void Zig::GlobalObject::resetOnEachMicrotaskTick()
-{
-    this->vm().setOnEachMicrotaskTick(nullptr);
-}
-
 extern "C" void Bun__didCreateNextTickQueue(JSC::VM* vm)
 {
-    newNextTickQueueWaitsForMicrotaskToEnd = true;
     vm->setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
 }
 

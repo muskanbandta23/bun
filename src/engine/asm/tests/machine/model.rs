@@ -54,6 +54,7 @@ impl From<()> for Outcome {
 pub(crate) enum Unspecified {
     All(Reg),
     IfBranched(Gpr),
+    WithinWidth(Gpr, Width),
     AboveFloat(Fpr, FloatWidth),
     WhichQuietNan(Fpr, FloatWidth),
     WhichHalfNan(Gpr),
@@ -192,6 +193,7 @@ impl Machine {
                 Unspecified::All(reg) => self.set_vector(reg.fpr(), fpr(reg.fpr())),
                 Unspecified::IfBranched(reg) if branched => self.set64(reg, gpr(reg)),
                 Unspecified::IfBranched(_) => {}
+                Unspecified::WithinWidth(reg, width) => self.set(width, reg, gpr(reg)),
                 Unspecified::AboveFloat(reg, width) => {
                     let float = u128::from(mask(width.width().size()));
                     self.set_vector(reg, self.vector(reg) & float | fpr(reg) & !float);

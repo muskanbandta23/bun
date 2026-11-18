@@ -1,7 +1,6 @@
 //! Runs operations of the macro assembler on the processor and compares all that they change with a model.
 //!
-//! `ASM_TEST_SEED` and `ASM_TEST_RUNS` vary the operands, `ASM_TEST_ALL_FEATURES` tries every set of features on
-//! every case, and `ASM_TEST_TRACE` names each case before it runs.
+//! `ASM_TEST_SEED` and `ASM_TEST_RUNS` vary the operands, and `ASM_TEST_TRACE` names each case before it runs.
 
 #![allow(
     dead_code,
@@ -16,17 +15,22 @@ pub(crate) mod host;
 pub(crate) mod memory;
 pub(crate) mod model;
 pub(crate) mod operands;
+pub(crate) mod operation;
 pub(crate) mod values;
 
 use std::fmt::Write as _;
 
 use bun_engine_asm::prelude::*;
-use bun_engine_asm::{Amount, Code, Features, Memory, Options, Scratch, Src};
+use bun_engine_asm::{Amount, Bank, Code, Features, Memory, Options, Reg, Scratch, Src};
 use bun_engine_exec_memory::{CodeHandle, Priority, link};
 
 use memory::{Arena, STACK_REACH, WINDOW_SIZE};
 pub(crate) use model::{Machine, Outcome, Registers};
 use operands::{SP, operand_registers};
+use operation::Names;
+pub(crate) use operation::Operation;
+#[allow(unused_imports)]
+pub(crate) use operation::op;
 use values::{Boundaries, FOREMOST_FLOATS, Kind, Random, mask};
 
 pub(crate) const WIDTHS: [Width; 2] = [Width::W32, Width::W64];
@@ -48,32 +52,6 @@ const MOST_ATTEMPTS: usize = 200;
 const BEFORE_OPERAND: usize = 48;
 const REGION_SIZE: usize = 128;
 const NOISE_SIZE: usize = 4096;
-
-type Emit = Box<dyn Fn(&mut MacroAssembler, Label)>;
-
-pub(crate) struct Operation {
-    pub(crate) describe: Box<dyn Fn() -> String>,
-    pub(crate) emit: Emit,
-}
-
-/// A call of a method. `=> target` adds the label to branch to as the last argument.
-macro_rules! op {
-    ($method:ident($($argument:expr),*)) => {
-        $crate::machine::Operation {
-            describe: Box::new(move || format!("{}{:x?}", stringify!($method), ($($argument,)*))),
-            emit: Box::new(move |masm, _| masm.$method($($argument),*)),
-        }
-    };
-    ($method:ident($($argument:expr),*) => target) => {
-        $crate::machine::Operation {
-            describe: Box::new(move || format!("{}{:x?}", stringify!($method), ($($argument,)*))),
-            emit: Box::new(move |masm, target| masm.$method($($argument,)* target)),
-        }
-    };
-}
-
-#[allow(unused_imports)]
-pub(crate) use op;
 
 #[derive(Clone, Copy)]
 enum Input {
@@ -205,12 +183,11 @@ pub(crate) fn moving_stack_pointer(
     keeper: Gpr,
     model: impl Fn(&mut Machine) + 'static,
 ) -> Case {
-    let Operation { describe, emit } = operation;
-    let emit: Emit = Box::new(move |masm, target| {
-        emit(masm, target);
+    let operation = operation.wrapped(keeper, move |masm, _, emit| {
+        emit(masm);
         host::exchange_with_stack_pointer(masm.assembler(), keeper);
     });
-    Case::new(Operation { describe, emit }, move |machine| {
+    Case::new(operation, move |machine| {
         let old = machine.get64(SP);
         model(machine);
         machine.set64(keeper, machine.get64(SP));
@@ -272,8 +249,8 @@ struct Region {
 pub(crate) struct Harness {
     pub(crate) random: Random,
     pub(crate) operand_registers: RegisterSet,
-    not_for_operands: RegisterSet,
-    first_scratch: RegisterSet,
+    /// What the case that is running may overwrite.
+    free: RegisterSet,
     arena: Arena,
     stack_pointer: usize,
     enter: CodeHandle,
@@ -294,14 +271,9 @@ impl Harness {
         let mut random = Random(seed());
         let mut exit = Self::assembler(Features::empty(), false, 0);
         host::exit(exit.assembler());
-        let scratch = exit.scratch();
         Self {
             operand_registers: operand_registers(),
-            not_for_operands: abi::ALL - operand_registers() - RegisterSet::of(&[SP], &[]),
-            first_scratch: RegisterSet::of(
-                &[scratch.gprs[0].unwrap()],
-                &[scratch.fprs[0].unwrap()],
-            ),
+            free: RegisterSet::EMPTY,
             stack_pointer: arena.stack_pointer(),
             arena,
             enter: install(&host::enter()),
@@ -328,6 +300,13 @@ impl Harness {
 
     pub(crate) fn default_scratch() -> Scratch {
         Self::assembler(Features::empty(), false, 0).scratch()
+    }
+
+    /// For the operations that leave these registers alone.
+    pub(crate) fn use_first_scratch_for_operands(&mut self) {
+        let scratch = Self::default_scratch();
+        self.operand_registers.insert(scratch.gprs[0].unwrap());
+        self.operand_registers.insert(scratch.fprs[0].unwrap());
     }
 
     pub(crate) fn stack_pointer(&self) -> usize {
@@ -359,41 +338,59 @@ impl Harness {
         }
     }
 
-    fn configurations(&mut self) -> Vec<(Features, bool)> {
-        if variable("ASM_TEST_ALL_FEATURES").is_some() {
-            let both = |&features| [(features, false), (features, true)];
-            return self.feature_sets.iter().flat_map(both).collect();
+    /// Registers that the case leaves free, if there are any.
+    fn other_scratch(&mut self, case: &Case) -> Scratch {
+        let usual = Self::default_scratch();
+        let mut free = self.operand_registers - case.operation.names - case.clobbers;
+        for &memory in &case.memories {
+            free -= memory.names();
         }
-        vec![
-            (Features::empty(), false),
-            (Features::host(), true),
-            (self.random.pick(&self.feature_sets), false),
-            (self.random.pick(&self.feature_sets), true),
-        ]
+        if free.gprs().count() < 2 || free.fprs().count() < 2 {
+            return usual;
+        }
+        let mut take = |bank| {
+            let candidates: Vec<Reg> = free.in_bank(bank).into_iter().collect();
+            let reg = self.random.pick(&candidates);
+            free.remove(reg);
+            reg
+        };
+        Scratch {
+            gprs: usual.gprs.map(|reg| reg.map(|_| take(Bank::Gpr).gpr())),
+            fprs: usual.fprs.map(|reg| reg.map(|_| take(Bank::Fpr).fpr())),
+        }
     }
 
     fn run_batch(&mut self) {
         let cases = std::mem::take(&mut self.cases);
         self.batches += 1;
+        let usual = vec![Self::default_scratch(); cases.len()];
+        let other: Vec<Scratch> = cases.iter().map(|case| self.other_scratch(case)).collect();
+        let mut configurations = vec![
+            (Features::empty(), false, &other),
+            (Features::host(), true, &other),
+        ];
+        for &features in &self.feature_sets {
+            configurations.extend([(features, false, &usual), (features, true, &usual)]);
+        }
         let mut seen: Vec<Vec<u8>> = Vec::new();
-        for (features, shorten_jumps) in self.configurations() {
+        for (features, shorten_jumps, scratch) in configurations {
             let masm = Self::assembler(features, shorten_jumps, self.batches as u64);
-            let (code, entries) = self.assemble(masm, &cases, usize::from(shorten_jumps));
+            let (code, entries) = self.assemble(masm, &cases, scratch, shorten_jumps.into());
             if !seen.iter().any(|bytes| bytes == code.bytes()) {
                 seen.push(code.bytes().into());
-                self.run_cases(&cases, &code, &entries, features);
+                self.run_cases(&cases, scratch, &code, &entries, features);
             }
         }
         if self.disguising_seeds.is_empty() {
             return;
         }
-        for case in cases.iter().filter(|case| case.has_untrusted_constant) {
+        for index in (0..cases.len()).filter(|&index| cases[index].has_untrusted_constant) {
             let features = self.random.pick(&self.feature_sets);
             let masm = Self::assembler(features, true, self.random.pick(&self.disguising_seeds));
-            let case = std::slice::from_ref(case);
-            let variant = self.random.below(4);
-            let (code, entries) = self.assemble(masm, case, variant);
-            self.run_cases(case, &code, &entries, features);
+            let (case, variant) = (&cases[index..=index], self.random.below(4));
+            let scratch = &self.random.pick(&[&usual, &other])[index..=index];
+            let (code, entries) = self.assemble(masm, case, scratch, variant);
+            self.run_cases(case, scratch, &code, &entries, features);
         }
     }
 
@@ -402,6 +399,7 @@ impl Harness {
         &self,
         mut masm: MacroAssembler,
         cases: &[Case],
+        scratch: &[Scratch],
         variant: usize,
     ) -> (Code, Vec<[Label; 2]>) {
         let (behind, ahead) = (masm.here(), masm.new_label());
@@ -411,6 +409,7 @@ impl Harness {
         for (index, case) in cases.iter().enumerate() {
             let (start, next) = (masm.here(), masm.new_label());
             let target = [next, behind, ahead, outside][(index + variant) % 4];
+            masm.set_scratch(scratch[index]);
             (case.operation.emit)(&mut masm, target);
             entries.push([start, masm.mark()]);
             host::note_fall_through(masm.assembler());
@@ -430,21 +429,26 @@ impl Harness {
     fn run_cases(
         &mut self,
         cases: &[Case],
+        scratch: &[Scratch],
         code: &Code,
         entries: &[[Label; 2]],
         features: Features,
     ) {
         let handle = install(code);
-        for (case, ends) in cases.iter().zip(entries) {
+        for ((case, ends), scratch) in cases.iter().zip(entries).zip(scratch) {
             if self.traces {
                 eprintln!("{} with {features:?}", (case.operation.describe)());
             }
             let [start, end] = ends.map(|label| code.offset_of(label));
+            let kept = usize::from(case.keeps_first_scratch);
+            let gprs: RegisterSet = scratch.gprs[kept..].iter().flatten().copied().collect();
+            let fprs: RegisterSet = scratch.fprs[kept..].iter().flatten().copied().collect();
+            self.free = gprs | fprs | case.clobbers | RegisterSet::of(host::UNCHECKED, &[]);
             if let Err(difference) = self.run_case(case, handle.address(start)) {
                 let bytes = &code.bytes()[start as usize..end as usize];
                 let listing = crate::support::disassemble(&host::LLVM_ARGUMENTS, bytes);
                 panic!(
-                    "{} with {features:?}\n{difference}{}",
+                    "{} with {features:?} and {scratch:?}\n{difference}{}",
                     (case.operation.describe)(),
                     listing.unwrap_or_default().join("\n")
                 );
@@ -631,11 +635,7 @@ impl Harness {
         let mut actual = before.clone();
         let branched = self.execute(entry, &mut actual);
 
-        let mut free = case.clobbers | self.not_for_operands;
-        if case.keeps_first_scratch {
-            free -= self.first_scratch;
-        }
-        for reg in free - machine.written {
+        for reg in self.free - machine.written {
             machine.forget(reg);
         }
         machine.accept(&actual, branched);

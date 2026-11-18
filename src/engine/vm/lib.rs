@@ -6,6 +6,7 @@
     allow_internal_unstable,
     auto_traits,
     core_intrinsics,
+    loop_match,
     macro_metavar_expr_concat,
     marker_trait_attr,
     maybe_uninit_fill,
@@ -13,9 +14,10 @@
     negative_impls,
     rust_preserve_none_cc,
     offset_of_enum,
+    rust_cold_cc,
     thread_local
 )]
-#![allow(dead_code, internal_features)]
+#![allow(dead_code, incomplete_features, internal_features)]
 // References to cells are plain pointers, and a `JsResult<Value>` is one word.
 #![allow(improper_ctypes_definitions)]
 

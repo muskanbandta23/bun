@@ -1,15 +1,21 @@
 //! What the compiler hands the run time. Nothing here holds a `Gc` or a `Value`: cells are addresses, as in the graph.
 
-use bun_engine_asm::Code;
+use bun_engine_asm::{Code, Gpr, abi};
 use bun_engine_bytecode::Register;
 
-use crate::graph::{Assumption, ExitKind, Format, FrameIndex, Layout};
+use crate::graph::{Assumption, ExitKind, Format, FrameIndex, Layout, Position};
 
 /// The addresses that [`bun_engine_exec_memory::link`] is asked for.
 pub(crate) mod symbol {
     /// The thunk that an exit jumps to, with the number of the exit in [`super::EXIT_REGISTER`].
     pub(crate) const EXIT: u32 = 0;
 }
+
+/// Where the code that leaves leaves the number of the exit. The back end never allocates it.
+#[cfg(target_arch = "x86_64")]
+pub(crate) const EXIT_REGISTER: Gpr = abi::SCRATCH_GPR;
+#[cfg(not(target_arch = "x86_64"))]
+pub(crate) const EXIT_REGISTER: Gpr = abi::SCRATCH_GPRS[1];
 
 /// Where a value is when the code stops.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -49,8 +55,10 @@ pub(crate) struct ExitRecord {
 /// A place at which the stack can be walked, for unwinding and for reading an inlined call.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct CallSite {
-    /// What the code writes into the frame before the call. The offset of the return address, so it ascends.
+    /// What the code writes into the frame before the call: the position of this record.
     pub(crate) site: u32,
+    /// Where the callee returns to.
+    pub(crate) return_offset: u32,
     pub(crate) frame: FrameIndex,
     pub(crate) bytecode_offset: u32,
     /// `NO_LAYOUT` where nothing of the frame is recorded.
@@ -97,28 +105,12 @@ pub(crate) struct Output {
     pub(crate) invalidation_points: Vec<InvalidationPoint>,
     /// The cells the code names. It dies with any of them.
     pub(crate) weak_references: Vec<usize>,
-    /// What to register before the code is installed.
-    pub(crate) assumptions: Vec<ResolvedAssumption>,
+    /// What to register before the code is installed. A `Stable` names a position in `Dependencies::shapes`.
+    pub(crate) assumptions: Vec<Assumption>,
     /// Moved out of the graph.
     pub(crate) frames: Vec<crate::graph::FrameInfo>,
     pub(crate) layouts: Vec<Layout>,
     pub(crate) layout_registers: Vec<Register>,
-}
-
-/// An [`Assumption`] with its shape resolved to an address.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum ResolvedAssumption {
-    /// No instance of the shape at this address changes to another.
-    Stable(usize),
-    /// The watchpoint of the realm whose global object is at this address.
-    Realm(usize, bun_engine_vm::RealmWatchpoint),
-}
-
-impl ResolvedAssumption {
-    pub(crate) fn of(assumption: Assumption, address_of_shape: impl Fn(u32) -> usize) -> Self {
-        match assumption {
-            Assumption::Stable(shape) => Self::Stable(address_of_shape(shape.0)),
-            Assumption::Realm(global, which) => Self::Realm(global, which),
-        }
-    }
+    /// What an `Origin` stands for, which is what `Layout::resume` needs.
+    pub(crate) positions: Vec<Position>,
 }

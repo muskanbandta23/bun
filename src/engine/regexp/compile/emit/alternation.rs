@@ -107,6 +107,7 @@ impl Emitter<'_> {
         self.output
             .bind(resume, Section::Cold, Room::NONE, slot.scope);
         self.output.op(Section::Cold, Op::Resume { slot })?;
+        self.repeats = true;
         self.fail_to_either(resume, resume)
     }
 

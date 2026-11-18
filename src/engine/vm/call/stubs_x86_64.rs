@@ -88,6 +88,48 @@ pub(super) unsafe extern "sysv64" fn enter(
     )
 }
 
+/// As `enter`, in a `Vm` that has been entered. What an exception restores on its way out means nothing to the caller.
+#[unsafe(naked)]
+pub(super) unsafe extern "rust-preserve-none" fn enter_with_registers(
+    entry: usize,
+    vm: &Vm,
+    number_tag: u64,
+    not_cell_mask: u64,
+    code_block: usize,
+    callee: Value,
+    this_value: Value,
+    executable: usize,
+    argument_count_including_this: u64,
+    first: Value,
+    second: Value,
+    third: Value,
+) -> JsResult<Value> {
+    naked_asm!(
+        "push rbp",
+        "mov rbp, rsp",
+        "push qword ptr [r13 + {top_call_frame}]",
+        "push qword ptr [r13 + {top_entry_frame}]",
+        "mov [r13 + {top_entry_frame}], rbp",
+        "push rax",
+        "push rax",
+        "push r11",
+        "push r9",
+        "push rdx",
+        "push r8",
+        "push rsi",
+        "push rdi",
+        "call r12",
+        "mov rcx, [rbp - 8]",
+        "mov [r13 + {top_call_frame}], rcx",
+        "mov rcx, [rbp - 16]",
+        "mov [r13 + {top_entry_frame}], rcx",
+        "leave",
+        "ret",
+        top_call_frame = const Vm::OFFSET_OF_TOP_CALL_FRAME,
+        top_entry_frame = const Vm::OFFSET_OF_TOP_ENTRY_FRAME,
+    )
+}
+
 #[unsafe(naked)]
 pub(super) unsafe extern "sysv64" fn return_to_native_code_with_exception() {
     naked_asm!(

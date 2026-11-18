@@ -9,8 +9,10 @@
     macro_metavar_expr_concat,
     marker_trait_attr,
     maybe_uninit_fill,
+    naked_functions_rustic_abi,
     negative_impls,
     offset_of_enum,
+    rust_preserve_none_cc,
     thread_local
 )]
 #![allow(dead_code, internal_features)]
@@ -46,7 +48,7 @@ mod value;
 mod vm;
 mod watchpoint;
 
-pub use call::{CallData, NativeFunction};
+pub use call::{CallData, NativeFunction, RepeatedCall};
 pub use cell_type::{CellType, CellTypeRange, TypeFlags};
 pub use code::*;
 pub use cx::{Cx, JsResult, NoGc, Thrown};

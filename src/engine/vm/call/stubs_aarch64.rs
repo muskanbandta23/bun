@@ -93,6 +93,50 @@ pub(super) unsafe extern "C" fn enter(
     )
 }
 
+/// As `enter`, in a `Vm` that has been entered. What an exception restores on its way out means nothing to the caller,
+/// but for `x19`, which the compiler may keep a pointer to the frame in.
+#[unsafe(naked)]
+pub(super) unsafe extern "rust-preserve-none" fn enter_with_registers(
+    entry: usize,
+    vm: &Vm,
+    number_tag: u64,
+    not_cell_mask: u64,
+    code_block: usize,
+    callee: Value,
+    this_value: Value,
+    executable: usize,
+    argument_count_including_this: u64,
+    first: Value,
+    second: Value,
+    third: Value,
+) -> JsResult<Value> {
+    naked_asm!(
+        "stp x29, x30, [sp, #-16]!",
+        "mov x29, sp",
+        "sub sp, sp, #224",
+        "ldr x9, [x21, #{top_entry_frame}]",
+        "ldr x10, [x21, #{top_call_frame}]",
+        "stp x9, x10, [x29, #-16]",
+        "str x19, [x29, #-32]",
+        "str x29, [x21, #{top_entry_frame}]",
+        "stp x24, x25, [sp]",
+        "stp x28, x26, [sp, #16]",
+        "stp x0, x1, [sp, #32]",
+        "stp x2, x2, [sp, #48]",
+        "mov x9, x27",
+        "blr x20",
+        "ldp x9, x10, [x29, #-16]",
+        "str x9, [x21, #{top_entry_frame}]",
+        "str x10, [x21, #{top_call_frame}]",
+        "ldr x19, [x29, #-32]",
+        "mov sp, x29",
+        "ldp x29, x30, [sp], #16",
+        "ret",
+        top_call_frame = const Vm::OFFSET_OF_TOP_CALL_FRAME,
+        top_entry_frame = const Vm::OFFSET_OF_TOP_ENTRY_FRAME,
+    )
+}
+
 #[unsafe(naked)]
 pub(super) unsafe extern "C" fn return_to_native_code_with_exception() {
     naked_asm!(

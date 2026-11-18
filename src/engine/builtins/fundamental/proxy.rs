@@ -1,5 +1,5 @@
-use bun_engine_text::PropertyName;
-use bun_engine_vm::{JsFinalObject, JsFunctionWithFields, ProxyObject, errors};
+use bun_engine_text::{PropertyName, StringRef};
+use bun_engine_vm::{JsFinalObject, JsFunction, JsFunctionWithFields, ProxyObject, errors};
 
 use crate::prelude::*;
 
@@ -29,6 +29,44 @@ pub(super) fn initialize_revocable_shape(cx: &Cx) {
     let names = [names::proxy, names::revoke].map(PropertyName::to_identifier);
     let shape = Shape::for_object_literal(cx, &names, names.len());
     cx.global().init_revocable_proxy_shape(shape);
+}
+
+pub(super) fn initialize_helpers(cx: &Cx) {
+    let global = cx.global();
+    let helper = |function| JsFunction::native(cx, 0, &StringRef::empty(), function);
+    global.init_private_validate_proxy_get(helper(validate_get));
+    global.init_private_validate_proxy_has(helper(validate_has));
+    global.init_private_validate_proxy_set(helper(validate_set));
+    global.init_private_throw_falsy_proxy_set(helper(throw_falsy_set));
+}
+
+#[native_abi]
+fn validate_get(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let (target, key) = (frame.argument(1), frame.argument(2).to_property_key(cx)?);
+    let target = target.cast::<JsObject>();
+    ProxyObject::validate_get_result(cx, frame.argument(0), &target, key.name())?;
+    Ok(Value::UNDEFINED)
+}
+
+#[native_abi]
+fn validate_has(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let (target, key) = (frame.argument(0), frame.argument(1).to_property_key(cx)?);
+    ProxyObject::validate_negative_has_result(cx, &target.cast::<JsObject>(), key.name())?;
+    Ok(Value::UNDEFINED)
+}
+
+#[native_abi]
+fn validate_set(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let (target, key) = (frame.argument(0), frame.argument(1).to_property_key(cx)?);
+    let target = target.cast::<JsObject>();
+    ProxyObject::validate_positive_set_result(cx, &target, key.name(), frame.argument(2))?;
+    Ok(Value::UNDEFINED)
+}
+
+#[native_abi]
+fn throw_falsy_set(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let key = frame.argument(0).to_property_key(cx)?;
+    Err(ProxyObject::throw_falsy_set_result(cx, key.name()))
 }
 
 #[native_abi]

@@ -1086,6 +1086,11 @@ useStrict = use strict
 @promiseReturnUndefinedOnFulfilled
 @proxyFieldHandler
 @proxyFieldTarget
+@proxyGet
+@proxyHandler
+@proxyHas
+@proxySet
+@throwFalsyProxySetTrapResult
 @push
 @putArrayIteratorInternalField
 @putAsyncDisposableStackInternalField

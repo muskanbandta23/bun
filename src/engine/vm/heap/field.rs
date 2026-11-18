@@ -565,6 +565,12 @@ impl<K: PlainKey, V: Copy> Owned<'_, TracedMap<K, V>> {
         self.read(|map| map.keys().filter(|key| filter(key)).min().cloned())
     }
 
+    pub fn values(self) -> RootVec<V> {
+        let mut values = root_vec();
+        self.read(|map| values.extend(map.values()));
+        values
+    }
+
     pub fn entries(self) -> RootVec<(K, V)> {
         let mut entries = root_vec();
         self.read(|map| entries.extend(map.iter().map(|(key, &value)| (key.clone(), value))));

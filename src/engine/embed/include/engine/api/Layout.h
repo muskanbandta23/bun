@@ -316,8 +316,35 @@ ENGINE_CONSTANT(maxSmallViewLength, 1000, JsArrayBufferView::MAX_SMALL_LENGTH)
 ENGINE_CONSTANT(packedElementSizeShifts, 0xfe6940, ElementType::PACKED_SIZE_SHIFTS)
 
 // Promises, collections, text and time
+ENGINE_CONSTANT(JsPromise_payload, 16, JsPromise::OFFSET_OF_PAYLOAD)
+ENGINE_CONSTANT(JsPromise_slot, 24, JsPromise::OFFSET_OF_SLOT)
+ENGINE_CONSTANT(promiseFlagsShift, 48, (JsPromise::OFFSET_OF_FLAGS - JsPromise::OFFSET_OF_PAYLOAD) * 8)
+ENGINE_CONSTANT(promiseStatusMask, 3, JsPromise::STATUS_MASK)
+ENGINE_CONSTANT(promiseIsHandled, 4, JsPromise::IS_HANDLED)
+ENGINE_CONSTANT(promiseIsResolved, 8, JsPromise::IS_RESOLVED)
+ENGINE_SIZE(QueuedTask, 40)
+ENGINE_CONSTANT(QueuedTask_arguments, 8, QueuedTask::OFFSET_OF_ARGUMENTS)
+ENGINE_CONSTANT(queuedTaskJobShift, 48, QueuedTask::JOB_SHIFT)
+ENGINE_CONSTANT(queuedTaskPayloadShift, 56, QueuedTask::PAYLOAD_SHIFT)
+ENGINE_CONSTANT(MicrotaskQueue_start, 16, MicrotaskQueue::OFFSET_OF_START)
+ENGINE_CONSTANT(MicrotaskQueue_end, 24, MicrotaskQueue::OFFSET_OF_END)
 
 // Modules, scopes and cached bytecode
+ENGINE_OFFSET(ModuleLoader, module_scope, 8)
+ENGINE_OFFSET(ModuleLoader, async_context, 16)
+ENGINE_OFFSET(ModuleRegistryEntry, key, 8)
+ENGINE_OFFSET(ModuleKey, name, 0)
+ENGINE_OFFSET(ModuleRegistryEntry, status, 32)
+ENGINE_OFFSET(ModuleRegistryEntry, module, 40)
+ENGINE_OFFSET(ModuleRegistryEntry, promise_of_load, 64)
+ENGINE_OFFSET(AbstractModuleRecord, key, 24)
+ENGINE_OFFSET(AbstractModuleRecord, is_typescript, 41)
+ENGINE_OFFSET(AbstractModuleRecord, has_live_exports, 42)
+ENGINE_OFFSET(ModuleNamespace, module, 24)
+ENGINE_OFFSET(ModuleNamespace, has_es_module_marker, 33)
+ENGINE_OFFSET(JsSourceCode, source, 8)
+ENGINE_CONSTANT(Environment_parent, 8, Environment::OFFSET_OF_PARENT)
+ENGINE_CONSTANT(Environment_template, 16, Environment::OFFSET_OF_TEMPLATE)
 
 // Inspector, profilers and options
 

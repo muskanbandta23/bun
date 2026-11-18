@@ -1,6 +1,6 @@
 use bun_engine_bytecode::{BuiltinFunction, FunctionKind, FunctionRef, Visibility};
 use bun_engine_bytecode::Code;
-use bun_engine_text::{Identifier, PropertyName, Text};
+use bun_engine_text::{Identifier, PropertyName};
 
 use crate::heap::{Scope, Survivors};
 use crate::{
@@ -36,8 +36,6 @@ pub struct Hooks {
     pub temporal_to_locale_string: fn(&mut Cx, Gc<JsObject>, Value, Value) -> JsResult<Value>,
     /// Of a `WebAssembly.Memory`, by so many pages. Returns whether it has grown.
     pub grow_wasm_memory: fn(&mut Cx, Gc<JsObject>, usize) -> bool,
-    /// `JSON.parse` without a reviver.
-    pub parse_json: fn(&mut Cx, Text<'_>) -> JsResult<Value>,
     /// Settles the promise with the record of the module whose bytes are the Latin-1 characters of the source.
     pub make_wasm_module:
         fn(&mut Cx, Gc<ModuleLoader>, &Identifier, Gc<JsSourceCode>, Gc<JsPromise>) -> JsResult<()>,

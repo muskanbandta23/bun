@@ -104,10 +104,9 @@ extern "C" bool Bun__FFI__closeFunctions(Zig::GlobalObject* globalObject, JSC::E
     auto& vm = JSC::getVM(globalObject);
     bool isRunning = false;
     JSC::StackVisitor::visit(vm.topCallFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-        JSC::CalleeBits callee = visitor->callee();
-        if (!callee.isCell() || !callee.asCell())
+        JSC::JSValue calleeValue = visitor->callee();
+        if (!calleeValue)
             return WTF::IterationStatus::Continue;
-        JSC::JSValue calleeValue = callee.asCell();
         for (unsigned i = 0; i < length; ++i) {
             if (functions->getIndexQuickly(i) == calleeValue) {
                 isRunning = true;
@@ -146,7 +145,7 @@ DEFINE_VISIT_CHILDREN(JSFFIFunction);
 
 JSFFIFunction* JSFFIFunction::create(VM& vm, Zig::GlobalObject* globalObject, unsigned length, const String& name, FFIFunction FFIFunction, Intrinsic intrinsic, NativeFunction nativeConstructor)
 {
-    NativeExecutable* executable = vm.getHostFunction(FFIFunction, ImplementationVisibility::Public, intrinsic, nativeConstructor, nullptr, length, name);
+    NativeExecutable* executable = vm.getHostFunction(FFIFunction, ImplementationVisibility::Public, intrinsic, nativeConstructor, length, name);
     Structure* structure = globalObject->FFIFunctionStructure();
     JSFFIFunction* function = new (NotNull, allocateCell<JSFFIFunction>(vm)) JSFFIFunction(vm, executable, globalObject, structure, reinterpret_cast<CFFIFunction>(WTF::move(FFIFunction)));
     function->finishCreation(vm);
@@ -176,7 +175,7 @@ void JSFFIFunction::close()
 
 JSFFIFunction* JSFFIFunction::createForFFI(VM& vm, Zig::GlobalObject* globalObject, unsigned length, const String& name, CFFIFunction FFIFunction)
 {
-    NativeExecutable* executable = vm.getHostFunction(trampoline, ImplementationVisibility::Public, NoIntrinsic, callHostFunctionAsConstructor, nullptr, length, name);
+    NativeExecutable* executable = vm.getHostFunction(trampoline, ImplementationVisibility::Public, NoIntrinsic, callHostFunctionAsConstructor, length, name);
     Structure* structure = globalObject->FFIFunctionStructure();
     JSFFIFunction* function = new (NotNull, allocateCell<JSFFIFunction>(vm)) JSFFIFunction(vm, executable, globalObject, structure, reinterpret_cast<CFFIFunction>(WTF::move(FFIFunction)));
     function->finishCreation(vm);

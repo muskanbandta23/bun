@@ -53,6 +53,8 @@ pub struct SourceProvider {
     source_mapping_url_directive: RefCell<Option<StringRef>>,
     /// For text that was made at run time: that of the code which made it.
     origin: Option<SourceProviderRef>,
+    /// Is reachable for as long as code from this text is. Null for none.
+    opaque_root: *const c_void,
     lines: OnceCell<LineTable>,
 }
 
@@ -68,6 +70,11 @@ impl SourceProviderBuilder {
 
     pub fn origin(mut self, origin: Option<&SourceProvider>) -> SourceProviderBuilder {
         self.0.origin = origin.map(|origin| SourceProviderRef::retain(origin.origin()));
+        self.opaque_root(origin.map_or_default(SourceProvider::opaque_root))
+    }
+
+    pub fn opaque_root(mut self, root: *const c_void) -> SourceProviderBuilder {
+        self.0.opaque_root = root;
         self
     }
 
@@ -106,6 +113,7 @@ impl SourceProvider {
             start_line: 0,
             start_column: 0,
             origin: None,
+            opaque_root: core::ptr::null(),
             lines: OnceCell::new(),
         }))
     }
@@ -157,6 +165,10 @@ impl SourceProvider {
     /// What `import()` in the text is relative to.
     pub fn origin(&self) -> &SourceProvider {
         self.origin.as_deref().unwrap_or(self)
+    }
+
+    pub(super) fn opaque_root(&self) -> *const c_void {
+        self.opaque_root
     }
 
     pub fn id(&self) -> usize {

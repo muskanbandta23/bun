@@ -221,3 +221,12 @@ value   ImportKind uint8_t
 
 # Inspector, profilers and options
 opaque  Options struct Engine::Options
+mirror  CodeRangeKind inspector/profiling/coverage.rs
+opaque  BlockRange struct JSC::BasicBlockRange
+opaque  CodeRange struct JSC::CodeRange
+mirror  AsyncCallType embed/api/missing.rs
+mirror  ProfilingReason embed/api/missing.rs
+opaque  InspectorBackend class Engine::InspectorBackend
+opaque  InspectorController class Inspector::JSGlobalObjectInspectorController
+value   AsyncCallType Inspector::AsyncCallType
+value   ProfilingReason JSC::ProfilingReason

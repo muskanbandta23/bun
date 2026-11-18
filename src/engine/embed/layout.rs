@@ -2,7 +2,10 @@
 
 #![allow(non_upper_case_globals, clippy::unnecessary_cast)]
 
+use core::mem::offset_of;
+
 use bun_engine_bytecode::Position;
+use bun_engine_inspector::profiling::{BlockRange, CodeRange};
 use bun_engine_text::*;
 use bun_engine_vm::heap::*;
 use bun_engine_vm::*;

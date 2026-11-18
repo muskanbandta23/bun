@@ -28,6 +28,7 @@ const TAGS: usize = 3;
 impl LazyField<JsCell> {
     /// # Safety
     /// The object has such a field there.
+    #[cfg_attr(rootcheck, rootcheck::stays("points into the cell"))]
     pub(crate) unsafe fn at(object: &JsObject, offset: usize) -> &LazyField<JsCell> {
         // SAFETY: the caller's.
         unsafe { &*core::ptr::with_exposed_provenance(object.address() + offset) }
@@ -70,6 +71,7 @@ pub struct LazyClass {
 impl LazyClass {
     /// # Safety
     /// The object has such a field there.
+    #[cfg_attr(rootcheck, rootcheck::stays("points into the cell"))]
     pub(crate) unsafe fn at(object: &JsObject, offset: usize) -> &LazyClass {
         // SAFETY: the caller's.
         unsafe { &*core::ptr::with_exposed_provenance(object.address() + offset) }

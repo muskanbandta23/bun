@@ -1,6 +1,6 @@
 //! `Intl.PluralRules`
 
-use core::cell::OnceCell;
+use core::cell::{Cell, OnceCell};
 use std::rc::Rc;
 
 use bun_engine_number::exact_int32;
@@ -66,6 +66,7 @@ struct Shared {
     locale: ResolvedLocale,
     options: Options,
     rules: IcuRules,
+    small_integers: [Cell<Option<Category>>; 128],
     formatter: OnceCell<ReusingFormatter>,
     range_formatter: OnceCell<NumberRangeFormatter>,
 }
@@ -89,6 +90,7 @@ impl PluralRules {
                     locale: locale.clone(),
                     options,
                     rules,
+                    small_integers: [const { Cell::new(None) }; _],
                     formatter: OnceCell::new(),
                     range_formatter: OnceCell::new(),
                 })))
@@ -123,10 +125,11 @@ impl PluralRules {
         if let Some(integer) = value.as_number().and_then(exact_int32)
             && self.shows_integers_as_they_are()
         {
-            return category(self.0.rules.select_integer(integer));
+            return self.select_integer(integer);
         }
         let formatter = self.0.formatter.get_or_try_init(|| {
-            ReusingFormatter::open(&self.skeleton(), &self.0.locale.icu_locale(&[])?)
+            let locale = self.0.locale.icu_locale(&[])?;
+            ReusingFormatter::open(&self.skeleton(), &locale, &self.0.options.digits)
                 .or_type_error(FAILED_TO_INITIALIZE)
         })?;
         formatter.format(value, FAILED_TO_SELECT, |number| {
@@ -149,9 +152,22 @@ impl PluralRules {
             )
             .or_type_error(FAILED_TO_INITIALIZE)
         })?;
-        let range = (start.format_range_to(end, formatter))
+        let range = start
+            .format_range_to(end, formatter, (&self.0.options.digits).into())
             .or_type_error("failed to select range of plural value")?;
         category(self.0.rules.select_range(&range))
+    }
+
+    fn select_integer(&self, integer: i32) -> Result<Category> {
+        let known = self.0.small_integers.get(integer.unsigned_abs() as usize);
+        if let Some(category) = known.and_then(Cell::get) {
+            return Ok(category);
+        }
+        let category = category(self.0.rules.select_integer(integer))?;
+        if let Some(known) = known {
+            known.set(Some(category));
+        }
+        Ok(category)
     }
 
     fn shows_integers_as_they_are(&self) -> bool {

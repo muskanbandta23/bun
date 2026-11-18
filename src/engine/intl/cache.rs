@@ -1,6 +1,6 @@
 use core::cell::RefCell;
 
-use bun_engine_text::{StaticString, StringImpl, StringRef, Text};
+use bun_engine_text::{StringImpl, StringRef, Text};
 
 use crate::collator::Collator;
 use crate::date_time_format::DateCache;
@@ -78,8 +78,6 @@ impl Cache {
 }
 
 fn first_locale(languages: &[Text<'_>]) -> LanguageTag {
-    static LAST_RESORT: StaticString = StaticString::new(b"en");
-
     let without_extensions = |language: Text<'_>| {
         let tag = LanguageTag::canonicalize(language).ok()??;
         let base_name = tag.base_name();
@@ -94,5 +92,5 @@ fn first_locale(languages: &[Text<'_>]) -> LanguageTag {
             let tag = bun_icu::locale::to_language_tag(bun_icu::locale::default()).ok()?;
             without_extensions(Text::Latin1(&tag))
         })
-        .unwrap_or_else(|| LanguageTag::from_static(&LAST_RESORT))
+        .unwrap_or_else(LanguageTag::english)
 }

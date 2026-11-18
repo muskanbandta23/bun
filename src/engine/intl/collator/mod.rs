@@ -14,7 +14,7 @@ use crate::error::IcuResult;
 use crate::language_tag::Key;
 use crate::language_tag::subtag::Subtag;
 use crate::locale_resolver::{LocaleResolver, ResolvedLocale};
-use crate::utf16::Utf16;
+use crate::utf16::Utf16Buffer;
 use crate::{AvailableLocales, Cache, Error, KeywordValue, LanguageTag, Named, Result, collation};
 
 option_enum! {
@@ -213,7 +213,10 @@ impl Shared {
             (Text::Latin1(a), Text::Latin1(b)) if a.is_ascii() && b.is_ascii() => {
                 collator.compare_utf8(a, b)
             }
-            _ => collator.compare(&Utf16::new(a)?, &Utf16::new(b)?),
+            _ => collator.compare(
+                Utf16Buffer::default().widen(a)?,
+                Utf16Buffer::default().widen(b)?,
+            ),
         };
         order.or_error(Error::Plain("Failed to compare strings."))
     }

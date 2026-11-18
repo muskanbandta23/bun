@@ -9,10 +9,11 @@ mod skeleton;
 mod unit;
 
 use core::cell::{OnceCell, RefCell};
+use core::ffi::CStr;
 use std::rc::Rc;
 
 use bun_engine_text::{StringImpl, StringRef};
-use bun_icu::formatted_value::{Category, FormattedValue};
+use bun_icu::formatted_value::FormattedValue;
 use bun_icu::number_format::{
     Collapse, FormattedNumber, FormattedNumberRange, IdentityFallback, NumberFormatter,
     NumberRangeFormatter,
@@ -24,11 +25,12 @@ pub use digit_options::{
     RoundingMode, RoundingPriority, RoundingType, TrailingZeroDisplay,
 };
 pub use mathematical_value::MathematicalValue;
+use mathematical_value::NumberInput;
 pub use options::{
     CompactDisplay, CurrencyDisplay, CurrencySign, Grouping, Notation, Options, RequestedStyle,
     SignDisplay, Style, StyleOptions, UnitDisplay,
 };
-use parts::{FieldContext, collect_fields, push_flattened, push_number_parts};
+use parts::{FieldContext, align_spans, collect_fields, push_flattened, push_number_parts};
 pub(crate) use skeleton::Skeleton;
 pub(crate) use unit::SANCTIONED_UNITS;
 pub use unit::Unit;
@@ -62,8 +64,9 @@ impl NumberFormat {
         cache.number_formats.find_or_insert(
             |it| it.0.options == options && it.0.locale == locale,
             || {
+                let skeleton = Skeleton::from(&options);
                 let formatter =
-                    ReusingFormatter::open(&Skeleton::from(&options), &locale.icu_locale()?)
+                    ReusingFormatter::open(&skeleton, &locale.icu_locale()?, &options.digits)
                         .or_type_error("Failed to initialize NumberFormat")?;
                 Ok(NumberFormat(Rc::new(Shared {
                     locale: locale.clone(),
@@ -141,14 +144,8 @@ impl NumberFormat {
         let range = range.value().or_type_error("failed to format a range")?;
         let failure = "Failed to format number range";
         let text = range.text().or_type_error(failure)?;
-        let fields = collect_fields(range, failure)?;
-        let span = |index| {
-            let mut spans = fields.iter();
-            let span =
-                spans.find(|it| it.category == Category::NUMBER_RANGE_SPAN && it.field == index);
-            span.map_or(0..0, |it| it.range.clone())
-        };
-        let (start_span, end_span) = (span(0), span(1));
+        let mut fields = collect_fields(range, failure)?;
+        let [start_span, end_span] = align_spans(&mut fields);
 
         let mut parts = Parts::default();
         push_flattened(&mut parts, text, fields, |field, at| {
@@ -183,7 +180,9 @@ impl NumberFormat {
             )
             .or_type_error("failed to initialize NumberFormat")
         })?;
-        (start.format_range_to(end, formatter)).or_type_error("failed to format a range")
+        start
+            .format_range_to(end, formatter, (&self.0.options.digits).into())
+            .or_type_error("failed to format a range")
     }
 
     fn context(&self, value: &MathematicalValue) -> FieldContext {
@@ -206,16 +205,19 @@ pub(crate) fn check_range(start: &MathematicalValue, end: &MathematicalValue) ->
 /// Keeps the object that takes the results.
 pub(crate) struct ReusingFormatter {
     formatter: NumberFormatter,
+    input: NumberInput,
     result: RefCell<FormattedNumber>,
 }
 
 impl ReusingFormatter {
     pub(crate) fn open(
         skeleton: &Skeleton,
-        locale: &core::ffi::CStr,
+        locale: &CStr,
+        digits: &DigitOptions,
     ) -> bun_icu::Result<ReusingFormatter> {
         Ok(ReusingFormatter {
             formatter: NumberFormatter::open(skeleton, locale)?,
+            input: digits.into(),
             result: RefCell::new(FormattedNumber::open()?),
         })
     }
@@ -228,7 +230,7 @@ impl ReusingFormatter {
     ) -> Result<T> {
         let format_into = |result: &mut FormattedNumber| {
             value
-                .format(&self.formatter, result)
+                .format(&self.formatter, self.input, result)
                 .or_type_error(failure)?;
             read(result)
         };

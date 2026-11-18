@@ -10,7 +10,7 @@ use bun_engine_wasm_format::opcode::{LOCAL_SET, LOCAL_TEE};
 
 use super::Function;
 use super::memory::FirstMemory;
-use super::operand::{Operand, bank, untrusted};
+use super::operand::{Operand, Place, bank, untrusted};
 use crate::abi::INSTANCE;
 
 #[derive(Clone, Copy)]
@@ -104,14 +104,6 @@ impl Registers {
     }
 }
 
-/// An integer where an instruction can read it.
-#[derive(Clone, Copy)]
-pub(super) enum Source {
-    Register(Gpr),
-    Constant(u64),
-    Frame(i32),
-}
-
 /// More lazy operands than this are not searched again and again.
 const LONGEST_SEARCH: u32 = 16;
 
@@ -137,27 +129,27 @@ impl Function<'_> {
         debug_assert!(self.registers.free.contains(reg));
         self.registers.free.remove(reg);
         self.registers.operand_of[reg.index()] = self.height();
-        self.stack.push(Operand::Register(ty, reg));
+        self.stack.push(Operand::in_register(ty, reg));
     }
 
     pub(super) fn push_slot(&mut self, ty: ValType) {
         let offset = self.frame.operand(self.height());
-        self.stack.push(Operand::Slot(ty, offset));
+        self.stack.push(Operand::in_slot(ty, offset));
     }
 
     /// Puts back what was just popped.
     pub(super) fn push(&mut self, value: Operand) {
-        match value {
-            Operand::Register(ty, reg) => self.push_register(ty, reg),
-            Operand::Slot(ty, _) => self.push_slot(ty),
-            Operand::Constant(..) | Operand::Local(..) => self.push_lazy(value),
+        match value.place() {
+            Place::Register(reg) => self.push_register(value.ty(), reg),
+            Place::Slot(_) => self.push_slot(value.ty()),
+            Place::Constant(_) | Place::Local(_) => self.push_lazy(value),
         }
     }
 
     #[inline(always)]
     pub(super) fn pop(&mut self) -> Operand {
         let value = self.stack.pop().expect("the code was validated");
-        if let Operand::Register(_, reg) = value {
+        if let Place::Register(reg) = value.place() {
             self.registers.free.insert(reg);
             self.registers.locked.insert(reg);
         }
@@ -201,10 +193,10 @@ impl Function<'_> {
     fn settle_lazy(&mut self, end: u32) {
         for position in self.lowest_lazy..end {
             let value = self.stack[position as usize];
-            if let Operand::Constant(ty, _) | Operand::Local(ty, _) = value {
+            if let Place::Constant(_) | Place::Local(_) = value.place() {
                 let offset = self.frame.operand(position);
                 self.store_operand(self.frame_address(offset), value);
-                self.stack[position as usize] = Operand::Slot(ty, offset);
+                self.stack[position as usize] = Operand::in_slot(value.ty(), offset);
             }
         }
         self.lowest_lazy = self.lowest_lazy.max(end);
@@ -224,7 +216,7 @@ impl Function<'_> {
         let ty = self.stack[position as usize].ty();
         let offset = self.frame.operand(position);
         self.store(ty.kind(), self.frame_address(offset), reg);
-        self.stack[position as usize] = Operand::Slot(ty, offset);
+        self.stack[position as usize] = Operand::in_slot(ty, offset);
         self.registers.free.insert(reg);
     }
 
@@ -233,9 +225,9 @@ impl Function<'_> {
     /// Not to be written unless it is free.
     #[inline(always)]
     pub(super) fn register(&mut self, value: Operand) -> Reg {
-        match value {
-            Operand::Register(_, reg) => reg,
-            Operand::Local(_, local) if let Some(reg) = self.locals[local as usize].register => {
+        match value.place() {
+            Place::Register(reg) => reg,
+            Place::Local(local) if let Some(reg) = self.locals[local as usize].register => {
                 self.registers.locked.insert(reg);
                 reg
             }
@@ -255,7 +247,7 @@ impl Function<'_> {
 
     #[inline(never)]
     fn bring(&mut self, value: Operand) -> Reg {
-        let Operand::Local(_, local) = value else {
+        let Place::Local(local) = value.place() else {
             return self.writable(value);
         };
         let reg = self.take_for_local(local);
@@ -266,66 +258,61 @@ impl Function<'_> {
     }
 
     pub(super) fn writable(&mut self, value: Operand) -> Reg {
-        if let Operand::Register(_, reg) = value {
+        if let Place::Register(reg) = value.place() {
             return reg;
         }
         self.lock(value);
-        let reg = self.take(bank(value.ty().kind()));
+        let reg = self.take(bank(value.kind()));
         self.move_operand(reg, value);
         reg
     }
 
     /// Keeps a local in its register.
     pub(super) fn lock(&mut self, value: Operand) {
-        if let Operand::Register(_, reg) = self.locate(value) {
+        if let Place::Register(reg) = self.locate(value).place() {
             self.registers.locked.insert(reg);
         }
     }
 
-    /// Nothing is put out of its register for it.
+    /// Locates an integer where an instruction can read it. Nothing is put out of its register for it.
     #[inline(always)]
-    pub(super) fn source(&mut self, value: Operand) -> Source {
-        match value {
-            Operand::Constant(_, bits) => Source::Constant(bits),
-            Operand::Register(_, reg) => Source::Register(reg.gpr()),
-            Operand::Slot(_, offset) => Source::Frame(offset),
-            Operand::Local(_, index) => {
-                let local = &self.locals[index as usize];
-                if let Some(reg) = local.register {
-                    self.registers.locked.insert(reg);
-                    Source::Register(reg.gpr())
-                } else if self.unused(Bank::Gpr).len() > 1 || self.has_own_register(index) {
-                    Source::Register(self.bring(value).gpr())
-                } else {
-                    Source::Frame(local.offset)
-                }
-            }
+    pub(super) fn source(&mut self, value: Operand) -> Operand {
+        let Place::Local(index) = value.place() else {
+            return value;
+        };
+        let local = &self.locals[index as usize];
+        if let Some(reg) = local.register {
+            self.registers.locked.insert(reg);
+            Operand::in_register(value.ty(), reg)
+        } else if self.unused(Bank::Gpr).len() > 1 || self.has_own_register(index) {
+            Operand::in_register(value.ty(), self.bring(value))
+        } else {
+            Operand::in_slot(value.ty(), local.offset)
         }
     }
 
+    /// `source` was located.
     #[inline(always)]
-    pub(super) fn src(&self, source: Source) -> Src {
-        match source {
-            Source::Register(reg) => reg.into(),
-            Source::Constant(bits) => Untrusted(bits).into(),
-            Source::Frame(offset) => self.frame_address(offset).into(),
+    pub(super) fn src(&self, source: Operand) -> Src {
+        match source.place() {
+            Place::Constant(bits) => Untrusted(bits).into(),
+            _ => self.reg_or_mem(source).into(),
         }
     }
 
-    /// `source` is no constant.
+    /// `source` was located and is no constant.
     #[inline(always)]
-    pub(super) fn reg_or_mem(&self, source: Source) -> RegOrMem {
-        match source {
-            Source::Register(reg) => reg.into(),
-            Source::Frame(offset) => self.frame_address(offset).into(),
-            Source::Constant(_) => unreachable!(),
+    pub(super) fn reg_or_mem(&self, source: Operand) -> RegOrMem {
+        match source.place() {
+            Place::Slot(offset) => self.frame_address(offset).into(),
+            _ => source.register().gpr().into(),
         }
     }
 
     #[inline(always)]
     pub(super) fn reg_or_imm(&mut self, value: Operand) -> RegOrImm {
-        match value {
-            Operand::Constant(_, bits) => untrusted(bits),
+        match value.place() {
+            Place::Constant(bits) => untrusted(bits),
             _ => self.gpr(value).into(),
         }
     }
@@ -413,8 +400,7 @@ impl Function<'_> {
 
     fn may_be_on_stack(&self, local: u32) -> bool {
         let lazy = self.stack.get(self.lowest_lazy as usize..).unwrap_or(&[]);
-        lazy.len() > LONGEST_SEARCH as usize
-            || (lazy.iter()).any(|value| matches!(*value, Operand::Local(_, own) if own == local))
+        lazy.len() > LONGEST_SEARCH as usize || lazy.iter().any(|value| value.is_local(local))
     }
 
     /// The register that the local was last in, if it is free and not set aside for another.
@@ -520,10 +506,10 @@ impl Function<'_> {
 
     /// For an integer that was popped before `registers` were claimed.
     pub(super) fn gpr_outside(&mut self, value: Operand, registers: RegisterSet) -> Gpr {
-        match value {
-            Operand::Register(ty, reg) if registers.contains(reg) => {
+        match value.place() {
+            Place::Register(reg) if registers.contains(reg) => {
                 let other = self.take(Bank::Gpr);
-                self.copy(ty.kind(), other, reg);
+                self.copy(value.kind(), other, reg);
                 other.gpr()
             }
             _ => self.gpr(value),
@@ -533,7 +519,7 @@ impl Function<'_> {
     fn give_to_operand(&mut self, position: u32, ty: ValType, reg: Reg) {
         self.registers.free.remove(reg);
         self.registers.operand_of[reg.index()] = position;
-        self.stack[position as usize] = Operand::Register(ty, reg);
+        self.stack[position as usize] = Operand::in_register(ty, reg);
     }
 
     // Locals
@@ -589,14 +575,14 @@ impl Function<'_> {
     #[inline(always)]
     pub(super) fn set_local(&mut self, local: u32) {
         let value = self.pop();
-        if matches!(value, Operand::Local(_, source) if source == local) {
+        if value.is_local(local) {
             return;
         }
         if self.lowest_lazy < self.height() {
             self.detach(local);
         }
-        match (value, self.locals[local as usize].register) {
-            (Operand::Register(_, reg), None) if !self.has_own_register(local) => {
+        match (value.place(), self.locals[local as usize].register) {
+            (Place::Register(reg), None) if !self.has_own_register(local) => {
                 self.bind(local, reg);
                 self.registers.dirty.insert(reg);
             }
@@ -606,8 +592,8 @@ impl Function<'_> {
 
     #[inline(never)]
     fn assign(&mut self, local: u32, old: Option<Reg>, value: Operand) {
-        let reg = match (value, old) {
-            (Operand::Register(_, reg), Some(old)) if !self.registers.pinned.contains(old) => {
+        let reg = match (value.place(), old) {
+            (Place::Register(reg), Some(old)) if !self.registers.pinned.contains(old) => {
                 self.unbind(old);
                 self.bind(local, reg);
                 reg
@@ -616,11 +602,11 @@ impl Function<'_> {
                 self.move_operand(old, value);
                 old
             }
-            (Operand::Constant(ty, bits), None)
-                if self.unused(bank(ty.kind())).len() < 2 && !self.has_own_register(local) =>
+            (Place::Constant(bits), None)
+                if self.unused(bank(value.kind())).len() < 2 && !self.has_own_register(local) =>
             {
                 let offset = self.locals[local as usize].offset;
-                return self.store_constant(ty.kind(), self.frame_address(offset), bits);
+                return self.store_constant(value.kind(), self.frame_address(offset), bits);
             }
             (_, None) => {
                 self.lock(value);
@@ -644,12 +630,10 @@ impl Function<'_> {
         let mut first = None;
         for position in self.lowest_lazy..height {
             let value = self.stack[position as usize];
-            let Operand::Local(ty, own) = value else {
-                continue;
-            };
-            if own != local {
+            if !value.is_local(local) {
                 continue;
             }
+            let ty = value.ty();
             let reg = match (first, self.locals[local as usize].register) {
                 (None, Some(reg)) => {
                     self.unbind(reg);

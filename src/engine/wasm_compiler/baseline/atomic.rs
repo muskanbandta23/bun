@@ -5,7 +5,7 @@ use bun_engine_asm::prelude::*;
 use bun_engine_wasm_format::{MemArg, ValType};
 
 use super::Function;
-use super::operand::Operand;
+use super::operand::{Operand, Place};
 use crate::abi::Trap;
 
 const OVERWRITTEN: RegisterSet = MacroAssembler::ATOMIC_CLOBBERS;
@@ -34,9 +34,10 @@ impl Function<'_> {
 
     /// Leaves it where it can be read more than once.
     fn pop_index(&mut self) -> Operand {
-        match self.pop() {
-            index @ Operand::Slot(ty, _) => Operand::Register(ty, self.writable(index)),
-            index => index,
+        let index = self.pop();
+        match index.place() {
+            Place::Slot(_) => Operand::in_register(index.ty(), self.writable(index)),
+            _ => index,
         }
     }
 

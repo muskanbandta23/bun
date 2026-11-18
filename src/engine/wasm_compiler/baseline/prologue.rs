@@ -106,11 +106,11 @@ impl Function<'_> {
             vacant.remove(SLOT);
             let reg = Registers::best_for_local(vacant).expect("there are few locals");
             let value = if index < self.signature.params.len() {
-                Operand::Slot(local.ty, local.offset)
+                Operand::in_slot(local.ty, local.offset)
             } else if local.ty.is_ref() {
-                Operand::Constant(local.ty, NULL as u64)
+                Operand::of_bits(local.ty, NULL as u64)
             } else {
-                Operand::Constant(local.ty, 0)
+                Operand::of_bits(local.ty, 0)
             };
             self.move_operand(reg, value);
             self.bind(index as u32, reg);

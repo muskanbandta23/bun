@@ -9,7 +9,7 @@ use bun_engine_wasm_format::{
 };
 
 use super::calls::Parameter;
-use super::operand::{Operand, bank};
+use super::operand::{Operand, Place, bank};
 use super::{Compiled, Function};
 use crate::abi::{
     GUARD_SIZE, INSTANCE, MEMORY_BASE, MemoryMode, MemoryView, Operation, PAGE_SIZE_LOG2, Trap,
@@ -241,10 +241,8 @@ impl VisitMemory for Function<'_> {
             return Ok(());
         };
         let (ty, next) = (op.value_type(), self.after_mem_arg(self.offset + 1));
-        let dst = match index {
-            Operand::Register(_, reg) if bank(ty.kind()) == Bank::Gpr => {
-                self.result_reusing(next, reg)
-            }
+        let dst = match index.place() {
+            Place::Register(reg) if bank(ty.kind()) == Bank::Gpr => self.result_reusing(next, reg),
             _ => self.result(next, bank(ty.kind())),
         };
         match (ty.kind(), op.sign()) {

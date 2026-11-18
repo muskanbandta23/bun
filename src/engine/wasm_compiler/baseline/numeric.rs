@@ -7,10 +7,9 @@ use bun_engine_wasm_format::{
     FloatBinaryOp, FloatUnaryOp, IntBinaryOp, IntUnaryOp, ValType, VisitNumeric,
 };
 
-use super::condition::{Condition, Decision};
+use super::condition::Relation;
 use super::division::Wanted;
-use super::operand::Operand;
-use super::registers::Source;
+use super::operand::{Operand, Place};
 use super::{Compiled, Function};
 use crate::abi::Trap;
 
@@ -67,15 +66,15 @@ impl Function<'_> {
     #[inline(always)]
     fn binary(&mut self, width: Width, op: IntBinaryOp) {
         let (mut rhs, mut lhs) = (self.pop(), self.pop());
-        match (lhs, rhs) {
-            (Operand::Constant(_, lhs), Operand::Constant(_, rhs)) => {
+        match (lhs.place(), rhs.place()) {
+            (Place::Constant(lhs), Place::Constant(rhs)) => {
                 return self.push_lazy(Operand::int(width, fold_binary(op, lhs, rhs)));
             }
-            (Operand::Constant(_, 0), _) if op == IntBinaryOp::Sub => {
+            (Place::Constant(0), _) if op == IntBinaryOp::Sub => {
                 return self.negate(width, rhs);
             }
-            (Operand::Register(..), _) => {}
-            (Operand::Constant(..), _) | (_, Operand::Register(..)) if op != IntBinaryOp::Sub => {
+            (Place::Register(_), _) => {}
+            (Place::Constant(_), _) | (_, Place::Register(_)) if op != IntBinaryOp::Sub => {
                 core::mem::swap(&mut lhs, &mut rhs);
             }
             _ => {}
@@ -91,15 +90,15 @@ impl Function<'_> {
         match op {
             IntBinaryOp::Add => self.masm.add(width, dst, lhs, src),
             IntBinaryOp::Sub => self.masm.sub(width, dst, lhs, src),
-            IntBinaryOp::Mul => match rhs {
-                Source::Constant(factor) if factor.is_power_of_two() => {
+            IntBinaryOp::Mul => match rhs.constant() {
+                Some(factor) if factor.is_power_of_two() => {
                     let amount = factor.trailing_zeros() as u8;
                     self.masm.shift(Shift::Left, width, dst, lhs, amount);
                 }
                 _ => self.masm.mul(width, dst, lhs, src),
             },
-            IntBinaryOp::And => match rhs {
-                Source::Constant(mask @ (0..=0xffff | 0xffff_ffff)) => {
+            IntBinaryOp::And => match rhs.constant() {
+                Some(mask @ (0..=0xffff | 0xffff_ffff)) => {
                     self.masm.and(width, dst, lhs, mask);
                 }
                 _ => self.masm.and(width, dst, lhs, src),
@@ -119,12 +118,13 @@ impl Function<'_> {
     }
 
     #[inline(never)]
-    fn defer_test(&mut self, width: Width, lhs: Operand, rhs: Source) {
-        let (value, mask) = match rhs {
-            Source::Frame(_) => (rhs, Source::Register(self.gpr(lhs))),
+    fn defer_test(&mut self, width: Width, lhs: Operand, rhs: Operand) {
+        let (value, mask) = match rhs.place() {
+            Place::Slot(_) => (rhs, Operand::in_register(lhs.ty(), self.register(lhs))),
             _ => (self.source(lhs), rhs),
         };
-        self.defer(Condition::Test(width, TestCond::NonZero, value, mask));
+        self.set_condition(Relation::Test(width, TestCond::NonZero), value, mask);
+        self.defer_condition();
     }
 
     #[inline(never)]
@@ -170,24 +170,24 @@ impl Function<'_> {
 
     fn reinterpret(&mut self, to: ValType, bank: Bank) -> Compiled {
         let value = self.pop();
-        if let Operand::Constant(..) | Operand::Slot(..) = value {
+        if let Place::Constant(_) | Place::Slot(_) = value.place() {
             self.push(value.with_type(to));
             return Ok(());
         }
         self.lock(value);
         let value = self.locate(value);
         let dst = self.result(self.next(), bank);
-        match (value, to) {
-            (Operand::Register(_, src), ValType::I32) => {
+        match (value.place(), to) {
+            (Place::Register(src), ValType::I32) => {
                 self.masm.move_f32_to_bits(dst.gpr(), src.fpr());
             }
-            (Operand::Register(_, src), ValType::I64) => {
+            (Place::Register(src), ValType::I64) => {
                 self.masm.move_f64_to_bits(dst.gpr(), src.fpr());
             }
-            (Operand::Register(_, src), ValType::F32) => {
+            (Place::Register(src), ValType::F32) => {
                 self.masm.move_bits_to_f32(dst.fpr(), src.gpr());
             }
-            (Operand::Register(_, src), _) => self.masm.move_bits_to_f64(dst.fpr(), src.gpr()),
+            (Place::Register(src), _) => self.masm.move_bits_to_f64(dst.fpr(), src.gpr()),
             _ => self.move_operand(dst, value.with_type(to)),
         }
         self.push_register(to, dst);
@@ -226,21 +226,24 @@ impl VisitNumeric for Function<'_> {
 
     #[inline]
     fn f32_const(&mut self, bits: u32) -> Compiled {
-        self.push_lazy(Operand::Constant(ValType::F32, bits.into()));
+        self.push_lazy(Operand::of_bits(ValType::F32, bits.into()));
         Ok(())
     }
 
     #[inline]
     fn f64_const(&mut self, bits: u64) -> Compiled {
-        self.push_lazy(Operand::Constant(ValType::F64, bits));
+        self.push_lazy(Operand::of_bits(ValType::F64, bits));
         Ok(())
     }
 
     #[inline(never)]
     fn int_eqz(&mut self, width: Width) -> Compiled {
-        match self.pop_decision(width) {
-            Decision::Known(holds) => self.push_lazy(Operand::int(Width::W32, (!holds).into())),
-            Decision::Unknown(holds) => self.push_condition(holds.inverted(), self.next()),
+        match self.pop_condition(width) {
+            Some(holds) => self.push_lazy(Operand::int(Width::W32, (!holds).into())),
+            None => {
+                self.invert_condition();
+                self.push_condition(self.next());
+            }
         }
         Ok(())
     }
@@ -312,7 +315,9 @@ impl VisitNumeric for Function<'_> {
     #[inline(never)]
     fn float_compare(&mut self, width: FloatWidth, cond: FloatCond) -> Compiled {
         let (rhs, lhs) = (self.pop_fpr(), self.pop_fpr());
-        self.push_condition(Condition::Float(width, cond, lhs, rhs), self.next());
+        let operand = |reg| Operand::in_register(ValType::float(width), reg);
+        self.set_condition(Relation::Float(width, cond), operand(lhs), operand(rhs));
+        self.push_condition(self.next());
         Ok(())
     }
 
@@ -353,7 +358,7 @@ impl VisitNumeric for Function<'_> {
 
     #[inline(never)]
     fn i32_wrap_i64(&mut self) -> Compiled {
-        if let Operand::Slot(..) = self.top() {
+        if let Place::Slot(_) = self.top().place() {
             self.narrow_top(ValType::I32);
             return Ok(());
         }
@@ -366,8 +371,8 @@ impl VisitNumeric for Function<'_> {
 
     #[inline(never)]
     fn i64_extend_i32(&mut self, sign: Sign) -> Compiled {
-        match (sign, self.top()) {
-            (Sign::Unsigned, Operand::Register(..)) => {
+        match (sign, self.top().place()) {
+            (Sign::Unsigned, Place::Register(_)) => {
                 self.narrow_top(ValType::I64);
                 Ok(())
             }

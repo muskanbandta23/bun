@@ -286,6 +286,17 @@ impl ValType {
     }
 
     #[inline]
+    pub const fn to_bits(self) -> u32 {
+        self.0
+    }
+
+    /// Undoes [`Self::to_bits`].
+    #[inline]
+    pub const fn from_bits(bits: u32) -> Self {
+        Self(bits)
+    }
+
+    #[inline]
     pub const fn kind(self) -> ValKind {
         match self.0 & KIND_MASK {
             0 => ValKind::I32,

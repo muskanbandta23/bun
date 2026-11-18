@@ -6,51 +6,55 @@ use bun_engine_wasm_format::opcode::{BR_IF, I32_EQZ, IF, SELECT, SELECT_TYPED};
 use bun_engine_wasm_format::{ValKind, ValType};
 
 use super::Function;
-use super::operand::{Operand, untrusted};
-use super::registers::Source;
+use super::operand::{Operand, Place, untrusted};
 
 #[derive(Clone, Copy)]
-pub(super) enum Condition {
+pub(super) enum Relation {
     /// The left side is no constant, and at most one is in the frame.
-    Compare(Width, Cond, Source, Source),
+    Compare(Width, Cond),
     /// Of a value, which is no constant, with a mask, which is not in the frame.
-    Test(Width, TestCond, Source, Source),
-    Float(FloatWidth, FloatCond, Fpr, Fpr),
+    Test(Width, TestCond),
+    /// Both are in registers.
+    Float(FloatWidth, FloatCond),
 }
 
-/// What decides where control goes.
-pub(super) enum Decision {
-    Known(bool),
-    Unknown(Condition),
-}
-
-/// A condition that stands in for the operand at the top of the stack until the next instruction.
-#[derive(Clone, Copy)]
-pub(super) struct Pending {
-    condition: Condition,
-    locked: RegisterSet,
-}
-
-const ALL_BITS: Source = Source::Constant(u64::MAX);
-
-impl Condition {
+impl Relation {
     #[inline]
-    pub(super) fn inverted(self) -> Self {
+    fn inverted(self) -> Self {
         match self {
-            Self::Compare(width, cond, a, b) => Self::Compare(width, cond.inverted(), a, b),
-            Self::Test(width, cond, a, b) => Self::Test(width, cond.inverted(), a, b),
-            Self::Float(width, cond, a, b) => Self::Float(width, cond.inverted(), a, b),
+            Self::Compare(width, cond) => Self::Compare(width, cond.inverted()),
+            Self::Test(width, cond) => Self::Test(width, cond.inverted()),
+            Self::Float(width, cond) => Self::Float(width, cond.inverted()),
         }
     }
 }
 
+/// The last that was set up. The operands are located.
+pub(super) struct Condition {
+    relation: Relation,
+    lhs: Operand,
+    rhs: Operand,
+    /// If it stands in for the operand at the top of the stack, what has to stay locked.
+    deferred: Option<RegisterSet>,
+}
+
+const ALL_BITS: Operand = Operand::of_bits(ValType::I64, u64::MAX);
+
+impl Condition {
+    pub(super) const NONE: Self = Self {
+        relation: Relation::Test(Width::W32, TestCond::NonZero),
+        lhs: ALL_BITS,
+        rhs: ALL_BITS,
+        deferred: None,
+    };
+}
+
 #[inline(always)]
-fn mask(source: Source) -> RegOrImm {
-    match source {
-        Source::Register(reg) => reg.into(),
-        Source::Constant(bits) if bits == u64::MAX || bits <= 0xffff => RegOrImm::Imm(bits as i64),
-        Source::Constant(bits) => untrusted(bits),
-        Source::Frame(_) => unreachable!(),
+fn mask(mask: Operand) -> RegOrImm {
+    match mask.constant() {
+        Some(bits @ (0..=0xffff | u64::MAX)) => bits.into(),
+        Some(bits) => untrusted(bits),
+        None => mask.register().gpr().into(),
     }
 }
 
@@ -64,91 +68,94 @@ impl Function<'_> {
         )
     }
 
-    /// The next instruction takes it.
     #[inline(always)]
-    pub(super) fn defer(&mut self, condition: Condition) {
-        self.pending = Some(Pending {
-            condition,
-            locked: self.registers.locked,
-        });
+    pub(super) fn set_condition(&mut self, relation: Relation, lhs: Operand, rhs: Operand) {
+        self.condition.relation = relation;
+        self.condition.lhs = lhs;
+        self.condition.rhs = rhs;
     }
 
     #[inline(always)]
-    pub(super) fn push_condition(&mut self, condition: Condition, next: usize) {
+    pub(super) fn invert_condition(&mut self) {
+        self.condition.relation = self.condition.relation.inverted();
+    }
+
+    /// The next instruction takes it.
+    #[inline(always)]
+    pub(super) fn defer_condition(&mut self) {
+        self.condition.deferred = Some(self.registers.locked);
+    }
+
+    #[inline(always)]
+    pub(super) fn push_condition(&mut self, next: usize) {
         if self.is_tested_at(next) {
-            self.defer(condition);
+            self.defer_condition();
         } else {
-            let result = self.boolean(condition, next);
+            let result = self.boolean(next);
             self.push_register(ValType::I32, result);
         }
     }
 
-    /// Whether the integer at the top of the stack is not zero.
+    /// Whether the integer at the top of the stack is not zero. If that is not known, it is the condition.
     #[inline(always)]
-    pub(super) fn pop_decision(&mut self, width: Width) -> Decision {
-        if let Some(pending) = self.pending.take() {
-            self.registers.locked |= pending.locked;
-            return Decision::Unknown(pending.condition);
+    pub(super) fn pop_condition(&mut self, width: Width) -> Option<bool> {
+        if let Some(locked) = self.condition.deferred.take() {
+            self.registers.locked |= locked;
+            return None;
         }
-        match self.pop() {
-            Operand::Constant(_, bits) => Decision::Known(bits != 0),
-            value => {
-                let value = self.source(value);
-                Decision::Unknown(Condition::Test(width, TestCond::NonZero, value, ALL_BITS))
-            }
+        let value = self.pop();
+        if let Some(bits) = value.constant() {
+            return Some(bits != 0);
         }
+        let value = self.source(value);
+        self.set_condition(Relation::Test(width, TestCond::NonZero), value, ALL_BITS);
+        None
     }
 
-    pub(super) fn branch(&mut self, condition: Condition, target: Label) {
-        match condition {
-            Condition::Compare(width, cond, lhs, rhs) => {
+    pub(super) fn branch_on_condition(&mut self, target: Label) {
+        let (lhs, rhs) = (self.condition.lhs, self.condition.rhs);
+        match self.condition.relation {
+            Relation::Compare(width, cond) => {
                 let (lhs, rhs) = (self.reg_or_mem(lhs), self.src(rhs));
                 self.masm.branch(width, cond, lhs, rhs, target);
             }
-            Condition::Test(width, cond, value, bits) => {
-                let value = self.reg_or_mem(value);
-                self.masm
-                    .branch_test(width, cond, value, mask(bits), target);
+            Relation::Test(width, cond) => {
+                let value = self.reg_or_mem(lhs);
+                self.masm.branch_test(width, cond, value, mask(rhs), target);
             }
-            Condition::Float(width, cond, lhs, rhs) => {
+            Relation::Float(width, cond) => {
+                let (lhs, rhs) = (lhs.register().fpr(), rhs.register().fpr());
                 self.masm.branch_float(width, cond, lhs, rhs, target);
             }
         }
     }
 
     #[inline(never)]
-    fn boolean(&mut self, condition: Condition, next: usize) -> Gpr {
-        let dst = match condition {
-            Condition::Compare(_, _, Source::Register(operand), _)
-            | Condition::Test(_, _, Source::Register(operand), _) => {
-                self.result_reusing(next, operand).gpr()
-            }
-            _ => self.result(next, Bank::Gpr).gpr(),
+    fn boolean(&mut self, next: usize) -> Gpr {
+        let (lhs, rhs) = (self.condition.lhs, self.condition.rhs);
+        let dst = match lhs.place() {
+            Place::Register(reg) if reg.bank() == Bank::Gpr => self.result_reusing(next, reg),
+            _ => self.result(next, Bank::Gpr),
         };
-        match condition {
-            Condition::Compare(width, cond, lhs, rhs) => {
+        let dst = dst.gpr();
+        match self.condition.relation {
+            Relation::Compare(width, cond) => {
                 let (lhs, rhs) = (self.reg_or_mem(lhs), self.src(rhs));
                 self.masm.compare(width, cond, dst, lhs, rhs);
             }
-            Condition::Test(width, cond, value, bits) => {
-                let value = self.reg_or_mem(value);
-                self.masm.test(width, cond, dst, value, mask(bits));
+            Relation::Test(width, cond) => {
+                let value = self.reg_or_mem(lhs);
+                self.masm.test(width, cond, dst, value, mask(rhs));
             }
-            Condition::Float(width, cond, lhs, rhs) => {
+            Relation::Float(width, cond) => {
+                let (lhs, rhs) = (lhs.register().fpr(), rhs.register().fpr());
                 self.masm.compare_float(width, cond, dst, lhs, rhs);
             }
         }
         dst
     }
 
-    fn source_in_register(&mut self, width: Width, source: Source) -> Gpr {
-        match source {
-            Source::Register(reg) => reg,
-            Source::Frame(offset) => self.gpr(Operand::Slot(ValType::int(width), offset)),
-            Source::Constant(_) => unreachable!(),
-        }
-    }
-
+    #[inline(always)]
     pub(super) fn compare_ints(&mut self, width: Width, cond: Cond, next: usize) {
         let (rhs, lhs) = (self.pop(), self.pop());
         let (cond, lhs, rhs) = match (lhs.constant(), rhs.constant()) {
@@ -163,46 +170,38 @@ impl Function<'_> {
             (None, _) => (cond, lhs, rhs),
         };
         let rhs = self.source(rhs);
-        let lhs = match rhs {
-            Source::Frame(_) => Source::Register(self.gpr(lhs)),
+        let lhs = match rhs.place() {
+            Place::Slot(_) => Operand::in_register(lhs.ty(), self.register(lhs)),
             _ => self.source(lhs),
         };
-        self.push_condition(Condition::Compare(width, cond, lhs, rhs), next);
+        self.set_condition(Relation::Compare(width, cond), lhs, rhs);
+        self.push_condition(next);
     }
 
     pub(super) fn select_value(&mut self, ty: Option<ValType>, next: usize) {
-        let decision = self.pop_decision(Width::W32);
-        let condition = match decision {
-            Decision::Known(holds) => return self.select_known(holds),
-            Decision::Unknown(condition) => condition,
-        };
+        if let Some(holds) = self.pop_condition(Width::W32) {
+            return self.select_known(holds);
+        }
         let (or, then) = (self.pop(), self.pop());
         let ty = ty.unwrap_or_else(|| then.ty());
         self.lock(then);
         let (or, then) = (self.register(or), self.register(then));
-        let reusable = if self.registers.free.contains(or) {
-            or
-        } else {
-            then
-        };
-        let kind = ty.kind();
-        match condition {
-            Condition::Compare(width, cond, lhs, rhs) if or.bank() == Bank::Gpr => {
-                let (cond, lhs, rhs) = match rhs {
-                    Source::Frame(_) => (cond.commuted(), rhs, lhs),
+        let is_free = self.registers.free.contains(or);
+        let reusable = if is_free { or } else { then };
+        let (lhs, rhs) = (self.condition.lhs, self.condition.rhs);
+        let dst = match (self.condition.relation, ty.kind()) {
+            (Relation::Compare(width, cond), ValKind::I32 | ValKind::I64 | ValKind::Ref) => {
+                let (cond, lhs, rhs) = match rhs.place() {
+                    Place::Slot(_) => (cond.commuted(), rhs, lhs),
                     _ => (cond, lhs, rhs),
                 };
-                let lhs = self.source_in_register(width, lhs);
-                let rhs = match rhs {
-                    Source::Register(reg) => reg.into(),
-                    Source::Constant(bits) => untrusted(bits),
-                    Source::Frame(_) => unreachable!(),
-                };
+                let (lhs, rhs) = (self.gpr(lhs), self.reg_or_imm(rhs));
                 let dst = self.result_reusing(next, reusable);
                 (self.masm).select(width, cond, dst.gpr(), lhs, rhs, then.gpr(), or.gpr());
-                self.push_register(ty, dst);
+                dst
             }
-            Condition::Float(width, cond, lhs, rhs) if kind != ValKind::V128 => {
+            (Relation::Float(width, cond), kind) if kind != ValKind::V128 => {
+                let (lhs, rhs) = (lhs.register().fpr(), rhs.register().fpr());
                 let dst = self.result_reusing(next, reusable);
                 let masm = &mut self.masm;
                 if dst.bank() == Bank::Gpr {
@@ -211,20 +210,18 @@ impl Function<'_> {
                     let (dst, then, or) = (dst.fpr(), then.fpr(), or.fpr());
                     masm.select_float_on_float(width, cond, dst, lhs, rhs, then, or);
                 }
-                self.push_register(ty, dst);
+                dst
             }
-            _ => {
-                let (width, cond, value, bits) = match condition {
-                    Condition::Test(width, cond, value, bits) => {
-                        (width, cond, self.source_in_register(width, value), bits)
-                    }
+            (relation, kind) => {
+                let (width, cond, value, bits) = match relation {
+                    Relation::Test(width, cond) => (width, cond, self.gpr(lhs), mask(rhs)),
                     _ => {
-                        let value = self.boolean(condition, self.offset);
-                        (Width::W32, TestCond::NonZero, value, ALL_BITS)
+                        let value = self.boolean(self.offset);
+                        (Width::W32, TestCond::NonZero, value, mask(ALL_BITS))
                     }
                 };
                 let dst = self.result_reusing(next, reusable);
-                let (masm, bits) = (&mut self.masm, mask(bits));
+                let masm = &mut self.masm;
                 match kind {
                     ValKind::V128 => {
                         let (dst, then, or) = (dst.fpr(), then.fpr(), or.fpr());
@@ -238,9 +235,10 @@ impl Function<'_> {
                         masm.select_test(width, cond, dst.gpr(), value, bits, then.gpr(), or.gpr());
                     }
                 }
-                self.push_register(ty, dst);
+                dst
             }
-        }
+        };
+        self.push_register(ty, dst);
     }
 
     fn select_known(&mut self, holds: bool) {
@@ -249,10 +247,10 @@ impl Function<'_> {
             return;
         }
         self.pop();
-        match or {
-            Operand::Slot(ty, _) => {
+        match or.place() {
+            Place::Slot(_) => {
                 let reg = self.writable(or);
-                self.push_register(ty, reg);
+                self.push_register(or.ty(), reg);
             }
             _ => self.push(or),
         }

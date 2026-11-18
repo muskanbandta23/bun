@@ -7,8 +7,8 @@ use smallvec::SmallVec;
 
 use crate::heap::Survivors;
 use crate::{
-    ConditionSet, Cx, InternalMethod, JsObject, JsResult, PropertySlot, Shape, Value, Vm,
-    Watchpoint,
+    ConditionSet, Cx, Gc, InternalMethod, JsObject, JsResult, JsString, PropertySlot, Shape, Value,
+    Vm, Watchpoint,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -64,6 +64,19 @@ impl Shape {
         (bits > GAVE_UP || bits == Value::NULL.to_bits()).then(|| unsafe { Value::from_bits(bits) })
     }
 
+    #[inline]
+    pub fn cached_tagged_string(&self) -> Option<Gc<JsString>> {
+        self.cached_special_property(SpecialProperty::ToStringTag)?;
+        self.rare_data()?.tagged_string.get()
+    }
+
+    pub(crate) fn cache_tagged_string(&self, tag: Gc<JsString>, string: Gc<JsString>) {
+        if self.cached_special_property(SpecialProperty::ToStringTag) == Some(tag.into()) {
+            // SAFETY: the shape traces its rare data.
+            unsafe { (self.ensure_rare_data().tagged_string).set(self, Some(string)) };
+        }
+    }
+
     fn cache_special_property(&self, vm: &Vm, property: SpecialProperty, slot: &PropertySlot) {
         let cache = &self.ensure_rare_data().special_properties;
         let cached = &cache.values[property as usize];
@@ -94,6 +107,10 @@ impl Shape {
         };
         cache.guards.borrow_mut()[property as usize] = Some(Box::new((conditions, watchpoints)));
         cached.set(value.to_bits());
+        if property == SpecialProperty::ToStringTag {
+            // SAFETY: no cell.
+            unsafe { (self.ensure_rare_data().tagged_string).set_without_barrier(None) };
+        }
         self.write_barrier_for_cell();
     }
 }

@@ -1,5 +1,7 @@
 #include "engine/Engine.h"
 
+#include <mutex>
+
 namespace JSC {
 
 Engine::Options Options::s_values;

@@ -59,18 +59,4 @@ size_t Heap::protectedGlobalObjectCount()
     return count;
 }
 
-TypeCountSet Heap::objectTypeCounts()
-{
-    TypeCountSet counts;
-    forEachLiveCell([&](JSCell* cell) { counts.add(cell->className()); });
-    return counts;
-}
-
-TypeCountSet Heap::protectedObjectTypeCounts()
-{
-    TypeCountSet counts;
-    forEachProtectedCell([&](JSCell* cell) { counts.add(cell->className()); });
-    return counts;
-}
-
 } // namespace JSC

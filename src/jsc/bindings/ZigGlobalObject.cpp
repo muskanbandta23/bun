@@ -229,10 +229,6 @@
 #include "JSBunRequest.h"
 #include "ServerRouteList.h"
 
-#if ENABLE(REMOTE_INSPECTOR)
-#include "JavaScriptCore/RemoteInspectorServer.h"
-#endif
-
 #include "NodeFSStatBinding.h"
 #include "NodeFSStatFSBinding.h"
 #include "NodeDirent.h"
@@ -3139,10 +3135,6 @@ void GlobalObject::finishCreation(VM& vm)
     // Initialize LazyProperties for stdin/stderr/stdout
 
     configureNodeVM(vm, this);
-
-#if ENABLE(REMOTE_INSPECTOR)
-    setInspectable(false);
-#endif
 
     addBuiltinGlobals(vm);
     // hostDidCreateRealm() runs lazy property builders, which ask for the thread's default global object. The first one of a thread is recorded by its creator only after this returns.

@@ -12,12 +12,7 @@
 #include <wtf/text/WTFString.h>
 
 #include <JavaScriptCore/JSGlobalObjectInspectorController.h>
-#include <JavaScriptCore/JSGlobalObjectDebuggable.h>
 #include <JavaScriptCore/ConsoleClient.h>
-
-#include <JavaScriptCore/InspectorScriptProfilerAgent.h>
-#include <JavaScriptCore/InspectorDebuggerAgent.h>
-#include <JavaScriptCore/InspectorConsoleAgent.h>
 
 namespace Bun {
 using namespace JSC;
@@ -37,10 +32,8 @@ void ConsoleObject::messageWithTypeAndLevel(MessageType type, MessageLevel level
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (globalObject->inspectable()) {
-        if (auto client = globalObject->inspectorController().consoleClient()) {
-            client->messageWithTypeAndLevel(type, level, globalObject, arguments.copyRef());
-            RETURN_IF_EXCEPTION(scope, );
-        }
+        globalObject->inspectorController().addConsoleMessage(globalObject, type, level, arguments->span());
+        RETURN_IF_EXCEPTION(scope, );
     }
     auto args = arguments.ptr();
     JSC::EncodedJSValue jsArgs[255];
@@ -137,20 +130,14 @@ void ConsoleObject::screenshot(JSGlobalObject*, Ref<ScriptArguments>&&)
 
 void ConsoleObject::profile(JSC::JSGlobalObject* globalObject, const String& title)
 {
-    if (globalObject->inspectable()) {
-        if (auto client = globalObject->inspectorController().consoleClient()) {
-            client->profile(globalObject, title);
-        }
-    }
+    if (globalObject->inspectable())
+        globalObject->inspectorController().startConsoleProfile(globalObject, title);
 }
 
 void ConsoleObject::profileEnd(JSC::JSGlobalObject* globalObject, const String& title)
 {
-    if (globalObject->inspectable()) {
-        if (auto client = globalObject->inspectorController().consoleClient()) {
-            client->profileEnd(globalObject, title);
-        }
-    }
+    if (globalObject->inspectable())
+        globalObject->inspectorController().stopConsoleProfile(globalObject, title);
 }
 
 }

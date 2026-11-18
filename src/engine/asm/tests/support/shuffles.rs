@@ -28,8 +28,7 @@ fn indices(pattern: Pattern, f: impl Fn(u8) -> u8) -> Pattern {
     pattern.map(|index| if index < 32 { f(index) } else { index })
 }
 
-/// What processors have instructions for, with the operands in any order, the same, or zero.
-pub(crate) fn with_names() -> Vec<Pattern> {
+fn interleavings() -> Vec<Pattern> {
     let mut all = Vec::new();
     for bytes in [1, 2, 4, 8] {
         let count = 16 / bytes;
@@ -43,6 +42,30 @@ pub(crate) fn with_names() -> Vec<Pattern> {
                 of_lanes(bytes, |i| i + (i + odd) % 2 * count),
             ]);
         }
+    }
+    all
+}
+
+/// One byte is from the other vector, or zero.
+pub(crate) fn interleavings_but_for_a_byte() -> Vec<Pattern> {
+    let mut all = Vec::new();
+    for pattern in interleavings() {
+        for byte in 0..16 {
+            for index in [pattern[byte] ^ 16, ZERO] {
+                let mut changed = pattern;
+                changed[byte] = index;
+                all.push(changed);
+            }
+        }
+    }
+    all
+}
+
+/// What processors have instructions for, with the operands in any order, the same, or zero.
+pub(crate) fn with_names() -> Vec<Pattern> {
+    let mut all = interleavings();
+    for bytes in [1, 2, 4, 8] {
+        let count = 16 / bytes;
         for lane in 0..count {
             all.extend([
                 of_lanes(bytes, |_| lane),

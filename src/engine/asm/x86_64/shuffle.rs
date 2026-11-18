@@ -496,7 +496,7 @@ impl MacroAssembler {
             Single::Shift(op, amount) => self.sse_shift(op, dst, src, amount),
             Single::Keep(bytes) => self.sse_with_constant(Sse::Pand, dst, src, mask_of(bytes)),
             Single::Lookup(pattern) => {
-                self.sse_with_constant(Sse::Pshufb, dst, src, pattern.indices());
+                self.sse_with_constant(Sse::Pshufb, dst, src, pattern.bits());
             }
         }
     }

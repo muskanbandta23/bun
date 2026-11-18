@@ -601,7 +601,7 @@ impl MacroAssembler {
                 self.asm.neon_bitwise(NeonBitwise::And, dst, src, mask);
             }
             Single::Lookup(pattern) => {
-                let indices = self.constant_unless(dst, &[src], pattern.indices());
+                let indices = self.constant_unless(dst, &[src], pattern.bits());
                 self.asm
                     .neon_lookup(NeonLookup::Tbl, B16, dst, src, 1, indices);
             }
@@ -640,7 +640,7 @@ impl MacroAssembler {
     }
 
     fn look_up_in_two(&mut self, pattern: Pattern, dst: Fpr, table: Fpr, live: &[Fpr]) {
-        let indices = self.constant_unless(dst, live, pattern.indices());
+        let indices = self.constant_unless(dst, live, pattern.bits());
         self.asm
             .neon_lookup(NeonLookup::Tbl, B16, dst, table, 2, indices);
     }
@@ -659,7 +659,7 @@ impl MacroAssembler {
         // The complement of an index for one table is past the end of the other.
         let indices = self.scratch_fpr(0);
         let of_other = mask_of(pattern.taken_from(Side::Second));
-        self.move_vector_constant(indices, pattern.folded().indices() ^ of_other);
+        self.move_vector_constant(indices, pattern.folded().bits() ^ of_other);
         self.asm
             .neon_lookup(NeonLookup::Tbl, B16, dst, own, 1, indices);
         self.asm.neon_unary(NeonUnary::Not, B16, indices, indices);
@@ -732,7 +732,7 @@ impl MacroAssembler {
                 let (pattern, kept, table) = seen_from(side);
                 let indices = self.scratch_fpr(0);
                 let of_table = pattern.replace(Side::First, ZERO).folded();
-                self.move_vector_constant(indices, of_table.indices());
+                self.move_vector_constant(indices, of_table.bits());
                 self.move_vector(dst, kept);
                 self.asm
                     .neon_lookup(NeonLookup::Tbx, B16, dst, table, 1, indices);

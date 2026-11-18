@@ -242,7 +242,7 @@ impl MacroAssembler {
 
     fn complement(&mut self, op: Sse, dst: Fpr, lhs: Fpr, rhs: Fpr) {
         let scratch = self.scratch_fpr(0);
-        if !self.has_avx() && dst == rhs && !op.commutes() {
+        if dst == rhs && !op.commutes() {
             self.sse_binary(op, scratch, lhs, rhs);
             self.set_all_bits(dst);
         } else {

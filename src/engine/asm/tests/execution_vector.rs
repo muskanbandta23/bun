@@ -619,6 +619,12 @@ fn shuffles_near_those_with_names() {
 }
 
 #[test]
+fn shuffles_that_nearly_interleave() {
+    let patterns = shuffles::interleavings_but_for_a_byte();
+    check_shuffles(patterns, &mut Random(seed()));
+}
+
+#[test]
 fn random_shuffles() {
     let random = &mut Random(seed());
     check_shuffles(shuffles::random(count(1500), random), random);

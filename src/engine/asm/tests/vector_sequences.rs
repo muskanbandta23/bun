@@ -133,6 +133,10 @@ fn arithmetic() {
     sequences! {
         vector_unary(Not, A, A) => "pcmpeqd pxor", "vpcmpeqd vpxor", "mvn";
         vector_unary(I32x4Neg, A, A) => "xorps psubd movaps", "vxorps vpsubd", "neg";
+        vector_unary(I8x16Popcnt, A, A)
+            => "movaps psrlw pand pand movaps pshufb movaps pshufb paddb",
+            "vpsrlw vpand vpand vmovaps vpshufb vpshufb vpaddb",
+            "cnt";
         vector_unary(I64x2Abs, A, A) => "pshufd psrad pxor psubq", "vxorps vpsubq vblendvpd", "abs";
         vector_unary(I16x8ExtendHighI8x16S, A, A) => "punpckhbw psraw", "vpunpckhbw vpsraw", "sshll2";
         vector_unary(I16x8ExtendHighI8x16S, D, A) => "pshufd pmovsxbw", "vpunpckhbw vpsraw", "sshll2";

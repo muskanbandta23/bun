@@ -16,7 +16,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use bun_engine_asm::{Arm64Features, Relaxed, X64Features};
 use bun_engine_codegen::Target;
-use bun_engine_codegen::ir::{Function, validate};
+use bun_engine_codegen::analysis::Cfg;
+use bun_engine_codegen::ir::{Function, Op, PatchpointFlags, validate};
 use bun_engine_codegen::passes::{Analyses, Level, Pass};
 
 use super::generator::{PROFILES, Program, Shape, generate};
@@ -25,7 +26,6 @@ use super::memory::{Input, Layout};
 use super::random::{Random, mix};
 use super::reducer::reduce;
 
-const INPUTS: usize = 5;
 const FUEL: u64 = 200_000;
 
 pub(crate) fn setting(name: &str) -> Option<String> {
@@ -96,7 +96,8 @@ impl Case {
     pub(crate) fn generate(seed: u64, shape: &Shape, world: &World) -> Self {
         let program = generate(seed, shape, world.target, &world.layout);
         let mut random = Random::new(mix(seed, 3));
-        let inputs = (0..INPUTS)
+        let runs_straight = shape.weights.loops + shape.weights.graphs == 0;
+        let inputs = (0..if runs_straight { 12 } else { 5 })
             .map(|_| program.input(&world.layout, &mut random))
             .collect();
         let text = || {
@@ -120,13 +121,23 @@ impl Case {
         program: Program,
         inputs: Vec<Input>,
     ) -> Result<Self, String> {
+        Self::with_fuel(seed, world, program, inputs, FUEL)
+    }
+
+    fn with_fuel(
+        seed: u64,
+        world: World,
+        program: Program,
+        inputs: Vec<Input>,
+        fuel: u64,
+    ) -> Result<Self, String> {
         let function = &program.function;
         validate(function)?;
         let mut interpreter = Interpreter::new(&world.layout, world.target);
         interpreter.load(function);
         let mut references = Vec::new();
         for input in &inputs {
-            let run = interpreter.run_to_end(function, input, world.options(Mode::Reference, FUEL));
+            let run = interpreter.run_to_end(function, input, world.options(Mode::Reference, fuel));
             if let Outcome::Undefined(reason) = run.outcome {
                 return Err(format!(
                     "{reason} after {} steps on {:x?}",
@@ -157,13 +168,23 @@ impl Case {
         })
     }
 
+    /// Also fails if the function takes much longer than the program.
     pub(crate) fn with_function(&self, function: Function) -> Result<Self, String> {
         let program = Program {
             function,
             target: self.program.target,
             params: self.program.params.clone(),
+            remarkable: Vec::new(),
         };
-        Self::new(self.seed, self.world.clone(), program, self.inputs.clone())
+        let steps = self.references.iter().map(|reference| reference.steps);
+        let fuel = 4 * steps.max().unwrap_or(0) + 1000;
+        let (world, inputs) = (self.world.clone(), self.inputs.clone());
+        let case = Self::with_fuel(self.seed, world, program, inputs, fuel)?;
+        let mut outcomes = case.references.iter().map(|reference| &reference.outcome);
+        if outcomes.any(|outcome| *outcome == Outcome::OutOfFuel) {
+            return Err("does not come to an end".into());
+        }
+        Ok(case)
     }
 
     /// Whether `function` does what the program may do.
@@ -275,8 +296,11 @@ impl Totals {
     }
 }
 
-fn report(subject: &mut impl Subject, case: Case) -> String {
+fn report(subject: &mut impl Subject, case: Case, problem: &str) -> String {
     let seed = case.seed;
+    if test_catching(subject, &case).is_ok() {
+        return format!("seed {seed}, only after the seeds before it\n{problem}");
+    }
     let mut case = subject.narrow(case);
     if setting("UNREDUCED").is_none() {
         case = reduce(case, &mut |candidate| {
@@ -325,7 +349,7 @@ pub(crate) fn campaign<S: Subject>(
                     problem.lines().next().unwrap_or_default()
                 );
             } else if is_first {
-                eprintln!("{}", report(&mut subject, case));
+                eprintln!("{}", report(&mut subject, case, &problem));
             }
         }
     };
@@ -347,16 +371,12 @@ pub(crate) fn campaign<S: Subject>(
 const PREREQUISITES: [&str; 1] = ["construct_ssa"];
 
 pub(crate) fn all_passes() -> Vec<&'static Pass> {
-    let mut passes: Vec<&Pass> = Vec::new();
-    for pass in [Level::Full, Level::Quick]
-        .into_iter()
-        .flat_map(Pass::pipeline)
-    {
-        if passes.iter().all(|known| known.name != pass.name) {
-            passes.push(pass);
-        }
-    }
-    passes
+    Pass::ALL.iter().collect()
+}
+
+fn has_natural_loops(function: &Function) -> bool {
+    let cfg = Cfg::new(function);
+    cfg.loops().values().all(|data| data.is_natural)
 }
 
 pub(crate) fn pass_named(name: &str) -> &'static Pass {
@@ -376,12 +396,18 @@ pub(crate) struct Passes {
     order: Order,
     /// Replaces the order.
     fixed: Option<Vec<&'static Pass>>,
+    /// Goes from one function to the next, as in a compiler.
+    analyses: Analyses,
 }
 
 impl Passes {
     pub(crate) fn new(order: Order) -> Self {
         let fixed = setting("PASSES").map(|names| names.split(',').map(pass_named).collect());
-        Self { order, fixed }
+        Self {
+            order,
+            fixed,
+            analyses: Analyses::default(),
+        }
     }
 
     fn schedules(&self, seed: u64) -> Vec<Vec<&'static Pass>> {
@@ -408,21 +434,46 @@ impl Passes {
         }
     }
 
+    /// What no input shows.
+    fn check_structure(function: &Function, had_natural_loops: bool) -> Result<(), String> {
+        if had_natural_loops && !has_natural_loops(function) {
+            return Err("a loop has got another entry".into());
+        }
+        let cfg = Cfg::new(function);
+        let instructions = cfg.order().iter();
+        let instructions = instructions.flat_map(|&block| function.instructions(block));
+        let mut tokens: Vec<u32> = instructions
+            .filter_map(|value| match *function.op(value) {
+                Op::Patchpoint(patchpoint) => Some(function.patchpoint(patchpoint)),
+                _ => None,
+            })
+            .filter(|data| data.flags.contains(PatchpointFlags::UNIQUE))
+            .map(|data| data.token.0)
+            .collect();
+        tokens.sort_unstable();
+        match tokens.chunk_by(|a, b| a == b).find(|same| same.len() > 1) {
+            Some(same) => Err(format!("#{} has been copied", same[0])),
+            None => Ok(()),
+        }
+    }
+
     /// The pass that fails, the function it was given, and what is wrong.
-    fn find_failure(&self, case: &Case) -> Option<(&'static Pass, Function, String)> {
+    fn find_failure(&mut self, case: &Case) -> Option<(&'static Pass, Function, String)> {
+        let target = case.world.target;
         for schedule in self.schedules(case.seed) {
-            let (mut function, mut analyses) = (case.program.function.clone(), Analyses::default());
+            let mut function = case.program.function.clone();
+            self.analyses.invalidate();
             for (position, &pass) in schedule.iter().enumerate() {
-                let result = catching(|| pass.run(&mut function, &mut analyses, case.world.target))
-                    .and_then(|()| {
-                        case.check(&function)
-                            .map_err(|problem| format!("{problem}\nafter:\n{function:?}"))
-                    });
+                let result = catching(|| pass.run(&mut function, &mut self.analyses, target));
+                let result = result.and_then(|()| {
+                    case.check(&function)
+                        .map_err(|problem| format!("{problem}\nafter:\n{function:?}"))
+                });
                 if let Err(problem) = result {
-                    let (mut before, mut analyses) =
-                        (case.program.function.clone(), Analyses::default());
+                    let mut before = case.program.function.clone();
+                    self.analyses = Analyses::default();
                     for earlier in &schedule[..position] {
-                        earlier.run(&mut before, &mut analyses, case.world.target);
+                        earlier.run(&mut before, &mut self.analyses, target);
                     }
                     return Some((pass, before, problem));
                 }

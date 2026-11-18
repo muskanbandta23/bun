@@ -141,3 +141,4 @@ value   WorkKind uint8_t
 # Modules, scopes and cached bytecode
 
 # Inspector, profilers and options
+opaque  Options struct Engine::Options

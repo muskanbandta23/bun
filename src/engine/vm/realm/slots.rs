@@ -138,6 +138,7 @@ realm_slots! {
         // Primitives
         string_constructor: JsObject = @String,
         string_object_shape: Shape,
+        string_prototype_iterator: JsFunction,
         string_iterator_prototype: JsObject,
         string_iterator_shape: Shape,
         number_prototype: JsObject,
@@ -185,6 +186,7 @@ realm_slots! {
         array_constructor: JsObject = @Array,
         array_iterator_shape: Shape,
         iterator_constructor: JsObject = @Iterator,
+        iterator_prototype_iterator: JsFunction,
         iterator_shape: Shape,
         iterator_result_shape: Shape,
         iterator_helper_prototype: JsObject,
@@ -308,6 +310,23 @@ realm_slots! {
         // Namespaces that other crates fill
         intl_object: JsObject,
         temporal_object: JsObject,
+        temporal_now_object: JsObject,
+        temporal_duration_constructor: JsObject,
+        temporal_duration_shape: Shape,
+        temporal_instant_constructor: JsObject,
+        temporal_instant_shape: Shape,
+        temporal_plain_date_constructor: JsObject,
+        temporal_plain_date_shape: Shape,
+        temporal_plain_date_time_constructor: JsObject,
+        temporal_plain_date_time_shape: Shape,
+        temporal_plain_month_day_constructor: JsObject,
+        temporal_plain_month_day_shape: Shape,
+        temporal_plain_time_constructor: JsObject,
+        temporal_plain_time_shape: Shape,
+        temporal_plain_year_month_constructor: JsObject,
+        temporal_plain_year_month_shape: Shape,
+        temporal_zoned_date_time_constructor: JsObject,
+        temporal_zoned_date_time_shape: Shape,
         webassembly_object: JsObject,
 
         // Intl
@@ -343,6 +362,7 @@ realm_slots! {
 
         // Only for built-ins
         private_is_array: JsFunction = @isArray,
+        private_collect_for_spread: JsFunction = @collectForSpread,
         private_flat_into_array: JsFunction = @flatIntoArray,
         private_is_typed_array_view: JsFunction = @isTypedArrayView,
         private_make_type_error: JsFunction = @makeTypeError,

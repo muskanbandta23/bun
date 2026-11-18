@@ -832,6 +832,12 @@ impl Function {
         Edges(data.first_edge..data.first_edge + data.edge_count)
     }
 
+    /// Whether the edge is still among those that leave its source.
+    #[inline]
+    pub fn is_attached(&self, edge: Edge) -> bool {
+        self.successors(self.source(edge)).0.contains(&edge.0)
+    }
+
     #[inline]
     pub fn successor(&self, block: Block, position: usize) -> Edge {
         assert!(position < self.blocks[block].edge_count as usize);

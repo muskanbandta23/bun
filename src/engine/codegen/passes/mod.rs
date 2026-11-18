@@ -24,6 +24,7 @@ mod preheaders;
 mod reaching;
 mod readability;
 mod rotate_loops;
+mod simplify;
 mod sink_into_cold_blocks;
 mod specialize_selects;
 mod unroll_loops;
@@ -54,6 +55,7 @@ pub struct Analyses {
     has_cfg: bool,
     has_dominators: bool,
     has_frequencies: bool,
+    simplify: simplify::Tables,
 }
 
 impl Analyses {
@@ -97,6 +99,14 @@ impl Analyses {
     }
 }
 
+#[cfg(debug_assertions)]
+impl Analyses {
+    /// The places in the source of the rules that the last run of `simplify` applied.
+    pub fn fired_rules(&self) -> &[&'static core::panic::Location<'static>] {
+        &self.simplify.fired_rules
+    }
+}
+
 pub struct Pass {
     pub name: &'static str,
     run: fn(&mut Function, &mut Analyses, Target),
@@ -123,6 +133,7 @@ passes! {
     LOWER_SWITCHES: lower_switches,
     LOWER_TOTAL_DIVISION: lower_total_division,
     ROTATE_LOOPS: rotate_loops,
+    SIMPLIFY: simplify,
     SINK_INTO_COLD_BLOCKS: sink_into_cold_blocks,
     SPECIALIZE_SELECTS: specialize_selects,
     UNROLL_LOOPS: unroll_loops,
@@ -136,17 +147,22 @@ const QUICK: &[Pass] = &[
 
 const FULL: &[Pass] = &[
     Pass::CONSTRUCT_SSA,
+    Pass::SIMPLIFY,
     Pass::SPECIALIZE_SELECTS,
     Pass::FOLD_PATH_CONSTANTS,
     Pass::HOIST_LOOP_INVARIANTS,
     Pass::ROTATE_LOOPS,
     Pass::ELIMINATE_REDUNDANT_MEMORY,
+    Pass::SIMPLIFY,
     Pass::ELIMINATE_DEAD_CODE,
     Pass::INFER_SWITCHES,
     Pass::DUPLICATE_TAILS,
+    Pass::FOLD_PATH_CONSTANTS,
     Pass::LOWER_SWITCHES,
     Pass::LOWER_TOTAL_DIVISION,
     Pass::BRANCHES_TO_SELECTS,
+    Pass::SIMPLIFY,
+    Pass::ELIMINATE_DEAD_CODE,
     Pass::SINK_INTO_COLD_BLOCKS,
 ];
 

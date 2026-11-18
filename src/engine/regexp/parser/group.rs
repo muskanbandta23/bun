@@ -1,8 +1,7 @@
 use bun_engine_text::CodeUnit;
 
-use super::names::Name;
-use super::quantifier::Repeated;
-use super::{GroupKind, MAX_DEPTH, Parser, Sink, try_push};
+use super::quantifier::{Atom, Repeated};
+use super::{Cursor, GroupKind, MAX_DEPTH, Parser, Sink, try_push};
 use crate::tree::{Group, Groups, MAX_GROUPS};
 use crate::{Error, Flags};
 
@@ -38,18 +37,21 @@ pub(super) enum Relation {
     },
 }
 
-impl<'a, C: CodeUnit, S: Sink> Parser<'a, C, S> {
-    #[inline]
+impl<'a, S: Sink> Parser<'a, S> {
+    #[inline(always)]
     pub(super) fn next_alternative(&mut self) -> Result<(), Error> {
         self.level.groups_before_alternative = self.group_count;
         self.sink.next_alternative()
     }
 
-    #[inline]
-    pub(super) fn open_group(&mut self) -> Result<(), Error> {
+    #[inline(always)]
+    pub(super) fn open_group<C: CodeUnit>(
+        &mut self,
+        cursor: &mut Cursor<'a, C>,
+    ) -> Result<(), Error> {
         let first_group = self.group_count + 1;
-        let kind = match self.eat(b'?') {
-            true => self.group_specifier()?,
+        let kind = match cursor.eat(b'?') {
+            true => self.group_specifier(cursor)?,
             false => GroupKind::Capture(self.add_group()?),
         };
         let (repeated, is_backward) = match kind {
@@ -57,7 +59,7 @@ impl<'a, C: CodeUnit, S: Sink> Parser<'a, C, S> {
                 self.open_lookbehinds += 1;
                 (Repeated::Lookbehind, true)
             }
-            GroupKind::Look { .. } if self.is_unicode => (Repeated::Nothing, false),
+            GroupKind::Look { .. } if cursor.is_unicode => (Repeated::Nothing, false),
             GroupKind::Look { .. } => (Repeated::Atom, false),
             _ => (Repeated::Atom, self.level.is_backward),
         };
@@ -74,8 +76,8 @@ impl<'a, C: CodeUnit, S: Sink> Parser<'a, C, S> {
         Ok(())
     }
 
-    #[inline]
-    pub(super) fn close_group(&mut self) -> Result<(), Error> {
+    #[inline(always)]
+    pub(super) fn close_group(&mut self) -> Result<Atom<S::Outer>, Error> {
         let (level, outer) = self.outer_levels.pop().ok_or(Error::UnmatchedParenthesis)?;
         let closed = core::mem::replace(&mut self.level, level);
         self.open_lookbehinds -= usize::from(matches!(closed.repeated, Repeated::Lookbehind));
@@ -83,8 +85,11 @@ impl<'a, C: CodeUnit, S: Sink> Parser<'a, C, S> {
             first: closed.first_group,
             end: self.group_count + 1,
         };
-        let quantifier = self.quantifier(closed.repeated)?;
-        self.sink.close(outer, captures, quantifier)
+        Ok(Atom::Group {
+            outer,
+            captures,
+            repeated: closed.repeated,
+        })
     }
 
     #[inline]
@@ -97,51 +102,77 @@ impl<'a, C: CodeUnit, S: Sink> Parser<'a, C, S> {
     }
 
     /// After `(?`.
-    #[inline]
-    fn group_specifier(&mut self) -> Result<GroupKind, Error> {
+    #[inline(always)]
+    fn group_specifier<C: CodeUnit>(
+        &mut self,
+        cursor: &mut Cursor<'a, C>,
+    ) -> Result<GroupKind, Error> {
         let look = |behind, negated| Ok(GroupKind::Look { behind, negated });
-        let first = self.peek();
-        self.at += 1;
+        let first = cursor.peek();
+        cursor.at += 1;
         match first {
-            b':' => Ok(GroupKind::Plain {
-                set: Flags::empty(),
-                cleared: Flags::empty(),
-            }),
+            b':' => Ok(GroupKind::PLAIN),
             b'=' => look(false, false),
             b'!' => look(false, true),
-            b'<' if self.eat(b'=') => look(true, false),
-            b'<' if self.eat(b'!') => look(true, true),
-            b'<' => match self.group_name()? {
-                Some(name) => self.named_group(name),
-                None => Err(Error::InvalidGroupName),
-            },
+            b'<' if cursor.eat(b'=') => look(true, false),
+            b'<' if cursor.eat(b'!') => look(true, true),
+            b'<' => cursor.apart(|it| self.named_group(it)),
             b'-' | b'i' | b'm' | b's' => {
-                self.at -= 1;
-                self.modifiers()
+                cursor.at -= 1;
+                cursor.apart(Cursor::modifiers)
             }
             _ => Err(Error::InvalidGroup),
         }
     }
 
-    fn named_group(&mut self, name: Name<'a>) -> Result<GroupKind, Error> {
-        if self.has_escaped_k {
+    /// After `(?<`.
+    #[inline(never)]
+    fn named_group<C: CodeUnit>(&mut self, cursor: &mut Cursor<'a, C>) -> Result<GroupKind, Error> {
+        let name = cursor.group_name()?.ok_or(Error::InvalidGroupName)?;
+        if cursor.has_passed_escaped_k {
             return Err(Error::InvalidNamedReference);
         }
-        let name = self.names.find_or_add(name)?;
+        let names = self.names.get_or_insert_default();
+        let name = names.find_or_add(name)?;
         // If the last group with the name cannot take part along with this one, no earlier one can.
-        if let Some(last) = *self.names.last_group(name)
+        if let Some(last) = *names.last_group(name)
             && !matches!(self.relation(last), Relation::Exclusive)
         {
             return Err(Error::DuplicateGroupName);
         }
         let group = self.add_group()?;
-        *self.names.last_group(name) = Some(group);
+        let names = self.names.get_or_insert_default();
+        *names.last_group(name) = Some(group);
         self.has_named_groups = true;
-        self.sink.name_group(group, name, self.names.text(name))?;
+        self.sink.name_group(group, name, names.text(name))?;
         Ok(GroupKind::Capture(group))
     }
 
+    pub(super) fn relation(&self, group: Group) -> Relation {
+        let (common, inner) = if self.level.groups_before_body < group {
+            (&self.level, None)
+        } else {
+            let outer = &self.outer_levels;
+            let around = outer.partition_point(|(level, _)| level.groups_before_body < group);
+            let inner = outer.get(around).map_or(&self.level, |(level, _)| level);
+            (&outer[around - 1].0, Some(inner))
+        };
+        if inner.is_some_and(|inner| inner.first_group == group) {
+            Relation::Enclosing
+        } else if group <= common.groups_before_alternative {
+            Relation::Exclusive
+        } else {
+            Relation::Sibling {
+                first_sibling: common.groups_before_alternative + 1,
+                is_backward: common.is_backward,
+            }
+        }
+    }
+}
+
+impl<C: CodeUnit> Cursor<'_, C> {
     /// The last error before the colon is the one to report.
+    #[inline(never)]
     fn modifiers(&mut self) -> Result<GroupKind, Error> {
         let (mut set, mut cleared) = (Flags::empty(), None);
         let mut error = None;
@@ -168,27 +199,6 @@ impl<'a, C: CodeUnit, S: Sink> Parser<'a, C, S> {
                 Err(Error::InvalidModifier)
             }
             None => Ok(GroupKind::Plain { set, cleared }),
-        }
-    }
-
-    pub(super) fn relation(&self, group: Group) -> Relation {
-        let (common, inner) = if self.level.groups_before_body < group {
-            (&self.level, None)
-        } else {
-            let outer = &self.outer_levels;
-            let around = outer.partition_point(|(level, _)| level.groups_before_body < group);
-            let inner = outer.get(around).map_or(&self.level, |(level, _)| level);
-            (&outer[around - 1].0, Some(inner))
-        };
-        if inner.is_some_and(|inner| inner.first_group == group) {
-            Relation::Enclosing
-        } else if group <= common.groups_before_alternative {
-            Relation::Exclusive
-        } else {
-            Relation::Sibling {
-                first_sibling: common.groups_before_alternative + 1,
-                is_backward: common.is_backward,
-            }
         }
     }
 }

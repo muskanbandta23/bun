@@ -16,16 +16,16 @@ mod recorder;
 use std::collections::HashMap;
 
 use bun_engine_asm::{
-    Arm64Features, Code, FloatAssembly, Label, Options as AssemblerOptions, Relaxed, X64Features,
+    Arm64Features, Code, FloatAssembly, Label, Options as AssemblerOptions, VectorAssembly,
+    X64Features, arm64, x64,
 };
 use bun_engine_codegen::ir::{Function, Origin};
 use bun_engine_codegen::passes::{Analyses, Level, Pass};
-use bun_engine_codegen::{Frame, Options, Target, TooComplex, X64Compiler};
+use bun_engine_codegen::{Arm64Compiler, Frame, Options, Target, TooComplex, X64Compiler};
 
 use self::recorder::{Recorder, Stop};
 use super::disassembly::listing;
-use super::generator::Shape;
-use super::harness::{Case, Subject, World, catching, setting, shape_for};
+use super::harness::{Case, Subject, World, catching, setting};
 use super::memory::{GRANULE, Layout};
 use super::random::{Random, mix};
 
@@ -161,6 +161,7 @@ pub(crate) struct Native {
     architecture: Architecture,
     levels: Vec<Level>,
     x64: X64Compiler,
+    arm64: Arm64Compiler,
     #[cfg(target_os = "linux")]
     thread: processor::Thread,
 }
@@ -175,6 +176,7 @@ impl Native {
                 _ => vec![Level::Quick, Level::Full],
             },
             x64: X64Compiler::default(),
+            arm64: Arm64Compiler::default(),
             #[cfg(target_os = "linux")]
             thread: processor::Thread::new(),
         }
@@ -193,7 +195,12 @@ impl Native {
                 self.x64 = compiler;
                 compiled
             }),
-            Target::Arm64(_) => unimplemented!(),
+            Target::Arm64(features) => compile(case, features, |function, masm, client| {
+                let mut compiler = std::mem::take(&mut self.arm64);
+                let compiled = compiler.compile(function, options, masm, client);
+                self.arm64 = compiler;
+                compiled
+            }),
         }
     }
 
@@ -254,23 +261,11 @@ impl Subject for Native {
             },
             target,
             relaxed: match target {
-                Target::X64(features) => {
-                    <bun_engine_asm::x64::MacroAssembler as bun_engine_asm::VectorAssembly>::relaxed(
-                        features,
-                    )
-                }
-                Target::Arm64(_) => Relaxed::empty(),
+                Target::X64(features) => x64::MacroAssembler::relaxed(features),
+                Target::Arm64(features) => arm64::MacroAssembler::relaxed(features),
             },
             other_threads: false,
         }
-    }
-
-    fn shape(&mut self, seed: u64) -> Shape {
-        let mut shape = shape_for(seed);
-        if matches!(self.architecture, Architecture::Arm64) {
-            shape.weights.vectors = 0;
-        }
-        shape
     }
 
     fn test(&mut self, case: &Case) -> Result<(), String> {

@@ -19,9 +19,9 @@ use crate::primitive::StringCaches;
 use crate::services::Service;
 use crate::{
     CallFrame, CellKind, CellType, Cx, ElementKind, EntryRecord, Exception, Executable,
-    FastHashMap, Gc, GcFree, GlobalObject, Hooks, IndexingMode,
-    JsBoundFunction, JsCell, JsFunction, JsSymbol, MicrotaskQueueRef, NativeExecutable, Shape,
-    ShapeSpec, SmallStrings, Traps, TypeFlags, Value, Visitor, call, options,
+    FastHashMap, Gc, GcFree, GlobalObject, Hooks, IndexingMode, JsBoundFunction, JsCell,
+    JsFunction, JsSymbol, MicrotaskQueueRef, NativeExecutable, Shape, ShapeSpec, SmallStrings,
+    Traps, TypeFlags, Value, Visitor, call, options,
 };
 
 /// A cell that the `Vm` keeps alive.
@@ -190,7 +190,6 @@ pub struct Vm {
     shapes_by_class: RefCell<FastHashMap<usize, usize>>,
     extensions: RefCell<FastHashMap<TypeId, Rc<dyn Any>>>,
     default_microtask_queue: MicrotaskQueueRef,
-    divisor_cache: bun_engine_bigint::DivisorCache,
     pub(crate) string_caches: StringCaches,
     pub(crate) shape_cache: ShapeCache,
     pub(crate) symbols: WeakValueMap<usize, JsSymbol>,
@@ -254,7 +253,6 @@ impl VmRef {
             shapes_by_class: RefCell::default(),
             extensions: RefCell::default(),
             default_microtask_queue: MicrotaskQueueRef::unregistered(),
-            divisor_cache: Default::default(),
             string_caches: StringCaches::new(),
             shape_cache: ShapeCache::default(),
             symbols: WeakValueMap::default(),
@@ -479,11 +477,6 @@ impl Vm {
             self.bound_function_executable.set(Some(executable));
             executable
         })
-    }
-
-    #[inline(always)]
-    pub fn divisor_cache(&self) -> &bun_engine_bigint::DivisorCache {
-        &self.divisor_cache
     }
 
     pub fn default_microtask_queue(&self) -> &MicrotaskQueueRef {

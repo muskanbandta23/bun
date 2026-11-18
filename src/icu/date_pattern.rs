@@ -5,9 +5,10 @@ use core::ptr;
 
 use smallvec::SmallVec;
 
+use crate::argument::{locale_id, pattern_length};
 use crate::error::Status;
-use crate::ffi::{fill, filled, length, open};
-use crate::{Buffer, Error, Result};
+use crate::ffi::{fill, filled, open};
+use crate::{Buffer, Result};
 
 bun_opaque::opaque_ffi! { struct UDateTimePatternGenerator; }
 
@@ -46,15 +47,6 @@ const UDATPG_MATCH_HOUR_FIELD_LENGTH: i32 = 1 << Field::Hour as i32;
 /// Has room for nearly all of them, because one that does not fit is looked up twice.
 pub type Pattern = SmallVec<[u16; 64]>;
 
-/// Of a pattern or a skeleton, which is short.
-pub(crate) fn pattern_length(pattern: &[u16]) -> Result<i32> {
-    const LONGEST: usize = 1024;
-    if pattern.len() > LONGEST {
-        return Err(Error::ILLEGAL_ARGUMENT);
-    }
-    length(pattern)
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(i32)]
 pub enum Field {
@@ -87,8 +79,9 @@ icu_handle! {
 
 impl PatternGenerator {
     pub fn open(locale: &CStr) -> Result<PatternGenerator> {
+        let locale = locale_id(locale)?;
         // SAFETY: `locale` is terminated.
-        open(|status| unsafe { udatpg_open(locale.as_ptr(), status) }).map(PatternGenerator)
+        open(|status| unsafe { udatpg_open(locale, status) }).map(PatternGenerator)
     }
 
     /// The hour is as wide as in `skeleton`, unless the locale has a pattern for that very width.

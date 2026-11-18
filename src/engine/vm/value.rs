@@ -67,6 +67,12 @@ impl Value {
     }
 
     #[inline(always)]
+    pub const fn slice_as_bits(values: &[Value]) -> &[u64] {
+        // SAFETY: what a value is represented as.
+        unsafe { core::slice::from_raw_parts(values.as_ptr().cast(), values.len()) }
+    }
+
+    #[inline(always)]
     pub const fn int32(value: i32) -> Value {
         // SAFETY: the tag makes it an int32.
         unsafe { Value::from_bits(Self::NUMBER_TAG | value as u32 as u64) }

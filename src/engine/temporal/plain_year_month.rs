@@ -25,10 +25,17 @@ pub struct ParsedPlainYearMonth(PlainYearMonth);
 
 impl ParsedPlainYearMonth {
     pub fn finish(self) -> Result<PlainYearMonth> {
-        if !self.0.date.is_month_within_limits() {
-            return Err(Error::PlainYearMonthOutOfRange);
+        let PlainYearMonth { date, calendar } = self.0;
+        if date.is_month_within_limits() {
+            return PlainYearMonth::of_date(date, calendar);
         }
-        PlainYearMonth::of_date(self.0.date, self.0.calendar)
+        Err(if calendar == CalendarId::Iso8601 {
+            Error::PlainYearMonthOutOfRange
+        } else if IsoDate::is_year_within_limits(date.year()) {
+            Error::YearMonthFieldsOutOfRange
+        } else {
+            calendar.year_out_of_range(date.year(), Error::YearMonthFieldsOutOfRange)
+        })
     }
 }
 

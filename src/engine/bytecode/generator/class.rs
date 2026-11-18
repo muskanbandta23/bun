@@ -8,7 +8,7 @@ use bun_engine_syntax::{EvalContext, FieldKind, FieldSource, FunctionFlags, Func
 
 use super::scope::{Layout, Place};
 use super::{Dest, Generator};
-use crate::function::{Fields, FunctionName, Origin, Visibility};
+use crate::function::{Fields, Origin, Visibility};
 use crate::operand::{DefineFlags, Operand, Register, StaticError};
 use crate::scope::{ScopeKind, SlotKind};
 
@@ -89,6 +89,7 @@ impl<'a> Generator<'a> {
     }
 
     /// `name` is the name of an anonymous class, where that is computed.
+    #[inline(never)]
     pub(super) fn class(
         &mut self,
         start: u32,
@@ -212,6 +213,7 @@ impl<'a> Generator<'a> {
                 info.origin |= Origin::DEFAULT_CONSTRUCTOR;
                 info.origin -= Origin::BUILTIN | Origin::NO_POSITIONS;
                 info.visibility = Visibility::Public;
+                info.parameters_start = "(function ".len() as u32;
                 info
             }
         };
@@ -367,10 +369,6 @@ impl<'a> Generator<'a> {
         is_static: bool,
     ) {
         let mut info = self.synthetic_function_info(FunctionKind::FieldInitializer, start + 1);
-        info.name = FunctionName::Source {
-            start: 0,
-            length: 0,
-        };
         info.flags.set(FunctionFlags::STATIC, is_static);
         info.visibility = info.visibility.max(Visibility::Private);
         (info.start, info.parameters_start, info.end) = (start, start, class.end);
@@ -394,6 +392,7 @@ impl<'a> Generator<'a> {
         self.top = mark;
     }
 
+    #[inline(never)]
     pub(super) fn define_field(
         &mut self,
         start: u32,
@@ -451,6 +450,7 @@ impl<'a> Generator<'a> {
         }
     }
 
+    #[inline(never)]
     pub(super) fn run_static_block(&mut self, node: &Stmt, function: FunctionId) {
         let block = self.temp();
         self.new_function(block, function, node.start);

@@ -38,6 +38,9 @@ pub struct ArrayType {
     pub element: FieldType,
 }
 
+/// Up to this many steps from a type to its supertype take less than looking at the display.
+const SHORT_WALK: u32 = 2;
+
 #[derive(Clone, Copy)]
 struct Definition {
     /// With the first index that has this type.
@@ -179,6 +182,10 @@ impl Types {
     }
 
     fn is_defined_subtype(&self, mut sub: TypeIndex, sup: TypeIndex) -> bool {
+        let has_rtt = |index| (self.definition(index).group as usize) < self.groups.len();
+        if self.depth(sub) > self.depth(sup) + SHORT_WALK && has_rtt(sub) && has_rtt(sup) {
+            return self.rtt(sub).is_subtype_of(self.rtt(sup));
+        }
         for _ in self.depth(sup)..self.depth(sub) {
             sub = TypeIndex(self.definition(sub).supertype);
         }
@@ -273,8 +280,8 @@ pub(crate) struct TypesBuilder {
     /// Where the open type starts in `values` or `fields`.
     pending_values: usize,
     pending_fields: usize,
-    /// The first type of each group, by the hash of the group.
-    seen: HashTable<u32>,
+    /// The hash and the first type of each group.
+    seen: HashTable<(u64, u32)>,
     candidate: Candidate,
     /// By type index, while a candidate is made: one more than its place among the outside types.
     outside_numbers: Vec<u32>,
@@ -369,38 +376,48 @@ impl TypesBuilder {
 
     pub(crate) fn end_group(&mut self) -> Result<(), GroupError> {
         self.fill_in_kinds();
-        self.check_subtyping()?;
         self.make_candidate()?;
-        let types = &mut self.types;
-        let group = self.candidate.intern(|number| {
-            let definition = &types.definitions[self.outside[number].usize()];
-            (&types.groups[definition.group as usize], definition.member)
-        })?;
-
-        let group_at = |first: u32| &types.groups[types.definitions[first as usize].group as usize];
-        let hash = group.hash();
-        let earlier = self
-            .seen
-            .find(hash, |&first| Arc::ptr_eq(group_at(first), &group));
-        if let Some(&first) = earlier {
-            let (first, start) = (first as usize, self.group_start as usize);
-            let count = types.definitions.len() - start;
-            types.definitions.copy_within(first..first + count, start);
-            types.values.truncate(self.values_start);
-            types.fields.truncate(self.fields_start);
-        } else {
-            let rehash = |&first: &u32| group_at(first).hash();
-            self.seen.try_reserve(1, rehash).map_err(|_| OutOfMemory)?;
-            self.seen.insert_unique(hash, self.group_start, rehash);
-            types.groups.try_push(group)?;
+        let hash = self.candidate.hash();
+        let earlier = self.seen.find(hash, |&(other, first)| {
+            let group = self.types.definitions[first as usize].group;
+            other == hash && self.candidate.describes(&self.types.groups[group as usize])
+        });
+        match earlier {
+            Some(&(_, first)) => self.repeat_group(first as usize),
+            None => self.add_group(hash)?,
         }
 
+        let types = &self.types;
         self.group_start = types.len();
         self.values_start = types.values.len();
         self.fields_start = types.fields.len();
         self.pending_values = self.values_start;
         self.pending_fields = self.fields_start;
         Ok(())
+    }
+
+    fn repeat_group(&mut self, first: usize) {
+        let (types, start) = (&mut self.types, self.group_start as usize);
+        let count = types.definitions.len() - start;
+        types.definitions.copy_within(first..first + count, start);
+        types.values.truncate(self.values_start);
+        types.fields.truncate(self.fields_start);
+    }
+
+    fn add_group(&mut self, hash: u64) -> Result<(), GroupError> {
+        self.check_subtyping()?;
+        let group = self.candidate.intern(hash, |number| {
+            let definition = self.types.definition(self.outside[number]);
+            (
+                &self.types.groups[definition.group as usize],
+                definition.member,
+            )
+        })?;
+        let rehash = |&(hash, _): &(u64, u32)| hash;
+        self.seen.try_reserve(1, rehash).map_err(|_| OutOfMemory)?;
+        self.seen
+            .insert_unique(hash, (hash, self.group_start), rehash);
+        Ok(self.types.groups.try_push(group)?)
     }
 
     pub(crate) fn finish(mut self) -> Types {

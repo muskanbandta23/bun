@@ -17,6 +17,8 @@ use crate::ir::{
 /// The instructions that lowering itself needs of an architecture.
 pub(crate) trait Instruction: Copy + core::fmt::Debug {
     type Features: Copy;
+    /// What instruction selection remembers while it goes through a function.
+    type Selection: Default;
 
     /// Result, source.
     const COPY: Self;
@@ -53,6 +55,7 @@ pub(crate) struct Lowering<'a, I: Instruction> {
     pub(crate) features: I::Features,
     pub(crate) function: &'a mut Function,
     pub(crate) cfg: &'a Cfg,
+    pub(crate) selection: I::Selection,
     frequencies: &'a Frequencies,
     slot_offsets: &'a Table<Slot, i32>,
     code: &'a mut Code,
@@ -111,6 +114,7 @@ pub(crate) fn lower<I: Instruction>(
         features,
         function,
         cfg,
+        selection: Default::default(),
         frequencies,
         slot_offsets,
         code,
@@ -308,11 +312,6 @@ impl<I: Instruction> Lowering<'_, I> {
             Op::Return(_) => self.lower_return(value),
             Op::Patchpoint(patchpoint) => self.lower_patchpoint(value, patchpoint),
             Op::Extract(..) => {}
-            Op::Unary(Unary::Widen(Sign::Unsigned), narrow) => {
-                self.push_def(Operand::tied(self.tables.vregs[value], 1, None));
-                self.use_value(narrow, Role::Use, Place::RegisterOrMemory);
-                self.finish(I::ZERO_EXTEND);
-            }
             _ => I::lower(self, value),
         }
     }
@@ -350,6 +349,19 @@ impl<I: Instruction> Lowering<'_, I> {
         !self.tables.vregs[value].is_none()
     }
 
+    /// For looking at the definition of `value` as its only user would.
+    pub(crate) fn as_if_used_once<T>(
+        &mut self,
+        value: Value,
+        look: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        let vreg = core::mem::replace(&mut self.tables.vregs[value], VReg::NONE);
+        let uses = core::mem::replace(&mut self.tables.uses[value], 1);
+        let seen = look(self);
+        (self.tables.vregs[value], self.tables.uses[value]) = (vreg, uses);
+        seen
+    }
+
     pub(crate) fn slot_offset(&self, slot: Slot) -> i32 {
         self.slot_offsets[slot]
     }
@@ -367,6 +379,16 @@ impl<I: Instruction> Lowering<'_, I> {
         let home = self.function.block_of(value);
         home == self.block
             || !home.is_none() && self.cfg.loop_of(home) == self.cfg.loop_of(self.block)
+    }
+
+    #[inline]
+    pub(crate) fn is_in_loop(&self) -> bool {
+        !self.is_cold && !self.cfg.loop_of(self.block).is_none()
+    }
+
+    pub(crate) fn is_element_used(&self, tuple: Value, position: u32) -> bool {
+        let first = self.tables.vregs[tuple];
+        !first.is_none() && self.code.vregs[VReg(first.0 + position)].end != NEVER
     }
 
     #[inline]
@@ -766,6 +788,7 @@ impl<I: Instruction> Lowering<'_, I> {
         }
         self.site = self.code.sites.push(SiteData {
             value,
+            is_exit: !matches!(self.function.op(value), Op::Patchpoint(_)),
             state,
             state_vregs,
             recoverable,
@@ -816,10 +839,23 @@ impl<I: Instruction> Lowering<'_, I> {
     #[inline]
     pub(crate) fn finish(&mut self, instruction: I) {
         let end = self.code.operands.len();
+        let (mut result_count, mut has_late_uses, mut writes_early) = (0, false, false);
+        for operand in &self.code.operands[self.first_operand..] {
+            result_count += u8::from(!operand.is_use());
+            has_late_uses |= operand.role == Role::LateUse;
+            writes_early |= matches!(operand.role, Role::EarlyDef | Role::Temp);
+        }
+        debug_assert!(
+            self.code.operands[self.first_operand..].is_sorted_by_key(|operand| operand.is_use())
+        );
+        let is_constrained = core::mem::take(&mut self.is_constrained);
         self.code.heads.push(Head {
             first_operand: self.first_operand as u32,
             operand_count: (end - self.first_operand) as u16,
-            is_constrained: core::mem::take(&mut self.is_constrained),
+            is_constrained,
+            result_count,
+            is_plain: !is_constrained && !has_late_uses && !writes_early,
+            has_late_uses,
             site: core::mem::replace(&mut self.site, Site::NONE),
             origin: self.origin,
         });
@@ -836,6 +872,13 @@ impl<I: Instruction> Lowering<'_, I> {
         } else {
             I::COPY
         });
+    }
+
+    /// `value` is the low half of `source`.
+    pub(crate) fn zero_extend(&mut self, value: Value, source: Value) {
+        self.def_tied(value, 1, None);
+        self.use_value(source, Role::Use, Place::RegisterOrMemory);
+        self.finish(I::ZERO_EXTEND);
     }
 
     /// A value that the next instruction, which has been lowered already, reads from `copy`.

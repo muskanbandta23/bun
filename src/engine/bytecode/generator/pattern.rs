@@ -26,6 +26,7 @@ fn range(pattern: &Pattern) -> (u32, u32, u32) {
 }
 
 impl Generator<'_> {
+    #[inline(never)]
     pub(super) fn destructure(&mut self, pattern: PatternId, value: ExprId, dst: Dest) -> Operand {
         if dst == Dest::Ignore {
             let is_at_risk = self
@@ -171,6 +172,7 @@ impl Generator<'_> {
         self.assign_target(pattern, target, value.into());
     }
 
+    #[inline(never)]
     fn bind_array(&mut self, node: &Pattern, elements: List<PatternElementId>, value: Operand) {
         let ast = self.ast;
         let state = self.temps(3);
@@ -216,6 +218,7 @@ impl Generator<'_> {
         }
     }
 
+    #[inline(never)]
     fn bind_object(&mut self, node: &Pattern, elements: List<PatternElementId>, value: Operand) {
         let ast = self.ast;
         let first_name = match ast.get(elements, 0).map(|first| ast[first].key) {

@@ -13,7 +13,7 @@ use crate::analysis::{Cfg, Frequencies};
 use crate::client::{CallSite, Client, ExitSite, Frame, PatchpointSite};
 use crate::ir::{
     Action, Bits64, Block, Edge, Function, Input, Location, Op, Origin, Output, PatchpointFlags,
-    Table, Type, Value,
+    Span, State, Table, Type, Value,
 };
 
 pub(crate) trait Isa: Instruction {
@@ -31,6 +31,7 @@ pub(crate) trait Isa: Instruction {
     fn emit_move(
         masm: &mut Self::Masm,
         function: &Function,
+        frame: &Frame,
         from: Location,
         to: Location,
         class: Class,
@@ -140,6 +141,44 @@ fn register(reg: Reg) -> Location {
     match reg.bank() {
         Bank::Gpr => Location::Gpr(reg.gpr()),
         Bank::Fpr => Location::Fpr(reg.fpr()),
+    }
+}
+
+/// Where the values of a state are at one place in the code.
+#[derive(Clone, Copy)]
+pub struct StateLocations<'a> {
+    places: Places<'a>,
+    state: State,
+    vregs: Span<VReg>,
+    assigned: Span<u8>,
+}
+
+impl<'a> StateLocations<'a> {
+    pub fn state(self) -> State {
+        self.state
+    }
+
+    pub fn len(self) -> usize {
+        self.vregs.len()
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.vregs.is_empty()
+    }
+
+    /// Two that are not empty and have the same key are of the same state and have the same locations.
+    pub fn key(self) -> u32 {
+        self.assigned.range().start as u32
+    }
+
+    pub fn iter(self) -> impl ExactSizeIterator<Item = Location> + use<'a> {
+        let Places {
+            code, allocation, ..
+        } = self.places;
+        let pairs = code.vreg_lists[self.vregs]
+            .iter()
+            .zip(&allocation.state_assigned[self.assigned]);
+        pairs.map(move |(&vreg, &assigned)| self.places.location(vreg, assigned))
     }
 }
 
@@ -444,7 +483,14 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
         if step.kind == MoveKind::Swap {
             self.masm.swap(from.gpr(), to.gpr());
         } else if from != to {
-            I::emit_move(self.masm, self.places.function, from, to, step.class);
+            I::emit_move(
+                self.masm,
+                self.places.function,
+                self.frame,
+                from,
+                to,
+                step.class,
+            );
         }
     }
 
@@ -531,14 +577,14 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
             })
     }
 
-    fn push_state(&mut self, site: Site) {
-        let (places, data) = (self.places, &self.places.code.sites[site]);
-        let state = places.code.vreg_lists[data.state_vregs]
-            .iter()
-            .zip(&places.allocation.state_assigned[data.state_assigned]);
-        self.tables
-            .locations
-            .extend(state.map(|(&vreg, &assigned)| places.location(vreg, assigned)));
+    fn state_at(&self, site: Site) -> StateLocations<'a> {
+        let data = &self.places.code.sites[site];
+        StateLocations {
+            places: self.places,
+            state: data.state,
+            vregs: data.state_vregs,
+            assigned: data.state_assigned,
+        }
     }
 
     fn emit_exit(&mut self, position: u32) {
@@ -557,8 +603,6 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
                 self.cursor(position),
             );
         }
-        self.tables.locations.clear();
-        self.push_state(site);
         self.client.exit(
             self.masm,
             &ExitSite {
@@ -566,7 +610,7 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
                 frame: self.frame,
                 token: self.places.function.op(data.value).exit().unwrap().token,
                 origin: self.places.function.origin(data.value),
-                state: &self.tables.locations,
+                state: self.state_at(site),
             },
         );
     }
@@ -607,7 +651,7 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
             };
             self.tables.locations.push(location);
         }
-        self.push_state(site);
+        let state = self.state_at(site);
         let ends_block = site_data.value == self.last_value();
         let returns_to_first = ends_block && data.action != Action::Custom;
         let edges = function
@@ -616,8 +660,7 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
             .skip(returns_to_first.into());
         let successors: SmallVec<[Label; 4]> = edges.map(|edge| self.label_of_edge(edge)).collect();
         let next_label = self.next_block.expand().map(|next| self.label(next));
-        let (results, rest) = self.tables.locations.split_at(outputs.len());
-        let (operands, state) = rest.split_at(inputs.len());
+        let (results, operands) = self.tables.locations.split_at(outputs.len());
 
         let own_scratch = I::lend_scratch(self.masm, data.clobbers_early & data.clobbers_late);
         match data.action {

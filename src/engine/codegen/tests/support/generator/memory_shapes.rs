@@ -1,0 +1,287 @@
+//! Accesses to a few places on several ways and in loops, and addresses that are good only on some ways.
+
+use bun_engine_asm::Cond;
+use bun_engine_codegen::ir::{Access, AccessFlags, Binary, Heap, Load, Op, Type, Unary, Value};
+
+use super::super::Generator;
+use super::{Pointer, Purpose, Spot};
+use crate::support::memory::Region;
+
+impl Generator<'_> {
+    pub(in super::super) fn memory_shape(&mut self, budget: u32) {
+        let can_loop = self.trips * 8 <= self.shape.trips;
+        match self.random.below(10) {
+            0 | 1 if can_loop => self.accesses_in_loop(budget),
+            2 if can_loop => self.guarded_in_loop(),
+            3 | 4 if can_loop => self.trusted_in_loop(),
+            5 => self.neighbouring_elements(),
+            _ => {
+                let spots = self.some_spots();
+                let depth = self.random.between(1, 3);
+                let seen = self.touch_on_ways(&spots, depth);
+                self.keep_all(&[seen]);
+            }
+        }
+    }
+
+    /// They can be written, and are often neighbours or overlap.
+    fn some_spots(&mut self) -> Vec<Spot> {
+        let whole = self.spot(16, Purpose::Write);
+        let part = |this: &mut Self| {
+            let size = this.random.pick(&[1, 2, 4, 4, 8, 8]);
+            if this.random.one_in(4) {
+                return this.spot(size, Purpose::Write);
+            }
+            let start = this.random.below((16 / size) as usize) as u32 * size;
+            Spot {
+                offset: whole.offset + start as i32,
+                size,
+                ..whole
+            }
+        };
+        (0..self.random.between(1, 3)).map(|_| part(self)).collect()
+    }
+
+    fn load_some_of(&mut self, spot: Spot) -> Value {
+        loop {
+            let ty = self
+                .random
+                .pick(&[Type::I32, Type::I64, Type::F32, Type::F64]);
+            let (kind, size) = self.load_kind(ty);
+            if size == spot.size || size < spot.size && self.random.one_in(4) {
+                let loaded = self.load_from(Spot { size, ..spot }, kind, ty);
+                return self.as_word(loaded);
+            }
+        }
+    }
+
+    fn as_word(&mut self, value: Value) -> Value {
+        let bits = match self.type_of(value) {
+            Type::F32 => self.unary(Unary::Bitcast, Type::I32, value),
+            Type::F64 => self.unary(Unary::Bitcast, Type::I64, value),
+            _ => value,
+        };
+        self.convert_int(bits, Type::I64)
+    }
+
+    /// Returns `sum` with what has been loaded.
+    fn touch(&mut self, spots: &[Spot], mut sum: Value) -> Value {
+        for _ in 0..self.random.pick(&[0, 1, 1, 2, 3]) {
+            let spot = self.random.pick(spots);
+            match self.random.below(8) {
+                0..3 => {
+                    let loaded = self.load_some_of(spot);
+                    let stirred = self.binary_constant(Binary::RotateLeft, sum, 5);
+                    sum = self.binary(Binary::Add, stirred, loaded);
+                }
+                3..6 => {
+                    let ty = match (spot.size, self.random.below(4)) {
+                        (8, 0) => Type::F64,
+                        (4, 0) => Type::F32,
+                        (8, _) | (_, 1) => Type::I64,
+                        _ => Type::I32,
+                    };
+                    let value = self.data(ty);
+                    self.store_to(spot, value, Purpose::Write);
+                }
+                6 => {
+                    let old = self.load_some_of(spot);
+                    let by = self.random.between(0, 2);
+                    let new = self.binary_constant(Binary::Add, old, by);
+                    self.store_to(spot, new, Purpose::Write);
+                }
+                _ => self.trifle(),
+            }
+        }
+        sum
+    }
+
+    fn touch_on_ways(&mut self, spots: &[Spot], depth: i64) -> Value {
+        let start = self.known_int(Type::I64);
+        let before = self.touch(spots, start);
+        if depth == 0 {
+            return before;
+        }
+        let condition = self.condition();
+        let mut arm = |this: &mut Self| vec![this.touch_on_ways(spots, depth - 1)];
+        let seen = if self.random.one_in(3) {
+            self.perhaps(condition, &[before], &mut arm)
+        } else {
+            self.choose(condition, &[Type::I64], &mut |this, _| arm(this))
+        };
+        let both = self.binary(Binary::Xor, before, seen[0]);
+        self.touch(spots, both)
+    }
+
+    fn accesses_in_loop(&mut self, budget: u32) {
+        let spots = self.some_spots();
+        let start = self.known_int(Type::I64);
+        let initial = [self.touch(&spots, start)];
+        let results = self.count(&initial, &mut |this, counting| {
+            let depth = this.random.between(0, 2);
+            let first = this.touch(&spots, counting.carried[0]);
+            let seen = this.touch_on_ways(&spots, depth);
+            this.body(budget.min(2));
+            vec![this.binary(Binary::Add, first, seen)]
+        });
+        let after = self.touch(&spots, results[0]);
+        self.keep_all(&[after]);
+    }
+
+    /// An object, or null if the condition is zero.
+    fn object_if(&mut self, condition: Value) -> Value {
+        let (object, null) = (self.object(), self.function.const64(0));
+        let either = self.select(condition, object, null);
+        self.unary(Unary::Opaque, Type::I64, either)
+    }
+
+    fn load_field(&mut self, object: Value, is_guarded: bool) -> Value {
+        let spot = Spot {
+            base: object,
+            pointer: Pointer {
+                is_guarded,
+                ..Pointer::ANY_OBJECT
+            },
+            offset: self.random.pick(&[8, 16, 24]),
+            size: 8,
+        };
+        self.load_from(spot, Load::Full, Type::I64)
+    }
+
+    /// Runs `inside` only where `holds` is not zero.
+    fn where_holds(
+        &mut self,
+        holds: Value,
+        otherwise: Value,
+        inside: &mut dyn FnMut(&mut Self) -> Value,
+    ) -> Value {
+        if self.random.one_in(3) {
+            let fails = self.compare_constant(Cond::Eq, holds, 0);
+            self.check(fails);
+            inside(self)
+        } else {
+            self.perhaps(holds, &[otherwise], &mut |this| vec![inside(this)])[0]
+        }
+    }
+
+    fn guarded_in_loop(&mut self) {
+        let condition = self.boolean();
+        let object = self.object_if(condition);
+        let initial = [self.known_int(Type::I64)];
+        let results = self.count(&initial, &mut |this, counting| {
+            this.trifle();
+            let holds = this.random.pick(&[condition, object]);
+            let seen = this.where_holds(holds, counting.carried[0], &mut |this| {
+                this.trifle();
+                let loaded = this.load_field(object, true);
+                let divisor = this.binary_constant(Binary::Shr, object, 4);
+                this.binary(Binary::UnsignedRem, loaded, divisor)
+            });
+            vec![this.binary(Binary::Add, counting.carried[0], seen)]
+        });
+        self.keep_all(&results);
+    }
+
+    fn load_trusted(&mut self, address: Value) -> Value {
+        let access = Access::new(Heap::EVERYTHING, AccessFlags::ALWAYS_READABLE);
+        let address = if self.random.one_in(3) {
+            let condition = self.condition();
+            self.choose(condition, &[Type::I64], &mut |_, _| vec![address])[0]
+        } else {
+            address
+        };
+        let load = Op::Load {
+            kind: Load::Full,
+            address,
+            offset: 8,
+            access,
+        };
+        self.emit(load, Type::I64)
+    }
+
+    /// The address can always be read, but what it equals on the way to the load cannot.
+    fn trusted_in_loop(&mut self) {
+        let (ty, condition) = (self.int_type(), self.boolean());
+        let (any, object) = (self.known_int(ty), self.object_if(condition));
+        let (start, holder) = (self.address_in(Region::Arrays, 0), self.object());
+        let masked = self.binary_constant(Binary::And, any, 7);
+        let small = self.unary(Unary::Opaque, ty, masked);
+        let element = |this: &mut Self, index| {
+            let pointer = Pointer::exactly(Region::Arrays, 0);
+            let address = this.add_index(start, pointer, index, 8, 8, false).0;
+            this.load_trusted(address)
+        };
+        let initial = [self.known_int(Type::I64)];
+        let results = self.count(&initial, &mut |this, counting| {
+            let sum = counting.carried[0];
+            let seen = match this.random.below(4) {
+                0 => {
+                    let fits = this.compare_constant(Cond::Below, any, 8);
+                    this.where_holds(fits, sum, &mut |this| {
+                        let fits = this.compare_constant(Cond::Below, any, 8);
+                        let last = this.constant(ty, 7);
+                        let clamped = this.select(fits, any, last);
+                        element(this, clamped)
+                    })
+                }
+                1 => {
+                    let fits = this.compare_constant(Cond::Below, any, 8);
+                    let last = this.constant(ty, 7);
+                    let clamped = this.select(fits, any, last);
+                    let fails = this.compare_constant(Cond::Eq, clamped, 3);
+                    this.check(fails);
+                    element(this, clamped)
+                }
+                2 => {
+                    let key = this.random.pick(&[5, 5000]);
+                    let is_equal = this.compare_constant(Cond::Eq, small, key);
+                    this.perhaps(is_equal, &[sum], &mut |this| vec![element(this, small)])[0]
+                }
+                _ => this.where_holds(object, sum, &mut |this| {
+                    let link = Spot {
+                        base: holder,
+                        pointer: Pointer {
+                            is_guarded: true,
+                            ..Pointer::ANY_OBJECT
+                        },
+                        offset: 0,
+                        size: 8,
+                    };
+                    this.store_to(link, object, Purpose::Write);
+                    let again = this.load_from(link, Load::Full, Type::I64);
+                    this.load_trusted(again)
+                }),
+            };
+            vec![this.binary(Binary::Add, sum, seen)]
+        });
+        self.keep_all(&results);
+    }
+
+    /// The indices differ by constants, which are added before they are extended.
+    fn neighbouring_elements(&mut self) {
+        let ty = self.int_type();
+        let index = self.fresh_index(ty, 4);
+        let (scale, back) = (self.random.pick(&[1, 2, 4, 8]), self.random.between(0, 3));
+        let origin = self.binary_constant(Binary::Add, index, -back);
+        let origin = self.unary(Unary::Opaque, ty, origin);
+        let start = self.address_in(Region::Arrays, 0);
+        let spots: Vec<Spot> = (0..3)
+            .map(|_| {
+                let by = back + self.random.between(0, 3);
+                let moved = self.binary_constant(Binary::Add, origin, by);
+                let pointer = Pointer::exactly(Region::Arrays, 0);
+                let (base, pointer) = self.add_index(start, pointer, moved, scale, 7, false);
+                Spot {
+                    base,
+                    pointer,
+                    offset: self.random.pick(&[0, 0, 4, 8]),
+                    size: self.random.pick(&[1, 2, 4, 8]),
+                }
+            })
+            .collect();
+        let depth = self.random.between(0, 2);
+        let seen = self.touch_on_ways(&spots, depth);
+        let after = self.touch(&spots, seen);
+        self.keep_all(&[after]);
+    }
+}

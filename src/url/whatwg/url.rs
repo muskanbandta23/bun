@@ -54,37 +54,43 @@ impl Url {
         base: Option<&Url>,
         punycode: Punycode,
     ) -> Result<Url> {
-        let (text, owner) = match input.into() {
-            Input::String(string) => (string.text(), Some(string)),
-            Input::Text(text) => (text, None),
-            Input::Utf8(bytes) => {
-                let source = Source::new(bytes, Encoding::UncheckedUtf8);
-                return Url::parse_source(source, None, base, punycode);
-            }
-        };
-        match text {
-            Text::Latin1(bytes) => {
-                Url::parse_source(Source::new(bytes, Encoding::Latin1), owner, base, punycode)
-            }
-            Text::Utf16(_) => Url::parse_utf16(text, base, punycode),
+        match input.into() {
+            Input::String(string) => Url::parse_string(string, base, punycode),
+            Input::Text(text) => Url::parse_text(text, base, punycode),
+            Input::Utf8(bytes) => Url::parse_bytes(bytes, Encoding::UncheckedUtf8, base, punycode),
         }
     }
 
-    fn parse_utf16(text: Text<'_>, base: Option<&Url>, punycode: Punycode) -> Result<Url> {
-        Url::parse_source(Transcoder::new().source(text)?, None, base, punycode)
+    fn parse_string(string: &StringImpl, base: Option<&Url>, punycode: Punycode) -> Result<Url> {
+        let Text::Latin1(bytes) = string.text() else {
+            return Url::parse_text(string.text(), base, punycode);
+        };
+        let source = Source::new(bytes, Encoding::Latin1);
+        parse::parse(source, base, punycode, |href| {
+            if href.len() == string.len() {
+                return Ok(Some(StringRef::retain(string)));
+            }
+            StringRef::try_from_units(href).map(Some)
+        })
     }
 
-    fn parse_source(
-        source: Source<'_>,
-        owner: Option<&StringImpl>,
+    #[inline(never)]
+    fn parse_text(text: Text<'_>, base: Option<&Url>, punycode: Punycode) -> Result<Url> {
+        let mut transcoder = Transcoder::new();
+        let Source { bytes, encoding } = transcoder.source(text)?;
+        Url::parse_bytes(bytes, encoding, base, punycode)
+    }
+
+    #[inline(never)]
+    fn parse_bytes(
+        bytes: &[u8],
+        encoding: Encoding,
         base: Option<&Url>,
         punycode: Punycode,
     ) -> Result<Url> {
-        let share = |href: &[u8]| match owner {
-            Some(owner) if owner.len() == href.len() => Ok(Some(StringRef::retain(owner))),
-            _ => StringRef::try_from_units(href).map(Some),
-        };
-        parse::parse(source, base, punycode, share)
+        parse::parse(Source::new(bytes, encoding), base, punycode, |href| {
+            StringRef::try_from_units(href).map(Some)
+        })
     }
 
     /// What does not parse becomes an invalid URL that has `input` for its text.
@@ -141,7 +147,7 @@ impl Url {
     /// Without credentials, query and fragment. The text of an invalid URL is left alone.
     pub fn string_for_report(&self) -> core::result::Result<StringRef, AllocError> {
         if self.has_credentials() || (self.parts.path_end as usize) < self.href().len() {
-            return concat(&self.without_credentials(self.parts.path_end));
+            return concat(self.without_credentials(self.parts.path_end));
         }
         Ok(self.text.clone().unwrap_or_default())
     }

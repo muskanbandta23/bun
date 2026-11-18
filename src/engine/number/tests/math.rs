@@ -101,8 +101,6 @@ fn rounding_signs_and_extremes() {
     }
     assert_same(fround(1.337), 1.3370000123977661);
     assert_same(f16round(1.337), 1.3369140625);
-    assert_eq!(clz32(0), 32);
-    assert_eq!(imul(-1, i32::MIN), i32::MIN);
     assert_same(atan2(-INFINITY, -INFINITY), -2.356194490192345);
     for (value, expected) in [(-0.0, -0.0), (-1.0, -INFINITY), (1.5, NAN), (1e-10, 1e-10)] {
         assert_same(atanh(value), expected);

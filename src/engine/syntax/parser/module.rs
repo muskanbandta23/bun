@@ -34,7 +34,7 @@ impl Session<'_> {
             let statement = match self.kind() {
                 TokenKind::Export => self.export()?,
                 TokenKind::Import
-                    if !matches!(self.peek().kind, TokenKind::OpenParen | TokenKind::Dot) =>
+                    if !matches!(self.peek().kind(), TokenKind::OpenParen | TokenKind::Dot) =>
                 {
                     self.import()?
                 }
@@ -100,7 +100,7 @@ impl Session<'_> {
     /// ModuleExportName of ECMA-262. Stays at the token.
     fn module_export_name(&mut self, sentence: &'static str) -> Parsed<Name> {
         let token = self.token();
-        if token.kind.is_identifier_name() {
+        if token.kind().is_identifier_name() {
             return Ok(token.name());
         }
         self.require(TokenKind::String, sentence)?;
@@ -155,7 +155,7 @@ impl Session<'_> {
         let list = self.open_list();
         while !self.at(TokenKind::CloseBrace) {
             let token = self.token();
-            if !token.kind.is_identifier_name() {
+            if !token.kind().is_identifier_name() {
                 self.require(TokenKind::String, "Expected an attribute key")?;
             }
             let key = self.word_or_string(token);
@@ -189,7 +189,7 @@ impl Session<'_> {
         self.next();
         let mut is_deferred = false;
         if !self.at(TokenKind::String) {
-            is_deferred = self.at_contextual(Name::DEFER) && self.peek().kind == TokenKind::Star;
+            is_deferred = self.at_contextual(Name::DEFER) && self.peek().kind() == TokenKind::Star;
             if is_deferred {
                 self.next();
             }
@@ -242,14 +242,14 @@ impl Session<'_> {
         let imported = self.module_export_name(
             "Expected an imported name or a module export name string for the import declaration",
         )?;
-        if local.kind == TokenKind::EscapedKeyword && !self.peek().is_contextual(Name::AS) {
+        if local.kind() == TokenKind::EscapedKeyword && !self.peek().is_contextual(Name::AS) {
             return Err(self.unexpected());
         }
         self.next();
         if self.at_contextual(Name::AS) {
             self.next();
             local = self.imported_binding()?;
-        } else if local.kind == TokenKind::String {
+        } else if local.kind() == TokenKind::String {
             return Err(self.fail("Expected 'as' after the module export name string"));
         }
         self.declare_import(Some(imported), local)
@@ -259,7 +259,7 @@ impl Session<'_> {
         if local.spells(TokenKind::Await) {
             return Err(self.reject("Cannot use 'await' as an imported binding name"));
         }
-        if local.kind.is_keyword() {
+        if local.kind().is_keyword() {
             return Err(self.reject("Cannot use keyword as imported binding name"));
         }
         let local = local.name();

@@ -224,7 +224,9 @@ fn what_is_live_after_a_resumption_is_saved() {
         for (index, point) in (0..).zip(body.suspend_points()) {
             let row = rows.iter().position(|row| row.0 == point.resume).unwrap();
             let saved = body.saved_registers(SuspendPointIndex(index));
-            assert_eq!(saved, members(&expected[row]));
+            let mut expected = members(&expected[row]);
+            expected.retain(|&register| register != Register::SCOPE);
+            assert_eq!(saved, expected);
             points += 1;
         }
     });
@@ -322,7 +324,7 @@ fn many_blocks_and_many_locals() {
     let body = body.unwrap();
     for point in 0..VARIABLES - 2 {
         let saved = body.saved_registers(SuspendPointIndex(point));
-        assert_eq!(saved, [local(0), local(point + 3)]);
+        assert_eq!(saved, [local(point + 3)]);
     }
 }
 

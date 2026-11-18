@@ -3,7 +3,7 @@
 use std::rc::Rc;
 
 use bun_engine_syntax::ast::{
-    self, Binding, BindingFlags, BindingKind, FunctionId, List, ScopeFlags, ScopeId,
+    self, Binding, BindingFlags, BindingKind, FunctionId, ScopeFlags, ScopeId,
 };
 use bun_engine_syntax::{FunctionFlags, Name, NameKind};
 use bun_engine_text::Identifier;
@@ -219,16 +219,16 @@ impl Generator<'_> {
         let (name, kind) = (binding.name, slot_kind(binding));
         let names = &self.ast.names;
         let in_source = names.source_start(name);
-        let (hash, name_start, name_length) =
-            match in_source.filter(|_| names.kind(name) == NameKind::Ordinary) {
-                Some(start) => (self.text_of(name).hash(), start, names.length(name)),
-                None => {
-                    let identifier = self.make_identifier(name);
-                    let hash = identifier.name().hash();
-                    layout.names.push(identifier);
-                    (hash, layout.names.len() as u32 - 1, Slot::OWNED)
-                }
-            };
+        let (hash, name_start, name_length) = if Name::known_text(name.index()).is_some() {
+            (self.text_of(name).hash(), name.index() as u32, Slot::KNOWN)
+        } else if let Some(start) = in_source.filter(|_| names.kind(name) == NameKind::Ordinary) {
+            (self.text_of(name).hash(), start, names.length(name))
+        } else {
+            let identifier = self.make_identifier(name);
+            let hash = identifier.name().hash();
+            layout.names.push(identifier);
+            (hash, layout.names.len() as u32 - 1, Slot::OWNED)
+        };
         let mut flags = slot_flags(binding);
         if layout.kind == ScopeKind::Parameters {
             flags |= SlotFlags::LEXICAL;
@@ -421,6 +421,7 @@ impl Generator<'_> {
         created
     }
 
+    #[inline(never)]
     pub(super) fn enter_with_scope(&mut self, object: Operand) {
         self.open_scope();
         let (parent, register) = (self.scope, self.temp());
@@ -434,14 +435,6 @@ impl Generator<'_> {
     /// From here on only a search at run time finds what has been bound so far.
     pub(super) fn raise_barrier(&mut self) {
         self.barrier = Some(self.b.bindings.len() as u32);
-    }
-
-    /// Whether a later declaration has the same name.
-    pub(super) fn is_redeclared(&self, functions: List<FunctionId>, index: u32) -> bool {
-        let ast = self.ast;
-        let name = ast[ast.at(functions, index)].own_name;
-        ast.iter(functions.skip(index + 1))
-            .any(|later| ast[later].own_name == name)
     }
 
     pub(super) fn declared_name(&self, function: FunctionId) -> Name {

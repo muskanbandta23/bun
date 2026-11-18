@@ -2,6 +2,7 @@
 
 use core::ffi::{CStr, c_char};
 
+use crate::argument::locale_id;
 use crate::enumeration::UEnumeration;
 use crate::error::Status;
 use crate::ffi::open;
@@ -25,8 +26,9 @@ icu_handle! {
 impl NumberingSystem {
     /// The one that `locale` names or prefers.
     pub fn for_locale(locale: &CStr) -> Result<NumberingSystem> {
+        let locale = locale_id(locale)?;
         // SAFETY: `locale` is terminated.
-        open(|status| unsafe { unumsys_open(locale.as_ptr(), status) }).map(NumberingSystem)
+        open(|status| unsafe { unumsys_open(locale, status) }).map(NumberingSystem)
     }
 
     pub fn by_name(name: &CStr) -> Result<NumberingSystem> {

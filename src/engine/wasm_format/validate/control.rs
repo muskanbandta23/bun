@@ -55,6 +55,9 @@ impl<'a> Validator<'a> {
         self.uses_simd |= self.types().signature_has_v128(index);
         let ty = self.types().func_type(index);
         let (count, available) = (ty.params.len(), self.available());
+        if self.top_is(ty.params) {
+            return Ok(count);
+        }
         ensure!(
             self.has(count),
             validation,
@@ -90,6 +93,9 @@ impl<'a> Validator<'a> {
     fn check_results_fully(&mut self, ty: BlockType) -> Checked {
         let ty = self.types().block_type(&ty);
         let (count, available) = (ty.results.len(), self.available());
+        if available == count && self.top_is(ty.results) {
+            return Ok(());
+        }
         ensure!(
             available <= count && self.has(count),
             validation,

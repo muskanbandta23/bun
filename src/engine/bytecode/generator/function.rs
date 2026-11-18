@@ -49,6 +49,9 @@ impl<'a> Generator<'a> {
 
     pub(super) fn function_name_of(&mut self, name: Option<Name>) -> FunctionName {
         let (names, name) = (&self.ast.names, name.unwrap_or(Name::EMPTY));
+        if Name::known_text(name.index()).is_some() {
+            return FunctionName::Known(name);
+        }
         match names.source_start(name) {
             Some(start) if names.kind(name) == NameKind::Ordinary => FunctionName::Source {
                 start,
@@ -64,10 +67,7 @@ impl<'a> Generator<'a> {
         position: u32,
     ) -> FunctionInfo {
         FunctionInfo {
-            name: FunctionName::Source {
-                start: 0,
-                length: 0,
-            },
+            name: FunctionName::Known(Name::EMPTY),
             kind,
             flags: FunctionFlags::STRICT,
             origin: self.origin - Origin::DEFAULT_CONSTRUCTOR,

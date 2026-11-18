@@ -1,6 +1,7 @@
 //! `String`, `RegExp`, `JSON` and the escaping of text.
 
 mod json;
+pub(crate) mod regexp;
 pub(crate) mod string;
 mod uri;
 
@@ -13,6 +14,7 @@ pub(crate) fn initialize_slot(cx: &Cx, slot: RealmSlot) -> bool {
     string::initialize_slot(cx, slot)
         || uri::initialize_slot(cx, slot)
         || json::initialize_slot(cx, slot)
+        || regexp::initialize_slot(cx, slot)
 }
 
 pub(crate) fn add_conditions(
@@ -20,5 +22,5 @@ pub(crate) fn add_conditions(
     which: RealmWatchpoint,
     conditions: &mut Conditions<'_>,
 ) -> bool {
-    string::add_conditions(cx, which, conditions)
+    string::add_conditions(cx, which, conditions) || regexp::add_conditions(cx, which, conditions)
 }

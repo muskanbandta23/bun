@@ -3,9 +3,9 @@ use bun_engine_vm::{
     JsFunction, NativeFunction, PadSide, RealmSlot, RopeBuilder, StringObject, TrimSides, TypeFlags,
 };
 
-use super::pattern::is_regexp;
 use super::{TYPE_ERROR, html, iterator, locale, pattern, this_string};
 use crate::prelude::*;
+use crate::text::regexp::string_methods::{string_match, string_match_all, string_search};
 
 const fn intrinsic(
     name: PropertyName<'static>,
@@ -58,9 +58,9 @@ static_table!(static PROPERTIES = [
     intrinsic(names::startsWith, starts_with, 1, Intrinsic::StringPrototypeStartsWith),
     intrinsic(names::endsWith, ends_with, 1, Intrinsic::StringPrototypeEndsWith),
     intrinsic(names::includes, includes, 1, Intrinsic::StringPrototypeIncludes),
-    intrinsic(names::r#match, pattern::r#match, 1, Intrinsic::StringPrototypeMatch),
-    intrinsic(names::search, pattern::search, 1, Intrinsic::StringPrototypeSearch),
-    StaticProperty::function(names::matchAll, pattern::match_all, 1),
+    intrinsic(names::r#match, string_match, 1, Intrinsic::StringPrototypeMatch),
+    intrinsic(names::search, string_search, 1, Intrinsic::StringPrototypeSearch),
+    StaticProperty::function(names::matchAll, string_match_all, 1),
     intrinsic(names::split, pattern::split, 2, Intrinsic::StringPrototypeSplit),
     StaticProperty::function(names::normalize, locale::normalize, 0),
     StaticProperty::realm_slot(names::trimStart, RealmSlot::string_prototype_trim_start),
@@ -236,7 +236,7 @@ fn search_argument(
     if let Some(string) = search.as_string() {
         return Ok(string);
     }
-    if is_regexp(cx, search)? {
+    if search.is_regexp(cx)? {
         return Err(cx.throw_type_error(message));
     }
     search.to_string(cx)

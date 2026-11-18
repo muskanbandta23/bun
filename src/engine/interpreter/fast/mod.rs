@@ -4,6 +4,7 @@ pub(crate) mod allocation;
 pub(crate) mod calls;
 pub(crate) mod control;
 pub(crate) mod elements;
+pub(crate) mod exotic;
 pub(crate) mod frames;
 pub(crate) mod iteration;
 pub(crate) mod operators;

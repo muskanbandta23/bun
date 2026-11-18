@@ -20,7 +20,6 @@ class QueuedTask;
 class SamplingProfiler;
 class SourceProviderCache;
 class TerminationDeadline;
-class TypedArrayController;
 class UnlinkedProgramCodeBlock;
 
 enum VMIdentifierType {};
@@ -322,7 +321,6 @@ private:
 public:
     // From here to the heap, what only C++ has.
     const Ref<DeferredWorkTimer> deferredWorkTimer;
-    RefPtr<TypedArrayController> m_typedArrayController;
     DateCache dateCache;
     Interpreter interpreter;
 
@@ -339,10 +337,9 @@ private:
     ExceptionScope* m_topExceptionScope { nullptr };
     ExceptionEventLocation m_simulatedThrowLocation;
     IsoSubspace* m_nativeStdFunctionSpace { nullptr };
-    Engine::Opaque<136> m_unused;
 
 public:
-    Heap heap;
+    alignas(Engine::Layout::Vm_embedder_members) Heap heap;
     SmallStrings smallStrings;
 };
 

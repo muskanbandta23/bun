@@ -335,6 +335,7 @@ impl Drop for VmRef {
         unsafe {
             let vm = self.0.as_ref();
             if vm.ref_count.fetch_sub(1, Ordering::AcqRel) == 1 {
+                (vm.hooks.will_destroy)(vm);
                 vm.services.will_destroy(vm);
                 vm.heap.tear_down();
                 if let Some(destroy) = vm.embedder.destroy_members.get() {

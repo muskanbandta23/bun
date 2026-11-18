@@ -3,6 +3,8 @@
 #[cfg_attr(target_arch = "aarch64", path = "stubs_aarch64.rs")]
 #[cfg_attr(target_arch = "x86_64", path = "stubs_x86_64.rs")]
 pub mod stubs;
+mod section;
+mod repeated;
 mod unwind;
 
 use std::rc::Rc;
@@ -10,6 +12,8 @@ use std::rc::Rc;
 use bun_engine_bytecode::{Code, Specialization};
 use bun_engine_macros::{FieldOffsets, native_abi};
 
+pub use section::code_in_call_frames;
+pub use repeated::RepeatedCall;
 pub use unwind::unwind;
 
 use crate::heap::stack::stack_pointer;

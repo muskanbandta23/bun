@@ -9,15 +9,14 @@ use bun_engine_vm::{
     StackTraceRequest, StackVisitor, Vm,
 };
 
-/// Until `visit` returns false.
+/// Until `visit` returns false. Nothing is visited if `first` is no frame on the stack.
 #[export]
 unsafe fn stack_visit(
     vm: &Vm,
-    first: Option<&CallFrame>,
+    first: *const CallFrame,
     visit: unsafe extern "C" fn(*const c_void, &StackFrame, Visibility) -> bool,
     context: *const c_void,
 ) {
-    let Some(first) = first else { return };
     // SAFETY: the two go together.
     StackVisitor::frames_from(vm, first)
         .all(|frame| unsafe { visit(context, &(&frame).into(), frame.visibility()) });

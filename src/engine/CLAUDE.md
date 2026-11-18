@@ -75,6 +75,8 @@ The caller builds the callee's header and arguments at the bottom of its own fra
 
 Native functions and run-time operations use the C calling convention (System V on Windows too).
 
+A profiler stops the thread at any instruction. A function of the engine that runs with the frame pointer at such a frame is `#[in_call_frame]`, and generated code that makes frames as C does has `Owner::NATIVE`.
+
 ## The heap
 
 Cells do not move. The collector is generational mark and sweep, finds roots by scanning the native stack conservatively, and traces cells precisely. So a `Gc<T>`, a `Value` or a `&T` of a cell is safe in a local, an argument or a struct on the stack, and in a field of another cell. It is **never** put in memory of the Rust allocator (`Vec`, `Box`, `Rc`, `SmallVec`, a hash map, a boxed closure, a static). Instead:

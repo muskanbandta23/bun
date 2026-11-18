@@ -2,6 +2,7 @@
 
 use std::io::{BufRead, Write};
 
+use bun_engine_inspector::profiling::Coverage;
 use bun_engine_text::names;
 use bun_engine_vm::heap::{HeapKind, Scope};
 use bun_engine_vm::{RunLoop, SourceType, evaluate_script};
@@ -171,6 +172,9 @@ pub(crate) fn run(command_line: &CommandLine, body: impl FnOnce(&mut Cx)) -> i32
         let _ = State::of(vm.get()).command_line.set(command_line.clone());
         Cx::from_global(global::create(vm.get()))
     };
+    if command_line.collects_coverage {
+        Coverage::of(cx).enable(cx);
+    }
     let run_loop = RunLoop::install(cx);
     let state = State::of(cx);
     (state.expected_async_passes).set(command_line.expected_async_passes);

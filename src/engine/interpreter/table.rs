@@ -230,6 +230,7 @@ fast_handlers! {
     JumpIfTypeofFunction jump_if_typeof_function,
     JumpIfTypeofNotFunction jump_if_typeof_not_function,
     JumpIfBuiltin jump_if_builtin,
+    Cover cover,
     SwitchInt switch_int,
     RethrowIfAny rethrow_if_any,
     ThrowIfNotObject throw_if_not_object,

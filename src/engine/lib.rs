@@ -21,7 +21,7 @@ fn hooks() -> Hooks {
         native_call_entry: |_, _| call::native_call_entry(),
         jettison: |_, _| {},
         debug: |_, _, _, _| Ok(()),
-        cover: |_, _, _, _| {},
+        cover: bun_engine_inspector::profiling::cover,
         access_handler: |_, _, _| 0,
         tier_up: |_, code_block, _, _| {
             code_block.execution_counter().set(i32::MIN);

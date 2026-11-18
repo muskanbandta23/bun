@@ -1,6 +1,8 @@
 //! What scripts find in the global object besides the standard library.
 
+mod coverage;
 mod dollar;
+mod dollar_vm;
 mod heap;
 mod io;
 mod scripts;
@@ -18,13 +20,17 @@ use crate::prelude::*;
 /// The name, the code and the `length` of each.
 pub(crate) type Functions = &'static [(&'static str, NativeFunction, u32)];
 
-fn object_with(cx: &Cx, functions: Functions, attributes: Attributes) -> Gc<JsObject> {
-    let object = cx.new_object();
+fn define_functions(cx: &Cx, object: &JsObject, functions: Functions, attributes: Attributes) {
     for &(name, function, length) in functions {
         let name = Identifier::from_literal(name);
         let intrinsic = Intrinsic::None;
         object.put_direct_native_function(cx, name.name(), length, function, intrinsic, attributes);
     }
+}
+
+fn object_with(cx: &Cx, functions: Functions, attributes: Attributes) -> Gc<JsObject> {
+    let object = cx.new_object();
+    define_functions(cx, &object, functions, attributes);
     object
 }
 
@@ -58,6 +64,9 @@ pub(crate) fn define_globals(cx: &Cx) {
     let dollar = dollar::create(cx).into();
     define_hidden(cx, "$", dollar);
     define_hidden(cx, "$262", dollar);
+    if State::of(cx).command_line().exposes_vm {
+        define_hidden(cx, "$vm", dollar_vm::create(cx).into());
+    }
     let performance = object_with(cx, tasks::PERFORMANCE, Attributes::DONT_ENUM);
     define_hidden(cx, "performance", performance.into());
 }

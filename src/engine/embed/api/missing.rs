@@ -257,11 +257,6 @@ fn sampling_profiler_top_bytecodes(_: &Vm) -> StringRef {
     unimplemented!()
 }
 
-#[export]
-fn function_reoptimization_count(_function: Value) -> u32 {
-    0
-}
-
 // Inspector
 
 #[allow(dead_code, clippy::unused_self)]

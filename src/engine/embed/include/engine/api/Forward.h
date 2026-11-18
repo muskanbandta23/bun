@@ -129,8 +129,6 @@ using SourceID = intptr_t;
 using BuiltinCode = FunctionExecutable*;
 
 enum Unknown {};
-enum class MessageLevel : uint8_t;
-enum class MessageType : uint8_t;
 
 template<typename T> class WriteBarrierBase;
 template<typename T> class WriteBarrier;

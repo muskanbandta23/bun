@@ -4,13 +4,13 @@ use core::hash::{Hash, Hasher};
 use std::rc::Rc;
 
 use bun_engine_bytecode::{Declarations, EvalContext, StaticScope};
-use bun_engine_text::StringRef;
+use bun_engine_text::{StringRef, Text, names};
 
 use crate::realm::Declarer;
 use crate::scope::{VariableScope, static_scope_of};
 use crate::{
     CodeBlock, Cx, ErrorType, EvalExecutable, Gc, JsCell, JsResult, SourceCode, SourceProvider,
-    SourceProviderRef, SourceType, StackVisitor, Value, Vm, create_compile_error, errors,
+    SourceProviderRef, SourceType, StackVisitor, Value, Vm, create_compile_error, errors, json,
 };
 
 #[derive(Clone)]
@@ -56,6 +56,23 @@ pub(super) fn generated_source(text: StringRef, origin: Option<&SourceProvider>)
     SourceCode::whole(provider.origin(origin).finish())
 }
 
+/// The value of a program that is JSON text, in parentheses or not, takes no code to find.
+fn evaluate_data(cx: &Cx, program: Text<'_>) -> JsResult<Option<Value>> {
+    let program = program.trim_matches(|unit| matches!(unit, 0x20 | 0x09 | 0x0a | 0x0d));
+    let data = match program.get(0).map(u8::try_from) {
+        Some(Ok(b'(')) if program.ends_with(Text::from_ascii(")")) => {
+            program.slice(1..program.len() - 1)
+        }
+        Some(Ok(b'[' | b'"' | b'-' | b'0'..=b'9')) => program,
+        _ => return Ok(None),
+    };
+    let value = json::try_parse(cx, data.into())?;
+    // In a literal, `__proto__` sets the prototype however it is spelled.
+    let may_set_prototype =
+        || data.contains(names::__proto__.text()) || data.contains(Text::from_ascii("\\u"));
+    Ok(value.filter(|it| !it.is_object() || !may_set_prototype()))
+}
+
 impl Cx {
     /// HostEnsureCanCompileStrings
     pub fn ensure_can_compile_strings(&self) -> JsResult<()> {
@@ -88,6 +105,9 @@ pub fn direct_eval(
     let executable = match caller.evals().get(&key) {
         Some(executable) => executable,
         None => {
+            if let Some(value) = evaluate_data(cx, key.text.text())? {
+                return Ok(value);
+            }
             let source = generated_source(key.text.clone(), Some(caller.provider()));
             let eval = cx.compile_direct_eval(&source.provider, context, key.scope.clone());
             let eval = eval.map_err(|error| cx.throw(create_compile_error(cx, &error).into()))?;
@@ -123,6 +143,9 @@ pub fn indirect_eval(cx: &mut Cx, program: Value) -> JsResult<Value> {
     };
     let text = program.to_string_ref(cx)?;
     cx.ensure_can_compile_strings()?;
+    if let Some(value) = evaluate_data(cx, text.text())? {
+        return Ok(value);
+    }
     let executable = prepare_indirect_eval(cx, text, origin_of_caller(cx).as_deref())?;
     execute_indirect_eval(cx, executable)
 }

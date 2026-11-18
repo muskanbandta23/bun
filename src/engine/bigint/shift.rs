@@ -1,6 +1,6 @@
 use crate::{BigIntRef, Error, Fill, Filled, MAX_BITS, Outcome, Poll, digits};
 
-#[inline]
+#[inline(always)]
 pub fn left_shift<'a>(
     x: BigIntRef<'a>,
     y: BigIntRef<'a>,
@@ -8,7 +8,7 @@ pub fn left_shift<'a>(
     shift(x, y.digits, !y.is_negative)
 }
 
-#[inline]
+#[inline(always)]
 pub fn signed_right_shift<'a>(
     x: BigIntRef<'a>,
     y: BigIntRef<'a>,
@@ -111,20 +111,21 @@ impl Fill for Shift<'_> {
         self.length
     }
 
-    #[inline]
+    #[inline(always)]
     fn fill(self, out: &mut [u64], _: Poll<'_>) -> Result<Filled, Error> {
         let out = &mut out[..self.length];
-        if self.kind == Kind::Left {
-            digits::shift_left(out, self.x.digits, self.amount);
-            return Ok(Filled::whole(self.x.is_negative, out));
+        match self.kind {
+            Kind::Left => digits::shift_left(out, self.x.digits, self.amount),
+            Kind::Right => digits::shift_right(out, self.x.digits, self.amount),
+            Kind::RightAwayFromZero => {
+                out[self.length - 1] = 0;
+                let kept = self.x.digits.len() - self.amount / 64;
+                let low = &mut out[..self.length.min(kept)];
+                digits::shift_right(low, self.x.digits, self.amount);
+                digits::increment(out);
+                return Filled::whole_or_one_less(true, out);
+            }
         }
-        let kept = &self.x.digits[self.amount / 64..];
-        let (low, above) = out.split_at_mut(self.length.min(kept.len()));
-        digits::shift_bits_right(low, kept, (self.amount % 64) as u32);
-        above.fill(0);
-        if self.kind == Kind::RightAwayFromZero {
-            digits::increment(out);
-        }
-        Filled::whole_or_one_less(self.x.is_negative, out)
+        Ok(Filled::whole(self.x.is_negative, out))
     }
 }

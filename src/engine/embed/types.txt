@@ -230,5 +230,3 @@ opaque  InspectorBackend class Engine::InspectorBackend
 opaque  InspectorController class Inspector::JSGlobalObjectInspectorController
 value   AsyncCallType Inspector::AsyncCallType
 value   ProfilingReason JSC::ProfilingReason
-value   MessageType JSC::MessageType
-value   MessageLevel JSC::MessageLevel

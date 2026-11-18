@@ -120,6 +120,13 @@ public:
     }
 
     const Vector<ModuleRequest> requestedModules() const;
+    size_t requestedModuleCount() const { return Engine::module_request_count(this); }
+    ModuleMapKey requestedModuleKey(size_t index) const
+    {
+        ScriptFetchParameters::Type type;
+        auto* specifier = Engine::module_request_key(this, index, type);
+        return { static_cast<UniquedStringImpl*>(specifier), type };
+    }
     const Vector<LoadedModule, 8> loadedModules() const;
     AbstractModuleRecord* loadedModule(ModuleMapKey request) const { return Engine::module_loaded_module(this, request.first, request.second); }
     void setImportedModule(ModuleMapKey request, AbstractModuleRecord* module) { Engine::module_set_imported_module(this, request.first, request.second, module); }
@@ -176,8 +183,8 @@ public:
 
     // For a caller that adds the entries itself.
     static JSModuleRecord* create(JSGlobalObject* globalObject, JSModuleLoader* loader, const Identifier& key, const SourceCode& source) { return Engine::source_text_module_create(globalObject, loader, key, source); }
-    // Parses the source. Null if that fails, or else if an import attribute is not valid.
-    static JSModuleRecord* analyze(JSGlobalObject*, JSModuleLoader*, const Identifier& key, const SourceCode&, ParserError&, String& attributeError);
+    // Parses the source, for the realm of the loader. Null with one of the errors if that fails.
+    static JSModuleRecord* analyze(JSModuleLoader* loader, const Identifier& key, const SourceCode& source, ParserError& parserError, String& attributeError) { return Engine::source_text_module_analyze(loader, key, source, parserError, attributeError); }
 
     void setIsTypeScript(bool value) { Engine::fieldAt<bool>(this, Engine::Layout::AbstractModuleRecord_is_typescript) = value; }
     void reserveCapacity(unsigned requests, unsigned imports, unsigned exports) { Engine::module_reserve_entries(this, requests, imports, exports); }

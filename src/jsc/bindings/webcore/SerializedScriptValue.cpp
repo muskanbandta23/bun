@@ -1154,7 +1154,7 @@ private:
                     return true;
                 write(RegExpTag);
                 write(regExp->regExp()->pattern());
-                write(String(JSC::Yarr::flagsString(regExp->regExp()->flags()).span()));
+                write(JSC::Yarr::flagsString(regExp->regExp()->flags()));
                 return true;
             }
             if (auto* errorInstance = dynamicDowncast<ErrorInstance>(obj)) {
@@ -3654,8 +3654,8 @@ private:
                 return JSValue();
             }
             VM& vm = m_lexicalGlobalObject->vm();
-            RegExp* regExp = RegExp::create(vm, pattern->string(), reFlags.value());
-            if (!regExp->isValid()) [[unlikely]] {
+            RegExp* regExp = RegExp::tryCreate(vm, pattern->string(), reFlags.value());
+            if (!regExp) [[unlikely]] {
                 fail();
                 return JSValue();
             }

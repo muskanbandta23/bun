@@ -28,13 +28,10 @@
 namespace WebCore {
 using namespace JSC;
 
-RefPtr<JSC::SourceProvider> createBuiltinsSourceProvider();
-
-JSVMClientData::JSVMClientData(VM& vm, RefPtr<JSC::SourceProvider> sourceProvider)
+JSVMClientData::JSVMClientData(VM& vm)
     : commonStrings(vm)
     , schemaStrings(vm)
     , m_builtinNames(vm)
-    , m_builtinFunctions(makeUnique<JSBuiltinFunctions>(vm, sourceProvider, m_builtinNames))
     , m_consoleClient(makeUniqueRef<Bun::ConsoleObject>())
     , m_clientSubspaces(makeUnique<ExtendedDOMClientIsoSubspaces>())
     , m_heapSizeAfterLastCollection(vm.heap)
@@ -56,8 +53,7 @@ JSVMClientData::~JSVMClientData()
 }
 void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
 {
-    auto provider = WebCore::createBuiltinsSourceProvider();
-    JSVMClientData* clientData = new JSVMClientData(*vm, provider);
+    JSVMClientData* clientData = new JSVMClientData(*vm);
     clientData->bunVM = bunVM;
     clientData->m_isWorkerVM = !!worker;
     clientData->m_isNodeWorkerVM = worker && worker->options().kind == WorkerOptions::Kind::Node;
@@ -133,8 +129,6 @@ void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
             clientData->schemaStrings.visit(visitor);
         })),
         JSC::ConstraintVolatility::GreyedByExecution));
-
-    clientData->builtinFunctions().exportNames();
 }
 
 JSC::GCClient::IsoSubspace* subspaceForImplSlow(JSC::VM& vm, SubspaceSlots slots, size_t cellSize, void (*destroy)(JSC::JSCell*), bool hasOutputConstraints)

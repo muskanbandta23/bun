@@ -48,7 +48,6 @@ inline bool Bun__VmHandle__scriptAllowedInline(const unsigned char* state)
 namespace WebCore {
 
 class ExtendedDOMClientIsoSubspaces;
-class JSBuiltinFunctions;
 
 class DOMWrapperWorld;
 }
@@ -176,7 +175,7 @@ class JSVMClientData : public JSC::VM::ClientData {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(JSVMClientData, JSVMClientData);
 
 public:
-    explicit JSVMClientData(JSC::VM&, RefPtr<JSC::SourceProvider>);
+    explicit JSVMClientData(JSC::VM&);
 
     virtual ~JSVMClientData();
 
@@ -184,7 +183,6 @@ public:
     static void create(JSC::VM*, void* bunVM, WorkerMessagingProxy* worker);
 
     BunBuiltinNames& builtinNames() { return m_builtinNames; }
-    JSBuiltinFunctions& builtinFunctions() { return *m_builtinFunctions; }
 
     WebCore::DOMWrapperWorld& normalWorld() { return *m_normalWorld; }
 
@@ -280,7 +278,6 @@ private:
     bool m_prelinkedModuleGraphChecked { false };
 
     BunBuiltinNames m_builtinNames;
-    std::unique_ptr<JSBuiltinFunctions> m_builtinFunctions;
 
     // Owns the per-VM `JSHeapData`. Declared *before* the client `IsoSubspace`
     // members below so it is destroyed *after* them (members destruct in

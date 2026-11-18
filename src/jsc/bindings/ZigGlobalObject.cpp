@@ -1445,7 +1445,6 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, const JSC::Gl
     , m_bunVM(Bun__getVM())
     , m_constructors(makeUnique<WebCore::DOMConstructors>())
     , m_world(static_cast<JSVMClientData*>(vm.clientData)->normalWorld())
-    , m_builtinInternalFunctions(makeUnique<WebCore::JSBuiltinInternalFunctions>(vm))
     , globalEventScope(Bun::GlobalEventScope::create())
     , m_scriptExecutionContext(adoptRef(*new WebCore::ScriptExecutionContext(&vm, this)))
 {
@@ -1458,7 +1457,6 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
     , m_bunVM(Bun__getVM())
     , m_constructors(makeUnique<WebCore::DOMConstructors>())
     , m_world(static_cast<JSVMClientData*>(vm.clientData)->normalWorld())
-    , m_builtinInternalFunctions(makeUnique<WebCore::JSBuiltinInternalFunctions>(vm))
     , globalEventScope(Bun::GlobalEventScope::create())
     , m_scriptExecutionContext(adoptRef(*new WebCore::ScriptExecutionContext(&vm, this, contextId)))
 {
@@ -3261,6 +3259,7 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleStderr, (JSGlobalObject * globalObject, Encod
 BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getRequireESMBuiltin, commonJSRequireESMCodeGenerator, PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly)
 BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getLoadEsmIntoCjsBuiltin, commonJSLoadEsmIntoCjsCodeGenerator, PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly)
 BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getInternalRequireBuiltin, commonJSInternalRequireCodeGenerator, PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly)
+BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getCreateFIFOBuiltin, fifoCreateFIFOCodeGenerator, PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly)
 #undef BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -3451,8 +3450,6 @@ private:
 void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    m_builtinInternalFunctions->initialize(*this);
-
     auto clientData = WebCore::clientData(vm);
     auto& builtinNames = WebCore::builtinNames(vm);
 
@@ -3506,7 +3503,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     // TODO: most/all of these private properties can be made as static globals.
     // i've noticed doing it as is will work somewhat but getDirect() wont be able to find them
 
-    putDirectBuiltinFunction(vm, this, builtinNames.createFIFOPrivateName(), fifoCreateFIFOCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    putDirectCustomAccessor(vm, builtinNames.createFIFOPrivateName(), JSC::CustomGetterSetter::create(vm, getCreateFIFOBuiltin, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
     // These three are CommonJS-only and never reached on an ESM startup path; install
     // lazy getters so their source isn't parsed during global object construction.
     // (See getRequireESMBuiltin / getLoadEsmIntoCjsBuiltin / getInternalRequireBuiltin above.)
@@ -3779,7 +3776,7 @@ template<class Visitor, class T> static void visitGlobalObjectMember(Visitor& vi
 
 template<class Visitor, class T> static void visitGlobalObjectMember(Visitor& visitor, std::unique_ptr<T>& ptr)
 {
-    // The two unique_ptr members (m_builtinInternalFunctions, m_constructors) are
+    // The unique_ptr member (m_constructors) is
     // populated in the constructor initializer list, so in steady state this is
     // never null. The guard exists because the concurrent marker can visit a
     // Zig::GlobalObject picked up via conservative stack scan while its own

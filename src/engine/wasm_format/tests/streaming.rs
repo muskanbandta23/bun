@@ -150,6 +150,15 @@ fn bodies_are_handed_out_before_the_end() {
 }
 
 #[test]
+fn sections_that_are_done_are_set_aside() {
+    let section = [vec![0], sized(&custom("", &[3; 1000]))].concat();
+    let bytes = [module(&[]), section.repeat(200)].concat();
+    let module = in_pieces(bytes.chunks(3000)).unwrap();
+    assert!(module.source().all(|piece| piece.len() < 40_000));
+    assert_eq!(contents(&module), contents(&valid(&bytes)));
+}
+
+#[test]
 fn the_order_of_errors_is_fixed() {
     let error = |bytes: &[u8]| {
         let errors = [64, 5000, bytes.len()].map(|size| in_pieces(bytes.chunks(size)).err());

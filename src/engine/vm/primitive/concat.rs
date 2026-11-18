@@ -114,7 +114,7 @@ impl JsString {
             };
             builder.push(cx, string)?;
         }
-        Ok(builder.finish(cx))
+        builder.finish(cx)
     }
 }
 
@@ -149,11 +149,11 @@ impl RopeBuilder {
     }
 
     #[inline(always)]
-    pub fn finish(self, vm: &Vm) -> Gc<JsString> {
-        match self.fibers {
-            [Some(a), Some(b), c] => JsRopeString::concatenation(vm, a, b, c, self.length),
+    pub fn finish(self, cx: &Cx) -> JsResult<Gc<JsString>> {
+        Ok(match self.fibers {
+            [Some(a), Some(b), c] => JsRopeString::concatenation(cx, a, b, c, self.length),
             [Some(only), None, _] => only,
-            [None, ..] => vm.small_strings.empty(),
-        }
+            [None, ..] => cx.small_strings.empty(),
+        })
     }
 }

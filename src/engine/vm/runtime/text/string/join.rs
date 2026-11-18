@@ -163,7 +163,7 @@ impl JsObject {
             }
         }
         joined.push(cx, separator.repeat(cx, separators)?)?;
-        Ok(joined.finish(cx))
+        joined.finish(cx)
     }
 
     /// The first index from `index` on at which there may be something. Looking at all elements is worth it once

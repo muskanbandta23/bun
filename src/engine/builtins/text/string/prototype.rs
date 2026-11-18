@@ -202,7 +202,7 @@ fn concat(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
         let argument = argument.to_string(cx)?;
         builder.push(cx, argument)?;
     }
-    Ok(builder.finish(cx).into())
+    builder.finish(cx).map(Into::into)
 }
 
 #[native_abi]

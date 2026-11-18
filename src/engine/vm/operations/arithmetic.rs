@@ -72,8 +72,7 @@ pub fn add(cx: &mut Cx, lhs: Value, rhs: Value) -> JsResult<Value> {
     let a = lhs.to_primitive(cx, PreferredType::None)?;
     let b = rhs.to_primitive(cx, PreferredType::None)?;
     if a.is_string() || b.is_string() {
-        let (a, b) = (a.primitive_to_string(cx)?, b.primitive_to_string(cx)?);
-        return JsString::concat(cx, a, b).map(Into::into);
+        return JsString::add(cx, a, b).map(Into::into);
     }
     add_numeric(cx, a, b)
 }

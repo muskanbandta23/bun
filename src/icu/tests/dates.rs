@@ -85,6 +85,15 @@ fn text_and_fields_of_a_date() {
 }
 
 #[test]
+fn a_format_takes_another_pattern() {
+    let mut format = DateFormat::open(c"en", &units("y")).unwrap();
+    format.set_pattern(&units("MMM d")).unwrap();
+    let mut out = Buffer::new();
+    format.format(&mut calendar_at(0.0), &mut out).unwrap();
+    assert_eq!(text(&out), "Jan 1");
+}
+
+#[test]
 fn a_letter_that_is_no_field_fails_to_format() {
     let format = DateFormat::open(c"en", &units("y T")).unwrap();
     let result = format.format(&mut calendar_at(0.0), &mut Buffer::new());

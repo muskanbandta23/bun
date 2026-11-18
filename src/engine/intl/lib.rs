@@ -13,6 +13,7 @@ mod available_locales;
 mod cache;
 mod calendar;
 mod collation;
+pub mod date_time_format;
 mod error;
 mod language_tag;
 mod locale_list;
@@ -20,6 +21,7 @@ mod locale_resolver;
 pub mod number_format;
 mod numbering_system;
 mod parts;
+mod recent;
 
 pub use available_locales::AvailableLocales;
 pub use cache::Cache;

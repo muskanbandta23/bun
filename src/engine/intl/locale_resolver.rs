@@ -97,7 +97,7 @@ impl ResolvedLocale {
         &self.tag.as_bytes()[..self.data_locale_length]
     }
 
-    /// The locale whose data is used, with values of `ca`, `co` and `nu`.
+    /// The locale whose data is used, with values of `ca`, `co`, `hc` and `nu`.
     pub(crate) fn icu_locale(&self, keywords: &[(Key, &[u8])]) -> Result<CText> {
         let mut id = Buffer::from_slice(self.data_locale());
         let mut separator = b'@';
@@ -105,6 +105,7 @@ impl ResolvedLocale {
             let (key, value): (&[u8], _) = match key {
                 Key::CALENDAR => (b"calendar", calendar::icu_name(value)),
                 Key::COLLATION => (b"collation", collation::icu_name(value)),
+                Key::HOUR_CYCLE => (b"hours", value),
                 Key::NUMBERING_SYSTEM => (b"numbers", value),
                 _ => (key.as_bytes(), value),
             };

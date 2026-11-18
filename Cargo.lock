@@ -606,7 +606,6 @@ dependencies = [
  "bitflags",
  "bun_engine_exec_memory",
  "libc",
- "smallvec",
 ]
 
 [[package]]

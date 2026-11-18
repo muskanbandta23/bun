@@ -143,7 +143,7 @@ impl<T: Element> TypedArray<T> {
         source: &JsObject,
         length: usize,
     ) -> JsResult<(Gc<TypedArray<T>>, usize)> {
-        if length > source.public_length() as usize {
+        if plain_elements(source, &(0..length), &cx.no_gc()).is_none() {
             // Memory that comes zeroed stays untouched until it is used.
             return Ok((Self::create(cx, shape, length)?, 0));
         }

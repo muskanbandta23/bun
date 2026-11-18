@@ -6,8 +6,8 @@ use super::static_table::StaticValue;
 use crate::{
     Attributes, CellType, CustomGetterSetter, CustomSetter, Cx, DeferredFire, DeleteKind,
     DeletePropertySlot, Gc, GetterSetter, GlobalProxy, InternalMethod, JsObject, JsResult,
-    PropertyDescriptor, PropertyOffset, PropertySlot, ProxyObject, PutContext, PutKind, PutPropertySlot, Shape,
-    ShapeFlags, TransitionKind, TypeFlags, Value, Vm, errors,
+    PropertyDescriptor, PropertyOffset, PropertySlot, ProxyObject, PutContext, PutKind,
+    PutPropertySlot, Shape, ShapeFlags, TransitionKind, TypeFlags, Value, Vm, errors,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
@@ -230,16 +230,20 @@ impl JsObject {
         let Some(original) = slot.this_value().as_object() else {
             return cx.reject(slot.is_strict(), errors::READ_ONLY_PROPERTY_WRITE);
         };
-        let (receiver, is_proxy) = (original.where_definitions_go(cx), original.is::<ProxyObject>());
+        let (receiver, is_proxy) = (
+            original.where_definitions_go(cx),
+            original.is::<ProxyObject>(),
+        );
         let shape = receiver.shape();
         let takes_plain_stores = receiver.cell_type() == CellType::FinalObject
             && !shape.has(ShapeFlags::HAS_READ_ONLY_OR_ACCESSOR_EXCLUDING_PROTO);
-        let may_be_exotic = slot.is_tainted_by_opaque_object()
-            || !shape.class().has_ordinary_define_own_property();
+        let may_be_exotic =
+            slot.is_tainted_by_opaque_object() || !shape.class().has_ordinary_define_own_property();
         let is_custom = |found: (_, Attributes)| found.1.contains(Attributes::CUSTOM_VALUE);
         if takes_plain_stores
             || !((may_be_exotic && may_be_special_property(receiver.cell_type(), name))
-                || (shape.has(ShapeFlags::HAS_ANY_ACCESSOR) && shape.get(name).is_some_and(is_custom)))
+                || (shape.has(ShapeFlags::HAS_ANY_ACCESSOR)
+                    && shape.get(name).is_some_and(is_custom)))
         {
             if !shape.has_non_reified_static_properties() {
                 return receiver.put_fast(cx, name, value, slot);

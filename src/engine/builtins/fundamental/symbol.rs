@@ -90,7 +90,11 @@ fn key_for(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 }
 
 fn this_symbol(cx: &Cx, this: Value, function: &str) -> JsResult<Gc<JsSymbol>> {
-    let wrapped = || this.downcast::<SymbolObject>()?.internal_value().as_symbol();
+    let wrapped = || {
+        this.downcast::<SymbolObject>()?
+            .internal_value()
+            .as_symbol()
+    };
     this.as_symbol().or_else(wrapped).ok_or_else(|| {
         cx.throw_type_error(format_args!(
             "Symbol.prototype.{function} requires that |this| be a symbol or a symbol object"

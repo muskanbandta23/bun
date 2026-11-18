@@ -1,6 +1,6 @@
 use bun_engine_text::PropertyName;
 use bun_engine_vm::{
-    Attributes, GetterSetter, IntegrityLevel, InternalMethod, JsFinalObject, JsFunction, JsObjectInit,
+    Attributes, GetterSetter, InternalMethod, JsFinalObject, JsFunction, JsObjectInit,
     NativeFunction, PropertyDescriptor, PropertySlot, RealmSlot, TypeFlags, caches, errors,
 };
 
@@ -68,9 +68,17 @@ pub(super) fn initialize_has_own_property(cx: &Cx) {
 
 /// %ThrowTypeError%
 pub(super) fn initialize_thrower(cx: &Cx) {
-    let function = method(cx, PropertyName::EMPTY, 0, throw_type_error, Intrinsic::None);
-    function.define_lazy_properties(cx);
-    function.restrict_ordinary(cx, IntegrityLevel::Frozen);
+    let function = method(
+        cx,
+        PropertyName::EMPTY,
+        0,
+        throw_type_error,
+        Intrinsic::None,
+    );
+    function.put_direct(cx, names::length, Value::ZERO, Attributes::CONSTANT);
+    let name = cx.small_strings.empty().into();
+    function.put_direct(cx, names::name, name, Attributes::CONSTANT);
+    function.ordinary_prevent_extensions(cx);
     let accessor = GetterSetter::create(cx, Some(function.upcast()), Some(function.upcast()));
     cx.global().init_throw_type_error_function(function);
     cx.global().init_throw_type_error_accessor(accessor);

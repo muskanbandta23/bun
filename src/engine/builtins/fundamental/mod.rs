@@ -18,12 +18,14 @@ use crate::watchpoints::Conditions;
 pub(crate) fn initialize_slot(cx: &Cx, slot: RealmSlot) -> bool {
     use RealmSlot::*;
     match slot {
-        object_constructor => object_constructor::initialize(cx),
-        object_prototype_has_own_property => object_prototype::initialize_has_own_property(cx),
-        object_prototype_to_string => object_prototype::initialize_to_string(cx),
-        object_prototype_value_of => object_prototype::initialize_value_of(cx),
+        object_constructor => self::object_constructor::initialize(cx),
+        object_prototype_has_own_property => {
+            self::object_prototype::initialize_has_own_property(cx)
+        }
+        object_prototype_to_string => self::object_prototype::initialize_to_string(cx),
+        object_prototype_value_of => self::object_prototype::initialize_value_of(cx),
         throw_type_error_function | throw_type_error_accessor => {
-            object_prototype::initialize_thrower(cx);
+            self::object_prototype::initialize_thrower(cx);
         }
         data_descriptor_shape | accessor_descriptor_shape => PropertyDescriptor::create_shapes(cx),
         direct_arguments_shape | scoped_arguments_shape => MappedArguments::create_shapes(cx),

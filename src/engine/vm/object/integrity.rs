@@ -129,7 +129,11 @@ impl JsObject {
         };
         are_elements_restricted
             && (shape.transition_kind() == TransitionKind::Freeze
-                || if is_frozen { shape.is_frozen() } else { shape.is_sealed() })
+                || if is_frozen {
+                    shape.is_frozen()
+                } else {
+                    shape.is_sealed()
+                })
     }
 
     /// TestIntegrityLevel

@@ -1,7 +1,7 @@
 use bun_engine_text::private_names;
 use bun_engine_vm::{
     DontEnumMode, IntegrityLevel, JsFinalObject, PropertyDescriptor, PropertyNameMode, caches,
-    errors, root_vec, try_function_realm,
+    errors, root_vec,
 };
 
 use crate::js;
@@ -71,12 +71,11 @@ fn call(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 
 #[native_abi]
 fn construct(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
-    let new_target = frame.new_target().cast::<JsObject>();
-    if new_target == frame.callee() {
+    let (new_target, callee) = (frame.new_target(), frame.callee());
+    if new_target == callee.into() {
         return call(cx, frame);
     }
-    let realm = try_function_realm(cx, new_target).unwrap_or_else(|| cx.global());
-    let shape = cx.subclass_shape(new_target, realm.object_shape())?;
+    let shape = cx.shape_from_new_target(new_target, &callee, |realm, _| realm.object_shape())?;
     Ok(JsFinalObject::create(cx, shape).into())
 }
 

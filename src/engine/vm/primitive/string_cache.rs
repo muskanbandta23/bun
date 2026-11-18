@@ -2,7 +2,7 @@
 
 use core::cell::{Cell, RefCell};
 
-use bun_engine_text::{Atom, StringImpl, StringRef, Text};
+use bun_engine_text::{Atom, PropertyName, StringImpl, StringRef, Text};
 
 use crate::vm::StartsZeroed;
 use crate::{FastHashSet, Gc, JsString, Vm};
@@ -74,6 +74,23 @@ impl JsString {
         let result = Self::new(vm, StringRef::substring(string, 0..string.len()));
         entry.set(result.address());
         result
+    }
+
+    /// The name is no static atom.
+    #[inline(always)]
+    pub(super) fn from_name_cached(vm: &Vm, name: PropertyName<'_>) -> Gc<JsString> {
+        let entry = &vm.string_caches.by_address[name.address() / 16 % BY_ADDRESS_SIZE];
+        match cached(entry.get()) {
+            Some(cached) if cached.fiber() == name.address() => cached,
+            _ if name.is_symbol() || name == PropertyName::EMPTY => {
+                Self::cache_impl(vm, name.string(), entry)
+            }
+            _ => {
+                let result = Self::allocate(vm, StringRef::retain(name.string()));
+                entry.set(result.address());
+                result
+            }
+        }
     }
 
     /// For short text that is likely to be a property key.

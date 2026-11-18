@@ -50,6 +50,7 @@ from_methods! {
     trunc = trunc,
 }
 
+/// `f64::atan2` of two infinities is not the multiple of a quarter turn that the language asks for.
 pub fn atan2(y: f64, x: f64) -> f64 {
     if x.is_infinite() && y.is_infinite() {
         let quarters = if x > 0.0 { 1.0 } else { 3.0 };
@@ -73,12 +74,14 @@ pub fn atanh(x: f64) -> f64 {
     (0.5 * ratio.ln_1p()).copysign(x)
 }
 
+/// Math.round, which rounds a half up and not away from zero.
 #[inline]
 pub fn round(x: f64) -> f64 {
     let ceiling = x.ceil();
     ceiling - if ceiling - 0.5 > x { 1.0 } else { 0.0 }
 }
 
+/// Math.sign
 #[inline]
 pub fn sign(x: f64) -> f64 {
     if x == 0.0 || x.is_nan() {
@@ -87,21 +90,25 @@ pub fn sign(x: f64) -> f64 {
     1f64.copysign(x)
 }
 
+/// Math.max of two, where a NaN wins and zero is above negative zero.
 #[inline]
 pub fn max(a: f64, b: f64) -> f64 {
     a.maximum(b)
 }
 
+/// The same, downwards.
 #[inline]
 pub fn min(a: f64, b: f64) -> f64 {
     a.minimum(b)
 }
 
+/// Math.fround
 #[inline]
 pub fn fround(x: f64) -> f64 {
     f64::from(x as f32)
 }
 
+/// Math.f16round
 #[inline]
 pub fn f16round(x: f64) -> f64 {
     float16_to_f64(float16_from_f64(x))

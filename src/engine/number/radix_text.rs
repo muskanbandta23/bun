@@ -10,6 +10,21 @@ use crate::{Radix, exact_int52, is_integer, write_f64};
 /// A sign and 64 binary digits.
 pub const RADIX_INTEGER_CAPACITY: usize = 65;
 
+/// A sign and eight digits of any radix, rounded up to a word that one store writes.
+const SMALL_CAPACITY: usize = 16;
+
+/// `radix^8`, the lowest number that `SMALL_CAPACITY` has no room for.
+static EIGHT_DIGITS: [u64; 37] = {
+    let mut powers = [0; 37];
+    let mut radix = 2;
+    while radix < powers.len() {
+        powers[radix] = (radix as u64).pow(8);
+        radix += 1;
+    }
+    powers
+};
+
+/// The digits of an integer in `radix`, with a sign if it is negative.
 pub fn integer_to_radix(
     number: i64,
     radix: Radix,
@@ -28,6 +43,14 @@ pub fn with_radix_text<R>(value: f64, radix: Radix, consume: impl FnOnce(&[u8]) 
         let length = write_f64(value, &mut out);
         consume(&out[..length])
     } else if let Some(integer) = exact_int52(value + 0.0) {
+        let magnitude = integer.unsigned_abs();
+        if magnitude < EIGHT_DIGITS[radix.get() as usize % EIGHT_DIGITS.len()] {
+            // A buffer that one store clears, which is most of the work for a number of a few digits.
+            let out = &mut [0; SMALL_CAPACITY];
+            let at = write_backward(magnitude, radix, out);
+            let start = with_sign(integer < 0, out, at);
+            return consume(&out[start..]);
+        }
         consume(integer_to_radix(integer, radix, &mut [0; _]))
     } else if (1.0 / 1024.0..IMPLICIT_BIT as f64).contains(&value.abs()) && !is_integer(value) {
         consume(write_fractional::<1, 128>(value, radix, &mut [0; _]))

@@ -7,6 +7,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use bun_alloc::AllocError;
 use bun_engine_text::{PropertyName, StringImpl, StringRef, Text, names};
 
+use crate::heap::Heap;
 use crate::heap::visit_children_of;
 use crate::{
     Attributes, CellKind, CellType, CellTypeRange, Class, ClassOps, Cx, Extends, Gc, GcFree,
@@ -144,7 +145,7 @@ impl JsString {
         }
         match text.get(0) {
             None => Some(vm.small_strings.empty()),
-            Some(unit) => Some(vm.small_strings.single_character(vm, unit.try_into().ok()?)),
+            Some(unit) => Some(vm.small_strings.single_character(unit.try_into().ok()?)),
         }
     }
 
@@ -168,7 +169,7 @@ impl JsString {
     #[inline(always)]
     pub fn from_unit(vm: &Vm, unit: u16) -> Gc<JsString> {
         match u8::try_from(unit) {
-            Ok(character) => vm.small_strings.single_character(vm, character),
+            Ok(character) => vm.small_strings.single_character(character),
             Err(_) => Self::from_wide_units(vm, &[unit]),
         }
     }
@@ -207,6 +208,9 @@ impl JsString {
     pub(super) fn set_characters(&self, string: StringRef) {
         debug_assert!(string.len() == self.len() as usize);
         debug_assert!(string.is_latin1() || !self.is_latin1());
+        if self.is_rope() {
+            Heap::request_destruction(self);
+        }
         let is_atom = string.is_atom();
         let fiber = string.into_raw().as_ptr().expose_provenance();
         self.fiber_atomic().store(fiber, Ordering::Release);

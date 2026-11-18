@@ -35,6 +35,10 @@ template<size_t size> struct alignas(size % 8 ? 1 : 8) Opaque {
 
 } // namespace Engine
 
+namespace Inspector {
+enum class AsyncCallType : uint8_t;
+}
+
 namespace JSC {
 
 class AbstractSlotVisitor;
@@ -49,7 +53,6 @@ class CodeBlock;
 class CompleteSubspace;
 class ConsoleClient;
 class CustomGetterSetter;
-class Debugger;
 class DeferredStructureTransitionWatchpointFire;
 class DeletePropertySlot;
 class ErrorInstance;
@@ -114,10 +117,6 @@ struct GlobalObjectMethodTable;
 struct HashTable;
 struct HashTableValue;
 struct MethodTable;
-
-namespace DOMJIT {
-class Signature;
-}
 
 namespace GCClient {
 using IsoSubspace = JSC::IsoSubspace;
@@ -268,6 +267,10 @@ enum class ScriptFetchParametersType : uint8_t {
 };
 
 enum class InternalMicrotask : uint8_t;
+enum class IterationKind : uint8_t;
+enum class MessageLevel : uint8_t;
+enum class MessageType : uint8_t;
+enum class TemporalType : uint8_t;
 
 enum class SubspaceAccess { OnMainThread,
     Concurrently };
@@ -276,9 +279,11 @@ enum class DestructionMode : uint8_t { DoesNotNeedDestruction,
     NeedsDestruction };
 using enum DestructionMode;
 
-enum class ProfilingReason { API,
-    Microtask,
-    Other };
+enum class ProfilingReason : uint8_t {
+    API = Engine::ProfilingReason::Api,
+    Microtask = Engine::ProfilingReason::Microtask,
+    Other = Engine::ProfilingReason::Other,
+};
 
 enum class CodeSpecializationKind : uint8_t { CodeForCall,
     CodeForConstruct };

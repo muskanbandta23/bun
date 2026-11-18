@@ -1,9 +1,9 @@
-use bun_engine_vm::{JsArray, is_array};
+use bun_engine_vm::is_array;
 
 use crate::prelude::*;
 
 fn comma(cx: &Cx) -> Gc<JsString> {
-    cx.small_strings.single_character(cx, b',')
+    cx.small_strings.single_character(b',')
 }
 
 #[native_abi]
@@ -24,7 +24,7 @@ pub(super) fn join(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 #[native_abi]
 pub(super) fn to_string(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let object = frame.this_value().to_object(cx)?;
-    if let Some(array) = object.downcast::<JsArray>()
+    if let Some(array) = object.as_exact_array()
         && array.has_default_join(cx)
     {
         return array.join_with_commas(cx).map(Into::into);

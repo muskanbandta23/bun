@@ -19,6 +19,8 @@ bitflags::bitflags! {
         const IN_FIELD_INITIALIZER = 1 << 4;
         /// `super()` goes on to initialize the fields of the class.
         const HAS_FIELD_INITIALIZER = 1 << 5;
+        /// The code comes from a debugger, and sees the variables that such code has declared.
+        const BY_DEBUGGER = 1 << 6;
     }
 }
 

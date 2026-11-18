@@ -79,20 +79,18 @@ impl ResolvedSource {
     }
 }
 
-/// `ResolvedSource.bytecode_cache`: C++ sees `{ uint8_t* ptr; size_t len; bool owned; bool persistent; uint32_t entry_offset; }`
+/// `ResolvedSource.bytecode_cache`: C++ sees `{ uint8_t* ptr; size_t len; bool owned; uint32_t entry_offset; }`
 /// (headers-handwritten.h flattens these into `ResolvedSource`; keep the two in step).
 /// When `owned`, `ptr` is a `heap::into_raw(Box<[u8]>)` freed on drop (or by
 /// the C++ consumer once it `std::exchange`s the pointer out); otherwise it is
-/// borrowed from the standalone module graph or the compile cache.
+/// borrowed from memory that outlives every VM (executable section, retired compile-cache blob).
 #[repr(C)]
 pub struct Bytecode {
     ptr: *mut u8,
     len: usize,
     owned: bool,
-    /// The bytes outlive every VM (executable section, retired compile-cache blob), so JSC may alias them instead of copying.
-    persistent: bool,
     /// Where the module's cache entry starts in the bytes: non-zero when they are one payload shared by every module
-    /// of an executable (`JSC::BytecodeLinkEncoder`).
+    /// of an executable (`Bun::BytecodeLinkEncoder`).
     entry_offset: u32,
 }
 
@@ -102,7 +100,6 @@ impl Default for Bytecode {
             ptr: core::ptr::null_mut(),
             len: 0,
             owned: false,
-            persistent: false,
             entry_offset: 0,
         }
     }
@@ -124,7 +121,6 @@ impl Bytecode {
             ptr: payload.cast::<u8>().cast_mut(),
             len: payload.len(),
             owned: false,
-            persistent: true,
             entry_offset,
         }
     }
@@ -137,7 +133,6 @@ impl Bytecode {
             ptr: bun_core::heap::into_raw(bytes).cast::<u8>(),
             len,
             owned: true,
-            persistent: false,
             entry_offset: 0,
         }
     }
@@ -161,4 +156,4 @@ extern "C" fn ResolvedSource__freeBytecode(bytecode: *mut u8) {
 }
 
 bun_core::assert_ffi_layout!(ResolvedSource, 136, 8; is_prelinked_module @ 77, depends_on_more_than_source @ 78, is_static @ 79, bytecode_cache @ 80, module_info @ 104);
-bun_core::assert_ffi_layout!(Bytecode, 24, 8; owned @ 16, persistent @ 17, entry_offset @ 20);
+bun_core::assert_ffi_layout!(Bytecode, 24, 8; owned @ 16, entry_offset @ 20);

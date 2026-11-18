@@ -8,7 +8,7 @@ use bun_engine_vm::{
     Vm,
 };
 
-use super::hooks::REALM_HOOKS;
+use super::hooks::{REALM_HOOKS, REALM_HOOKS_WITH_WASM_STREAMING};
 
 #[export]
 unsafe fn global_construct(
@@ -16,9 +16,15 @@ unsafe fn global_construct(
     vm: &Vm,
     shape: Gc<Shape>,
     methods: *const c_void,
+    has_wasm_streaming: bool,
 ) {
     let _defer = vm.heap.defer_collection();
-    let init = GlobalObject::init(vm, shape, &REALM_HOOKS, methods);
+    let hooks = if has_wasm_streaming {
+        &REALM_HOOKS_WITH_WASM_STREAMING
+    } else {
+        &REALM_HOOKS
+    };
+    let init = GlobalObject::init(vm, shape, hooks, methods);
     // SAFETY: a new cell that is large enough.
     unsafe { GlobalObject::initialize(place, init) }
 }

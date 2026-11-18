@@ -1,7 +1,7 @@
-use core::any::Any;
-use core::cell::{Cell, OnceCell, RefCell};
+use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 use core::mem::offset_of;
+use std::rc::Rc;
 
 use bun_engine_macros::{cell, native_abi, object_ops};
 use bun_engine_number::Random;
@@ -10,7 +10,7 @@ use bun_engine_text::{PropertyName, StringRef, names};
 use super::watchpoints::RealmWatchpoints;
 use crate::runtime::control::RealmMicrotaskQueue;
 use crate::{
-    Attributes, CustomGetterSetter, Cx, DeferredFire, DeletePropertySlot, DontEnumMode,
+    Attributes, CustomGetterSetter, Cx, Debugger, DeferredFire, DeletePropertySlot, DontEnumMode,
     ElementKind, Environment, Field, FieldArray, Gc, GcFree, GlobalBinding, GlobalBindings,
     GlobalProxy, IndexingMode, JsArray, JsCell, JsDestructibleObject, JsFinalObject, JsObject,
     JsObjectInit, JsResult, MicrotaskQueueRef, PropertyDescriptor, PropertyNameList, PropertySlot,
@@ -147,10 +147,14 @@ pub struct GlobalObject {
     random: Cell<Random>,
     eval_disabled_message: RefCell<Option<StringRef>>,
     webassembly_disabled_message: RefCell<Option<StringRef>>,
-    inspector: OnceCell<Box<dyn InspectorState>>,
+    debugger: DebuggerSlot,
 }
 
-pub trait InspectorState: Any + GcFree {}
+#[derive(Default)]
+struct DebuggerSlot(RefCell<Option<Rc<dyn Debugger>>>);
+
+// SAFETY: a supertrait.
+unsafe impl GcFree for DebuggerSlot {}
 
 #[object_ops(export = "engine_GlobalObject")]
 impl GlobalObject {
@@ -286,7 +290,7 @@ impl GlobalObject {
             eval_disabled_message: RefCell::new(None),
             webassembly_disabled_message: RefCell::new(None),
             console_client: Cell::new(core::ptr::null_mut()),
-            inspector: OnceCell::new(),
+            debugger: DebuggerSlot::default(),
         }
     }
 
@@ -571,7 +575,8 @@ impl GlobalObject {
         &self.console_client
     }
 
-    pub fn inspector(&self) -> &OnceCell<Box<dyn InspectorState>> {
-        &self.inspector
+    #[inline(always)]
+    pub(crate) fn debugger_slot(&self) -> &RefCell<Option<Rc<dyn Debugger>>> {
+        &self.debugger.0
     }
 }

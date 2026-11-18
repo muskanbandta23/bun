@@ -169,7 +169,8 @@ impl GlobalObject {
         let Some(constructor) = self.slot_if_initialized(RealmSlot::error_constructor) else {
             return Some(options().default_error_stack_trace_limit);
         };
-        let limit = (constructor.as_object()?).get_direct(names::stackTraceLimit)?;
+        let caches = &self.heap().vm().services.errors.caches;
+        let limit = caches.stack_trace_limit(&*constructor.as_object()?)?;
         let limit = limit.as_number().filter(|it| !it.is_nan())?;
         Some(limit as u32)
     }

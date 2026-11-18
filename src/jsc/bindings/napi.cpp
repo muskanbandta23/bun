@@ -1722,16 +1722,17 @@ static NEVER_INLINE void throwBufferTooLarge(napi_env env)
 // NapiEnv::doFinalizer.
 class NapiNoEnvExternalBufferDestructor final : public SharedTask<void(void*)> {
 public:
-    NapiNoEnvExternalBufferDestructor(node_api_noenv_finalize cb, void* hint)
+    NapiNoEnvExternalBufferDestructor(node_api_noenv_finalize cb, void* data, void* hint)
         : m_cb(cb)
+        , m_data(data)
         , m_hint(hint)
     {
     }
 
-    void run(void* data) override
+    void run(void*) override
     {
         if (m_armed && m_cb) {
-            m_cb(data, m_hint);
+            m_cb(m_data, m_hint);
         }
     }
 
@@ -1739,6 +1740,7 @@ public:
 
 private:
     node_api_noenv_finalize m_cb;
+    void* m_data;
     void* m_hint;
     bool m_armed { false };
 };
@@ -1757,9 +1759,12 @@ extern "C" JS_EXPORT napi_status node_api_create_external_sharedarraybuffer(napi
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
 
-    Ref<NapiNoEnvExternalBufferDestructor> destructor = adoptRef(*new NapiNoEnvExternalBufferDestructor(finalize_cb, finalize_hint));
+    Ref<NapiNoEnvExternalBufferDestructor> destructor = adoptRef(*new NapiNoEnvExternalBufferDestructor(finalize_cb, external_data, finalize_hint));
     auto* destructorPtr = destructor.ptr();
-    auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(external_data), byte_length }, WTF::move(destructor));
+    // No address means detached, which a shared buffer cannot be.
+    static constexpr uint64_t noBytes = 0;
+    auto bytes = external_data ? std::span { static_cast<const uint8_t*>(external_data), byte_length } : asByteSpan(noBytes).first(0);
+    auto arrayBuffer = ArrayBuffer::createFromBytes(bytes, WTF::move(destructor));
     arrayBuffer->makeShared();
 
     auto* buffer = JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Shared), WTF::move(arrayBuffer));
@@ -1868,8 +1873,10 @@ extern "C" napi_status napi_create_dataview(napi_env env, size_t length,
         return napi_set_last_error(env, napi_pending_exception);
     }
 
-    auto dataView = JSC::DataView::create(arraybufferPtr->impl(), byte_offset, length);
-    *result = toNapi(dataView->wrap(globalObject, globalObject), globalObject);
+    auto* structure = globalObject->typedArrayStructure(JSC::TypeDataView, arraybufferPtr->isResizableOrGrowableShared());
+    auto* dataView = JSC::JSDataView::create(globalObject, structure, arraybufferPtr->impl(), byte_offset, length);
+    RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
+    *result = toNapi(dataView, globalObject);
     RELEASE_AND_RETURN(scope, napi_set_last_error(env, napi_ok));
 }
 

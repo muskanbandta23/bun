@@ -29,7 +29,6 @@
 #include <JavaScriptCore/ModuleRegistryEntry.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/PropertyNameArray.h>
-#include <JavaScriptCore/SymbolTable.h>
 #include <wtf/Scope.h>
 #include <JavaScriptCore/WeakGCMapInlines.h>
 #include <wtf/text/StringBuilder.h>
@@ -43,8 +42,8 @@ using namespace JSC;
 // loader, and the scope the wrappers of its CommonJS modules close over. It holds the host's
 // `globals`, @moduleLoader (what import() compiles to a lookup of) and @moduleGraph (the
 // graph, which is how code scoped to the overlay is attributed to it and keeps it alive).
-// Graphs whose `globals` have the same names share one SymbolTable, which is what JSC keys
-// shared module executables on.
+// Graphs whose `globals` have the same names share one ScopeTemplate, which is what shared
+// module executables are keyed on.
 
 static Identifier moduleGraphSlotName(VM& vm) { return WebCore::builtinNames(vm).moduleGraphPrivateName(); }
 static Identifier moduleLoaderSlotName(VM& vm) { return vm.propertyNames->builtinNames().moduleLoaderPrivateName(); }
@@ -53,10 +52,8 @@ static Identifier moduleLoaderSlotName(VM& vm) { return vm.propertyNames->builti
 static JSModuleGraph* moduleGraphOfOverlay(VM& vm, JSScope* scope)
 {
     auto* environment = dynamicDowncast<JSLexicalEnvironment>(scope);
-    if (!environment)
-        return nullptr;
-    auto entry = environment->symbolTable()->get(moduleGraphSlotName(vm).impl());
-    return entry.isNull() ? nullptr : dynamicDowncast<JSModuleGraph>(environment->variableAt(entry.scopeOffset()).get());
+    JSValue graph = environment ? environment->variable(moduleGraphSlotName(vm)) : JSValue();
+    return graph ? dynamicDowncast<JSModuleGraph>(graph) : nullptr;
 }
 
 JSModuleGraph* moduleGraphForFunction(JSObject* function)
@@ -80,7 +77,7 @@ static ModuleGraphState& moduleGraphState(Zig::GlobalObject* globalObject)
     return *state;
 }
 
-static SymbolTable* overlaySymbolTable(Zig::GlobalObject* globalObject, const Vector<Identifier>& sortedNames, unsigned& shape)
+static ScopeTemplate* overlayTemplate(Zig::GlobalObject* globalObject, const Vector<Identifier>& sortedNames, unsigned& shape)
 {
     VM& vm = globalObject->vm();
     // One key per name set: each name as <length>:<name>, so no two sets share a key.
@@ -90,38 +87,15 @@ static SymbolTable* overlaySymbolTable(Zig::GlobalObject* globalObject, const Ve
     String key = keyBuilder.toString();
     auto& shapes = moduleGraphState(globalObject).overlayShapes;
     shape = shapes.ensure(key, [&] { return shapes.size() + 1; }).iterator->value;
-    auto& symbolTables = moduleGraphState(globalObject).overlaySymbolTables;
-    if (SymbolTable* existing = symbolTables.get(key))
+    auto& templates = moduleGraphState(globalObject).overlayTemplates;
+    if (ScopeTemplate* existing = templates.get(key))
         return existing;
-    SymbolTable* symbolTable = SymbolTable::create(vm);
-    auto add = [&](const Identifier& name) {
-        symbolTable->add(NoLockingNecessary, name.impl(), SymbolTableEntry(VarOffset(symbolTable->takeNextScopeOffset(NoLockingNecessary))));
-    };
-    for (auto& name : sortedNames)
-        add(name);
-    add(moduleLoaderSlotName(vm));
-    add(moduleGraphSlotName(vm));
-    symbolTables.set(key, symbolTable);
-    return symbolTable;
-}
-
-// The symbol table is shared by every overlay of its shape, each holding other values: a write
-// invalidates the entry's watchpoint so compiled code never takes one overlay's value for a constant.
-static void setOverlaySlot(VM& vm, JSLexicalEnvironment* overlay, const Identifier& name, JSValue value)
-{
-    SymbolTable* symbolTable = overlay->symbolTable();
-    InlineWatchpointSet* watchpoints = nullptr;
-    ScopeOffset offset;
-    {
-        ConcurrentJSLocker locker(symbolTable->m_lock);
-        auto entry = symbolTable->find(locker, name.impl());
-        ASSERT(entry != symbolTable->end(locker));
-        offset = entry->value.scopeOffset();
-        watchpoints = entry->value.watchpointSet();
-    }
-    overlay->variableAt(offset).set(vm, overlay, value);
-    if (watchpoints)
-        watchpoints->invalidate(vm, StringFireDetail("A Bun.ModuleGraph overlay variable was written"));
+    Vector<Identifier> names = sortedNames;
+    names.append(moduleLoaderSlotName(vm));
+    names.append(moduleGraphSlotName(vm));
+    ScopeTemplate* scopeTemplate = ScopeTemplate::create(vm, names.span());
+    templates.set(key, scopeTemplate);
+    return scopeTemplate;
 }
 
 // The new graph's loader, over a new overlay holding `globals`.
@@ -138,15 +112,14 @@ __attribute__((minsize)) static JSModuleLoader* createModuleGraphLoader(Zig::Glo
             names.append(name);
         std::sort(names.begin(), names.end(), [](const Identifier& a, const Identifier& b) { return codePointCompare(a.string(), b.string()) < 0; });
     }
-    SymbolTable* symbolTable = overlaySymbolTable(globalObject, names, overlayShape);
-    JSLexicalEnvironment* overlay = JSLexicalEnvironment::create(vm, globalObject, globalObject->globalLexicalEnvironment(), symbolTable, jsUndefined());
+    JSLexicalEnvironment* overlay = JSLexicalEnvironment::create(globalObject, overlayTemplate(globalObject, names, overlayShape));
     for (auto& name : names) {
         JSValue value = globals->get(globalObject, name);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        setOverlaySlot(vm, overlay, name, value);
+        overlay->setVariable(vm, name, value);
     }
     JSModuleLoader* loader = JSModuleLoader::create(globalObject, vm, overlay);
-    setOverlaySlot(vm, overlay, moduleLoaderSlotName(vm), loader);
+    overlay->setVariable(vm, moduleLoaderSlotName(vm), loader);
     return loader;
 }
 
@@ -613,7 +586,7 @@ void JSModuleGraph::finishCreation(VM& vm, JSGlobalObject* globalObject)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
     m_requireMap.set(vm, this, JSMap::create(vm, globalObject->mapStructure()));
-    setOverlaySlot(vm, overlay(), moduleGraphSlotName(vm), this);
+    overlay()->setVariable(vm, moduleGraphSlotName(vm), this);
     m_context->setModuleGraph(this);
     // The graph's context travels with the async context: the top-level code of the graph's
     // modules runs in it however their evaluation is reached, and run() enters it.
@@ -642,7 +615,7 @@ void JSModuleGraph::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Locker locker { thisObject->cellLock() };
     for (auto* wrapper : thisObject->m_commonJSWrappers)
         visitor.appendUnbarriered(wrapper);
-    for (auto& [executable, key] : thisObject->m_moduleExecutables)
+    for (auto* executable : thisObject->m_moduleExecutables)
         visitor.appendUnbarriered(executable);
 }
 DEFINE_VISIT_CHILDREN(JSModuleGraph);
@@ -657,11 +630,11 @@ void JSModuleGraph::keepCommonJSWrapper(VM& vm, CodeBlock* wrapper)
     vm.writeBarrier(this, wrapper);
 }
 
-void JSModuleGraph::keepModuleExecutable(VM& vm, ModuleProgramExecutable* executable, UniquedStringImpl* key)
+void JSModuleGraph::keepModuleExecutable(VM& vm, ModuleProgramExecutable* executable)
 {
     {
         Locker locker { cellLock() };
-        m_moduleExecutables.append({ executable, key });
+        m_moduleExecutables.append(executable);
     }
     vm.writeBarrier(this, executable);
 }
@@ -784,23 +757,9 @@ extern "C" __attribute__((minsize)) void Bun__TestFile__leaveModuleGraph(Zig::Gl
     if (!finished)
         return;
 
-    {
-        DeferGC deferGC(vm);
-        // Same key as JSModuleRecord::getOrMakeExecutable().
-        SymbolTable* moduleScope = finished->overlay()->symbolTable();
-        for (auto& entry : finished->loader()->moduleMap().values()) {
-            UniquedStringImpl* key = entry->key().impl();
-            ModuleProgramExecutable* executable = globalObject->moduleProgramExecutables().get({ key, moduleScope });
-            if (!executable)
-                continue;
-            finished->keepModuleExecutable(vm, executable, key);
-            // Later files compare their imports against these before reusing the executable. JSC normally asks the
-            // record that linked it, but that record will be gone by then.
-            if (JSModuleRecord* linker = executable->linkerImportedBindings() ? nullptr : executable->linker()) {
-                executable->setLinkerImportedBindings(linker->importedBindings(globalObject));
-                (void)scope.tryClearException();
-            }
-        }
+    for (auto& [key, entry] : finished->loader()->moduleMap()) {
+        if (auto* executable = finished->loader()->shareableExecutable(globalObject, entry->key()))
+            finished->keepModuleExecutable(vm, executable);
     }
     constexpr size_t maxFinishedTestFiles = 8;
     if (state.finishedTestFiles.size() == maxFinishedTestFiles)
@@ -808,7 +767,7 @@ extern "C" __attribute__((minsize)) void Bun__TestFile__leaveModuleGraph(Zig::Gl
     state.finishedTestFiles.append(Strong<JSModuleGraph>(vm, finished));
 
     // Same as Zig__GlobalObject__createForTestIsolation().
-    size_t loadedModules = finished->loader()->moduleMap().size() + finished->requireMap()->size();
+    size_t loadedModules = finished->loader()->moduleCount() + finished->requireMap()->size();
     if (size_t entries = std::min<size_t>(2 * loadedModules, 16384); entries > vm.codeCache()->workingSetMaxEntries())
         vm.codeCache()->setWorkingSetMaxEntries(entries);
 

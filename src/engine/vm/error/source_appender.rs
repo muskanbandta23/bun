@@ -156,8 +156,10 @@ impl SourceAppender {
     /// `None` if the message stays as it is.
     pub(super) fn append(self, vm: &Vm, message: Text<'_>, value: Value) -> Option<StringRef> {
         const CONTEXT: usize = 20;
+        // A call is that of the code which makes it, whether or not that can be seen.
+        let is_call = self == SourceAppender::NotAFunction;
         let (code_block, bytecode_offset) = StackVisitor::frames(vm)
-            .filter(|frame| !frame.is_private())
+            .filter(|frame| is_call || !frame.is_private())
             .find_map(|frame| Some((frame.code_block?, frame.bytecode_offset)))?;
         let body = code_block.body();
         if body.positions().is_empty() || code_block.executable().is_private_builtin() {

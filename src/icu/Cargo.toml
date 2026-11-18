@@ -2,6 +2,7 @@
 name = "bun_icu"
 version.workspace = true
 edition.workspace = true
+build = "build.rs"
 
 [lib]
 path = "lib.rs"
@@ -10,7 +11,8 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
-libc.workspace = true
+bun_opaque.workspace = true
+smallvec.workspace = true
 
 [dev-dependencies]
 bun_engine_standalone.workspace = true

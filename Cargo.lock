@@ -1205,7 +1205,8 @@ name = "bun_icu"
 version = "0.0.0"
 dependencies = [
  "bun_engine_standalone",
- "libc",
+ "bun_opaque",
+ "smallvec",
 ]
 
 [[package]]

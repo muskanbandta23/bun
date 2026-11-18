@@ -897,6 +897,7 @@ dependencies = [
  "bun_highway",
  "bun_simdutf_sys",
  "bun_threading",
+ "getrandom",
  "hashbrown 0.15.5",
  "libc",
  "smallvec",

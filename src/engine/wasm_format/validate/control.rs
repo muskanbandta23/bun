@@ -126,6 +126,10 @@ impl<'a> Validator<'a> {
             validation,
             "catch block isn't associated to a try"
         );
+        if self.innermost().kind == FrameKind::Try {
+            self.catch_depth += 1;
+            self.max_catch_depth = self.max_catch_depth.max(self.catch_depth);
+        }
         self.start_arm(kind, payload)
     }
 
@@ -410,8 +414,10 @@ impl VisitControl for Validator<'_> {
     #[inline(always)]
     fn end(&mut self, _: Flow) -> Checked {
         let frame = self.innermost();
-        if frame.kind == FrameKind::If && frame.ty != BlockType::Empty {
-            self.start_else()?;
+        match frame.kind {
+            FrameKind::If if frame.ty != BlockType::Empty => self.start_else()?,
+            FrameKind::Catch | FrameKind::CatchAll => self.catch_depth -= 1,
+            _ => {}
         }
         self.close()
     }

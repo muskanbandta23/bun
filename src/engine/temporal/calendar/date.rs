@@ -56,25 +56,24 @@ impl CalendarId {
     /// CalendarISOToDate
     #[inline(always)]
     pub fn date(self, date: IsoDate) -> Result<CalendarDate> {
-        match self {
-            CalendarId::Iso8601 => Ok(CalendarDate::iso(date)),
-            _ => self.non_iso_date(date),
+        if self == CalendarId::Iso8601 {
+            return Ok(CalendarDate::iso(date));
         }
-    }
-
-    fn non_iso_date(self, date: IsoDate) -> Result<CalendarDate> {
-        let system = match self.layout(date.year()) {
-            Layout::Own(system) => system,
+        match self.layout(date.year()) {
+            Layout::Own(system) => self.date_in_system(system, date),
             Layout::Iso { year_offset } => {
                 let year = date.year() - year_offset;
-                return Ok(CalendarDate {
+                Ok(CalendarDate {
                     era: self.era_year(year, date),
                     year,
                     in_leap_year: is_leap_year(date.year()) && !self.is_chinese_or_dangi(),
                     ..CalendarDate::iso(date)
-                });
+                })
             }
-        };
+        }
+    }
+
+    fn date_in_system(self, system: System, date: IsoDate) -> Result<CalendarDate> {
         let (month, day) = system.locate(date)?;
         let year = month.year;
         Ok(CalendarDate {

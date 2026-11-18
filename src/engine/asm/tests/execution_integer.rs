@@ -401,6 +401,18 @@ fn the_stack_pointer_as_an_operand() {
             }
         }
     }
+    for ([other], rhs) in h.memories(4) {
+        for (dst, lhs) in [(SP, other), (SP, SP), (other, SP)] {
+            let mut add = |operation, model: fn(u64, u64) -> u64| {
+                let case = with_stack_pointer(operation, dst, keeper, move |m| {
+                    model(m.get64(lhs), m.load(Size::S64, rhs))
+                });
+                h.add(case.reads(Size::S64, rhs));
+            };
+            add(op!(add64(dst, lhs, rhs)), u64::wrapping_add);
+            add(op!(sub64(dst, lhs, rhs)), u64::wrapping_sub);
+        }
+    }
     for [dst, src] in h.gprs_with(&[SP]) {
         let case = with_stack_pointer(op!(move64(dst, src)), dst, keeper, move |m| m.get64(src));
         h.add(case.keeps_first_scratch());

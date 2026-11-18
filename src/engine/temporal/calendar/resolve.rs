@@ -80,7 +80,8 @@ impl CalendarId {
         Ok(date)
     }
 
-    pub(super) fn year_out_of_range(self, year: i32, otherwise: Error) -> Error {
+    /// The error for a date whose ISO 8601 year is outside the limits.
+    pub(crate) fn year_out_of_range(self, year: i32, otherwise: Error) -> Error {
         match (self, self.layout(year)) {
             (CalendarId::Gregory, _) | (_, Layout::Own(_)) => Error::CalendarDateOutOfRange,
             _ => otherwise,

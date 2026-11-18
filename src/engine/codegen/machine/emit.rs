@@ -13,7 +13,7 @@ use crate::analysis::{Cfg, Frequencies};
 use crate::client::{CallSite, Client, ExitSite, Frame, PatchpointSite};
 use crate::ir::{
     Action, Bits64, Block, Edge, Function, Input, Location, Op, Origin, Output, PatchpointFlags,
-    Span, Table, Type, Value,
+    Span, State, Table, Type, Value,
 };
 
 pub(crate) trait Isa: Instruction {
@@ -147,11 +147,16 @@ fn register(reg: Reg) -> Location {
 #[derive(Clone, Copy)]
 pub struct StateLocations<'a> {
     places: Places<'a>,
+    state: State,
     vregs: Span<VReg>,
     assigned: Span<u8>,
 }
 
 impl<'a> StateLocations<'a> {
+    pub fn state(self) -> State {
+        self.state
+    }
+
     pub fn len(self) -> usize {
         self.vregs.len()
     }
@@ -568,6 +573,7 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
         let data = &self.places.code.sites[site];
         StateLocations {
             places: self.places,
+            state: data.state,
             vregs: data.state_vregs,
             assigned: data.state_assigned,
         }

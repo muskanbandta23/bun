@@ -200,6 +200,8 @@ pub struct FunctionFacts {
     pub local_count: u32,
     /// In values, unreachable code included.
     pub max_stack_height: u32,
+    /// How deep `catch` and `catch_all` blocks nest.
+    pub max_catch_depth: u32,
     pub call_count: u32,
     pub loop_count: u32,
     pub flags: FunctionFlags,

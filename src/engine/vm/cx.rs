@@ -158,11 +158,19 @@ impl Cx {
     /// CreateArrayFromList
     #[inline]
     pub fn new_array_from(&self, values: &[Value]) -> JsResult<Gc<JsArray>> {
-        let kind = values
-            .first()
-            .map_or(ElementKind::Undecided, |&it| ElementKind::for_value(it));
+        let kind = ElementKind::Undecided.generalized_for(values.iter().copied());
         let shape = self.global().array_shape(kind);
         self.or_out_of_memory(JsArray::try_from_values_with_shape(self, shape, values))
+    }
+
+    /// An entry, such as a key and its value.
+    #[inline]
+    pub fn new_pair(&self, first: Value, second: Value) -> JsResult<Gc<JsArray>> {
+        let (shape, values) = (
+            self.global().array_shape(ElementKind::Contiguous),
+            [first, second],
+        );
+        self.or_out_of_memory(JsArray::try_from_values_with_shape(self, shape, &values))
     }
 
     /// CreateIteratorResultObject

@@ -290,7 +290,16 @@ impl Template {
     }
 
     #[inline(always)]
-    fn push_number(&self, mut number: u32, least_count: usize, out: &mut Cursor<'_>) {
+    fn push_number(&self, number: u32, least_count: usize, out: &mut Cursor<'_>) {
+        if number >= 100 || least_count > 2 || self.digits.is_some() {
+            return self.push_any_number(number, least_count, out);
+        }
+        out.push(u16::from(b'0') + (number / 10) as u16);
+        out.length -= usize::from(number < 10 && least_count < 2);
+        out.push(u16::from(b'0') + (number % 10) as u16);
+    }
+
+    fn push_any_number(&self, mut number: u32, least_count: usize, out: &mut Cursor<'_>) {
         let mut digits = [0; MAX_DIGITS];
         let mut start = MAX_DIGITS;
         while number != 0 {

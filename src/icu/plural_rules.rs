@@ -2,6 +2,7 @@
 
 use core::ffi::{CStr, c_char};
 
+use crate::argument::locale_id;
 use crate::enumeration::UEnumeration;
 use crate::error::Status;
 use crate::ffi::{filled, open};
@@ -46,9 +47,9 @@ icu_handle! {
 
 impl PluralRules {
     pub fn open(locale: &CStr, kind: Kind) -> Result<PluralRules> {
+        let locale = locale_id(locale)?;
         // SAFETY: `locale` is terminated.
-        open(|status| unsafe { uplrules_openForType(locale.as_ptr(), kind, status) })
-            .map(PluralRules)
+        open(|status| unsafe { uplrules_openForType(locale, kind, status) }).map(PluralRules)
     }
 
     pub fn select_integer(&self, number: i32) -> Result<Buffer<u16>> {

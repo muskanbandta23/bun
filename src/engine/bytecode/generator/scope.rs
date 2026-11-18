@@ -421,6 +421,7 @@ impl Generator<'_> {
         created
     }
 
+    #[inline(never)]
     pub(super) fn enter_with_scope(&mut self, object: Operand) {
         self.open_scope();
         let (parent, register) = (self.scope, self.temp());

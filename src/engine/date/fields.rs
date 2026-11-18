@@ -84,6 +84,8 @@ impl DateFields {
     /// Signed.
     pub const YEAR: BitField = Self::MONTH.above(20);
 
+    pub const EPOCH: DateFields = DateFields::at_midnight(0, OffsetBits::UTC);
+
     /// `None` if `time` is not in the range of time values.
     #[inline]
     pub fn utc(time: f64) -> Option<DateFields> {

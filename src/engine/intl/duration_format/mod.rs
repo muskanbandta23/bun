@@ -57,7 +57,7 @@ struct Shared {
 pub struct ResolvedOptions<'a> {
     pub locale: &'a LanguageTag,
     pub numbering_system: NumberingSystem,
-    pub units: &'a Units,
+    pub units: Units,
     pub fractional_digits: Option<FractionalDigits>,
 }
 
@@ -241,7 +241,7 @@ impl DurationFormat {
         Ok(ResolvedOptions {
             locale: self.0.locale.tag(),
             numbering_system: self.0.locale.numbering_system()?,
-            units: &self.0.units,
+            units: self.0.units,
             fractional_digits: self.0.fractional_digits,
         })
     }

@@ -3,10 +3,13 @@
 #[cfg(not(miri))]
 use bun_engine_standalone as _;
 
+mod binary;
 mod builder;
 mod compare;
 mod json;
+mod replace;
 mod scan;
 mod search;
 mod support;
+mod uri;
 mod utf8;

@@ -139,6 +139,7 @@ pub struct Embedder {
     /// AgentCanSuspend is false.
     pub must_not_block: Cell<bool>,
     pub errors: crate::ErrorHooks,
+    pub console: Cell<Option<&'static crate::ConsoleHooks>>,
     pub microtasks: crate::MicrotaskHooks,
 }
 

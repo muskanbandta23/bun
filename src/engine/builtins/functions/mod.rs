@@ -1,8 +1,10 @@
 //! `Function`, errors, `eval`, `ShadowRealm` and `console`.
 
+mod console;
 mod error;
 mod eval;
 pub(crate) mod function;
+mod shadow_realm;
 
 use bun_engine_vm::{
     CellKind, JsBoundFunction, JsCustomGetterFunction, JsCustomSetterFunction, JsNativeClosure,
@@ -42,6 +44,8 @@ pub(crate) fn initialize_slot(cx: &Cx, slot: RealmSlot) -> bool {
             global.init_remote_function_shape(shape_of::<JsRemoteFunction>(cx));
         }
         eval_function => eval::initialize(cx),
+        shadow_realm_constructor | shadow_realm_shape => shadow_realm::initialize(cx),
+        console_object => console::initialize(cx),
         _ => return error::initialize_slot(cx, slot),
     }
     true

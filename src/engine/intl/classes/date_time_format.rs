@@ -1,4 +1,5 @@
 use bun_engine_date::TimeZone;
+use bun_engine_temporal::TemporalValue;
 use bun_engine_text::{StringRef, Text};
 
 use super::legacy;
@@ -45,7 +46,7 @@ fn read_time_zone(cx: &mut Cx, bag: OptionBag, fixed: Option<TimeZone>) -> JsRes
 }
 
 /// CreateDateTimeFormat. `fixed_time_zone` is `toLocaleStringTimeZone`.
-fn new_date_time_format(
+pub(super) fn new_date_time_format(
     cx: &mut Cx,
     locales: Value,
     options: Value,
@@ -82,7 +83,11 @@ fn new_date_time_format(
 /// ToDateTimeFormattable
 #[inline]
 fn to_date_time_value(cx: &mut Cx, value: Value) -> JsResult<DateTimeValue> {
-    value.to_number(cx).map(DateTimeValue::Number)
+    let temporal = value.as_object().and_then(|it| TemporalValue::of(&it));
+    match temporal.as_ref().and_then(DateTimeValue::from_temporal) {
+        Some(value) => Ok(value),
+        None => value.to_number(cx).map(DateTimeValue::Number),
+    }
 }
 
 fn to_date_time_value_or_now(cx: &mut Cx, value: Value) -> JsResult<DateTimeValue> {
@@ -138,7 +143,10 @@ fn get_format(cx: &mut Cx, this: Value, _: PropertyName<'_>) -> JsResult<Value> 
     Ok(bound.into())
 }
 
-fn string(cx: &Cx, format: impl FnOnce(&Cache) -> crate::Result<StringRef>) -> JsResult<Value> {
+pub(super) fn string(
+    cx: &Cx,
+    format: impl FnOnce(&Cache) -> crate::Result<StringRef>,
+) -> JsResult<Value> {
     Ok(JsString::new(cx, with_cache(cx, format)?).into())
 }
 

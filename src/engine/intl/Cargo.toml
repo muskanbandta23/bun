@@ -15,6 +15,7 @@ bun_engine_unicode.workspace = true
 bun_engine_number.workspace = true
 bun_engine_bigint.workspace = true
 bun_engine_date.workspace = true
+bun_engine_temporal.workspace = true
 bun_highway.workspace = true
 bun_icu.workspace = true
 bun_pod.workspace = true

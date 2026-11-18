@@ -14,6 +14,7 @@ pub mod collator;
 pub mod date_time_format;
 mod default_instances;
 pub mod display_names;
+pub mod duration_format;
 mod error;
 mod language_tag;
 mod latin1;

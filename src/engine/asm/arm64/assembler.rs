@@ -1,6 +1,7 @@
 //! One method for each form of instruction. Operands are in the order of Arm's manual.
 
-use super::opcode::Cc;
+use super::opcode::{Barrier, Cc};
+use super::registers::{LR, SP, ZR};
 use crate::buffer::CodeBuffer;
 use crate::features::Arm64Features;
 use crate::label::Label;
@@ -38,8 +39,17 @@ pub(crate) fn padding(offset: u32, log2: u8, max: u8) -> u32 {
     if needed > u32::from(max) { 0 } else { needed }
 }
 
+/// For a field in which 31 is the zero register.
 #[inline(always)]
 pub(super) fn gpr(reg: Gpr) -> u32 {
+    debug_assert!(reg < SP || reg == ZR, "this operand cannot be sp");
+    u32::from(reg.0 & 31)
+}
+
+/// For a field in which 31 is the stack pointer.
+#[inline(always)]
+pub(super) fn gpr_or_sp(reg: Gpr) -> u32 {
+    debug_assert!(reg <= SP, "this operand cannot be the zero register");
     u32::from(reg.0 & 31)
 }
 
@@ -50,7 +60,7 @@ pub(super) fn fpr(reg: Fpr) -> u32 {
 
 /// The bit that selects 64 bits.
 #[inline(always)]
-pub(super) fn sf(width: Width) -> u32 {
+pub(super) const fn sf(width: Width) -> u32 {
     (width as u32) << 31
 }
 
@@ -90,10 +100,15 @@ impl Assembler {
 
     #[inline]
     pub fn bind(&mut self, label: Label) {
+        self.leave_replaceable_bytes();
+        self.buffer.bind(label);
+    }
+
+    #[inline]
+    pub(super) fn leave_replaceable_bytes(&mut self) {
         if self.buffer.len < self.buffer.replaceable_end {
             self.nop();
         }
-        self.buffer.bind(label);
     }
 
     pub fn replaceable_point(&mut self) -> Label {
@@ -103,9 +118,7 @@ impl Assembler {
 
     /// Makes the offset a multiple of `1 << log2` if `max` bytes are enough.
     pub(crate) fn pad(&mut self, log2: u8, max: u8) {
-        if self.buffer.len < self.buffer.replaceable_end {
-            self.nop();
-        }
+        self.leave_replaceable_bytes();
         self.buffer.require_alignment(1 << log2);
         let size = padding(self.buffer.offset(), log2, max) as u8;
         self.buffer.record(
@@ -168,7 +181,30 @@ impl Assembler {
         self.test_bit_and_branch(0x3700_0000, reg, bit, target);
     }
 
-    /// May overwrite x17, which `dst` is not.
+    pub fn br(&mut self, target: Gpr) {
+        self.emit(0xd61f_0000 | gpr(target) << 5);
+    }
+
+    pub fn blr(&mut self, target: Gpr) {
+        self.emit(0xd63f_0000 | gpr(target) << 5);
+    }
+
+    pub fn ret(&mut self) {
+        self.emit(0xd65f_0000 | gpr(LR) << 5);
+    }
+
+    pub fn brk(&mut self, imm: u16) {
+        self.emit(0xd420_0000 | u32::from(imm) << 5);
+    }
+
+    pub fn udf(&mut self, imm: u16) {
+        self.emit(imm.into());
+    }
+
+    pub fn dmb(&mut self, barrier: Barrier) {
+        self.emit(0xd503_30bf | (barrier as u32) << 8);
+    }
+
     pub fn adr(&mut self, dst: Gpr, target: Label) {
         self.emit_with_target(0x1000_0000 | gpr(dst), target, SiteKind::Address21);
     }

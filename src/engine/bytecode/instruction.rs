@@ -1,5 +1,7 @@
 //! The types that the table of instructions expands to.
 
+use core::ops::Range;
+
 use bun_engine_syntax::EvalContext;
 
 use crate::metadata::MetadataKind;
@@ -352,6 +354,18 @@ impl Opcode {
         W::PREFIX_BYTES + 1 + self.shapes().len() * W::OPERAND_BYTES + metadata
     }
 
+    /// The opcode and the size of the instruction at `offset`, which may end past the code.
+    #[inline(always)]
+    pub(crate) fn read(code: &[u8], offset: u32) -> Option<(Opcode, u32)> {
+        let opcode_at = |offset: u32| Opcode::from_byte(*code.get(offset as usize)?);
+        let (opcode, size) = match opcode_at(offset)? {
+            Opcode::Wide16Prefix => opcode_at(offset + 1).map(|it| (it, it.size::<Wide16>()))?,
+            Opcode::Wide32Prefix => opcode_at(offset + 1).map(|it| (it, it.size::<Wide32>()))?,
+            opcode => (opcode, opcode.size::<Narrow>()),
+        };
+        Some((opcode, size as u32))
+    }
+
     pub fn mnemonic(self) -> &'static str {
         let (mnemonic, _) = NAMES[self as usize];
         mnemonic.strip_prefix("r#").unwrap_or(mnemonic)
@@ -426,6 +440,35 @@ impl RawInstruction {
     #[inline]
     pub fn words(&self) -> &[u32] {
         &self.words[..self.opcode.shapes().len()]
+    }
+}
+
+/// The instructions of a range of code with their offsets. Ends early at what is no instruction.
+#[derive(Clone)]
+pub struct Instructions<'a> {
+    code: &'a [u8],
+    offset: u32,
+}
+
+impl<'a> Instructions<'a> {
+    #[inline]
+    pub fn new(code: &'a [u8], range: Range<u32>) -> Instructions<'a> {
+        Instructions {
+            code: &code[..range.end as usize],
+            offset: range.start,
+        }
+    }
+}
+
+impl Iterator for Instructions<'_> {
+    type Item = (u32, RawInstruction);
+
+    #[inline]
+    fn next(&mut self) -> Option<(u32, RawInstruction)> {
+        let offset = self.offset;
+        let instruction = RawInstruction::read(self.code, offset)?;
+        self.offset += u32::from(instruction.size);
+        Some((offset, instruction))
     }
 }
 

@@ -1,11 +1,12 @@
 use bun_engine_date::TimeZoneId;
+use bun_engine_temporal::CalendarId;
 use bun_engine_text::{StringRef, Text};
 use bun_icu::currency::{self, NameStyle};
 
 use crate::error::IcuResult;
 use crate::language_tag::subtag::Subtag;
 use crate::number_format::SANCTIONED_UNITS;
-use crate::{Error, NumberingSystem, Result, calendar, collation};
+use crate::{Error, NumberingSystem, Result, collation};
 
 /// `Intl.supportedValuesOf`
 pub fn supported_values_of(key: Text<'_>) -> Result<Vec<StringRef>> {
@@ -22,7 +23,9 @@ pub fn supported_values_of(key: Text<'_>) -> Result<Vec<StringRef>> {
         return Err(Error::Range("Unknown key for Intl.supportedValuesOf"));
     };
     Ok(match key {
-        "calendar" => calendar::AVAILABLE.map(StringRef::from_literal).into(),
+        "calendar" => (CalendarId::ALL.iter())
+            .map(|it| StringRef::from_literal(it.identifier()))
+            .collect(),
         "collation" => to_strings(&collations()?),
         "currency" => to_strings(&currencies()?),
         "numberingSystem" => (NumberingSystem::all()?.iter())

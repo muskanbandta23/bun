@@ -52,6 +52,8 @@ pub struct CallSite<'a> {
     pub origin: Origin,
     pub return_address: Label,
     pub state: &'a [Location],
+    /// Where an unwinder resumes, once it has restored the frame pointer, the stack pointer and what is pinned.
+    pub handlers: &'a [Label],
 }
 
 /// The scratch registers of the macro assembler are set to those that the code may overwrite: what is never
@@ -60,7 +62,10 @@ pub trait Client<Masm> {
     /// Enters the frame and moves the stack pointer down by its size. Keeps the parameters.
     fn prologue(&mut self, masm: &mut Masm, entry: usize, frame: &Frame);
 
-    /// Placed after the body of the function. Control does not fall out of it.
+    /// Code for all the exits with this token, which needs neither state nor origin.
+    fn shared_exit(&mut self, masm: &mut Masm, token: Token) -> Option<Label>;
+
+    /// For the other exits. Placed after the body of the function. Control does not fall out of it.
     fn exit(&mut self, masm: &mut Masm, site: &ExitSite<'_>);
 
     fn patchpoint(&mut self, masm: &mut Masm, site: &PatchpointSite<'_>);

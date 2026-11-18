@@ -129,7 +129,7 @@ impl JsObject {
                 GetterSetter::create(cx, Some(getter.upcast()), None).into()
             }
             StaticValue::EngineBuiltin(id) => {
-                JsFunction::builtin(cx, cx.builtin_executable(id)).into()
+                JsFunction::builtin(cx, crate::FunctionExecutable::for_builtin(cx, id)).into()
             }
             StaticValue::Constant(value) => value,
             StaticValue::String(string) => JsString::from_name(cx, string).into(),
@@ -196,7 +196,7 @@ impl JsObject {
                 .is_some_and(|it| core::ptr::fn_addr_eq(it.function(), native)),
             StaticValue::EngineBuiltin(id) => function
                 .and_then(|it| it.script_executable())
-                .is_some_and(|it| it == cx.builtin_executable(id)),
+                .is_some_and(|it| it.is_for_builtin(cx, id)),
             StaticValue::RealmSlot(slot) => self
                 .realm()
                 .is_some_and(|global| value == global.slot(cx, slot).into()),

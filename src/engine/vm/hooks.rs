@@ -1,9 +1,12 @@
+use core::ops::Range;
+
+use bun_engine_bytecode::{FunctionKind, Visibility};
 use bun_engine_text::PropertyName;
 
 use crate::heap::{Scope, Survivors};
 use crate::{
-    BuiltinId, CallFrame, CodeBlock, Cx, GlobalObject, Intrinsic, PropertyCondition, RealmSlot,
-    RealmWatchpoint, Visitor, Vm,
+    BuiltinId, CallFrame, CodeBlock, CompileError, Cx, GlobalObject, Intrinsic, PropertyCondition,
+    RealmSlot, RealmWatchpoint, SourceProvider, Visitor, Vm,
 };
 
 /// What this crate needs from those above it.
@@ -21,8 +24,13 @@ pub struct Hooks {
     pub realm_watchpoint_conditions: fn(&Cx, RealmWatchpoint) -> Option<Vec<PropertyCondition>>,
     pub did_start_having_a_bad_time: fn(&Vm, &GlobalObject),
     pub did_declare_global_lexical: fn(&Vm, &GlobalObject, PropertyName<'_>),
+    /// The sources of all built-ins, one after the other.
+    pub builtins_text: &'static str,
     pub builtin_source: fn(BuiltinId) -> BuiltinSource,
+    /// The built-ins that others refer to as `@name`.
+    pub private_builtins: fn() -> &'static [(PropertyName<'static>, BuiltinId)],
     pub find_wasm_handler: fn(&Vm, &CallFrame) -> Option<(usize, u32)>,
+    pub debugger_did_parse: fn(&Cx, &SourceProvider, Option<&CompileError>),
     pub debugger_will_unwind: fn(&Vm, &CallFrame),
     pub debugger_did_unwind_frame: fn(&Vm, &CallFrame),
     pub visit_roots: fn(&Vm, &mut Visitor),
@@ -34,8 +42,10 @@ pub struct Hooks {
 
 /// A function of the standard library that is written in JavaScript.
 pub struct BuiltinSource {
-    pub name: PropertyName<'static>,
-    /// A function expression in parentheses.
-    pub text: &'static str,
+    pub name: &'static str,
+    /// Of a function expression in parentheses, in `Hooks::builtins_text`.
+    pub range: Range<u32>,
+    pub kind: FunctionKind,
+    pub visibility: Visibility,
     pub intrinsic: Intrinsic,
 }

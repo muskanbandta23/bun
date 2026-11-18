@@ -4,7 +4,9 @@ use core::ops::{Deref, Range};
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering, fence};
 
-use bun_engine_text::{CodeUnit, StringRef, Text, with_text};
+use bun_engine_bytecode::Directives;
+use bun_engine_syntax::LineTable;
+use bun_engine_text::{StringRef, Text};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
@@ -35,6 +37,9 @@ pub struct SourceProvider {
     embedder_vtable: *const c_void,
     ref_count: AtomicU32,
     source_type: SourceType,
+    has_live_exports: Cell<bool>,
+    /// Zero until it is asked for, unless the embedder knows it.
+    hash: Cell<u32>,
     id: Cell<usize>,
     source: StringRef,
     url: Option<StringRef>,
@@ -45,7 +50,7 @@ pub struct SourceProvider {
     start_column: i32,
     /// For text that was made at run time: that of the code which made it.
     origin: Option<SourceProviderRef>,
-    line_starts: OnceCell<Box<[u32]>>,
+    lines: OnceCell<LineTable>,
 }
 
 static DELETE_EMBEDDER_PROVIDER: AtomicUsize = AtomicUsize::new(0);
@@ -78,6 +83,8 @@ impl SourceProvider {
             embedder_vtable: core::ptr::null(),
             ref_count: AtomicU32::new(1),
             source_type,
+            has_live_exports: Cell::new(false),
+            hash: Cell::new(0),
             id: Cell::new(0),
             source,
             url,
@@ -86,7 +93,7 @@ impl SourceProvider {
             start_line: 0,
             start_column: 0,
             origin: None,
-            line_starts: OnceCell::new(),
+            lines: OnceCell::new(),
         }))
     }
 
@@ -116,6 +123,24 @@ impl SourceProvider {
         self.source_type
     }
 
+    /// Equal for equal texts, or they do not share their code.
+    pub fn hash(&self) -> u32 {
+        if self.hash.get() == 0 {
+            self.hash.set(self.source.hash());
+        }
+        self.hash.get()
+    }
+
+    /// Whether importers ask the module for the value of an export each time they read it.
+    pub fn has_live_exports(&self) -> &Cell<bool> {
+        &self.has_live_exports
+    }
+
+    /// Line and column, from zero.
+    pub fn start_position(&self) -> (i32, i32) {
+        (self.start_line, self.start_column)
+    }
+
     /// What `import()` in the text is relative to.
     pub fn origin(&self) -> &SourceProvider {
         self.origin.as_deref().unwrap_or(self)
@@ -137,26 +162,25 @@ impl SourceProvider {
         self.source_mapping_url_directive.borrow().clone()
     }
 
-    pub fn set_directives(&self, directives: &bun_engine_bytecode::Directives) {
+    pub fn set_directives(&self, directives: &Directives) {
         self.source_url_directive
             .replace(directives.source_url.clone());
         self.source_mapping_url_directive
             .replace(directives.source_mapping_url.clone());
     }
 
-    pub fn line_starts(&self) -> &[u32] {
-        self.line_starts
-            .get_or_init(|| with_text!(self.text(), |units| find_line_starts(units)))
+    pub fn has_lines(&self) -> bool {
+        self.lines.get().is_some()
+    }
+
+    pub fn lines(&self) -> &LineTable {
+        self.lines.get_or_init(|| LineTable::new(self.text()))
     }
 
     /// From zero, and not counting where the text starts in its document.
     pub fn position_in_text(&self, offset: u32) -> LineColumn {
-        let starts = self.line_starts();
-        let line = starts.partition_point(|&start| start <= offset) - 1;
-        LineColumn {
-            line: line as u32,
-            column: offset - starts[line],
-        }
+        let (line, column) = self.lines().line_and_column(offset);
+        LineColumn { line, column }
     }
 
     /// From one.
@@ -168,21 +192,6 @@ impl SourceProvider {
             column: (column + 1).wrapping_add_signed(shift),
         }
     }
-}
-
-fn find_line_starts<T: CodeUnit>(units: &[T]) -> Box<[u32]> {
-    let mut starts = vec![0];
-    for (index, unit) in units.iter().enumerate() {
-        let ends_line = match unit.to_u16() {
-            0x0a | 0x2028 | 0x2029 => true,
-            0x0d => !units.get(index + 1).is_some_and(|next| next.is(b'\n')),
-            _ => false,
-        };
-        if ends_line {
-            starts.push(index as u32 + 1);
-        }
-    }
-    starts.into()
 }
 
 #[repr(transparent)]

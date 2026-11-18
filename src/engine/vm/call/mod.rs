@@ -5,8 +5,6 @@
 mod stubs;
 mod unwind;
 
-use std::rc::Rc;
-
 use bun_engine_bytecode::Specialization;
 use bun_engine_macros::native_abi;
 
@@ -364,19 +362,12 @@ fn link_executable(
     executable: Gc<ScriptExecutable>,
     specialization: Specialization,
 ) -> JsResult<Gc<CodeBlock>> {
-    let code = if let Some(function) = executable.downcast::<FunctionExecutable>() {
-        if specialization == Specialization::Construct && !function.info().is_constructor() {
-            return Err(errors::throw_not_a_constructor(cx, callee.into()));
-        }
-        function.unlinked_code(cx, specialization)?
-    } else if let Some(program) = executable.downcast::<crate::ProgramExecutable>() {
-        Rc::clone(&program.unit().code)
-    } else if let Some(module) = executable.downcast::<crate::ModuleExecutable>() {
-        Rc::clone(&module.unit().code)
-    } else {
-        let eval = executable.cast::<crate::EvalExecutable>();
-        Rc::clone(&eval.unit().code)
-    };
+    if specialization == Specialization::Construct
+        && !(executable.cast::<FunctionExecutable>().info()).is_constructor()
+    {
+        return Err(errors::throw_not_a_constructor(cx, callee.into()));
+    }
+    let code = executable.unlinked_code(cx, specialization)?;
     let code_block = CodeBlock::link(cx, executable, code)?;
     // SAFETY: the interpreter runs any code block.
     unsafe {

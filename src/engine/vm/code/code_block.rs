@@ -16,7 +16,7 @@ use super::metadata;
 use crate::heap::Survivors;
 use crate::{
     Attributes, Cx, Field, FunctionExecutable, Gc, GcFree, GlobalObject, ImmutableArray,
-    IntegrityLevel, JsArray, JsBigInt, JsCell, JsResult, JsString, LineColumn, RealmSlot, RegExp,
+    IntegrityLevel, JsArray, JsBigInt, JsCell, JsResult, JsString, LineColumn, RegExp,
     ScopeTemplate, ScriptExecutable, TypeFlags, Value, ValueVec, Visitor, Vm,
 };
 
@@ -235,7 +235,7 @@ impl CodeBlock {
             }
             Constant::Template(site) => self.template_object(cx, site)?.into(),
             Constant::Array(literal) => self.link_array(cx, literal)?.into(),
-            &Constant::LinkTime(id) => cx.global().slot(cx, RealmSlot::for_constant(id)).into(),
+            &Constant::LinkTime(id) => cx.global().link_time_constant(cx, id).into(),
         }))
     }
 

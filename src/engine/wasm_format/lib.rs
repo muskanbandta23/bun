@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 mod alloc;
+mod builtins;
 mod custom;
 mod decode;
 mod driver;
@@ -19,6 +20,7 @@ mod validate;
 mod visitor;
 
 pub use alloc::OutOfMemory;
+pub use builtins::{CompileOptions, Provided, StringBuiltin};
 pub use custom::{BranchHint, BranchHints, Names};
 pub use driver::{Driver, FunctionBody, LoopEffects, LoopFlags};
 pub use error::{Error, ErrorKind};

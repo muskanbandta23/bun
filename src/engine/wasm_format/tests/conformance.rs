@@ -1,14 +1,16 @@
 //! The modules of the test suite of the specification. `WASM_SCRIPTS` names a directory that has, for each script,
-//! one with its modules, `commands.txt` and `messages.txt`.
+//! one with its modules, `commands.txt` and `messages.txt`. Without it nothing is tested.
 
-#![allow(clippy::disallowed_methods, clippy::disallowed_macros)]
+#![allow(clippy::disallowed_methods)]
+
+mod support;
 
 use std::collections::BTreeMap;
-use std::convert::Infallible;
 use std::fs;
 use std::path::Path;
 
 use bun_engine_wasm_format::*;
+use support::Ignore;
 
 /// These predate multiple tables and memories.
 const OUTDATED: &[(&str, &[&str])] = &[
@@ -29,23 +31,6 @@ fn is_listed(list: &[(&str, &[&str])], script: &str, line: &str) -> bool {
     list.iter()
         .any(|(name, lines)| *name == script && lines.contains(&line))
 }
-
-struct Ignore;
-
-impl Visit for Ignore {
-    type Error = Infallible;
-
-    fn unhandled(&mut self) -> Result<(), Infallible> {
-        Ok(())
-    }
-}
-
-impl VisitControl for Ignore {}
-impl VisitVariable for Ignore {}
-impl VisitNumeric for Ignore {}
-impl VisitMemory for Ignore {}
-impl VisitReference for Ignore {}
-impl VisitVector for Ignore {}
 
 fn byte_by_byte(bytes: &[u8]) -> Result<Module, Error> {
     let mut parser = Parser::new(Features::all());
@@ -114,7 +99,6 @@ fn check_script(directory: &Path, failures: &mut Vec<String>) -> usize {
 #[test]
 fn modules_of_the_suite() {
     let Ok(root) = std::env::var("WASM_SCRIPTS") else {
-        eprintln!("skipped: WASM_SCRIPTS is not set");
         return;
     };
     let mut failures = Vec::new();

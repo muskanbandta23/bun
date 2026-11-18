@@ -14,6 +14,7 @@ pub(crate) mod harness;
 pub(crate) mod interpreter;
 pub(crate) mod memory;
 pub(crate) mod native;
+pub(crate) mod nodes;
 pub(crate) mod random;
 pub(crate) mod reducer;
 pub(crate) mod sketch;

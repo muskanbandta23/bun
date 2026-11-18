@@ -1,8 +1,10 @@
 //! How values are represented, and values that scripts cannot make.
 
 use bun_engine_macros::cell;
+use bun_engine_number::Random;
 use bun_engine_vm::{
-    InternalFunction, JsArrayBuffer, RealmWatchpoint, Shape, ShapeSpec, TypeFlags, call,
+    InternalFunction, JsArrayBuffer, JsArrayBufferView, JsFunctionWithFields, RealmWatchpoint,
+    Shape, ShapeSpec, TypeFlags, call,
 };
 
 use super::{return_false, return_undefined, string};
@@ -25,10 +27,19 @@ pub(super) const FUNCTIONS: Functions = &[
     ("is32BitPlatform", return_false, 0),
     ("maxArguments", max_arguments, 0),
     ("transferArrayBuffer", transfer_array_buffer, 1),
+    ("ensureArrayStorage", ensure_array_storage, 0),
+    ("hasCustomProperties", has_custom_properties, 0),
+    ("getRandomSeed", get_random_seed, 0),
+    ("setRandomSeed", set_random_seed, 1),
+    (
+        "createNoopNativeFunctionWithCapture",
+        create_function_with_capture,
+        1,
+    ),
 ];
 
 #[native_abi]
-fn describe(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+pub(super) fn describe(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let Some(&value) = frame.arguments().first() else {
         return Ok(Value::UNDEFINED);
     };
@@ -167,4 +178,43 @@ pub(super) fn transfer_array_buffer(cx: &mut Cx, frame: &CallFrame) -> JsResult<
         buffer.buffer().detach(cx);
     }
     Ok(Value::UNDEFINED)
+}
+
+#[native_abi]
+pub(super) fn ensure_array_storage(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    for object in frame.arguments().iter().filter_map(|it| it.as_object()) {
+        if !object.is::<JsArrayBufferView>() {
+            cx.or_out_of_memory(object.convert_to_sparse(cx))?;
+        }
+    }
+    Ok(Value::UNDEFINED)
+}
+
+#[native_abi]
+fn has_custom_properties(_: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let object = frame.argument(0).as_object();
+    Ok(object.is_some_and(|it| it.shape().slot_count() != 0).into())
+}
+
+#[native_abi]
+fn get_random_seed(cx: &mut Cx, _: &CallFrame) -> JsResult<Value> {
+    Ok(cx.global().random_state().get().seed().into())
+}
+
+#[native_abi]
+fn set_random_seed(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let seed = frame.argument(0).to_uint32(cx)?;
+    cx.global().random_state().set(Random::new(seed));
+    Ok(Value::UNDEFINED)
+}
+
+#[native_abi]
+fn return_capture(_: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    Ok(JsFunctionWithFields::fields_of_callee(frame)[0])
+}
+
+#[native_abi]
+fn create_function_with_capture(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let fields = [frame.argument(0), Value::UNDEFINED];
+    Ok(JsFunctionWithFields::new(cx, 0, return_capture, fields).into())
 }

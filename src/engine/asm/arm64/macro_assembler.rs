@@ -150,11 +150,12 @@ impl MacroAssembler {
 
     fn add_long_constant(&mut self, width: Width, dst: Gpr, lhs: Gpr, value: i64) {
         let value = signed(width, value);
-        let magnitude = value.unsigned_abs();
-        if let (Some(high), Some(low)) = (
-            ArithmeticImm::new(magnitude & !0xfff),
-            ArithmeticImm::new(magnitude & 0xfff),
-        ) {
+        let (constant, magnitude) = (ConstantMove::new(width, value as u64), value.unsigned_abs());
+        // A move does not wait for `lhs`.
+        if (constant.instructions() > 1 || lhs == SP)
+            && let Some(high) = ArithmeticImm::new(magnitude & !0xfff)
+            && let Some(low) = ArithmeticImm::new(magnitude & 0xfff)
+        {
             let op = if value < 0 { AddSub::Sub } else { AddSub::Add };
             // A signal may arrive in between, and overwrite what is below the stack pointer.
             let partial = if dst == SP && lhs != SP {
@@ -166,13 +167,13 @@ impl MacroAssembler {
             self.asm.add_sub_imm(op, width, dst, partial, low);
             return;
         }
-        let constant = if dst == lhs || dst == SP {
+        let temp = if dst == lhs || dst == SP {
             self.address_scratch()
         } else {
             dst
         };
-        self.move_long_constant(width, constant, value);
-        self.add_sub_registers(AddSub::Add, width, dst, lhs, constant);
+        self.asm.move_constant(temp, constant);
+        self.add_sub_registers(AddSub::Add, width, dst, lhs, temp);
     }
 
     fn add_index(&mut self, dst: Gpr, base: Gpr, index: Gpr, scale: Scale) {

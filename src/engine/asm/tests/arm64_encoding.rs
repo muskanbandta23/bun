@@ -919,3 +919,33 @@ fn every_float_immediate() {
     }
     listing.check();
 }
+
+#[cfg(debug_assertions)]
+#[test]
+fn the_number_31_has_one_meaning_in_each_operand() {
+    let (w, one) = (Width::W64, ArithmeticImm::ONE);
+    let mask = BitmaskImm::new(w, 1).unwrap();
+    let mistakes: [&dyn Fn(&mut Assembler); 16] = [
+        &|a| a.add_sub_imm(AddSub::Add, w, ZR, X1, one),
+        &|a| a.add_sub_imm(AddSub::Adds, w, SP, X1, one),
+        &|a| a.add_sub_imm(AddSub::Add, w, X0, ZR, one),
+        &|a| a.add_sub(AddSub::Add, w, SP, X1, X2),
+        &|a| a.add_sub(AddSub::Add, w, X0, SP, X2),
+        &|a| a.add_sub_extended(AddSub::Add, w, X0, X1, SP, Extend::Uxtx, 0),
+        &|a| a.add_sub_extended(AddSub::Add, w, X0, ZR, X2, Extend::Uxtx, 0),
+        &|a| a.logical_imm(Logical::And, ZR, X1, mask),
+        &|a| a.logical_imm(Logical::Ands, SP, X1, mask),
+        &|a| a.logical_imm(Logical::And, X0, SP, mask),
+        &|a| a.mov(w, X0, SP),
+        &|a| a.ldr(X0, Mem::at(Size::S64, ZR)),
+        &|a| a.str(SP, Mem::at(Size::S64, X0)),
+        &|a| a.ldr(X0, Mem::indexed(w, X1, SP, IndexExtend::Lsl, false)),
+        &|a| a.ldar(Size::S64, X0, ZR),
+        &|a| a.cbz(w, SP, Assembler::new(Arm64Features::empty()).new_label()),
+    ];
+    for (index, mistake) in mistakes.into_iter().enumerate() {
+        let emit = || mistake(&mut Assembler::new(Arm64Features::all()));
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(emit));
+        assert!(outcome.is_err(), "{index}");
+    }
+}

@@ -574,3 +574,26 @@ fn arm64_constants_and_tables_out_of_reach() {
     let constants = || extents.iter().step_by(2).map(|(start, end)| end - start);
     assert!(constants().any(|size| size == 4) && constants().any(|size| size == 24));
 }
+
+#[test]
+#[ignore = "fills 128 MiB"]
+fn arm64_code_of_the_greatest_size() {
+    let program = |excess: usize| {
+        let mut program = Program::<arm64::MacroAssembler>::new(false);
+        let (behind, ahead) = (program.here(), program.masm.new_label());
+        for transfer in TRANSFERS {
+            program.add(Item::Transfer(transfer, ahead));
+        }
+        program.fill(arm64::patch::REACH - 96 + excess);
+        for transfer in TRANSFERS {
+            program.add(Item::Transfer(transfer, behind));
+        }
+        program.bind(ahead);
+        program
+    };
+    let extents = program(0).check();
+    assert_eq!(extents.last().unwrap().1 as usize, arm64::patch::REACH);
+    for excess in [4, 40, 4000] {
+        assert!(program(excess).masm.finish().is_err());
+    }
+}

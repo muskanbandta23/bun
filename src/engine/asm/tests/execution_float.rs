@@ -415,10 +415,13 @@ fn floats_to_integers() {
                     let mut add = |case: Case| {
                         h.add(case.reads_float(from, src).with_all_boundaries(round < 4));
                     };
-                    let case = Case::new(op!(truncate_float(from, sign, to, dst, src)), move |m| {
-                        m.set(to, dst, truncated(m.float(from, src), sign, to).unwrap());
-                    });
-                    add(case.given(move |m, _| truncated(m.float(from, src), sign, to).is_some()));
+                    let operation = op!(truncate_float(from, sign, to, dst, src));
+                    add(Case::new(operation, move |m| {
+                        match truncated(m.float(from, src), sign, to) {
+                            Some(integer) => m.set(to, dst, integer),
+                            None => m.unspecified.push(Unspecified::WithinWidth(dst, to)),
+                        }
+                    }));
 
                     let operation = op!(truncate_float_saturating(from, sign, to, dst, src));
                     add(Case::new(operation, move |m| {

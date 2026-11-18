@@ -1,4 +1,4 @@
-use core::cell::RefCell;
+use core::cell::{Cell, RefCell};
 
 use bun_engine_text::{StaticString, StringImpl, StringRef, Text};
 
@@ -24,6 +24,7 @@ pub struct Cache {
     /// By the hash of the tag as it was written.
     canonical_tags: RefCell<[Option<(StringRef, LanguageTag)>; CANONICAL_TAG_SLOTS]>,
     default_locale: RefCell<Option<LanguageTag>>,
+    allocated_bytes: Cell<usize>,
     pub(crate) collators: RecentSet<Collator, 4>,
     pub(crate) default_collators: DefaultInstances<Collator>,
     pub(crate) dates: DateCache,
@@ -68,6 +69,16 @@ impl Cache {
                 first_locale(&[Text::Latin1(bun_icu::host_language().to_bytes())])
             })
             .clone()
+    }
+
+    /// An estimate of the memory that new objects have taken since the last call, for the collector to take into account.
+    #[inline]
+    pub fn take_allocated_bytes(&self) -> usize {
+        self.allocated_bytes.take()
+    }
+
+    pub(crate) fn note_allocation(&self, bytes: usize) {
+        self.allocated_bytes.update(|it| it.saturating_add(bytes));
     }
 
     /// In place of the language of the host.

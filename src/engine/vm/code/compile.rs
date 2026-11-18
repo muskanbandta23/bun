@@ -62,6 +62,7 @@ impl Vm {
             .code_cache
             .borrow_mut()
             .clear();
+        self.forget_static_builtins();
     }
 
     pub fn clear_source_caches(&self) {
@@ -293,7 +294,8 @@ impl Cx {
 
 impl FunctionExecutable {
     pub(super) fn compile(&self, cx: &Cx, specialization: Specialization) -> JsResult<Rc<Code>> {
-        let (function, provider) = (self.info(), self.provider());
+        let this = crate::anchor!(self);
+        let (function, provider) = (this.info(), this.provider());
         let mut instrumentation = cx.global().instrumentation(cx);
         if function.origin().contains(Origin::NO_POSITIONS) {
             instrumentation = Instrumentation::empty();

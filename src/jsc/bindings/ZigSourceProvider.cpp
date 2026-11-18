@@ -108,33 +108,11 @@ Ref<SourceProvider> SourceProvider::create(
         return toSourceOrigin(sourceURLString, isBuiltin);
     };
 
-    const auto getProvider = [&]() -> Ref<SourceProvider> {
-        auto origin = getSourceOrigin();
-        if (auto bytecode = resolvedSource.bytecode_cache.take()) {
-            auto provider = adoptRef(*new SourceProvider(
-                globalObject->bunVM(),
-                resolvedSource,
-                string.isNull() ? Ref { *StringImpl::empty() } : Ref { *string.impl() },
-                JSC::SourceTaintedOrigin::Untainted,
-                origin,
-                WTF::move(sourceURLString), TextPosition(),
-                sourceType));
-            provider->m_hash = resolvedSource.source_code_hash;
-            provider->m_cachedBytecode = WTF::move(bytecode);
-            return provider;
-        }
-
-        return adoptRef(*new SourceProvider(
-            globalObject->bunVM(),
-            resolvedSource,
-            string.isNull() ? Ref { *StringImpl::empty() } : Ref { *string.impl() },
-            JSC::SourceTaintedOrigin::Untainted,
-            origin,
-            WTF::move(sourceURLString), TextPosition(),
-            sourceType));
-    };
-
-    auto provider = getProvider();
+    auto provider = adoptRef(*new SourceProvider(globalObject->bunVM(), resolvedSource, string, getSourceOrigin(), WTF::move(sourceURLString), TextPosition(), sourceType));
+    if (auto bytecode = resolvedSource.bytecode_cache.take()) {
+        provider->setHash(resolvedSource.source_code_hash);
+        provider->m_cachedBytecode = WTF::move(bytecode);
+    }
 
     if (shouldGenerateCodeCoverage) {
         BunString providerURL = Bun::toString(provider->sourceURL());
@@ -149,11 +127,6 @@ Ref<SourceProvider> SourceProvider::create(
     }
 
     return provider;
-}
-
-StringView SourceProvider::source() const
-{
-    return StringView(m_source.get());
 }
 
 SourceProvider::~SourceProvider()
@@ -398,15 +371,6 @@ extern "C" bool Bun__BytecodeOrder__digestModule(JSC::VM* vm, const BunString* s
     return true;
 }
 
-unsigned SourceProvider::hash() const
-{
-    if (m_hash) {
-        return m_hash;
-    }
-
-    return m_source->hash();
-}
-
 extern "C" BunString ZigSourceProvider__getSourceSlice(SourceProvider* provider)
 {
     return Bun::toStringView(provider->source());
@@ -439,7 +403,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSourceHasLineStarts, (JSC::JSGlobalObject*, JSC::Call
     auto* function = dynamicDowncast<JSC::JSFunction>(callFrame->argument(0));
     if (!function || function->isHostFunction())
         return JSValue::encode(jsUndefined());
-    return JSValue::encode(jsBoolean(function->jsExecutable()->source().provider()->lineStartTableIsBuilt()));
+    return JSValue::encode(jsBoolean(function->jsExecutable()->sourceProvider()->lineStartTableIsBuilt()));
 }
 
 } // namespace Bun

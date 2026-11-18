@@ -18,6 +18,7 @@ workspace = true
 
 [dependencies]
 bun_engine.workspace = true
+bun_engine_inspector.workspace = true
 bun_engine_macros.workspace = true
 bun_engine_date.workspace = true
 bun_engine_number.workspace = true

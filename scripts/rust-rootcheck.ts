@@ -4,12 +4,14 @@
  *
  *   bun run rust:rootcheck                        # exits 1 on a finding
  *   bun run rust:rootcheck -p bun_engine_builtins # other arguments go to `cargo check`
- *   bun run rust:rootcheck --borrows              # lists what is borrowed from cells without a guard
+ *   bun run rust:rootcheck --lenders              # lists the functions that lend what a cell owns
+ *   bun run rust:rootcheck --all                  # also what baseline.json holds back
+ *   bun run rust:rootcheck --baseline             # writes baseline.json
  *   bun run rust:rootcheck --test                 # the tests of the tool
  */
 
 import { spawnSync } from "node:child_process";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join, resolve } from "node:path";
 
 const repo = resolve(import.meta.dirname, "..");
@@ -37,7 +39,7 @@ const build = ["build", "--quiet", "--release", "--manifest-path", join(tool, "C
 if (spawnSync("cargo", build, { cwd: repo, stdio: "inherit" }).status !== 0) process.exit(1);
 const driver = join(target, "release", process.platform === "win32" ? "rootcheck.exe" : "rootcheck");
 
-const flags = new Set(["--borrows", "--test"]);
+const flags = new Set(["--all", "--baseline", "--lenders", "--test"]);
 const args = process.argv.slice(2).filter(it => !flags.has(it));
 const libraryPath = { darwin: "DYLD_FALLBACK_LIBRARY_PATH", win32: "PATH" }[process.platform] ?? "LD_LIBRARY_PATH";
 const libraries = join(sysroot, process.platform === "win32" ? "bin" : "lib");
@@ -46,14 +48,14 @@ const env = {
   [libraryPath]: [libraries, process.env[libraryPath]].filter(Boolean).join(delimiter),
   RUSTC_WORKSPACE_WRAPPER: driver,
   RUSTC_ICE: "0",
-  ROOTCHECK_BORROWS: process.argv.includes("--borrows") ? "1" : undefined,
+  ROOTCHECK_LENDERS: process.argv.includes("--lenders") ? "1" : undefined,
 };
 
 type Diagnostic = {
   level: string;
   rendered: string;
   code: { code: string } | null;
-  spans: { is_primary: boolean; line_start: number }[];
+  spans: { is_primary: boolean; file_name: string; line_start: number }[];
 };
 type Message =
   | { reason: "compiler-message"; message: Diagnostic }
@@ -89,18 +91,31 @@ function lint(): boolean {
   const isScoped = args.some(it => it === "-p" || it === "--workspace" || it.startsWith("--package"));
   const scope = isScoped ? [] : [...dependentsOfVm().flatMap(name => ["-p", name]), "--all-targets"];
   const { messages, ok } = check([...scope, ...args]);
-  const shown = new Set<string>();
-  let findings = 0;
-  for (const it of messages) {
-    if (it.reason !== "compiler-message" || shown.has(it.message.rendered)) continue;
-    const rule = ruleOf(it.message);
-    if (!rule && !it.message.level.startsWith("error")) continue;
-    shown.add(it.message.rendered);
-    process.stderr.write(it.message.rendered);
-    if (rule) findings++;
+  const diagnostics = messages.flatMap(it => (it.reason === "compiler-message" ? [it.message] : []));
+  // A crate is checked as a library and as a test.
+  const distinct = [
+    ...new Map(diagnostics.map(it => [it.rendered.split("\n", 2).join().replace(/ +/g, " "), it])).values(),
+  ];
+  const fileOf = (it: Diagnostic) => it.spans.find(span => span.is_primary)!.file_name.replaceAll("\\", "/");
+  const borrows = Object.groupBy(
+    distinct.filter(it => ruleOf(it) === "borrow"),
+    fileOf,
+  );
+  const baselinePath = join(tool, "baseline.json");
+  if (ok && process.argv.includes("--baseline")) {
+    const counts = Object.entries(borrows).map(([file, found]) => [file, found!.length]);
+    writeFileSync(baselinePath, JSON.stringify(Object.fromEntries(counts.sort()), null, 2) + "\n");
   }
-  console.error(`rootcheck: ${ok ? `${findings} finding(s)` : "does not compile"}`);
-  return ok && findings === 0;
+  const baseline = process.argv.includes("--all") ? {} : JSON.parse(readFileSync(baselinePath, "utf8"));
+  const isKnown = (it: Diagnostic) => ruleOf(it) === "borrow" && borrows[fileOf(it)]!.length <= baseline[fileOf(it)];
+  const wanted = (rule: string) => (rule === "lender") === process.argv.includes("--lenders");
+  const findings = distinct.filter(it => ruleOf(it) && wanted(ruleOf(it)!) && !isKnown(it));
+  for (const it of [...findings, ...distinct.filter(it => it.level.startsWith("error"))]) {
+    process.stderr.write(it.rendered);
+  }
+  const known = distinct.filter(isKnown).length;
+  console.error(`rootcheck: ${ok ? `${findings.length} finding(s), ${known} in the baseline` : "does not compile"}`);
+  return ok && (findings.length === 0 || process.argv.includes("--lenders"));
 }
 
 /** A line that ends in `//~ rule: text` has a finding of that rule which says that, and no other line has one. */
@@ -134,8 +149,8 @@ function test(): boolean {
         })),
       );
     expectations += expected.length;
-    const borrows = name.startsWith("borrows") ? "1" : undefined;
-    const result = capture(driver, ["rustc", path, ...options], { ...env, ROOTCHECK_BORROWS: borrows });
+    const lenders = name.startsWith("lenders") ? "1" : undefined;
+    const result = capture(driver, ["rustc", path, ...options], { ...env, ROOTCHECK_LENDERS: lenders });
     const problems = result.status === 0 ? [] : [`exited with ${result.status ?? result.signal}\n${result.stderr}`];
     for (const diagnostic of parseLines(result.stderr) as Diagnostic[]) {
       const line = diagnostic.spans?.find(it => it.is_primary)?.line_start;

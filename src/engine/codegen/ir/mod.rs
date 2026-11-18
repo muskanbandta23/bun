@@ -5,6 +5,7 @@ mod effects;
 mod entities;
 pub mod evaluate;
 mod function;
+mod node;
 mod op;
 mod patchpoint;
 mod print;
@@ -18,6 +19,7 @@ pub use entities::{
 };
 pub(crate) use entities::{Pool, entities};
 pub use function::{Edges, Entry, Function, SlotData, Successor};
+pub use node::{NodeInfo, NodeKind};
 pub use op::{
     Access, AccessFlags, Binary, Bits64, Checked, Exit, Lanes, Load, Op, Origin, Store, Token,
     Type, Unary, Wide,

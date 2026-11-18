@@ -8,9 +8,8 @@ use crate::enumeration::UEnumeration;
 use crate::error::Status;
 use crate::ffi::{call, open};
 use crate::locale::listed;
-#[cfg(icu_before_79)]
-use crate::{Buffer, normalizer::Form};
-use crate::{Enumeration, Result};
+use crate::normalizer::{decompose_stream_safe, has_long_run_of_marks};
+use crate::{Buffer, Enumeration, Result};
 
 bun_opaque::opaque_ffi! { struct UCollator; }
 
@@ -85,14 +84,13 @@ impl Collator {
     }
 
     pub fn compare(&self, a: &[u16], b: &[u16]) -> Result<Ordering> {
-        #[cfg(icu_before_79)]
-        if has_mark_after_pair(a) || has_mark_after_pair(b) {
-            let (mut decomposed_a, mut decomposed_b) = (Buffer::new(), Buffer::new());
-            Form::Nfd.normalize(a, &mut decomposed_a)?;
-            Form::Nfd.normalize(b, &mut decomposed_b)?;
-            return self.compare_as_is(&decomposed_a, &decomposed_b);
+        if !needs_decomposition(a)? && !needs_decomposition(b)? {
+            return self.compare_as_is(a, b);
         }
-        self.compare_as_is(a, b)
+        let (mut decomposed_a, mut decomposed_b) = (Buffer::new(), Buffer::new());
+        decompose_stream_safe(a, &mut decomposed_a)?;
+        decompose_stream_safe(b, &mut decomposed_b)?;
+        self.compare_as_is(&decomposed_a, &decomposed_b)
     }
 
     fn compare_as_is(&self, a: &[u16], b: &[u16]) -> Result<Ordering> {
@@ -119,6 +117,15 @@ impl Collator {
         })
         .map(|order| order.cmp(&0))
     }
+}
+
+#[inline]
+fn needs_decomposition(text: &[u16]) -> Result<bool> {
+    #[cfg(icu_before_79)]
+    if has_mark_after_pair(text) {
+        return Ok(true);
+    }
+    has_long_run_of_marks(text)
 }
 
 /// Whether the decomposition of a unit that follows a surrogate pair starts with a combining mark.

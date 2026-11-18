@@ -47,6 +47,7 @@ pub(crate) struct Weights {
     pub(crate) switches: u32,
     pub(crate) graphs: u32,
     pub(crate) pressure: u32,
+    pub(crate) shapes: u32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -72,7 +73,7 @@ pub(crate) struct Shape {
     pub(crate) withheld_percent: u32,
 }
 
-pub(crate) const PROFILES: [&str; 10] = [
+pub(crate) const PROFILES: [&str; 11] = [
     "integers",
     "floats",
     "vectors",
@@ -82,6 +83,7 @@ pub(crate) const PROFILES: [&str; 10] = [
     "graphs",
     "variables",
     "sites",
+    "shapes",
     "everything",
 ];
 
@@ -103,6 +105,7 @@ impl Shape {
             switches: 0,
             graphs: 0,
             pressure: 0,
+            shapes: 0,
         };
         let basic = Weights {
             integers: 30,
@@ -126,6 +129,7 @@ impl Shape {
             switches: 2,
             graphs: 2,
             pressure: 1,
+            shapes: 4,
             ..basic
         };
         let weights = match profile {
@@ -191,6 +195,13 @@ impl Shape {
                 pressure: 5,
                 vectors: 5,
                 loops: 4,
+                ..basic
+            },
+            "shapes" => Weights {
+                shapes: 40,
+                trapping_accesses: 3,
+                loops: 4,
+                graphs: 2,
                 ..basic
             },
             "everything" => everything,

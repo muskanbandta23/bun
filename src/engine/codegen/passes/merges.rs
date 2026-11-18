@@ -53,6 +53,21 @@ impl<'a> Merges<'a> {
         self.tree[rank as usize].parent
     }
 
+    pub(super) fn all_ranks(&self) -> Range<u32> {
+        1..self.tree.len() as u32
+    }
+
+    /// The dominator of the block at `rank`, or that block, whose parent is `top`.
+    pub(super) fn child_toward(&self, top: u32, mut rank: u32) -> u32 {
+        loop {
+            let Ancestry { parent, jump, .. } = self.tree[rank as usize];
+            if parent == top {
+                return rank;
+            }
+            rank = if jump > top { jump } else { parent };
+        }
+    }
+
     #[inline]
     pub(super) fn add_changes(&mut self, rank: u32, bits: u64) {
         self.changes[rank as usize].inside |= bits;

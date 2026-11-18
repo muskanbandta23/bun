@@ -100,10 +100,19 @@ impl<'a> Frame<'a> {
     ) -> (&'a mut Cx, Frame<'a>) {
         vm.set_top_call_frame(header);
         header.set_call_site(start.addr() as u32);
+        // SAFETY: the caller's.
+        unsafe { Self::new(header) }
+    }
+
+    /// # Safety
+    /// `header` is that of a frame, or of memory that is laid out like one, whose code is running.
+    #[inline(always)]
+    unsafe fn new(header: &'a CallFrame) -> (&'a mut Cx, Frame<'a>) {
         // SAFETY: the frame keeps its code block alive, and generated code runs inside a call that has the `Cx`.
         unsafe {
-            let code_block = &*Gc::<CodeBlock>::from_address(header.code_block_bits()).as_ptr();
+            let code_block = Gc::<CodeBlock>::from_address(header.code_block_bits()).baseline();
             let cx = Cx::from_global(code_block.global());
+            let code_block = &*code_block.as_ptr();
             (cx, Frame { header, code_block })
         }
     }
@@ -274,8 +283,18 @@ pub(crate) unsafe fn slow_path<O: Execute>(
     frame: &CallFrame,
     start: *const u8,
 ) -> Outcome {
+    vm.set_top_call_frame(frame);
+    frame.set_call_site(start.addr() as u32);
     // SAFETY: the caller's.
-    let (op, (cx, frame)) = unsafe { (decode::<O>(start), Frame::enter(vm, frame, start)) };
+    unsafe { operation::<O>(vm, frame, start) }
+}
+
+/// For a caller that has made its frame known already.
+#[native_abi]
+#[inline(never)]
+pub(crate) unsafe fn operation<O: Execute>(_: &Vm, frame: &CallFrame, start: *const u8) -> Outcome {
+    // SAFETY: the caller's.
+    let (op, (cx, frame)) = unsafe { (decode::<O>(start), Frame::new(frame)) };
     Next::encode(op.execute(cx, frame))
 }
 

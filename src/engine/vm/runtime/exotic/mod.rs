@@ -7,6 +7,7 @@ mod literal;
 mod mapped_arguments;
 mod private;
 mod proxy;
+mod reflection;
 mod string_object;
 mod wrapper;
 

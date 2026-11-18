@@ -16,7 +16,6 @@ bun_highway.workspace = true
 bun_pod.workspace = true
 bun_simdutf_sys.workspace = true
 hashbrown.workspace = true
-smallvec.workspace = true
 
 [build-dependencies]
 bun_pod.workspace = true

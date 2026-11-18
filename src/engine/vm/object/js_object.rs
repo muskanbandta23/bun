@@ -149,7 +149,7 @@ unsafe extern "C" fn estimated_size(cell: &JsCell, _: &Vm) -> usize {
     cell.cell_size() + cell.as_object().map_or(0, |object| object.storage_size())
 }
 
-#[object_ops]
+#[object_ops(export = "engine_Object")]
 impl JsObject {
     fn put(
         &self,

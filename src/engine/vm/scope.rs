@@ -1,11 +1,17 @@
 //! The scopes that exist at run time. A chain of them ends in a global object.
 
+mod dynamic;
+mod variables;
+
 use core::mem::offset_of;
 use core::ops::Deref;
 use std::rc::Rc;
 
 use bun_engine_bytecode::{ScopeKind, StaticScope};
 use bun_engine_macros::cell;
+
+pub use dynamic::dynamic_this;
+pub(crate) use variables::VariableScope;
 
 use crate::heap::{HeapAnalyzer, Owned, barrier, visit_children_of};
 use crate::{
@@ -36,7 +42,10 @@ impl ScopeTemplate {
     pub fn create(vm: &Vm, scope: Rc<StaticScope>) -> Gc<ScopeTemplate> {
         vm.allocate::<ScopeTemplate>(ScopeTemplateInit {
             base: vm.shapes.scope_template(),
-            slot_count: scope.slot_count(),
+            slot_count: match scope.kind() {
+                ScopeKind::With => 1,
+                _ => scope.slot_count(),
+            },
             undefined_slots: scope.undefined_slots(),
             singleton_watchpoints: InlineWatchpointSet::new(WatchpointState::Clear),
             first_instance: None,
@@ -238,6 +247,34 @@ impl Environment {
         };
         // SAFETY: the caller's.
         unsafe { Self::create_with_shape(vm, shape, parent, template) }
+    }
+
+    /// The instruction `create_with_scope`, after ToObject.
+    ///
+    /// # Safety
+    /// As for `create`, of a `with` scope.
+    pub unsafe fn create_with(
+        vm: &Vm,
+        parent: Gc<JsCell>,
+        template: Gc<ScopeTemplate>,
+        object: Gc<JsObject>,
+    ) -> Gc<Environment> {
+        debug_assert!(template.scope.kind() == ScopeKind::With);
+        let shape = realm_of_scope(parent).with_scope_shape();
+        // SAFETY: the one slot is written.
+        unsafe {
+            let (environment, slots) = Self::allocate(vm, shape, parent, template);
+            slots.write(object.as_value().to_bits());
+            environment.did_initialize(vm);
+            environment
+        }
+    }
+
+    /// A `with` scope that is not in the source of anything.
+    pub fn create_for_object(vm: &Vm, parent: Gc<JsCell>, object: Gc<JsObject>) -> Gc<Environment> {
+        let template = ScopeTemplate::create(vm, StaticScope::with(static_scope_of(parent)));
+        // SAFETY: made for this parent.
+        unsafe { Self::create_with(vm, parent, template, object) }
     }
 
     pub fn copy(&self, vm: &Vm) -> Gc<Environment> {

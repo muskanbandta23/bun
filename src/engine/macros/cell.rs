@@ -3,7 +3,7 @@ use quote::{format_ident, quote};
 use syn::parse::Parser;
 use syn::{Expr, Field, Fields, GenericArgument, Ident, ItemStruct, LitStr, PathArguments, Type};
 
-use crate::trace;
+use crate::{field_offsets, trace};
 
 #[derive(Default)]
 struct Options {
@@ -234,6 +234,10 @@ pub(crate) fn expand(arguments: TokenStream, item: TokenStream) -> syn::Result<T
         .export
         .as_ref()
         .map(|export| quote!(#[unsafe(export_name = #export)]));
+    let offsets = options
+        .export
+        .as_ref()
+        .map(|_| field_offsets::offset_of_field(names.iter().copied()));
 
     Ok(quote! {
         #[repr(C)]
@@ -255,6 +259,8 @@ pub(crate) fn expand(arguments: TokenStream, item: TokenStream) -> syn::Result<T
             const CLASS_TYPES: #vm::CellTypeRange = #type_range;
 
             #(#accessors)*
+
+            #offsets
         }
 
         #export

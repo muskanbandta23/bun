@@ -83,6 +83,9 @@ impl Function {
             }
             Op::Switch(_, cases) => write!(f, "Switch {:?}", self.cases(cases)),
             Op::JumpTable(_, cases) => write!(f, "JumpTable {:?}", self.cases(cases)),
+            Op::Node { kind, data, .. } | Op::WideNode { kind, data, .. } => {
+                write!(f, "{} #{data}", self.node_info(kind).name)
+            }
             Op::Branch(_) => write!(f, "Branch"),
             Op::Return(_) => write!(f, "Return"),
             op => write!(f, "{op:?}"),

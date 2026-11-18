@@ -11,8 +11,9 @@ use bun_icu::plural_rules::{Kind, PluralRules as IcuRules};
 use crate::error::IcuResult;
 use crate::locale_resolver::ResolvedLocale;
 use crate::number_format::{
-    CompactDisplay, DigitOptions, DigitRange, MathematicalValue, Notation, RequestedDigits,
-    ReusingFormatter, RoundingType, Skeleton, check_range,
+    CompactDisplay, DigitOptions, DigitRange, ESTIMATED_FORMATTER_SIZE,
+    ESTIMATED_RANGE_FORMATTER_SIZE, MathematicalValue, Notation, RequestedDigits, ReusingFormatter,
+    RoundingType, Skeleton, check_range,
 };
 use crate::{AvailableLocales, Cache, Error, LanguageTag, Named, Result};
 
@@ -80,6 +81,7 @@ impl PluralRules {
         cache.plural_rules.find_or_insert(
             |it| it.0.options == options && it.0.locale == locale,
             || {
+                cache.note_allocation(ESTIMATED_FORMATTER_SIZE);
                 let kind = match options.kind {
                     Type::Cardinal => Kind::Cardinal,
                     Type::Ordinal => Kind::Ordinal,
@@ -139,11 +141,13 @@ impl PluralRules {
 
     pub fn select_range(
         &self,
+        cache: &Cache,
         start: &MathematicalValue,
         end: &MathematicalValue,
     ) -> Result<Category> {
         check_range(start, end)?;
         let formatter = self.0.range_formatter.get_or_try_init(|| {
+            cache.note_allocation(ESTIMATED_RANGE_FORMATTER_SIZE);
             NumberRangeFormatter::open(
                 &self.skeleton(),
                 &self.0.locale.icu_locale(&[])?,

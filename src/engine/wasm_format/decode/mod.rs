@@ -259,29 +259,24 @@ impl<'c, 'a, M: Mode> Decoder<'c, 'a, M> {
     }
 
     /// Goes on to the end of the outermost block. When skipping, stops in front of the instruction that ends it.
-    #[inline]
+    /// If the decoder and the context are locals of the caller, the one stays in registers and the other takes none.
+    #[inline(always)]
     pub(crate) fn run<V: Visitor<Error = M::Error>>(&mut self, v: &mut V) -> Result<(), M::Error> {
-        // The reader stays in registers, as no call gets its address, and the context takes none.
-        let mut cx = *self.cx;
-        let mut local = Decoder::<M>::new(self.reader, &mut cx);
-        let result = loop {
-            if M::PURPOSE == Purpose::Run && v.flow() == Flow::Dead && local.cx.dead == 0 {
-                local.cx.dead = 1;
-                local.skip_dead_code();
+        loop {
+            if M::PURPOSE == Purpose::Run && v.flow() == Flow::Dead && self.cx.dead == 0 {
+                self.cx.dead = 1;
+                self.skip_dead_code();
             }
-            let start = local.reader.position();
-            match local.step(v, start) {
+            let start = self.reader.position();
+            match self.step(v, start) {
                 Ok(true) => {}
-                Ok(false) => break Ok(()),
+                Ok(false) => return Ok(()),
                 Err(error) => {
-                    let (bytes, end) = (local.reader.bytes(), local.reader.position());
-                    break Err(M::complete(error, bytes, start, end));
+                    let (bytes, end) = (self.reader.bytes(), self.reader.position());
+                    return Err(M::complete(error, bytes, start, end));
                 }
             }
-        };
-        self.reader = local.reader;
-        *self.cx = cx;
-        result
+        }
     }
 
     /// For what is too rare or too large to be part of the loop.

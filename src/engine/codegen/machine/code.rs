@@ -139,6 +139,9 @@ pub(crate) struct Operand {
     wish: u8,
     /// The register, and whether the value is dead afterwards.
     outcome: u8,
+    /// The position at which the value is wanted after this. For all but one of several uses by an instruction it may
+    /// be that of the instruction.
+    pub(crate) next: u32,
 }
 
 impl Operand {
@@ -152,6 +155,7 @@ impl Operand {
             place,
             wish: NO_TIE << 4 | NO_TIE,
             outcome: AT_HOME,
+            next: 0,
         }
     }
 
@@ -243,11 +247,26 @@ pub(crate) struct Head {
     pub(crate) operand_count: u16,
     /// Has an operand in a fixed register, or clobbers.
     pub(crate) is_constrained: bool,
+    /// The results and temporaries, which come before the uses.
+    pub(crate) result_count: u8,
+    /// Is not constrained, reads at the start and writes at the end.
+    pub(crate) is_plain: bool,
+    pub(crate) has_late_uses: bool,
     pub(crate) site: Site,
     pub(crate) origin: Origin,
 }
 
 impl Head {
+    #[inline]
+    pub(crate) fn results(self) -> core::ops::Range<usize> {
+        self.first_operand as usize..self.first_operand as usize + usize::from(self.result_count)
+    }
+
+    #[inline]
+    pub(crate) fn uses(self) -> core::ops::Range<usize> {
+        self.results().end..self.operands().end
+    }
+
     #[inline]
     pub(crate) fn operands(self) -> core::ops::Range<usize> {
         self.first_operand as usize..self.first_operand as usize + usize::from(self.operand_count)
@@ -257,6 +276,7 @@ impl Head {
 #[derive(Clone, Copy)]
 pub(crate) struct SiteData {
     pub(crate) value: Value,
+    pub(crate) is_exit: bool,
     pub(crate) state: State,
     pub(crate) state_vregs: Span<VReg>,
     /// An operand that the exit can compute back from the result, which may therefore take its register.

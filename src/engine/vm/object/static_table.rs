@@ -14,7 +14,7 @@ use crate::{
 pub type BuiltinGenerator = unsafe extern "C" fn(&Vm) -> Gc<FunctionExecutable>;
 pub type PropertyCallback = unsafe extern "C" fn(&Vm, &JsObject) -> JsResult<Value>;
 /// For a value that takes no script to make.
-pub type PropertyMaker = fn(&Vm, &JsObject) -> Value;
+pub type PropertyMaker = fn(&crate::Cx, &JsObject) -> Value;
 
 /// Kinds of entries that only tables in Rust have.
 const ENGINE_BUILTIN: u32 = 1 << 24;

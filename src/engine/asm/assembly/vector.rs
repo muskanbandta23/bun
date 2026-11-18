@@ -47,6 +47,20 @@ pub trait VectorAssembly: FloatAssembly {
     /// `cond` is `Zero` or `NonZero`.
     fn branch_test_vector(&mut self, cond: TestCond, vector: Fpr, target: Label);
 
+    // For searching text. These need no scratch register but the first for vectors.
+
+    /// `move_byte_mask` has `1 << BYTE_MASK_SHIFT` bits for each byte.
+    const BYTE_MASK_SHIFT: u8;
+
+    /// Each byte of `mask` is all ones or all zeros, and so are its bits in the 64 of `dst`, from the lowest up.
+    fn move_byte_mask(&mut self, dst: Gpr, mask: Fpr);
+    /// The number of the first byte that is set in a result of `move_byte_mask`, which is not zero.
+    fn first_in_byte_mask(&mut self, dst: Gpr, mask: Gpr);
+    /// The low bytes of the lanes of 16 bits of `lhs` and then `rhs`, whose values fit in bytes of that sign.
+    fn narrow_to_bytes(&mut self, sign: Sign, dst: Fpr, lhs: Fpr, rhs: Fpr);
+    /// All ones in the bytes in which `value` has the bit that `bit` has. Each byte of `bit` has one.
+    fn test_bit_in_bytes(&mut self, dst: Fpr, value: Fpr, bit: Fpr);
+
     /// What the relaxed operations do.
     fn relaxed(features: Self::Features) -> Relaxed;
 

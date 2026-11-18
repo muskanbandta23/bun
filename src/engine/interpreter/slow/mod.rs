@@ -11,7 +11,7 @@ mod operators;
 mod properties;
 mod regexp;
 mod scopes;
-mod suspension;
+pub(crate) mod suspension;
 
 use bun_engine_bytecode::{
     IdentifierIndex, Jump, Narrow, Op, Opcode, Operand, Register, Wide16, Wide32, op,

@@ -73,6 +73,18 @@ impl LoadCache {
         self.byte_offset.set(0);
     }
 
+    /// For a cache that has only cases of own slots.
+    pub(super) fn list(&self) -> &AccessCases {
+        debug_assert!(!self.has_inline_lookup());
+        &self.cases_or_lookup
+    }
+
+    /// The barrier of the owner follows.
+    pub(super) fn set_inline_own(&self, case: &AccessCase) {
+        self.shape.set(case.shape());
+        self.byte_offset.set(case.byte_offset);
+    }
+
     /// Makes room for the list.
     fn ensure_cases(&self, vm: &Vm, owner: &CodeBlock) -> &AccessCases {
         if let Some(lookup) = self.inline_lookup() {

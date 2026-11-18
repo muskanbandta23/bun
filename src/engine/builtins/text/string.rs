@@ -2,7 +2,9 @@ use bun_engine_vm::StringObject;
 
 use crate::prelude::*;
 
-static_table!(static PROTOTYPE_PROPERTIES = []);
+static_table!(static PROTOTYPE_PROPERTIES = [
+    StaticProperty::realm_slot(symbols::iterator, bun_engine_vm::RealmSlot::string_prototype_iterator),
+]);
 
 #[cell(name = "String", shared_type = DerivedStringObject, static_table = PROTOTYPE_PROPERTIES)]
 struct StringPrototype {

@@ -1,7 +1,6 @@
 #include "engine/Support.h"
 
 #include <cstdio>
-#include <mutex>
 #if OS(WINDOWS)
 #include <windows.h>
 #include <dbghelp.h>
@@ -62,6 +61,24 @@ static void forEachLine(std::span<void* const> frames, const auto& write)
         line[line.size() - 2] = '\n';
         write(line.data());
     }
+}
+
+NEVER_INLINE std::unique_ptr<StackTrace> StackTrace::captureStackTrace(size_t maxFrames)
+{
+    auto trace = makeUnique<StackTrace>();
+    auto& frames = trace->m_frames;
+    frames.grow(maxFrames + 1);
+    frames.shrink(Support__captureStackTrace(frames.begin(), frames.size()));
+    if (!frames.isEmpty())
+        frames.removeAt(0);
+    return trace;
+}
+
+String StackTrace::toString() const
+{
+    StringBuilder builder;
+    forEachLine(m_frames.span(), [&](const char* line) { builder.append(StringView::fromLatin1(line)); });
+    return builder.toString();
 }
 
 }

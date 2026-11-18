@@ -78,11 +78,15 @@ impl PropertyNameEnumerator {
         self.indexed_length | self.name_count == 0
     }
 
+    /// # Safety
+    /// There are that many.
     #[inline(always)]
-    fn name_at(&self, index: u32) -> Option<Gc<JsString>> {
-        let name = self.names.values()?.get(index as usize)?;
-        // SAFETY: only strings are in there.
-        Some(unsafe { Gc::from_address(name.to_bits() as usize) })
+    unsafe fn name_unchecked(&self, index: u32) -> Gc<JsString> {
+        // SAFETY: the caller's, and only strings are in there.
+        unsafe {
+            let name = self.names.storage().value_at(index).get();
+            Gc::from_address(Value::bits_of(name) as usize)
+        }
     }
 
     #[inline(always)]
@@ -351,7 +355,7 @@ impl ForIn {
 
     /// `base`, if the current key names the slot with the number of the index.
     #[inline(always)]
-    fn object_with_slot(self, base: Value) -> Option<(Gc<JsObject>, PropertyOffset)> {
+    pub fn object_with_slot(self, base: Value) -> Option<(Gc<JsObject>, PropertyOffset)> {
         let (cell, enumerator) = (base.as_cell()?, self.enumerator);
         (self.mode == EnumerationMode::OwnShape
             && cell.shape_id() == enumerator.subject_shape
@@ -364,24 +368,57 @@ impl ForIn {
             })
     }
 
-    /// `for_in_next`. `None` at the end. Changes nothing if it throws.
+    /// The same, if any value can be stored there without further ado.
     #[inline(always)]
-    pub fn next(&mut self, cx: &mut Cx, base: Value) -> JsResult<Option<Gc<JsString>>> {
+    pub fn object_with_writable_slot(self, base: Value) -> Option<(Gc<JsObject>, PropertyOffset)> {
+        self.object_with_slot(base).filter(|(object, _)| {
+            self.enumerator.is_writable && !object.shape().has(ShapeFlags::IS_WATCHING_REPLACEMENT)
+        })
+    }
+
+    /// In a profile: the mode was `OwnShape`, but the object had another.
+    pub const SHAPE_MISMATCH: u32 = 8;
+
+    /// What an instruction that uses the current key on `base` has to remember.
+    pub fn profile_for(self, base: Value) -> u32 {
+        if self.mode == EnumerationMode::OwnShape && self.object_with_slot(base).is_none() {
+            return self.mode as u32 | Self::SHAPE_MISMATCH;
+        }
+        self.mode as u32
+    }
+
+    /// The part of `next` that calls nothing and leaves the mode as it is.
+    #[inline(always)]
+    pub fn try_next(&mut self, base: Value) -> Option<Gc<JsString>> {
         let next = ForIn {
             index: self.index.wrapping_add(1),
             ..*self
         };
-        if next.object_with_slot(base).is_some() {
-            *self = next;
-            return Ok(self.enumerator.name_at(next.index));
+        next.object_with_slot(base)?;
+        *self = next;
+        // SAFETY: there are at least as many names as slots.
+        Some(unsafe { self.enumerator.name_unchecked(next.index) })
+    }
+
+    #[inline(always)]
+    pub fn is_at_last_name(self) -> bool {
+        self.mode != EnumerationMode::Indexed
+            && self.index.wrapping_add(1) >= self.enumerator.name_count
+    }
+
+    /// `for_in_next`. `None` at the end. Changes nothing if it throws.
+    #[inline(always)]
+    pub fn next(&mut self, cx: &mut Cx, base: Value) -> JsResult<Option<Gc<JsString>>> {
+        match self.try_next(base) {
+            Some(name) => Ok(Some(name)),
+            None => self.next_slow(cx, base),
         }
-        self.next_slow(cx, base)
     }
 
     #[inline(never)]
     fn next_slow(&mut self, cx: &mut Cx, base: Value) -> JsResult<Option<Gc<JsString>>> {
         let (enumerator, mut first) = (self.enumerator, self.index.wrapping_add(1));
-        if self.mode != EnumerationMode::Indexed && first >= enumerator.name_count {
+        if self.is_at_last_name() {
             return Ok(None);
         }
         let object = base.to_object(cx)?;
@@ -394,10 +431,9 @@ impl ForIn {
             }
             first = 0;
         }
-        for index in first.. {
-            let Some(name) = enumerator.name_at(index) else {
-                break;
-            };
+        for index in first..enumerator.name_count {
+            // SAFETY: below the count.
+            let name = unsafe { enumerator.name_unchecked(index) };
             let is_own = index < enumerator.own_shape_count;
             if (is_own && object.shape_id() == enumerator.subject_shape)
                 || object.has_enumerable_property(cx, name.to_property_key(cx)?.name())?
@@ -414,48 +450,17 @@ impl ForIn {
         Ok(None)
     }
 
-    /// The part of `get` that calls nothing.
-    #[inline(always)]
-    pub fn try_get(self, base: Value) -> Option<Value> {
-        match self.object_with_slot(base) {
-            // SAFETY: a slot of the shape, which has no accessor.
-            Some((object, offset)) => unsafe { object.slot_unchecked(offset) }.get(),
-            None if self.mode == EnumerationMode::Indexed => {
-                base.as_object()?.try_get_index_quickly(self.index)
-            }
-            None => None,
-        }
-    }
-
     /// `for_in_get`
     #[inline]
     pub fn get(self, cx: &mut Cx, base: Value, name: Gc<JsString>) -> JsResult<Value> {
-        if let Some(value) = self.try_get(base) {
-            return Ok(value);
+        if let Some((object, offset)) = self.object_with_slot(base) {
+            // SAFETY: a slot of the shape, which has no accessor.
+            return Ok(unsafe { object.get_direct_unchecked(offset) });
         }
         if self.mode == EnumerationMode::Indexed {
             return base.get_index(cx, self.index);
         }
         caches::get_megamorphic(cx, base, name.to_property_key(cx)?.name())
-    }
-
-    /// The part of `put` that calls nothing.
-    #[inline(always)]
-    pub fn try_put(self, base: Value, value: Value) -> bool {
-        match self.object_with_slot(base) {
-            Some((object, offset))
-                if self.enumerator.is_writable
-                    && !object.shape().has(ShapeFlags::IS_WATCHING_REPLACEMENT) =>
-            {
-                // SAFETY: the slot of a writable data property.
-                unsafe { object.put_direct_unchecked(offset, value) };
-                true
-            }
-            None if self.mode == EnumerationMode::Indexed => base
-                .as_object()
-                .is_some_and(|object| object.try_set_dense(self.index, value)),
-            _ => false,
-        }
     }
 
     /// `for_in_put`
@@ -468,11 +473,13 @@ impl ForIn {
         value: Value,
         is_strict: bool,
     ) -> JsResult<()> {
-        if self.try_put(base, value) {
+        if let Some((object, offset)) = self.object_with_writable_slot(base) {
+            // SAFETY: the slot of a writable data property.
+            unsafe { object.put_direct_unchecked(offset, value) };
             return Ok(());
         }
         if self.mode == EnumerationMode::Indexed {
-            return base.put_index(cx, self.index, value, is_strict).map(|_| ());
+            return (base.put_index(cx, self.index, value, is_strict)).map(|_| ());
         }
         match base.as_object() {
             Some(object) => {

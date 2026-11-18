@@ -627,7 +627,7 @@ extern "C" void Bun__ensureDebugger(ScriptExecutionContextIdentifier scriptId, b
 // Not inlined, here and below: each holds one guard, and link-time optimization would copy the guard into every caller. The link charges a guard to the built-ins that reach it.
 extern "C" NEVER_INLINE void BunDebugger__willHotReload()
 {
-    JSC_BEGIN_REMOVABLE_ENTRY_POINT(Inspector, ReturnDefault, void)
+    BUN_BEGIN_REMOVABLE_ENTRY_POINT(Inspector, ReturnDefault, void)
     if (debuggerScriptExecutionContext == nullptr) {
         return;
     }
@@ -640,7 +640,7 @@ extern "C" NEVER_INLINE void BunDebugger__willHotReload()
             }
         }
     });
-    JSC_END_REMOVABLE_ENTRY_POINT
+    BUN_END_REMOVABLE_ENTRY_POINT
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -989,51 +989,51 @@ static Inspector::InspectorDebuggerAgent::AsyncCallType getCallType(AsyncCallTyp
 
 extern "C" NEVER_INLINE void Debugger__didScheduleAsyncCall(JSGlobalObject* globalObject, AsyncCallTypeUint8 callType, uint64_t callbackId, bool singleShot)
 {
-    JSC_BEGIN_REMOVABLE_ENTRY_POINT(Inspector, ReturnDefault, void)
+    BUN_BEGIN_REMOVABLE_ENTRY_POINT(Inspector, ReturnDefault, void)
     auto* agent = debuggerAgent(globalObject);
     if (!agent)
         return;
 
     agent->didScheduleAsyncCall(globalObject, getCallType(callType), callbackId, singleShot);
-    JSC_END_REMOVABLE_ENTRY_POINT
+    BUN_END_REMOVABLE_ENTRY_POINT
 }
 
 extern "C" NEVER_INLINE void Debugger__didCancelAsyncCall(JSGlobalObject* globalObject, AsyncCallTypeUint8 callType, uint64_t callbackId)
 {
-    JSC_BEGIN_REMOVABLE_ENTRY_POINT(Inspector, ReturnDefault, void)
+    BUN_BEGIN_REMOVABLE_ENTRY_POINT(Inspector, ReturnDefault, void)
     auto* agent = debuggerAgent(globalObject);
     if (!agent)
         return;
 
     agent->didCancelAsyncCall(getCallType(callType), callbackId);
-    JSC_END_REMOVABLE_ENTRY_POINT
+    BUN_END_REMOVABLE_ENTRY_POINT
 }
 
 extern "C" NEVER_INLINE void Debugger__didDispatchAsyncCall(JSGlobalObject* globalObject, AsyncCallTypeUint8 callType, uint64_t callbackId)
 {
-    JSC_BEGIN_REMOVABLE_ENTRY_POINT(Inspector, ReturnDefault, void)
+    BUN_BEGIN_REMOVABLE_ENTRY_POINT(Inspector, ReturnDefault, void)
     auto* agent = debuggerAgent(globalObject);
     if (!agent)
         return;
 
     agent->didDispatchAsyncCall(getCallType(callType), callbackId);
-    JSC_END_REMOVABLE_ENTRY_POINT
+    BUN_END_REMOVABLE_ENTRY_POINT
 }
 
 extern "C" NEVER_INLINE void Debugger__willDispatchAsyncCall(JSGlobalObject* globalObject, AsyncCallTypeUint8 callType, uint64_t callbackId)
 {
-    JSC_BEGIN_REMOVABLE_ENTRY_POINT(Inspector, ReturnDefault, void)
+    BUN_BEGIN_REMOVABLE_ENTRY_POINT(Inspector, ReturnDefault, void)
     auto* agent = debuggerAgent(globalObject);
     if (!agent)
         return;
 
     agent->willDispatchAsyncCall(getCallType(callType), callbackId);
-    JSC_END_REMOVABLE_ENTRY_POINT
+    BUN_END_REMOVABLE_ENTRY_POINT
 }
 
 extern "C" NEVER_INLINE void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject* globalObject)
 {
-    JSC_BEGIN_REMOVABLE_ENTRY_POINT(Inspector, ReturnDefault, void)
+    BUN_BEGIN_REMOVABLE_ENTRY_POINT(Inspector, ReturnDefault, void)
     // Snapshot under the lock, release before calling into the inspector —
     // `willDestroyFrontendAndBackend` must not run with `inspectorConnectionsLock` held.
     Vector<RefPtr<BunInspectorConnection>, 8> toDisconnect;
@@ -1076,6 +1076,6 @@ extern "C" NEVER_INLINE void Bun__InspectorConnection__disconnectAllOnExit(Zig::
     // Leak the connected controller and hand the global a fresh, never-connected one.
     [[maybe_unused]] auto* leakedController = globalObject->m_inspectorController.release();
     globalObject->m_inspectorController = makeUnique<Inspector::JSGlobalObjectInspectorController>(*globalObject, Bun::BunInjectedScriptHost::create());
-    JSC_END_REMOVABLE_ENTRY_POINT
+    BUN_END_REMOVABLE_ENTRY_POINT
 }
 }

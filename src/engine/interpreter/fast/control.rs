@@ -1,5 +1,5 @@
 use bun_engine_bytecode::op;
-use bun_engine_vm::code::metadata::Flags;
+use bun_engine_vm::code::metadata::{Cover, Flags};
 
 use crate::machine::{EMPTY, dispatch, go, handler, jump, next, slow};
 use crate::slow::Frame;
@@ -35,6 +35,11 @@ handler! {
         }
         let _ = op;
         slow!(m, op::LoopHint)
+    }
+
+    fn cover(m, op: op::Cover) {
+        m.entry::<Cover>(op.metadata).count().update(|count| count + 1);
+        next!(m, op)
     }
 
     fn jump_if_builtin(m, op: op::JumpIfBuiltin) {

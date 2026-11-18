@@ -549,6 +549,17 @@ impl JsObject {
         debug_assert!(result.is_ok());
     }
 
+    /// The kind of the property follows from what `value` is. Panics if the name is an index.
+    pub fn put_direct_any(
+        &self,
+        vm: &Vm,
+        name: PropertyName<'_>,
+        value: Value,
+        attributes: Attributes,
+    ) {
+        self.put_direct_stored(vm, name, value, attributes.for_stored(value));
+    }
+
     /// Panics if the name is an index.
     pub fn put_direct_accessor(
         &self,

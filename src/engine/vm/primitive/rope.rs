@@ -94,6 +94,18 @@ impl JsRopeString {
         Self::allocate(vm, flags, base.address(), start as usize, text.len() as u32)
     }
 
+    /// Panics if `base` is a concatenation, or the range is not inside it.
+    #[inline]
+    pub fn substring_of_resolved(
+        vm: &Vm,
+        base: Gc<JsString>,
+        start: u32,
+        length: u32,
+    ) -> Gc<JsString> {
+        let view = base.try_view().expect("one piece");
+        view.substring(vm, start as usize..start as usize + length as usize)
+    }
+
     #[inline(always)]
     pub(super) fn rope_length(&self) -> u32 {
         self.length_and_fiber1 as u32

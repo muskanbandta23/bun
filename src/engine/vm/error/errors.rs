@@ -32,6 +32,10 @@ pub const SYMBOL_TO_STRING: &str = "Cannot convert a symbol to a string";
 pub const ITERATOR_RESULT_NOT_OBJECT: &str = "Iterator result interface is not an object.";
 pub const BUFFER_DETACHED_OR_OUT_OF_BOUNDS: &str =
     "Underlying ArrayBuffer has been detached from the view or out-of-bounds";
+pub const BUFFER_ALREADY_DETACHED: &str = "Buffer is already detached";
+pub const BYTE_OFFSET_EXCEEDS_BUFFER: &str = "byteOffset exceeds source ArrayBuffer byteLength";
+pub const CONTENT_TYPES_DIFFER: &str =
+    "Content types of source and destination typed arrays are different";
 pub const LENGTH_OUT_OF_RANGE_OF_BUFFER: &str = "Length out of range of buffer";
 pub const RANGE_OUT_OF_BOUNDS: &str = "Range consisting of offset and length are out of bounds";
 pub const SYNTAX_ERROR: &str = "Syntax error";

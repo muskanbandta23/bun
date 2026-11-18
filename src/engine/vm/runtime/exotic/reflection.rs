@@ -5,7 +5,7 @@ use bun_engine_text::{PropertyName, Text, names};
 use crate::{
     CachedNames, CellType, Cx, DontEnumMode, ElementKind, Gc, ImmutableArray, JsArray,
     JsArrayBufferView, JsObject, JsResult, JsString, PropertyNameList, PropertyNameMode,
-    PropertyOffset, ProxyObject, SpecialProperty, TypeFlags, Value, is_array,
+    PropertyOffset, ProxyObject, SpecialProperty, TypeFlags, Value, is_array_for,
 };
 
 fn cached_kind(kinds: PropertyNameMode, mode: DontEnumMode) -> Option<CachedNames> {
@@ -186,7 +186,9 @@ impl JsObject {
             CellType::BooleanObject => names::objectBoolean,
             CellType::NumberObject => names::objectNumber,
             CellType::StringObject | CellType::DerivedStringObject => names::objectString,
-            _ if is_array(cx, self.as_value())? => names::objectArray,
+            _ if is_array_for(cx, self.as_value(), "Object.prototype.toString")? => {
+                names::objectArray
+            }
             _ if self.is_callable() => names::objectFunction,
             _ => names::objectObject,
         })

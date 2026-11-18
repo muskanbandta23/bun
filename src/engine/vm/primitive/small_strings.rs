@@ -44,10 +44,20 @@ impl SmallStrings {
         unsafe { Gc::from_address(self.of_static_atoms[usize::from(character)].get()) }
     }
 
+    /// Panics unless the index is below `STATIC_ATOM_COUNT`.
+    #[inline(always)]
+    pub fn of_static_atom(&self, vm: &Vm, index: usize) -> Gc<JsString> {
+        match self.of_static_atoms[index].get() {
+            0 => self.create(vm, index),
+            // SAFETY: a root.
+            address => unsafe { Gc::from_address(address) },
+        }
+    }
+
     #[cold]
     #[inline(never)]
-    fn create(&self, vm: &Vm, index: usize, name: PropertyName<'_>) -> Gc<JsString> {
-        let string = JsString::allocate(vm, StringRef::retain(name.string()));
+    fn create(&self, vm: &Vm, index: usize) -> Gc<JsString> {
+        let string = JsString::allocate(vm, StringRef::static_atom(index));
         self.of_static_atoms[index].set(string.address());
         self.has_young.set(true);
         string
@@ -68,13 +78,9 @@ impl JsString {
     /// Of a symbol, the description.
     #[inline(always)]
     pub fn from_name(vm: &Vm, name: PropertyName<'_>) -> Gc<JsString> {
-        let Some(index) = name.static_atom_index() else {
-            return Self::from_impl_cached(vm, name.string());
-        };
-        match vm.small_strings.of_static_atoms[index].get() {
-            0 => vm.small_strings.create(vm, index, name),
-            // SAFETY: a root.
-            address => unsafe { Gc::from_address(address) },
+        match name.static_atom_index() {
+            Some(index) => vm.small_strings.of_static_atom(vm, index),
+            None => Self::from_impl_cached(vm, name.string()),
         }
     }
 }

@@ -522,7 +522,7 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, MessageBuilder& buil
         if (!symbol->uid().isNullSymbol() && !symbol->uid().isEmpty()) {
             builder.append(symbol->tryGetDescriptiveString().value_or(String()));
         } else {
-            builder.append(globalObject->vm().smallStrings.symbolString());
+            builder.append("symbol"_s);
         }
         return;
     }
@@ -2310,7 +2310,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __att
     case Bun::ErrorCode::ERR_MISSING_ARGS: {
         switch (callFrame->argumentCount()) {
         case 0: {
-            UNREACHABLE();
+            RELEASE_ASSERT_NOT_REACHED();
         }
         case 1: {
             ASSERT("At least one arg needs to be specified");

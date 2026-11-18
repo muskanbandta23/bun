@@ -160,8 +160,8 @@ static NEVER_INLINE JSC::JSValue generateInternalModuleFromText(JSC::JSGlobalObj
     JSFunction* func = JSFunction::create(vm, globalObject, executable->link(vm), static_cast<JSC::JSGlobalObject*>(globalObject));
 
     RETURN_IF_EXCEPTION(throwScope, {});
-    if (globalObject->hasDebugger() && globalObject->debugger()->isInteractivelyDebugging()) [[unlikely]] {
-        globalObject->debugger()->sourceParsed(globalObject, source.provider(), -1, ""_s);
+    if (globalObject->hasDebugger() && globalObject->inspectorController().isInteractivelyDebugging()) [[unlikely]] {
+        globalObject->inspectorController().sourceParsed(*source.provider());
     }
 
     // A builtin module is the realm's, whichever script is first to load it: what its top level

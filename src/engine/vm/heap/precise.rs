@@ -132,8 +132,8 @@ impl PreciseAllocation {
     }
 
     /// # Safety
-    /// The cell is dead, and nothing uses the allocation afterwards.
-    pub(super) unsafe fn destroy(&self) {
+    /// The cell is dead, and this is the first time.
+    pub(super) unsafe fn destroy_cell(&self) {
         let header = core::ptr::with_exposed_provenance_mut::<u32>(self.cell());
         // SAFETY: a header that is not zero belongs to an initialized cell.
         unsafe {
@@ -141,8 +141,16 @@ impl PreciseAllocation {
                 && *header != 0
             {
                 destroy(header.cast());
+                *header = 0;
             }
-            default_alloc::free(header.byte_sub(HEADER_SIZE).cast());
         }
+    }
+
+    /// # Safety
+    /// The cell has been destroyed, and nothing uses the allocation afterwards.
+    pub(super) unsafe fn free(&self) {
+        let memory = core::ptr::with_exposed_provenance_mut(self.cell() - HEADER_SIZE);
+        // SAFETY: the caller's.
+        unsafe { default_alloc::free(memory) };
     }
 }

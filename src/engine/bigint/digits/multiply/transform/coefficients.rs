@@ -70,7 +70,7 @@ fn read_group<const COUNT: usize, const DIGITS: usize>(
     excess: u64,
 ) {
     let bits = 64 * DIGITS / COUNT;
-    unroll!(wide i in 0, COUNT => {
+    unroll!(16, i in 0, COUNT => {
         let low = bits_at(digits, i * bits) & ((1 << 62) - 1);
         let high = bits_at(digits, i * bits + 62) & ((1 << (bits - 62)) - 1);
         out[i] = low.wrapping_add(high.wrapping_mul(excess));
@@ -151,7 +151,7 @@ impl Combination {
     ) {
         let bits = 64 * DIGITS / COUNT;
         *out = [0; DIGITS];
-        unroll!(wide i in 0, COUNT => {
+        unroll!(16, i in 0, COUNT => {
             let [first, second, third] = self.apply(residues[0][i], residues[1][i], residues[2][i]);
             let (first, carry) = first.overflowing_add(*above as u64);
             let (second, carry) = add_with_carry(second, (*above >> 64) as u64, carry);

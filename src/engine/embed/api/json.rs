@@ -3,7 +3,7 @@ use core::ffi::c_void;
 use bun_engine_macros::export;
 use bun_engine_text::{StringRef, Text};
 use bun_engine_vm::json::{self, Source};
-use bun_engine_vm::{Cx, JsResult, Value, ValueVec};
+use bun_engine_vm::{Cx, Gc, JsResult, JsString, Value, ValueVec, Vm};
 
 #[export]
 fn json_parse(cx: &Cx, text: Text<'_>) -> JsResult<Value> {
@@ -23,6 +23,15 @@ fn json_try_parse_utf8(cx: &Cx, utf8: &[u8]) -> JsResult<Option<Value>> {
 #[export]
 fn json_stringify(cx: &mut Cx, value: Value, space: Value) -> JsResult<Option<StringRef>> {
     json::stringify(cx, value, Value::NULL, space)
+}
+
+#[export]
+fn json_try_make_string(vm: &Vm, text: Text<'_>) -> Option<Gc<JsString>> {
+    const MAX_SHARED_LENGTH: usize = 16;
+    if text.len() <= MAX_SHARED_LENGTH {
+        return Some(JsString::from_text_as_atom(vm, text));
+    }
+    JsString::try_from_text(vm, text).ok()
 }
 
 /// Returns a `LinesEnd`.

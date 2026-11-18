@@ -632,7 +632,7 @@ impl FunctionExecutable {
             return Ok(text);
         }
         let text = if self.is_private_builtin() && !self.info.kind().is_class_constructor() {
-            native_source_text(cx, self.name_text())?
+            native_source_text(cx, crate::anchor!(self).name_text())?
         } else {
             let range = self.info.text_range();
             let range = range.start as usize..range.end as usize;

@@ -12,7 +12,7 @@ bun_opaque::opaque_ffi! {
 }
 
 bun_opaque::opaque_ffi! {
-    /// One `JSC::EncoderStringTable` shared by every `encodeCodeBlock` in a `--compile --bytecode` build so ≥4-char strings become 4-byte ordinals in each chunk's payload and their characters are written once by `serialize()`.
+    /// The names in the module info of every chunk of a `--compile --bytecode` build (ZigSourceProvider.cpp).
     pub struct EncoderStringTable;
 }
 
@@ -45,7 +45,7 @@ impl EncoderStringTable {
         // SAFETY: `this` was produced by `new`.
         unsafe { Bun__EncoderStringTable__destroy(this.as_ptr()) };
     }
-    /// The 4-byte cache slot for a module-info name (`EncoderStringTable::slotFor`).
+    /// The 4-byte slot for a module-info name.
     pub fn slot_for_wtf8(this: NonNull<EncoderStringTable>, wtf8: &[u8]) -> u32 {
         match bun_core::strings::wtf8_to_utf16_alloc(wtf8) {
             // SAFETY: `this` is a live table; the slice is valid for the call.
@@ -61,7 +61,7 @@ impl EncoderStringTable {
 }
 
 bun_opaque::opaque_ffi! {
-    /// One `JSC::BytecodeLinkEncoder`: every chunk of a `--compile --bytecode` link encoded into one payload, laid out by a payload order file.
+    /// One `Bun::BytecodeLinkEncoder`: every chunk of a `--compile --bytecode` link encoded into one payload.
     pub struct BytecodeLinkEncoder;
 }
 
@@ -326,7 +326,7 @@ pub(crate) fn __bun_jsc_generate_cached_bytecode(
     Some(Box::from(&*bytecode))
 }
 
-/// A `JSC::BytecodeLinkEncoder` on the calling thread's bytecode VM; every later call must come from the same thread.
+/// A `Bun::BytecodeLinkEncoder` on the calling thread's bytecode VM; every later call must come from the same thread.
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_jsc_bytecode_link_encoder_new(
     external_strings: NonNull<EncoderStringTable>,
@@ -435,7 +435,7 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_add_internal_module_from_source(
 }
 
 /// The payload, each module's cache-entry offset in it (in the order of the successful `add_*` calls), where each of the
-/// payload's regions ends (`JSC::BytecodeLinkEncoder`), how many of the order files' hot functions are functions
+/// payload's regions ends (`Bun::BytecodeLinkEncoder`), how many of the order files' hot functions are functions
 /// of this link, and for each module how many functions with code its names did not cover.
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_jsc_bytecode_link_encoder_finish(
@@ -501,20 +501,6 @@ pub(crate) fn __bun_jsc_encoder_string_table_slot(
     wtf8: &[u8],
 ) -> u32 {
     EncoderStringTable::slot_for_wtf8(table, wtf8)
-}
-
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_jsc_wtf_string_hash(wtf8: &[u8]) -> u32 {
-    unsafe extern "C" {
-        fn Bun__WTFStringHashLatin1(ptr: *const u8, len: usize) -> u32;
-        fn Bun__WTFStringHashUTF16(ptr: *const u16, len: usize) -> u32;
-    }
-    match bun_core::strings::wtf8_to_utf16_alloc(wtf8) {
-        // SAFETY: pure functions reading `len` units from `ptr`.
-        None => unsafe { Bun__WTFStringHashLatin1(wtf8.as_ptr(), wtf8.len()) },
-        // SAFETY: as above.
-        Some(units) => unsafe { Bun__WTFStringHashUTF16(units.as_ptr(), units.len()) },
-    }
 }
 
 #[unsafe(no_mangle)]

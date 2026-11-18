@@ -253,6 +253,7 @@ flag usePolymorphicCallInlining
 flag usePolymorphicCallInliningForNonStubStatus
 flag usePolyvariantDevirtualization
 flag usePredictionFileCreatingFuzzerAgent
+flag usePrelinkedModuleInfo
 flag useProfiler
 flag usePromiseIsPromise
 flag usePutStackSinking

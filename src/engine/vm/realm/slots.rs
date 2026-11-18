@@ -5,7 +5,7 @@ use bun_engine_bytecode::LinkTimeConstant;
 use bun_engine_text::{PropertyName, private_names};
 
 use crate::{
-    Cx, Gc, GlobalObject, GlobalProxy, InternalFieldTuple, JsCell, JsFunction, JsObject,
+    Cx, Gc, GlobalObject, GlobalProxy, InternalFieldTuple, JsCell, JsFunction, JsObject, JsSymbol,
     ModuleLoader, Shape, Vm,
 };
 
@@ -309,6 +309,37 @@ realm_slots! {
         intl_object: JsObject,
         temporal_object: JsObject,
         webassembly_object: JsObject,
+
+        // Intl
+        intl_state: JsCell,
+        intl_fallback_symbol: JsSymbol,
+        intl_part_shape: Shape,
+        intl_part_with_unit_shape: Shape,
+        intl_part_with_source_shape: Shape,
+        collator_constructor: JsObject,
+        collator_shape: Shape,
+        date_time_format_constructor: JsObject,
+        date_time_format_shape: Shape,
+        display_names_constructor: JsObject,
+        display_names_shape: Shape,
+        duration_format_constructor: JsObject,
+        duration_format_shape: Shape,
+        list_format_constructor: JsObject,
+        list_format_shape: Shape,
+        locale_constructor: JsObject,
+        locale_shape: Shape,
+        number_format_constructor: JsObject,
+        number_format_shape: Shape,
+        plural_rules_constructor: JsObject,
+        plural_rules_shape: Shape,
+        relative_time_format_constructor: JsObject,
+        relative_time_format_shape: Shape,
+        segmenter_constructor: JsObject,
+        segmenter_shape: Shape,
+        segments_shape: Shape,
+        segment_iterator_shape: Shape,
+        segment_data_shape: Shape,
+        word_segment_data_shape: Shape,
 
         // Only for built-ins
         private_is_array: JsFunction = @isArray,

@@ -3,8 +3,8 @@ use bun_engine_text::{Identifier, PropertyName};
 
 use crate::heap::{Scope, Survivors};
 use crate::{
-    BuiltinId, CallFrame, CodeBlock, Cx, GlobalObject, Intrinsic, PropertyCondition, RealmSlot,
-    RealmWatchpoint, Visitor, Vm,
+    BuiltinId, CallFrame, CodeBlock, CompileError, Cx, Gc, GlobalObject, Intrinsic, JsObject,
+    JsResult, PropertyCondition, RealmSlot, RealmWatchpoint, SourceProvider, Value, Visitor, Vm,
 };
 
 /// What this crate needs from those above it.
@@ -15,6 +15,10 @@ pub struct Hooks {
     pub catch_address: fn(&CodeBlock, u32) -> usize,
     pub native_call_entry: fn(&Vm, Intrinsic) -> usize,
     pub jettison: fn(&Vm, &CodeBlock),
+    /// The code that baseline code jumps to for the case, or zero if there is no such tier.
+    pub access_handler: fn(&Vm, &crate::ic::AccessCase, crate::ic::Key) -> usize,
+    /// The counter of the code block has run out at that instruction. Returns where to go on in the same frame, or zero.
+    pub tier_up: fn(&Vm, &CodeBlock, &CallFrame, u32) -> usize,
     /// Sets the eager slots but `global_this`.
     pub initialize_realm: fn(&Cx),
     pub initialize_realm_slot: fn(&Cx, RealmSlot),
@@ -23,7 +27,10 @@ pub struct Hooks {
     pub did_start_having_a_bad_time: fn(&Vm, &GlobalObject),
     pub did_declare_global_lexical: fn(&Vm, &GlobalObject, PropertyName<'_>),
     pub builtin_source: fn(BuiltinId) -> &'static BuiltinSource,
+    /// `toLocaleString` of an instance of a class of `Temporal`, with the locales and the options.
+    pub temporal_to_locale_string: fn(&mut Cx, Gc<JsObject>, Value, Value) -> JsResult<Value>,
     pub find_wasm_handler: fn(&Vm, &CallFrame) -> Option<(usize, u32)>,
+    pub debugger_did_parse: fn(&Cx, &SourceProvider, Option<&CompileError>),
     pub debugger_will_unwind: fn(&Vm, &CallFrame),
     pub debugger_did_unwind_frame: fn(&Vm, &CallFrame),
     pub visit_roots: fn(&Vm, &mut Visitor),

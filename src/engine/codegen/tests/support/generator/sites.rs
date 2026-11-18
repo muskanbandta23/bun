@@ -91,7 +91,7 @@ impl Generator<'_> {
         }
     }
 
-    fn check(&mut self, condition: Value) {
+    pub(super) fn check(&mut self, condition: Value) {
         let exit = self.exit(&[]);
         if self.shape.folds {
             self.builder().check(condition, exit);
@@ -289,7 +289,7 @@ impl Generator<'_> {
         results: &[Type],
     ) -> (Vec<(Value, Input)>, Vec<(Type, Output)>) {
         let mut witness = Witness {
-            free: self.registers.usable.into_iter().collect(),
+            free: self.usable.into_iter().collect(),
             read_early: Vec::new(),
             outgoing_end: 0,
         };
@@ -323,7 +323,8 @@ impl Generator<'_> {
             Output::Fixed(reg) => Some(reg),
             _ => None,
         });
-        let unused = || witness.free.iter().copied().chain(self.registers.scratch);
+        let scratch = self.registers.scratch - self.function.pinned;
+        let unused = || witness.free.iter().copied().chain(scratch);
         let (early, late): (Vec<_>, Vec<_>) = (
             unused().collect(),
             unused()
@@ -534,7 +535,6 @@ impl Generator<'_> {
                         .all(|&(_, input)| input != Input::Fixed(reg))
                 };
                 let free: Vec<Reg> = self
-                    .registers
                     .usable
                     .in_bank(Bank::Gpr)
                     .into_iter()
@@ -570,8 +570,8 @@ impl Generator<'_> {
             }
         };
         let mut data = PatchpointData::new(action, self.token(behaviour), effects);
-        data.clobbers_late = signature.clobbers;
-        data.clobbers_upper_halves = signature.clobbers_upper_halves;
+        data.clobbers_late = signature.clobbers - self.function.pinned;
+        data.clobbers_upper_halves = signature.clobbers_upper_halves - self.function.pinned;
         data.flags = signature.flags;
         if effects.has(EffectFlags::EXITS) {
             data.state = self.state(true, &[]);

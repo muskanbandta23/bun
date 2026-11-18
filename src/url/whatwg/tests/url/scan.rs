@@ -42,7 +42,7 @@ fn every_length_start_and_position() {
 fn skipping() {
     let text = [b'#'; 200];
     for step in 1..140 {
-        let mut scan = SET.scan_with(&text, 3, SET.stops_in_64(&text, 3));
+        let mut scan = SET.resume_scan(&text, 3 + 64, SET.stops_in_64(&text, 3));
         let mut expected = 3;
         while let Some(at) = scan.next() {
             assert_eq!(at, expected);

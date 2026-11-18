@@ -2,6 +2,7 @@ use core::cell::Cell;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_alloc::default_alloc;
+use bun_engine_macros::FieldOffsets;
 
 use super::block::ATOM_SIZE;
 use super::{CellAttributes, Heap};
@@ -10,6 +11,7 @@ use super::{CellAttributes, Heap};
 pub const PRECISE_BIT: usize = ATOM_SIZE / 2;
 
 /// The header of a cell that is too large for a block.
+#[derive(FieldOffsets)]
 #[repr(C)]
 pub struct PreciseAllocation {
     heap: *const Heap,

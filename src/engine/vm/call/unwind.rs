@@ -7,7 +7,8 @@ use crate::{CallFrame, CodeBlock, CodeOrigin, Vm};
 fn find_handler(vm: &Vm, frame: &CallFrame, code_block: &CodeBlock) -> Option<(usize, u32)> {
     let call_site = frame.call_site();
     let Some(compiled) = code_block.compiled().filter(|_| code_block.is_optimized()) else {
-        let target = code_block.body().handler_for(call_site)?.target;
+        let offset = code_block.bytecode_offset_of(call_site);
+        let target = code_block.body().handler_for(offset)?.target;
         let address = (vm.hooks().catch_address)(code_block, target);
         return Some((address, target));
     };

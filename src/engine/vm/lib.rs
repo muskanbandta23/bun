@@ -16,7 +16,7 @@
 
 extern crate self as bun_engine_vm;
 
-mod caches;
+pub mod caches;
 pub mod call;
 mod cell_type;
 pub mod code;
@@ -27,6 +27,7 @@ mod function;
 mod hash;
 pub mod heap;
 mod hooks;
+pub mod ic;
 mod intrinsic;
 mod object;
 mod operations;

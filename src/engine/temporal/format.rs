@@ -2,12 +2,13 @@ use core::fmt;
 use core::ops::Deref;
 
 use bun_engine_date::TimeZone;
-use bun_engine_number::NumberText;
+use bun_engine_number::write_u64;
 use bun_engine_text::Text;
 
 use crate::settings::SecondsFormat;
-use crate::unit::NANOSECONDS_PER_SECOND;
-use crate::{CalendarId, Duration, IsoDate, IsoDateTime, PlainTime, ShowCalendar, Unit};
+use crate::{
+    CalendarId, Duration, IsoDate, IsoDateTime, PlainTime, ShowCalendar, TimeDuration, Unit,
+};
 
 /// More than the longest duration, or a date and time with all of its annotations.
 const CAPACITY: usize = 127;
@@ -66,6 +67,12 @@ impl IsoText {
         self.push_slice(&[separator, tens, ones]);
     }
 
+    #[inline]
+    fn push_integer(&mut self, number: u64) {
+        let room = self.bytes[usize::from(self.length)..].first_chunk_mut();
+        self.length += write_u64(number, room.expect("a duration leaves room")) as u8;
+    }
+
     /// PadISOYear
     #[inline]
     fn push_year(&mut self, year: i32) {
@@ -118,19 +125,15 @@ impl IsoText {
         {
             return;
         }
-        let mut digits = [b'.'; 10];
-        digits[1] = b'0' + (nanoseconds / 100_000_000) as u8;
         let (upper, lower) = (nanoseconds / 10_000 % 10_000, nanoseconds % 10_000);
-        digits[2..4].copy_from_slice(&two_digits(upper / 100));
-        digits[4..6].copy_from_slice(&two_digits(upper % 100));
-        digits[6..8].copy_from_slice(&two_digits(lower / 100));
-        digits[8..].copy_from_slice(&two_digits(lower % 100));
-        let unused = match format {
+        self.push_slice(&[b'.', b'0' + (nanoseconds / 100_000_000) as u8]);
+        for pair in [upper / 100, upper % 100, lower / 100, lower % 100] {
+            self.push_slice(&two_digits(pair));
+        }
+        self.length -= match format {
             SecondsFormat::Digits(count) => 9 - count,
-            _ => digits.iter().rev().take_while(|&&it| it == b'0').count() as u8,
+            _ => self.iter().rev().take_while(|&&it| it == b'0').count() as u8,
         };
-        self.push_slice(&digits);
-        self.length -= unused;
     }
 
     #[inline]
@@ -185,7 +188,6 @@ impl IsoText {
 
     /// TemporalDurationToString
     pub(crate) fn push_duration(&mut self, duration: &Duration, format: SecondsFormat) {
-        const SECOND: u64 = NANOSECONDS_PER_SECOND as u64;
         if duration.sign() < 0 {
             self.push(b'-');
         }
@@ -195,8 +197,8 @@ impl IsoText {
         self.push_count(duration.get(Unit::Week), b'W');
         self.push_count(duration.get(Unit::Day), b'D');
 
-        let nanoseconds = duration.nanoseconds_from(Unit::Second).unsigned_abs();
-        let has_seconds = nanoseconds != 0
+        let seconds = TimeDuration::from_valid(duration.nanoseconds_from(Unit::Second));
+        let has_seconds = seconds != TimeDuration::ZERO
             || format != SecondsFormat::Shortest
             || duration.largest_unit() <= Unit::Second;
         let (hours, minutes) = (duration.get(Unit::Hour), duration.get(Unit::Minute));
@@ -207,15 +209,9 @@ impl IsoText {
         self.push_count(hours, b'H');
         self.push_count(minutes, b'M');
         if has_seconds {
-            let (seconds, fraction) = match u64::try_from(nanoseconds) {
-                Ok(nanoseconds) => (nanoseconds / SECOND, nanoseconds % SECOND),
-                Err(_) => (
-                    (nanoseconds / u128::from(SECOND)) as u64,
-                    (nanoseconds % u128::from(SECOND)) as u64,
-                ),
-            };
-            self.push_slice(&NumberText::from(seconds));
-            self.push_fraction(fraction as u32, format);
+            let (seconds, fraction) = seconds.magnitude_in_seconds();
+            self.push_integer(seconds);
+            self.push_fraction(fraction, format);
             self.push(b'S');
         }
     }
@@ -223,7 +219,7 @@ impl IsoText {
     #[inline]
     fn push_count(&mut self, count: f64, designator: u8) {
         if count != 0.0 {
-            self.push_slice(&NumberText::from(count.abs() as u64));
+            self.push_integer((count as i64).unsigned_abs());
             self.push(designator);
         }
     }

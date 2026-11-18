@@ -56,6 +56,7 @@ macro_rules! services {
 
 services! {
     caches: caches::State,
+    prototype_lookups: crate::ic::PrototypeLookups,
     code: code::State,
     errors: error::State,
     buffers: runtime::buffers::State,

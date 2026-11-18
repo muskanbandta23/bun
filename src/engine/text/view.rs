@@ -1,4 +1,3 @@
-use core::cmp::Ordering;
 use core::ops::Range;
 
 use crate::{CodeUnit, hash_latin1, hash_utf16};
@@ -97,51 +96,6 @@ impl<'a> Text<'a> {
             Text::Utf16(units) => hash_utf16(units),
         }
     }
-
-    pub fn is_ascii(self) -> bool {
-        match self {
-            Text::Latin1(characters) => characters.is_ascii(),
-            Text::Utf16(units) => units.iter().fold(0, |all, &unit| all | unit) < 0x80,
-        }
-    }
-
-    /// Whether every unit fits in a byte, whichever width stores it.
-    pub fn fits_latin1(self) -> bool {
-        match self {
-            Text::Latin1(_) => true,
-            Text::Utf16(units) => units.iter().fold(0, |all, &unit| all | unit) < 0x100,
-        }
-    }
-
-    #[inline]
-    pub fn eq_ascii(self, ascii: &str) -> bool {
-        self == Text::from_ascii(ascii)
-    }
-
-    pub fn eq_ignore_ascii_case(self, other: Text<'_>) -> bool {
-        let fold = |unit: u16| {
-            if unit.is_ascii_alphabetic() {
-                unit | 0x20
-            } else {
-                unit
-            }
-        };
-        self.len() == other.len()
-            && self
-                .code_units()
-                .zip(other.code_units())
-                .all(|(a, b)| fold(a) == fold(b))
-    }
-
-    #[inline]
-    pub fn starts_with(self, prefix: Text<'_>) -> bool {
-        self.len() >= prefix.len() && self.slice(0..prefix.len()) == prefix
-    }
-
-    #[inline]
-    pub fn ends_with(self, suffix: Text<'_>) -> bool {
-        self.len() >= suffix.len() && self.slice_from(self.len() - suffix.len()) == suffix
-    }
 }
 
 #[inline]
@@ -154,39 +108,6 @@ fn code_point_at(units: &[u16], index: usize) -> u32 {
         return 0x10000 + ((u32::from(first) - 0xd800) << 10) + (u32::from(second) - 0xdc00);
     }
     u32::from(first)
-}
-
-impl PartialEq<Text<'_>> for Text<'_> {
-    #[inline]
-    fn eq(&self, other: &Text<'_>) -> bool {
-        match (*self, *other) {
-            (Text::Latin1(a), Text::Latin1(b)) => a == b,
-            (Text::Utf16(a), Text::Utf16(b)) => a == b,
-            (Text::Latin1(a), Text::Utf16(b)) | (Text::Utf16(b), Text::Latin1(a)) => {
-                a.len() == b.len() && a.iter().zip(b).all(|(&a, &b)| u16::from(a) == b)
-            }
-        }
-    }
-}
-
-impl Eq for Text<'_> {}
-
-impl PartialOrd for Text<'_> {
-    #[inline]
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-/// By code unit, as IsLessThan of ECMA-262 compares strings.
-impl Ord for Text<'_> {
-    fn cmp(&self, other: &Self) -> Ordering {
-        match (*self, *other) {
-            (Text::Latin1(a), Text::Latin1(b)) => a.cmp(b),
-            (Text::Utf16(a), Text::Utf16(b)) => a.cmp(b),
-            _ => self.code_units().cmp(other.code_units()),
-        }
-    }
 }
 
 impl core::fmt::Display for Text<'_> {

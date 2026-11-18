@@ -1,5 +1,6 @@
 //! From UTF-8. What is written stays inside its room even if the bytes change between two looks at them.
 
+use core::hint::select_unpredictable;
 use core::mem::MaybeUninit;
 
 use bun_alloc::AllocError;
@@ -8,12 +9,12 @@ use bun_simdutf_sys::simdutf::{self, WithUtf16Len};
 use crate::{CodeUnit, Cursor, StringBuilder, StringRef, Text, ascii};
 
 /// Up to here the vector code does not make up for the call.
-const SHORT: usize = 32;
+const SHORT: usize = 12;
 /// What is converted on the stack, where there is room for the worst case, and then copied.
 const SCRATCH: usize = 1024;
 /// The highest first byte of a character up to U+00FF.
 const LAST_LATIN1_LEAD: u8 = 0xc3;
-const REPLACEMENT: u16 = 0xfffd;
+const REPLACEMENT: u32 = 0xfffd;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Invalid {
@@ -26,52 +27,52 @@ fn is_continuation(byte: u8) -> bool {
     byte & 0xc0 == 0x80
 }
 
-/// The first character of `bytes`, which are not empty, and its length. The error is the length of the longest start
-/// of a sequence, or one.
-#[inline(always)]
-pub(crate) fn decode(bytes: &[u8]) -> Result<(u32, usize), usize> {
-    let bits = |byte: u8, mask: u8, shift: u32| u32::from(byte & mask) << shift;
-    match *bytes {
-        [a @ ..=0x7f, ..] => return Ok((u32::from(a), 1)),
-        [a @ 0xc2..=0xdf, b, ..] if is_continuation(b) => {
-            return Ok((bits(a, 0x1f, 6) | bits(b, 0x3f, 0), 2));
-        }
-        [a @ 0xe0..=0xef, b, c, ..] if is_continuation(b) & is_continuation(c) => {
-            let value = bits(a, 0x0f, 12) | bits(b, 0x3f, 6) | bits(c, 0x3f, 0);
-            if (value >= 0x800) & !(value as u16).is_surrogate() {
-                return Ok((value, 3));
-            }
-        }
-        [a @ 0xf0..=0xf4, b, c, d, ..]
-            if is_continuation(b) & is_continuation(c) & is_continuation(d) =>
-        {
-            let value = bits(a, 0x07, 18) | bits(b, 0x3f, 12) | bits(c, 0x3f, 6) | bits(d, 0x3f, 0);
-            if (0x1_0000..=0x10_ffff).contains(&value) {
-                return Ok((value, 4));
-            }
-        }
-        _ => {}
+/// For each byte the lowest that can follow it in a sequence, and how many can.
+static SECOND_BYTES: [[u8; 2]; 256] = {
+    let (mut ranges, mut first) = ([[0; 2]; 256], 0xc2);
+    while first <= 0xf4 {
+        ranges[first] = match first {
+            0xe0 => [0xa0, 0x20],
+            0xed => [0x80, 0x20],
+            0xf0 => [0x90, 0x30],
+            0xf4 => [0x80, 0x10],
+            _ => [0x80, 0x40],
+        };
+        first += 1;
     }
-    Err(invalid_len(bytes))
+    ranges
+};
+
+/// Whether the first two of `bytes`, which are not empty, belong together.
+#[inline(always)]
+fn starts_with_sequence(bytes: &[u8]) -> bool {
+    let [lowest, count] = SECOND_BYTES[usize::from(bytes[0])];
+    bytes.get(1).map_or(0, |&it| it).wrapping_sub(lowest) < count
 }
 
-#[cold]
-fn invalid_len(bytes: &[u8]) -> usize {
+/// The character that `bytes` start with and its length, if their first two belong together. The error is the length
+/// of a sequence that ends early.
+#[inline(always)]
+fn decode_sequence(bytes: &[u8]) -> Result<(u32, usize), usize> {
+    let bits = |byte: u8, mask: u8, shift: u32| u32::from(byte & mask) << shift;
     match *bytes {
-        [0xf0, 0x90..=0xbf, c, ..]
-        | [0xf1..=0xf3, 0x80..=0xbf, c, ..]
-        | [0xf4, 0x80..=0x8f, c, ..]
-            if is_continuation(c) =>
-        {
-            3
+        [a @ ..0xe0, b, ..] => Ok((bits(a, 0x1f, 6) | bits(b, 0x3f, 0), 2)),
+        [a @ ..0xf0, b, c, ..] if is_continuation(c) => {
+            Ok((bits(a, 0x0f, 12) | bits(b, 0x3f, 6) | bits(c, 0x3f, 0), 3))
         }
-        [0xe0, 0xa0..=0xbf, ..]
-        | [0xe1..=0xec | 0xee | 0xef | 0xf1..=0xf3, 0x80..=0xbf, ..]
-        | [0xed, 0x80..=0x9f, ..]
-        | [0xf0, 0x90..=0xbf, ..]
-        | [0xf4, 0x80..=0x8f, ..] => 2,
-        _ => 1,
+        [a, b, c, d, ..] if is_continuation(c) & is_continuation(d) => Ok((
+            bits(a, 0x07, 18) | bits(b, 0x3f, 12) | bits(c, 0x3f, 6) | bits(d, 0x3f, 0),
+            4,
+        )),
+        [_, _, c, ..] if is_continuation(c) => Err(3),
+        _ => Err(2),
     }
+}
+
+/// The character above U+007F that `bytes` start with, and its length.
+#[inline(always)]
+pub(crate) fn decode_non_ascii(bytes: &[u8; 4]) -> Option<(u32, usize)> {
+    starts_with_sequence(bytes).then(|| decode_sequence(bytes).ok())?
 }
 
 /// Goes on up to the character that starts at `end` or later. Returns how many bytes it has read. There is room for
@@ -83,19 +84,27 @@ fn decode_characters(
     invalid: Invalid,
     cursor: &mut Cursor<'_, u16>,
 ) -> usize {
+    assert!(end <= bytes.len());
     let mut read = 0;
     while read < end {
-        match decode(&bytes[read..]) {
-            Ok((code_point, length)) => {
-                cursor.push_code_point(code_point);
-                read += length;
+        let rest = &bytes[read..];
+        let (code_point, length) = if starts_with_sequence(rest) {
+            match decode_sequence(rest) {
+                Ok(character) => character,
+                Err(_) if invalid == Invalid::Stops => break,
+                Err(length) => (REPLACEMENT, length),
             }
-            Err(_) if invalid == Invalid::Stops => break,
-            Err(length) => {
-                cursor.push(REPLACEMENT);
-                read += length;
-            }
-        }
+        } else if invalid == Invalid::Stops && !rest[0].is_ascii() {
+            break;
+        } else {
+            let is_ascii = rest[0].is_ascii();
+            (
+                select_unpredictable(is_ascii, u32::from(rest[0]), REPLACEMENT),
+                1,
+            )
+        };
+        cursor.push_code_point(code_point);
+        read += length;
     }
     read
 }
@@ -126,11 +135,12 @@ fn decode_all(bytes: &[u8], invalid: Invalid, cursor: &mut Cursor<'_, u16>) -> u
 /// are gone through by character.
 #[cold]
 fn decode_replacing(mut bytes: &[u8], mut valid: usize, cursor: &mut Cursor<'_, u16>) {
-    let mut stretch = SHORT;
+    const SHORTEST_STRETCH: usize = 32;
+    let mut stretch = SHORTEST_STRETCH;
     loop {
         if valid > stretch && convert_valid(&bytes[..valid], cursor).is_successful() {
             bytes = &bytes[valid..];
-            stretch = SHORT;
+            stretch = SHORTEST_STRETCH;
         } else {
             stretch = (2 * stretch).min(SCRATCH);
         }
@@ -244,11 +254,13 @@ fn from_non_ascii_utf8(bytes: &[u8], invalid: Invalid) -> Result<Option<StringRe
 
 impl StringRef {
     /// `Ok(None)` if the bytes are not UTF-8. Latin-1 if the characters allow it.
+    #[inline]
     pub fn try_from_utf8(bytes: &[u8]) -> Result<Option<StringRef>, AllocError> {
         from_utf8(bytes, Invalid::Stops)
     }
 
     /// Each maximal invalid sequence becomes U+FFFD, as in the WHATWG decoder. Latin-1 if the characters allow it.
+    #[inline]
     pub fn try_from_utf8_lossy(bytes: &[u8]) -> Result<StringRef, AllocError> {
         from_utf8(bytes, Invalid::IsReplaced).map(Option::unwrap_or_default)
     }

@@ -8,6 +8,7 @@ pub struct SIMDUTFResult {
 }
 
 impl SIMDUTFResult {
+    #[inline]
     pub fn is_successful(&self) -> bool {
         self.status == Status::SUCCESS
     }
@@ -75,25 +76,30 @@ pub mod validate {
     pub mod with_errors {
         use super::*;
 
+        #[inline]
         pub fn utf8(input: &[u8]) -> SIMDUTFResult {
             // SAFETY: input is a valid slice; FFI reads exactly len bytes.
             unsafe { simdutf__validate_utf8_with_errors(input.as_ptr(), input.len()) }
         }
 
+        #[inline]
         pub fn utf16le(input: &[u16]) -> SIMDUTFResult {
             // SAFETY: input is a valid slice; FFI reads exactly len u16s.
             unsafe { simdutf__validate_utf16le_with_errors(input.as_ptr(), input.len()) }
         }
     }
 
+    #[inline]
     pub fn utf8(input: &[u8]) -> bool {
         // SAFETY: input is a valid slice; FFI reads exactly len bytes.
         unsafe { simdutf__validate_utf8(input.as_ptr(), input.len()) }
     }
+    #[inline]
     pub fn ascii(input: &[u8]) -> bool {
         // SAFETY: input is a valid slice; FFI reads exactly len bytes.
         unsafe { simdutf__validate_ascii(input.as_ptr(), input.len()) }
     }
+    #[inline]
     pub fn utf16le(input: &[u16]) -> bool {
         // SAFETY: input is a valid slice; FFI reads exactly len u16s.
         unsafe { simdutf__validate_utf16le(input.as_ptr(), input.len()) }
@@ -108,27 +114,32 @@ pub struct WithUtf8Len<'a, T> {
 }
 
 impl<'a, T> WithUtf8Len<'a, T> {
+    #[inline]
     pub fn slice(self) -> &'a [T] {
         self.slice
     }
 
+    #[inline]
     pub fn utf8_len(self) -> usize {
         self.utf8_len
     }
 }
 
 impl<'a> WithUtf8Len<'a, u16> {
+    #[inline]
     pub fn utf16(slice: &'a [u16]) -> Self {
         let utf8_len = length::utf8::from::utf16::le(slice);
         Self { slice, utf8_len }
     }
 
+    #[inline]
     pub fn utf16_with_replacement(slice: &'a [u16]) -> Self {
         let utf8_len = length::utf8::from::utf16::le_with_replacement(slice);
         Self { slice, utf8_len }
     }
 
     /// `None` if the worst case does not fit in `capacity` bytes.
+    #[inline]
     pub fn utf16_worst_case(slice: &'a [u16], capacity: usize) -> Option<Self> {
         let utf8_len = slice.len() * 3;
         (utf8_len <= capacity).then_some(Self { slice, utf8_len })
@@ -136,11 +147,13 @@ impl<'a> WithUtf8Len<'a, u16> {
 }
 
 impl<'a> WithUtf8Len<'a, u8> {
+    #[inline]
     pub fn latin1(slice: &'a [u8]) -> Self {
         let utf8_len = length::utf8::from::latin1(slice);
         Self { slice, utf8_len }
     }
 
+    #[inline]
     pub fn latin1_worst_case(slice: &'a [u8]) -> Self {
         let utf8_len = slice.len() * 2;
         Self { slice, utf8_len }
@@ -155,17 +168,20 @@ pub struct WithUtf16Len<'a> {
 }
 
 impl<'a> WithUtf16Len<'a> {
+    #[inline]
     pub fn utf8(slice: &'a [u8]) -> Self {
         let utf16_len = length::utf16::from::utf8(slice);
         Self { slice, utf16_len }
     }
 
     /// `None` if the worst case does not fit in `capacity` units.
+    #[inline]
     pub fn utf8_worst_case(slice: &'a [u8], capacity: usize) -> Option<Self> {
         let utf16_len = slice.len();
         (utf16_len <= capacity).then_some(Self { slice, utf16_len })
     }
 
+    #[inline]
     pub fn utf16_len(self) -> usize {
         self.utf16_len
     }
@@ -184,6 +200,7 @@ pub mod convert {
                     use super::*;
 
                     /// Appends nothing to `output` if the result is an error.
+                    #[inline]
                     pub fn le(
                         input: WithUtf16Len<'_>,
                         mut output: BorrowedCursor<'_, u16>,
@@ -208,6 +225,7 @@ pub mod convert {
 
             /// Returns false, having appended nothing, unless `input` is UTF-8 with no character above U+00FF, and
             /// not empty. Panics if `output` is shorter than `input`.
+            #[inline]
             pub fn latin1(input: &[u8], mut output: BorrowedCursor<'_, u8>) -> bool {
                 assert!(input.len() <= output.capacity());
                 // SAFETY: simdutf writes at most a byte for each byte it reads, and returns their count or zero.
@@ -230,6 +248,7 @@ pub mod convert {
             use super::*;
 
             /// Each unpaired surrogate becomes U+FFFD. Panics if `output` is shorter than `input`.
+            #[inline]
             pub fn well_formed_le(input: &[u16], mut output: BorrowedCursor<'_, u16>) {
                 assert!(input.len() <= output.capacity());
                 // SAFETY: simdutf writes a unit for each unit of `input`.
@@ -249,6 +268,7 @@ pub mod convert {
                     use super::*;
 
                     /// Appends nothing to `output` if the result is an error.
+                    #[inline]
                     pub fn le(
                         input: WithUtf8Len<'_, u16>,
                         mut output: BorrowedCursor<'_, u8>,
@@ -278,6 +298,7 @@ pub mod convert {
         pub mod to {
             use super::*;
 
+            #[inline]
             pub fn utf8(input: WithUtf8Len<'_, u8>, mut output: BorrowedCursor<'_, u8>) {
                 assert!(input.utf8_len <= output.capacity());
                 // SAFETY: simdutf writes `utf8_len` bytes and returns that count.
@@ -310,6 +331,7 @@ pub mod length {
                 /// Like [`le`], but charges 3 bytes (U+FFFD) per unpaired
                 /// surrogate instead of assuming valid UTF-16. This is the
                 /// exact byte count produced by the replacement encoder.
+                #[inline]
                 pub fn le_with_replacement(input: &[u16]) -> usize {
                     // SAFETY: input is a valid slice; FFI reads exactly len u16s.
                     unsafe {
@@ -321,6 +343,7 @@ pub mod length {
                 }
             }
 
+            #[inline]
             pub fn latin1(input: &[u8]) -> usize {
                 // SAFETY: input is a valid slice; FFI reads exactly len bytes.
                 unsafe { simdutf__utf8_length_from_latin1(input.as_ptr(), input.len()) }
@@ -332,6 +355,7 @@ pub mod length {
         use super::*;
         pub mod from {
             use super::*;
+            #[inline]
             pub fn utf8(input: &[u8]) -> usize {
                 // SAFETY: input is a valid slice; FFI reads exactly len bytes.
                 unsafe { simdutf__utf16_length_from_utf8(input.as_ptr(), input.len()) }
@@ -343,6 +367,7 @@ pub mod length {
         use super::*;
         pub mod from {
             use super::*;
+            #[inline]
             pub fn utf8(input: &[u8]) -> usize {
                 // SAFETY: input is a valid slice; FFI reads exactly len bytes.
                 unsafe { simdutf__latin1_length_from_utf8(input.as_ptr(), input.len()) }
@@ -393,6 +418,7 @@ pub mod base64 {
     }
 
     /// Panics if `output` is shorter than [`encode_len`].
+    #[inline]
     pub fn encode(input: &[u8], mut output: BorrowedCursor<'_, u8>, is_urlsafe: bool) {
         assert!(encode_len(input.len(), is_urlsafe) <= output.capacity());
         // SAFETY: simdutf writes exactly `encode_len` bytes and returns that count.
@@ -407,10 +433,12 @@ pub mod base64 {
         }
     }
 
+    #[inline]
     pub fn encode_len(input: usize, is_urlsafe: bool) -> usize {
         simdutf__base64_length_from_binary(input, is_urlsafe as c_int)
     }
 
+    #[inline]
     pub fn decode(input: &[u8], output: &mut [u8], is_urlsafe: bool) -> SIMDUTFResult {
         // SAFETY: input/output are valid slices; FFI honors outlen bound.
         unsafe {
@@ -455,6 +483,7 @@ pub mod base64 {
     /// Decodes the chunks of four characters, skipping white space, and leaves a last one that has fewer. Returns
     /// how many characters it has read, or `None`, having appended nothing. It may write past what it appends.
     /// Panics unless `output` has room for 3 bytes for every 4 characters, whole or not.
+    #[inline]
     pub fn decode_whole_chunks(
         input: &[u8],
         output: BorrowedCursor<'_, u8>,
@@ -469,6 +498,7 @@ pub mod base64 {
     }
 
     /// [`decode_whole_chunks`] of UTF-16.
+    #[inline]
     pub fn decode_whole_chunks16(
         input: &[u16],
         output: BorrowedCursor<'_, u8>,
@@ -487,6 +517,7 @@ pub mod base64 {
     /// accepts both the standard and URL-safe alphabets, skips whitespace and
     /// any other non-alphabet characters, and stops at the first `'='`.
     /// On success, `count` is the number of bytes written to `output`.
+    #[inline]
     pub fn decode_lenient(input: &[u8], output: &mut [u8]) -> SIMDUTFResult {
         // SAFETY: input/output are valid slices; FFI honors outlen bound.
         unsafe {
@@ -502,6 +533,7 @@ pub mod base64 {
 
 /// Returns false if this CPU can't run any compiled-in kernel. simdutf then falls back to a stub
 /// that returns false for every query.
+#[inline]
 pub fn has_any_implementation() -> bool {
     validate::ascii(b"a")
 }

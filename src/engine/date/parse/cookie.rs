@@ -84,6 +84,7 @@ impl Reader<'_> {
 
     /// After spaces, a plus and a minus, each if it is there. Nothing is consumed unless the number is strictly inside the
     /// range of `i32`.
+    #[inline(never)]
     fn integer(&mut self) -> Option<i32> {
         let mut reader = *self;
         reader.skip_while(is_space);

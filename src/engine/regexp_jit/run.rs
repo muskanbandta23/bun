@@ -6,6 +6,7 @@ use bun_engine_regexp::program::{ClassId, Direction, Op, Place, Stride, UNBOUNDE
 use crate::class::{Branch, Test};
 use crate::frame::{ORIGIN, POSITION};
 use crate::generator::Generator;
+use crate::vector::{Lanes, Slack, VectorTest, Vectors};
 
 const UNITS_UNROLLED: u32 = 3;
 
@@ -37,6 +38,7 @@ impl Generator<'_> {
         let Op::Run {
             direction,
             code_points,
+            is_long,
             class,
             max,
             reserve,
@@ -53,11 +55,18 @@ impl Generator<'_> {
             self.plus(POSITION, POSITION, advance.into());
             return self.short_run(direction, test, max, reserve);
         }
+        let done = self.masm.new_label();
+        let is_worth_vectors = is_long && max == UNBOUNDED && direction == Direction::Forward;
+        let plan = is_worth_vectors.then(|| self.plan_vector(class, Slack::MissesMembers));
+        let mut advance = advance;
+        if let Some((lanes, vector_test)) = plan.flatten() {
+            self.plus(POSITION, POSITION, core::mem::take(&mut advance).into());
+            self.run_of_vectors(lanes, vector_test, reserve, done);
+        }
         // The loop starts with a step.
         let before_start = i64::from(advance) - i64::from(step(direction));
         self.plus(POSITION, POSITION, before_start);
         let limit = self.limit(direction, max, reserve);
-        let done = self.masm.new_label();
         self.prepare_test(test);
         let again = self.masm.here();
         self.step_unless_at(limit, direction, done);
@@ -65,6 +74,30 @@ impl Generator<'_> {
         self.load_unit(c, POSITION, next_unit(direction));
         self.holding_constant(|generator| generator.prepared_test(test, c, Branch::If(again)));
         self.masm.bind(done);
+    }
+
+    /// Falls through if the rest has to be done unit by unit.
+    fn run_of_vectors(&mut self, lanes: Lanes, test: VectorTest, reserve: u32, done: Label) {
+        let mut vectors = Vectors::new(lanes);
+        if !vectors.reserve(&test) {
+            return;
+        }
+        let (stopped, by_units) = (self.masm.new_label(), self.masm.new_label());
+        let (end, is_exact) = (-i64::from(reserve), test.is_exact);
+        let last = end - i64::from(lanes.units());
+        self.masm.branch64(Cond::Gt, POSITION, last, by_units);
+        vectors.load_constants(&mut self.masm);
+        self.vector_loop(lanes, end, done, |generator| {
+            let mask = generator.test_all(&vectors, &[(0, test)]);
+            generator.branch_if_any(mask, false, stopped);
+        });
+        self.masm.bind(stopped);
+        let lane = self.first_lane(lanes);
+        self.masm.add64(POSITION, POSITION, lane);
+        if is_exact {
+            self.masm.jump(done);
+        }
+        self.masm.bind(by_units);
     }
 
     /// The position is one step before the start.
@@ -187,6 +220,10 @@ impl Generator<'_> {
         };
         let (c, test) = (self.frame.temporary(0), self.plan_for_units(filter));
         let last = self.slot_plus(self.frame.temporary(1), floor.slot, distance);
+        let found = self.masm.new_label();
+        if direction == Direction::Forward && units == 1 && !stride.is_code_point() {
+            self.give_back_vectors(filter, last, found);
+        }
         self.prepare_test(test);
         let again = self.masm.here();
         self.masm.branch64(too_far, POSITION, last, fail);
@@ -199,6 +236,36 @@ impl Generator<'_> {
         }
         self.load_unit(c, POSITION, next_unit(direction));
         self.holding_constant(|generator| generator.prepared_test(test, c, Branch::Unless(again)));
+        self.masm.bind(found);
+    }
+
+    /// Falls through if the rest has to be done unit by unit.
+    fn give_back_vectors(&mut self, filter: ClassId, floor: Gpr, found: Label) {
+        let plan = self.plan_vector(filter, Slack::TakesOthers);
+        let Some((lanes, test)) = plan.filter(|it| it.1.is_exact && it.1.only_compares()) else {
+            return;
+        };
+        let mut vectors = Vectors::new(lanes);
+        if !vectors.reserve(&test) {
+            return;
+        }
+        let (left, units) = (self.frame.temporary(0), lanes.units());
+        let (stopped, by_units) = (self.masm.new_label(), self.masm.new_label());
+        self.masm.sub64(left, POSITION, floor);
+        self.masm.branch64(Cond::Lt, left, units, by_units);
+        vectors.load_constants(&mut self.masm);
+        let again = self.masm.here();
+        let mask = self.test_all(&vectors, &[(-units, test)]);
+        self.step_back(-units);
+        self.branch_if_any_passes(mask, stopped);
+        self.masm.sub64(left, POSITION, floor);
+        self.masm.branch64(Cond::Ge, left, units, again);
+        self.masm.jump(by_units);
+        self.masm.bind(stopped);
+        let lane = self.last_lane(lanes);
+        self.masm.add64(POSITION, POSITION, lane);
+        self.masm.jump(found);
+        self.masm.bind(by_units);
     }
 
     fn step_back(&mut self, distance: i32) {

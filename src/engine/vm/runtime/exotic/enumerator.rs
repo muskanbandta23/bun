@@ -233,11 +233,9 @@ fn gapless_index_count(object: &JsObject) -> Option<u32> {
 }
 
 fn names_are_in_slot_order(object: &JsObject) -> bool {
-    !object.shape().has(
-        ShapeFlags::PREVENTS_QUICK_ENUMERATION
-            | ShapeFlags::HAS_ANY_ACCESSOR
-            | ShapeFlags::UNCACHEABLE_DICTIONARY,
-    ) && !object.shape().has_non_reified_static_properties()
+    let shape = object.shape();
+    shape.has_properties_in_slot_order()
+        && !shape.has_non_reified_static_properties()
         && (!object.overrides_get_own_property_slot() || object.cell_type() == CellType::Array)
 }
 

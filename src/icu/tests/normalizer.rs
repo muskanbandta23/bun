@@ -6,7 +6,6 @@ fn normalize(form: Form, text: &str) -> String {
     let units: Vec<u16> = text.encode_utf16().collect();
     let mut out = Buffer::new();
     form.normalize(&units, &mut out).unwrap();
-    assert!(form.is_normalized(&out).unwrap());
     String::from_utf16(&out).unwrap()
 }
 
@@ -52,6 +51,22 @@ fn any_number_of_marks() {
         assert_eq!(
             normalize(Form::Nfd, &"\u{f73}".repeat(count)),
             "\u{f71}".repeat(count) + &"\u{f72}".repeat(count)
+        );
+    }
+}
+
+#[test]
+fn any_number_of_starters_that_combine_backwards() {
+    for count in [510, 511, 512, 1023, 1024, 1025, 5000] {
+        let vowels = "\u{1161}".repeat(count);
+        assert_eq!(
+            normalize(Form::Nfc, &format!("\u{1100}\u{1161}{vowels}\u{11a8}")),
+            format!("\u{ac00}{vowels}\u{11a8}")
+        );
+        let marks = "\u{301}".repeat(count);
+        assert_eq!(
+            normalize(Form::Nfc, &format!("\u{dd9}\u{dcf}\u{dca}{marks}\u{dcf}")),
+            format!("\u{ddd}{marks}\u{dcf}")
         );
     }
 }

@@ -59,15 +59,6 @@ impl Form {
         }
     }
 
-    pub fn is_normalized(self, text: &[u16]) -> Result<bool> {
-        let mut is_normalized = true;
-        let rest = &text[self.normalized_prefix(text)?..];
-        self.normalize_pieces(rest, |piece, normalized| {
-            is_normalized &= piece == normalized;
-        })?;
-        Ok(is_normalized)
-    }
-
     /// The length of a prefix that is normalized, whatever follows it. It need not be the longest.
     pub fn normalized_prefix(self, text: &[u16]) -> Result<usize> {
         let (normalizer, length) = (self.normalizer()?, length(text)?);
@@ -94,13 +85,11 @@ impl Form {
                 take(piece, &normalized);
                 continue;
             }
-            let decomposed = self.decomposing().normalizer()?.decompose_long(piece)?;
-            if self == self.decomposing() {
-                take(piece, &decomposed);
-            } else {
-                normalizer.normalize(&decomposed, decomposed.len(), &mut normalized)?;
-                take(piece, &normalized);
+            let mut long = self.decomposing().normalizer()?.decompose_long(piece)?;
+            if self != self.decomposing() {
+                normalizer.compose_long(&mut long)?;
             }
+            take(piece, &long);
         }
         Ok(())
     }
@@ -216,6 +205,37 @@ impl Normalizer {
         order_marks(&mut decomposed)?;
         Ok(decomposed)
     }
+
+    /// For decomposed text in which any number of starters combine with the one before them.
+    fn compose_long(self, text: &mut Vec<u16>) -> Result<()> {
+        let mut scratch = Scratch::new();
+        let (mut composed, mut read) = (0, 0);
+        while read < text.len() {
+            let end = read + length_to_starter(&text[read..]);
+            // A starter combines with nothing but the code point before it, so that one is all that is read again.
+            let last = match text[..composed] {
+                [.., 0xd800..=0xdbff, 0xdc00..=0xdfff] => 2,
+                [.., _] => 1,
+                [] => 0,
+            };
+            text.copy_within(composed - last..composed, read - last);
+            self.normalize(&text[read - last..end], end - read + last, &mut scratch)?;
+            (text.get_mut(composed - last..end))
+                .and_then(|room| room.get_mut(..scratch.len()))
+                .ok_or(Error::BUFFER_OVERFLOW)?
+                .copy_from_slice(&scratch);
+            (composed, read) = (composed - last + scratch.len(), end);
+        }
+        text.truncate(composed);
+        Ok(())
+    }
+}
+
+/// The offset of the first starter after `PIECE_LENGTH` units.
+fn length_to_starter(text: &[u16]) -> usize {
+    let start = code_point_boundary(text, PIECE_LENGTH);
+    let marks = code_points(&text[start..]).take_while(|&it| combining_class(it) != 0);
+    start + marks.map(unit_count).sum::<usize>()
 }
 
 /// The Canonical Ordering Algorithm.

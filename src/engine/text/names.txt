@@ -816,10 +816,12 @@ objectObject = [object Object]
 objectRegExp = [object RegExp]
 objectString = [object String]
 objectUndefined = [object Undefined]
+regExpStringIteratorTag = RegExp String Iterator
 segmenterStringIterator = Segmenter String Iterator
 setIterator = Set Iterator
 starDefaultText = *default*
 stopBeforePartial = stop-before-partial
+notEqual = not-equal
 timedOut = timed-out
 useStrict = use strict
 @@asyncDispose
@@ -1209,3 +1211,4 @@ temporalPlainMonthDay = Temporal.PlainMonthDay
 temporalPlainTime = Temporal.PlainTime
 temporalPlainYearMonth = Temporal.PlainYearMonth
 temporalZonedDateTime = Temporal.ZonedDateTime
+colonAndSpace = : 

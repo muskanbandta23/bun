@@ -218,6 +218,19 @@ impl Class {
         }
     }
 
+    /// Of cells of that size that start with a `T` and behave as one.
+    pub(crate) const fn extending<T: CellKind>(name: AsciiLiteral, size: usize) -> Class {
+        Class {
+            name,
+            parent: Some(T::CLASS),
+            static_table: None,
+            reserved: core::ptr::null(),
+            types: CellTypeRange::NONE,
+            size: size as u32,
+            ops: T::OPS,
+        }
+    }
+
     pub fn name(&self) -> &'static str {
         self.name.as_str()
     }
@@ -271,6 +284,11 @@ impl Class {
     pub fn has_ordinary_define_own_property(&self) -> bool {
         let ordinary = JsObject::CLASS.ops.define_own_property;
         core::ptr::fn_addr_eq(self.ops.define_own_property, ordinary)
+    }
+
+    pub(super) fn has_ordinary_prevent_extensions(&self) -> bool {
+        let ordinary = JsObject::CLASS.ops.prevent_extensions;
+        core::ptr::fn_addr_eq(self.ops.prevent_extensions, ordinary)
     }
 
     /// That of ordinary objects, arrays or functions.

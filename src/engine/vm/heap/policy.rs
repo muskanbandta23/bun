@@ -230,14 +230,19 @@ impl Heap {
         const NEGLIGIBLE: usize = 256;
         if bytes > NEGLIGIBLE {
             self.note_extra_memory_allocated(cell, bytes);
-            if self.policy.extra_since_check.get() >= BLOCK_SIZE {
-                self.policy.extra_since_check.set(0);
-                self.collect_if_necessary();
-            }
+            self.collect_if_extra_memory_adds_up();
         }
     }
 
-    /// The same, but does not collect.
+    #[inline]
+    pub(crate) fn collect_if_extra_memory_adds_up(&self) {
+        if self.policy.extra_since_check.get() >= BLOCK_SIZE {
+            self.policy.extra_since_check.set(0);
+            self.collect_if_necessary();
+        }
+    }
+
+    /// As `report_extra_memory_allocated`, but does not collect.
     pub(crate) fn note_extra_memory_allocated(&self, cell: &JsCell, bytes: usize) {
         self.did_allocate(bytes);
         self.policy
@@ -266,9 +271,15 @@ impl Heap {
         self.collect_if_necessary();
     }
 
-    pub(crate) fn did_add_array_buffer(&self, bytes: usize) {
+    /// So many of the bytes have already been reported as allocated.
+    #[inline]
+    pub(crate) fn did_add_array_buffer(&self, bytes: usize, already_reported: usize) {
         self.policy.array_buffer_bytes.update(|total| total + bytes);
-        self.did_allocate(bytes);
+        let new = bytes.saturating_sub(already_reported);
+        self.did_allocate(new);
+        self.policy
+            .extra_since_check
+            .update(|total| total.saturating_add(new));
     }
 
     pub(crate) fn did_remove_array_buffer(&self, bytes: usize) {

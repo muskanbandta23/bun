@@ -14,8 +14,8 @@ use crate::{
     Field, FieldArray, Gc, GcFree, GlobalBinding, GlobalBindings, GlobalProxy, IndexingMode,
     JsArray, JsCell, JsDestructibleObject, JsFinalObject, JsObject, JsObjectInit, JsResult,
     MicrotaskQueueRef, PropertyDescriptor, PropertyNameList, PropertySlot, PutPropertySlot,
-    RealmHooks, RealmSlot, RealmWatchpoint, RegExpGlobalState, Shape, ShapeFlags, ShapeSpec, StaticProperty,
-    TracedVec, TransitionKind, TypeFlags, Value, Vm, errors, static_table,
+    RealmHooks, RealmSlot, RealmWatchpoint, RegExpGlobalState, Shape, ShapeFlags, ShapeSpec,
+    StaticProperty, TracedVec, TransitionKind, TypeFlags, Value, Vm, errors, static_table,
     validate_property_descriptor,
 };
 
@@ -230,6 +230,7 @@ impl GlobalObject {
     pub const OFFSET_OF_LEXICAL_EPOCH: usize = offset_of!(GlobalObject, lexical_epoch);
     pub const OFFSET_OF_MICROTASK_QUEUE: usize = offset_of!(GlobalObject, microtask_queue);
     pub const OFFSET_OF_RANDOM: usize = offset_of!(GlobalObject, random);
+    pub const OFFSET_OF_REGEXP_STATE: usize = offset_of!(GlobalObject, regexp_state);
 
     pub const fn offset_of_slot(slot: RealmSlot) -> usize {
         offset_of!(GlobalObject, slots) + slot as usize * size_of::<u64>()
@@ -428,10 +429,17 @@ impl GlobalObject {
                 shapes.set(index, Some(shape));
             }
         }
-        if self.slot_if_initialized(RealmSlot::cloned_arguments_shape).is_some() {
-            let shape = self.cloned_arguments_shape(vm);
-            let shape = shape.non_property_transition(vm, kind, &mut DeferredFire::new(vm));
-            self.init_cloned_arguments_shape(shape);
+        for slot in [
+            RealmSlot::cloned_arguments_shape,
+            RealmSlot::regexp_match_array_shape,
+            RealmSlot::regexp_match_array_with_indices_shape,
+            RealmSlot::regexp_indices_array_shape,
+        ] {
+            if let Some(shape) = self.slot_if_initialized(slot) {
+                let shape = shape.cast::<Shape>();
+                let shape = shape.non_property_transition(vm, kind, &mut DeferredFire::new(vm));
+                self.slots().set(slot as usize, Some(shape.cell()));
+            }
         }
         (vm.hooks().did_start_having_a_bad_time)(vm, self);
     }
@@ -497,9 +505,9 @@ impl GlobalObject {
         &self.discards_microtasks
     }
 
-    pub fn regexp_state(&self) -> crate::heap::Owned<'_, RegExpGlobalState> {
-        // SAFETY: a field of the cell.
-        unsafe { crate::heap::Owned::new(self, &self.regexp_state) }
+    #[inline(always)]
+    pub(crate) fn regexp_state(&self) -> &RegExpGlobalState {
+        &self.regexp_state
     }
 
     /// That of `Math.random`.

@@ -10,7 +10,7 @@ mod persian;
 
 use super::era::AMETE_ALEM_YEARS;
 use super::year::{Year, YearMonth};
-use crate::{CalendarId, Result};
+use crate::{CalendarId, Error, Result};
 
 /// The day of 1970-01-01.
 const JULIAN_DAY_OF_EPOCH: i32 = 2_440_588;
@@ -72,6 +72,7 @@ impl System {
         }
     }
 
+    #[inline]
     pub(super) fn year(self, number: i32) -> Result<Year> {
         match self {
             System::Chinese(variant) => variant.year(number),
@@ -83,9 +84,10 @@ impl System {
         }
     }
 
+    #[inline]
     pub(super) fn month_of_day(self, epoch_day: i32) -> Result<YearMonth> {
         // At most one off.
-        let estimate = match self {
+        let mut number = match self {
             System::Chinese(_) => chinese::estimate_year(epoch_day),
             System::Coptic { year_offset } => coptic::year_of_day(epoch_day, year_offset),
             System::Hebrew => hebrew::estimate_year(epoch_day),
@@ -93,13 +95,17 @@ impl System {
             System::Islamic(variant) => variant.estimate_year(epoch_day),
             System::Persian => persian::estimate_year(epoch_day),
         };
-        let mut year = self.year(estimate)?;
-        if epoch_day < year.first_day {
-            year = self.year(estimate - 1)?;
-        } else if epoch_day >= year.end() {
-            year = self.year(estimate + 1)?;
+        for _ in 0..2 {
+            let year = self.year(number)?;
+            if epoch_day < year.first_day {
+                number -= 1;
+            } else if epoch_day >= year.end() {
+                number += 1;
+            } else {
+                return Ok(year.month_of_day(epoch_day));
+            }
         }
-        Ok(year.month_of_day(epoch_day))
+        Err(Error::CalendarDataUnavailable)
     }
 
     /// `None` if the result is outside the years that the system has.

@@ -58,6 +58,7 @@ impl StackTrace {
     }
 
     pub(super) fn capture(vm: &Vm, request: StackTraceRequest<'_>) -> StackTrace {
+        let _defer = vm.heap.defer_collection();
         let mut frames = Vec::new();
         request.capture_into(vm, &mut frames);
         Self::from_vec(frames)
@@ -65,6 +66,7 @@ impl StackTrace {
 
     /// Adds the frames of the stack to those that it has, which count towards the limit.
     pub fn append_capture(&mut self, vm: &Vm, request: StackTraceRequest<'_>) {
+        let _defer = vm.heap.defer_collection();
         let mut frames = core::mem::replace(self, Self::EMPTY).into_vec();
         request.capture_into(vm, &mut frames);
         *self = Self::from_vec(frames);

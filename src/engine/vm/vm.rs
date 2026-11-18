@@ -17,13 +17,13 @@ use crate::heap::{
     FieldValue, Heap, HeapKind, IsoSpace, RootReason, Scope, Survivors, WeakValueMap, barrier,
 };
 use crate::object::ShapeCache;
-use crate::primitive::StringCaches;
+use crate::primitive::{StringCaches, WeaklyHeldSymbols};
 use crate::services::Service;
 use crate::{
     CallFrame, CellKind, CellType, Cx, ElementKind, EntryRecord, Exception, Executable,
     FastHashMap, Gc, GcFree, GlobalObject, Hooks, IndexingMode, JsBoundFunction, JsCell,
-    JsFunction, JsSymbol, MicrotaskQueueRef, NativeExecutable, Shape, ShapeSpec, SmallStrings,
-    Traps, TypeFlags, Value, Visitor, call, options,
+    JsFunction, JsSymbol, MicrotaskQueueRef, NativeExecutable, NumberStrings, Shape, ShapeSpec,
+    SmallStrings, Traps, TypeFlags, Value, Visitor, call, options,
 };
 
 /// A cell that the `Vm` keeps alive.
@@ -200,8 +200,10 @@ pub struct Vm {
     extensions: RefCell<FastHashMap<TypeId, Rc<dyn Any>>>,
     default_microtask_queue: MicrotaskQueueRef,
     pub(crate) string_caches: StringCaches,
+    pub(crate) number_strings: NumberStrings,
     pub(crate) shape_cache: ShapeCache,
     pub(crate) symbols: WeakValueMap<usize, JsSymbol>,
+    pub(crate) weakly_held_symbols: WeaklyHeldSymbols,
     pub(crate) native_executables: WeakValueMap<NativeExecutableKey, NativeExecutable>,
     pub(crate) custom_accessor_functions: WeakValueMap<CustomAccessorKey, JsFunction>,
     pub(crate) services: crate::services::Services,
@@ -209,6 +211,38 @@ pub struct Vm {
 
 // SAFETY: visits its roots.
 unsafe impl GcFree for Vm {}
+
+/// A table that is too large to be made on the stack.
+///
+/// # Safety
+/// `complete` makes a valid value of zeros.
+pub(crate) unsafe trait StartsZeroed {
+    /// # Safety
+    /// Memory for a `Self` that is all zero.
+    unsafe fn complete(_: *mut Self) {}
+}
+
+/// `Box::new(Vm { .. })`, field by field.
+macro_rules! new_vm {
+    (zeroed: [$($table:ident),*], $($field:ident: $value:expr,)*) => {{
+        let _has_no_other_fields = |Vm { $($table: _,)* $($field: _,)* }: &Vm| ();
+        let mut vm = Box::<Vm>::new_zeroed();
+        let fields = vm.as_mut_ptr();
+        $(
+            let value = $value;
+            // SAFETY: inside the allocation.
+            unsafe { (&raw mut (*fields).$field).write(value) };
+        )*
+        // SAFETY: all fields are initialized.
+        unsafe {
+            $(StartsZeroed::complete(&raw mut (*fields).$table);)*
+            vm.assume_init()
+        }
+    }};
+}
+
+// SAFETY: anything goes.
+unsafe impl<T> StartsZeroed for MaybeUninit<T> {}
 
 /// A counted reference. The last one has to go on the thread of the `Vm`.
 pub struct VmRef(NonNull<Vm>);
@@ -220,7 +254,8 @@ impl VmRef {
         getrandom::fill(&mut seed).expect("a source of randomness");
         let seed = u64::from_ne_bytes(seed);
         let heap = Heap::new(heap_kind, seed);
-        let vm: &Vm = Box::leak(Box::new(Vm {
+        let vm: &Vm = Box::leak(new_vm! {
+            zeroed: [heap_padding, small_strings, string_caches, number_strings],
             exception: Root::new(),
             top_call_frame: Cell::new(0),
             top_entry_frame: Cell::new(0),
@@ -237,11 +272,9 @@ impl VmRef {
             scratch: Default::default(),
             shapes: VmShapes::new(),
             embedder_members: EmbedderMembers(UnsafeCell::new(MaybeUninit::zeroed())),
-            heap,
-            heap_padding: MaybeUninit::uninit(),
-            small_strings: SmallStrings::new(),
+            heap: heap,
             ref_count: AtomicU32::new(1),
-            hooks,
+            hooks: hooks,
             embedder: Embedder::default(),
             stack_bounds: StackBounds::current(),
             lowest_stack_pointer: Cell::new(stack_pointer()),
@@ -260,13 +293,13 @@ impl VmRef {
             shapes_by_class: RefCell::default(),
             extensions: RefCell::default(),
             default_microtask_queue: MicrotaskQueueRef::unregistered(),
-            string_caches: StringCaches::new(),
             shape_cache: ShapeCache::default(),
             symbols: WeakValueMap::default(),
+            weakly_held_symbols: WeaklyHeldSymbols::default(),
             native_executables: WeakValueMap::default(),
             custom_accessor_functions: WeakValueMap::default(),
             services: Default::default(),
-        }));
+        });
         core::ptr::from_ref(vm).expose_provenance();
         vm.initialize();
         VmRef(NonNull::from(vm))
@@ -348,6 +381,7 @@ impl Vm {
     pub const OFFSET_OF_DEBUGGER_COUNT: usize = offset_of!(Vm, debugger_count);
     pub const OFFSET_OF_HEAP: usize = offset_of!(Vm, heap);
     pub const OFFSET_OF_SMALL_STRINGS: usize = offset_of!(Vm, small_strings);
+    pub const OFFSET_OF_NUMBER_STRINGS: usize = offset_of!(Vm, number_strings);
 
     fn initialize(&self) {
         self.update_stack_limit();
@@ -363,6 +397,7 @@ impl Vm {
             root.set(Some(Shape::create(self, None, Value::NULL, spec)));
         }
         self.small_strings.initialize(self);
+        self.number_strings.initialize(self);
         let init = Executable::init(
             self.shapes.executable(),
             call::internal_function_call_entry(),
@@ -778,6 +813,8 @@ impl Vm {
         self.bound_function_executable.visit(visitor);
         self.shapes.visit(visitor);
         self.small_strings.visit(visitor);
+        self.number_strings.visit(visitor);
+        self.weakly_held_symbols.visit(visitor);
         for &shape in self.shapes_by_class.borrow().values() {
             // SAFETY: a root.
             unsafe { visitor.append_word(shape as u64) };
@@ -797,7 +834,10 @@ impl Vm {
 
     pub(crate) fn reconcile_weak_references(&self, survivors: &Survivors) {
         self.shape_cache.prune(survivors);
+        self.string_caches.clear();
+        self.number_strings.reconcile(survivors);
         self.symbols.prune(survivors);
+        self.weakly_held_symbols.prune(survivors);
         self.native_executables.prune(survivors);
         self.custom_accessor_functions.prune(survivors);
         self.services.reconcile_weak_references(self, survivors);
@@ -808,7 +848,7 @@ impl Vm {
     }
 
     pub(crate) fn did_collect(&self, scope: Scope, cells_on_stack: &[usize]) {
-        self.string_caches.did_collect(scope, cells_on_stack);
+        self.string_caches.release_retired(cells_on_stack);
         self.invalidate_prototype_chain_caches();
         self.services.did_collect(self, scope);
         (self.hooks.did_collect)(self, scope);

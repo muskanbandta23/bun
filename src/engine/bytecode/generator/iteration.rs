@@ -478,7 +478,6 @@ impl Generator<'_> {
     #[inline(never)]
     pub(super) fn await_value(&mut self, dst: Register, value: Operand, position: u32) {
         self.debug_hook(DebugHook::WillAwait, position);
-        self.position_at(position);
         self.suspend(value, SuspendKind::Await);
         self.asm().resume_after_await(dst);
         self.debug_hook(DebugHook::DidAwait, position);

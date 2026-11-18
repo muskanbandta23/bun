@@ -96,9 +96,5 @@ entry!(
     construct,
     Construct,
     native_construct_entry,
-    [
-        "ldr x4, [sp, #{this}]",
-        "cmp x4, x2",
-        "csel x4, x3, x4, eq"
-    ]
+    ["ldr x4, [sp, #{this}]", "cmp x4, x2", "csel x4, x3, x4, eq"]
 );

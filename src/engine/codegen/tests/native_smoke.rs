@@ -1,4 +1,5 @@
 #![cfg(target_arch = "x86_64")]
+#![allow(clippy::disallowed_methods)]
 
 use bun_engine_asm::prelude::*;
 use bun_engine_asm::{Features, Options as AssemblerOptions};

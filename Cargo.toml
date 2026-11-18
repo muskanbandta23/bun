@@ -163,6 +163,7 @@ members = [
   "src/engine/optimizer",
   "src/engine/wasm_format",
   "src/engine/wasm_compiler",
+  "src/engine/wasm_runtime",
   "src/engine/wasm",
   "src/engine/inspector",
   "src/engine",
@@ -442,6 +443,7 @@ bun_engine_baseline = { path = "src/engine/baseline" }
 bun_engine_optimizer = { path = "src/engine/optimizer" }
 bun_engine_wasm_format = { path = "src/engine/wasm_format" }
 bun_engine_wasm_compiler = { path = "src/engine/wasm_compiler" }
+bun_engine_wasm_runtime = { path = "src/engine/wasm_runtime" }
 bun_engine_wasm = { path = "src/engine/wasm" }
 bun_engine_inspector = { path = "src/engine/inspector" }
 bun_engine = { path = "src/engine" }

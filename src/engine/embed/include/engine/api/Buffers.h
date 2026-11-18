@@ -464,7 +464,9 @@ public:
         return cast(Engine::uint8_array_adopt(vm, structure, bytes.data(), bytes.size()));
     }
     // Without a length it reaches to the end of the buffer.
-    static JSGenericTypedArrayView* create(JSGlobalObject* globalObject, Structure* structure, RefPtr<ArrayBuffer>&& buffer, size_t byteOffset, std::optional<size_t> length) { return cast(JSArrayBufferView::create(globalObject, structure, *buffer, byteOffset, length)); }
+    static JSGenericTypedArrayView* create(JSGlobalObject* globalObject, Structure* structure, RefPtr<ArrayBuffer>&& buffer, size_t byteOffset, std::optional<size_t> length) { return createOn(globalObject, structure, *buffer, byteOffset, length); }
+    // For the buffer of an object that is alive.
+    static JSGenericTypedArrayView* createOn(JSGlobalObject* globalObject, Structure* structure, ArrayBuffer& buffer, size_t byteOffset, std::optional<size_t> length) { return cast(JSArrayBufferView::create(globalObject, structure, buffer, byteOffset, length)); }
 
     size_t byteLength() const { return length() * sizeof(ElementType); }
     std::span<const uint8_t> span() const { return { static_cast<const uint8_t*>(vector()), byteLength() }; }

@@ -1,5 +1,7 @@
 //! What C++ links against and the engine does not have yet.
 
+#![allow(clippy::unimplemented)]
+
 use core::ffi::{c_char, c_void};
 
 use bun_engine_macros::export;

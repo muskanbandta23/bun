@@ -779,6 +779,7 @@ dollarBacktick = $`
 dollarPlus = $+
 dollarStar = $*
 dollarUnderscore = $_
+invalidDate = Invalid Date
 negativeInfinity = -Infinity
 notEqual = not-equal
 objectArguments = [object Arguments]

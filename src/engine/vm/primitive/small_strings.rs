@@ -39,7 +39,7 @@ impl SmallStrings {
     }
 
     #[inline(always)]
-    pub fn single_character(&self, character: u8) -> Gc<JsString> {
+    pub fn single_character(&self, _: &Vm, character: u8) -> Gc<JsString> {
         // SAFETY: as above.
         unsafe { Gc::from_address(self.of_static_atoms[usize::from(character)].get()) }
     }

@@ -59,7 +59,7 @@ impl NumberStrings {
 
     pub(crate) fn initialize(&self, vm: &Vm) {
         for (entry, digit) in self.small.iter().zip(b'0'..=b'9') {
-            entry.set(vm.small_strings.single_character(digit).address());
+            entry.set(vm.small_strings.single_character(vm, digit).address());
         }
     }
 

@@ -311,7 +311,7 @@ fn pad(cx: &mut Cx, frame: &CallFrame, side: PadSide, message: &'static str) -> 
         return Ok(string.into());
     }
     let filler = match frame.argument(1) {
-        Value::UNDEFINED => cx.small_strings.single_character(b' '),
+        Value::UNDEFINED => cx.small_strings.single_character(cx, b' '),
         filler => filler.to_string(cx)?,
     };
     string.pad(cx, side, length, &filler).map(Into::into)

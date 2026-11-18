@@ -55,7 +55,7 @@ pub(super) fn code_point_string_at(
     Ok(Some(match view.text() {
         Text::Latin1(characters) => {
             let character = characters[index as usize];
-            (cx.small_strings.single_character(character), index + 1)
+            (cx.small_strings.single_character(cx, character), index + 1)
         }
         text => {
             let code_point = text.code_point_at(index as usize);

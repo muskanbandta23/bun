@@ -28,6 +28,11 @@ macro_rules! options {
             fn settings(&mut self) -> [(&'static str, &mut dyn Setting); COUNT] {
                 [$((stringify!($external), &mut self.$name),)*]
             }
+
+            /// The name and the value of each.
+            pub fn all(&self) -> impl Iterator<Item = (&'static str, crate::Value)> {
+                [$((stringify!($external), self.$name.into()),)*].into_iter()
+            }
         }
     };
 }

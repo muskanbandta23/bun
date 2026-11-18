@@ -204,8 +204,8 @@ handler! {
     fn in_by_id(m, op: op::InById) {
         let Some(object) = m.as_cell(m.get(op.base)) else { slow!(m, op::InById) };
         let case = m.entry::<AccessCases>(op.metadata).find(object.shape_id(), 0);
-        let Some(case) = case.filter(|it| it.is_valid()) else { slow!(m, op::InById) };
-        m.set(op.dst, boolean(case.kind() != AccessKind::HasNot));
+        let Some(answer) = case.and_then(|it| it.try_has()) else { slow!(m, op::InById) };
+        m.set(op.dst, boolean(answer));
         next!(m, op)
     }
 
@@ -221,8 +221,8 @@ handler! {
             next!(m, op)
         }
         let case = m.name_of_key(key).and_then(|name| entry.cases.find(object.shape_id(), name));
-        let Some(case) = case.filter(|it| it.is_valid()) else { slow!(m, op::InByVal) };
-        m.set(op.dst, boolean(case.kind() != AccessKind::HasNot));
+        let Some(answer) = case.and_then(|it| it.try_has()) else { slow!(m, op::InByVal) };
+        m.set(op.dst, boolean(answer));
         next!(m, op)
     }
 

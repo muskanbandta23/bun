@@ -699,10 +699,15 @@ dependencies = [
  "bun_alloc",
  "bun_core",
  "bun_engine",
+ "bun_engine_date",
+ "bun_engine_number",
  "bun_engine_standalone",
  "bun_engine_text",
+ "bun_engine_unicode",
  "bun_engine_vm",
+ "bun_icu",
  "bun_threading",
+ "bun_url_whatwg",
  "libc",
 ]
 

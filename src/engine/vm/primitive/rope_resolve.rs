@@ -134,6 +134,13 @@ impl JsRopeString {
         self.become_flat(vm, self.characters()?);
         Ok(())
     }
+
+    pub(super) fn flatten_without_collecting(&self) -> Result<(), AllocError> {
+        let string = self.characters()?;
+        (self.heap()).note_extra_memory_allocated(self, string.take_cost());
+        self.set_characters(string);
+        Ok(())
+    }
 }
 
 /// None of these changes the string, or allocates in the heap unless it gets the `Cx`.

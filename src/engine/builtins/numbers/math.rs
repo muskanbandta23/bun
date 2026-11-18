@@ -215,8 +215,8 @@ fn sum_of_array_of_numbers(cx: &mut Cx, iterable: Value) -> Option<f64> {
         Elements::Int32([]) => Some(-0.0),
         Elements::Int32(values) => values
             .iter()
-            .try_fold(0, |sum: i64, value| {
-                Some(sum + i64::from((*value)?.as_int32()?))
+            .try_fold(0i64, |sum, value| {
+                sum.checked_add(i64::from((*value)?.as_int32()?))
             })
             .map(|sum| sum as f64),
         // A hole reads as NaN.

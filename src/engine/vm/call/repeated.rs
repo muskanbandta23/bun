@@ -28,7 +28,7 @@ impl RepeatedCall {
         this: Value,
         arguments: [Value; COUNT],
     ) -> JsResult<Value> {
-        const { assert!(COUNT <= 3) };
+        const { assert!(COUNT <= 2) };
         let Some(function) = self.function else {
             return cx.call(self.callee, this, &arguments);
         };
@@ -38,19 +38,17 @@ impl RepeatedCall {
         unsafe {
             let executable = JsFunction::executable_or_rare_data(function);
             let target = CallTarget::of(&executable, Specialization::Call);
-            stubs::enter_with_registers(
+            stubs::enter_short(
                 target.entry,
                 cx,
-                Value::NUMBER_TAG,
-                Value::NOT_CELL_MASK,
                 target.code_block,
-                self.callee,
-                this,
-                target.executable,
+                self.callee.to_bits(),
                 COUNT as u64 + 1,
-                argument(0),
-                argument(1),
-                argument(2),
+                this.to_bits(),
+                0,
+                target.executable,
+                argument(0).to_bits(),
+                argument(1).to_bits(),
             )
         }
     }

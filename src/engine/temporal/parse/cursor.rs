@@ -91,7 +91,7 @@ impl<'a, T: CodeUnit> Cursor<'a, T> {
     }
 
     /// An optional TemporalDecimalFraction, in units of 10^-9. The outer `None` is an error.
-    #[inline]
+    #[inline(always)]
     pub(super) fn fraction(&mut self) -> Option<Option<u32>> {
         const SCALES: [u32; 9] = [
             100_000_000,

@@ -106,6 +106,14 @@ impl JsString {
         cx.or_out_of_memory(self.try_resolve(cx))
     }
 
+    /// For code that has no right to allocate in the heap. Empty if there is no memory.
+    pub fn to_string_without_collecting(&self) -> StringRef {
+        if let Some(rope) = self.as_rope() {
+            let _ = rope.flatten_without_collecting();
+        }
+        self.try_impl().map_or_default(StringRef::retain)
+    }
+
     pub fn to_string_ref(&self, cx: &Cx) -> JsResult<StringRef> {
         Ok(StringRef::retain(&*self.resolve(cx)?))
     }
@@ -169,9 +177,11 @@ impl JsString {
         if end - start == fiber.len() {
             return Ok(fiber);
         }
-        Ok(match fiber.try_view() {
-            Some(view) => view.substring(cx, offset as usize..(offset + end - start) as usize),
-            None => self.view(cx)?.substring(cx, start as usize..end as usize),
-        })
+        // A character is copied once for each time that the length of what has it grows fourfold.
+        if fiber.is_concatenation() && fiber.len() > self.len() / 4 {
+            return Ok(self.view(cx)?.substring(cx, start as usize..end as usize));
+        }
+        let range = offset as usize..(offset + end - start) as usize;
+        Ok(fiber.view(cx)?.substring(cx, range))
     }
 }

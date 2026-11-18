@@ -9,9 +9,11 @@ use crate::{Cx, Gc, ImmutableArray, JsResult, Value};
 
 /// What a parser tells about its progress.
 pub(super) trait Recorder {
+    const IS_ACTIVE: bool = false;
+
     fn key(&mut self, _: impl FnOnce() -> Identifier) {}
 
-    fn primitive(&mut self, _: &Cx, _: Value, _: impl FnOnce() -> Range<usize>) -> JsResult<()> {
+    fn primitive(&mut self, _: &Cx, _: Value, _: Range<usize>) -> JsResult<()> {
         Ok(())
     }
 
@@ -84,17 +86,13 @@ impl RecordBuilder {
 }
 
 impl Recorder for RecordBuilder {
+    const IS_ACTIVE: bool = true;
+
     fn key(&mut self, name: impl FnOnce() -> Identifier) {
         self.next_key = Some(name());
     }
 
-    fn primitive(
-        &mut self,
-        cx: &Cx,
-        value: Value,
-        range: impl FnOnce() -> Range<usize>,
-    ) -> JsResult<()> {
-        let range = range();
+    fn primitive(&mut self, cx: &Cx, value: Value, range: Range<usize>) -> JsResult<()> {
         self.begin(cx, value, range.start as u32..range.end as u32)
     }
 

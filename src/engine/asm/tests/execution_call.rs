@@ -49,12 +49,22 @@ fn any_arguments(h: &mut Harness) -> (Vec<Argument>, [Address; 2]) {
 }
 
 fn moving(arguments: Vec<Argument>) -> Case {
-    let (described, emitted) = (arguments.clone(), arguments.clone());
-    let operation = Operation {
-        describe: Box::new(move || format!("move_arguments({described:x?})")),
-        emit: Box::new(move |masm, _| masm.move_arguments(&emitted)),
-    };
-    Case::new(operation, move |m| {
+    let emitted = arguments.clone();
+    let name = format!("move_arguments({arguments:x?})");
+    let operation = Operation::custom(name, move |masm, _| masm.move_arguments(&emitted));
+    let mut names = RegisterSet::of(&abi::ARGUMENT_GPRS, &abi::ARGUMENT_FPRS);
+    for &argument in &arguments {
+        match argument {
+            Argument::Gpr(reg) => names.insert(reg),
+            Argument::Fpr(reg) => names.insert(reg),
+            Argument::Imm(_) => {}
+            Argument::Load32(address)
+            | Argument::Load64(address)
+            | Argument::LoadF64(address)
+            | Argument::AddressOf(address) => names.insert(address.base()),
+        }
+    }
+    Case::new(operation.naming(names), move |m| {
         let values: Vec<u64> = arguments.iter().map(|&each| value_of(m, each)).collect();
         let (mut gprs, mut fprs) = (abi::ARGUMENT_GPRS.iter(), abi::ARGUMENT_FPRS.iter());
         let mut on_stack = 0;
@@ -106,10 +116,9 @@ fn constants_become_arguments() {
     let mut h = Harness::new();
     let arguments = vec![(-1i32).into(), u32::MAX.into(), usize::MAX.into()];
     let [first, second, third] = *abi::ARGUMENT_GPRS.first_chunk().unwrap();
-    let operation = Operation {
-        describe: Box::new(|| "move_arguments".into()),
-        emit: Box::new(move |masm, _| masm.move_arguments(&arguments)),
-    };
+    let operation = Operation::custom("move_arguments".into(), move |masm, _| {
+        masm.move_arguments(&arguments)
+    });
     h.add(Case::new(operation, move |m| {
         m.set64(first, u64::MAX);
         m.set64(second, u32::MAX.into());
@@ -148,17 +157,14 @@ fn a_function_finds_its_arguments() {
             })
             .collect();
         let emitted = arguments.clone();
-        let operation = Operation {
-            describe: Box::new(|| "call".into()),
-            emit: Box::new(move |masm, _| {
-                let size = MacroAssembler::stack_size_of_arguments(&emitted);
-                masm.enter_frame();
-                masm.sub64(SP, SP, size.next_multiple_of(16));
-                masm.move_arguments(&emitted);
-                masm.call_address(weigh as *const () as usize);
-                masm.leave_frame();
-            }),
-        };
+        let operation = Operation::custom("call".into(), move |masm, _| {
+            let size = MacroAssembler::stack_size_of_arguments(&emitted);
+            masm.enter_frame();
+            masm.sub64(SP, SP, size.next_multiple_of(16));
+            masm.move_arguments(&emitted);
+            masm.call_address(weigh as *const () as usize);
+            masm.leave_frame();
+        });
         let case = Case::new(operation, move |m| {
             let (floats, integers): (Vec<_>, Vec<_>) =
                 (arguments.iter()).partition(|argument| matches!(argument, Argument::Fpr(_)));
@@ -230,15 +236,13 @@ fn all_registers_survive_a_round_trip() {
     let mut h = Harness::new();
     let all = h.operand_registers;
     for vector_bytes in [8, 16] {
-        let operation = Operation {
-            describe: Box::new(move || format!("round trip with {vector_bytes}")),
-            emit: Box::new(move |masm, _| {
+        let operation =
+            Operation::custom(format!("round trip with {vector_bytes}"), move |masm, _| {
                 masm.store_registers(all, vector_bytes, Address::new(SP, 0x400));
                 all.gprs().for_each(|reg| masm.move64(reg, 0));
                 all.fprs().for_each(|reg| masm.move_f64_constant(reg, 0.0));
                 masm.load_registers(all, vector_bytes, Address::new(SP, 0x400));
-            }),
-        };
+            });
         h.add(Case::new(operation, move |m| {
             for reg in all.fprs().filter(|_| vector_bytes == 8) {
                 m.set_float_bits(FloatWidth::F64, reg, m.vector(reg) as u64);

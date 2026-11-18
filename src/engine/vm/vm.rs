@@ -654,6 +654,13 @@ impl Vm {
         self.top_entry_frame.get()
     }
 
+    /// The one around `top_entry_frame`, or zero. `None` if there is no such frame either.
+    pub fn outer_entry_frame(&self) -> Option<usize> {
+        let top = self.top_entry_frame();
+        // SAFETY: on the stack.
+        (top != 0).then(|| unsafe { EntryRecord::of(top) }.previous_top_entry_frame)
+    }
+
     /// The frames of the stack, innermost first. Calls that were inlined have none.
     pub fn machine_frames(&self) -> impl Iterator<Item = &CallFrame> {
         let mut entry_frame = self.top_entry_frame();

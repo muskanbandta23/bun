@@ -18,6 +18,7 @@ pub(crate) struct Annotations<'a> {
 
 impl Annotations<'_> {
     /// False if the calendar does not have the form of `type` in UTS #35, as every calendar identifier does.
+    #[inline]
     pub(crate) fn can_name_calendar(&self) -> bool {
         self.calendar.is_none_or(|calendar| {
             with_text!(calendar, |units| units
@@ -83,17 +84,16 @@ impl<'a, T: CodeUnit> Cursor<'a, T> {
         (!has_empty_component(value, b'-')).then_some(value)
     }
 
-    /// An optional TimeZoneAnnotation and optional Annotations.
-    #[inline]
-    pub(super) fn annotations(&mut self) -> Option<Annotations<'a>> {
+    /// An optional TimeZoneAnnotation and optional Annotations. `annotations` is empty.
+    #[inline(always)]
+    pub(super) fn annotations(&mut self, annotations: &mut Annotations<'a>) -> Option<()> {
         if self.peek() != b'[' {
-            return Some(Annotations::default());
+            return Some(());
         }
-        self.bracketed_annotations()
+        self.bracketed_annotations(annotations)
     }
 
-    fn bracketed_annotations(&mut self) -> Option<Annotations<'a>> {
-        let mut annotations = Annotations::default();
+    fn bracketed_annotations(&mut self, annotations: &mut Annotations<'a>) -> Option<()> {
         let mut is_first = true;
         let mut calendar_is_critical = false;
         while self.eat(b'[') {
@@ -118,6 +118,6 @@ impl<'a, T: CodeUnit> Cursor<'a, T> {
             self.expect(b']')?;
             is_first = false;
         }
-        Some(annotations)
+        Some(())
     }
 }

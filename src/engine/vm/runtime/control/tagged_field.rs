@@ -66,6 +66,13 @@ impl<T: CellKind> TaggedField<T> {
         self.atomic().store(word(cell, tag), Ordering::Relaxed);
         owner.write_barrier_for_cell();
     }
+
+    /// # Safety
+    /// As for `Field::set_without_barrier`.
+    #[inline(always)]
+    pub(super) unsafe fn set_without_barrier(&self, cell: Option<Gc<T>>, tag: u16) {
+        self.atomic().store(word(cell, tag), Ordering::Relaxed);
+    }
 }
 
 // SAFETY: `set` runs the barrier.

@@ -5,6 +5,8 @@ mod free_space;
 mod instruction_cache;
 mod pages;
 mod pool;
+#[cfg(windows)]
+mod unwinding;
 
 pub use code::{
     CodeHandle, Observer, OutOfExecutableMemory, Owner, Owners, Priority, link, lock_owners,
@@ -13,3 +15,5 @@ pub use code::{
 };
 pub use instruction_cache::{synchronize_instructions, synchronize_instructions_of_all_threads};
 pub use pool::{Usage, address_range, contains, is_available, usage};
+#[cfg(windows)]
+pub use unwinding::{ExceptionHandler, describe_frames};

@@ -128,6 +128,8 @@ mirror  FunctionKind syntax/options.rs
 mirror  ErrorKind syntax/error.rs
 mirror  Recovery syntax/error.rs
 opaque  BuiltinOutline struct JSC::BuiltinSourceMetadata
+opaque  KnownCapture struct JSC::KnownCapture
+opaque  KnownFunction struct JSC::KnownFunction
 opaque  ParserError class JSC::ParserError
 opaque  Position struct JSC::ExpressionRange
 opaque  UnlinkedFunction class JSC::UnlinkedFunctionExecutable

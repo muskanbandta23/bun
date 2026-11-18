@@ -44,6 +44,8 @@ pub struct ModuleLoader {
 /// How far a load goes, and what its promise is fulfilled with.
 #[derive(Clone, Copy)]
 pub enum LoadGoal {
+    /// The key, once all that the module requests has been loaded.
+    Load,
     /// The key, once the module has been evaluated.
     Evaluate,
     /// The namespace object.

@@ -124,6 +124,11 @@ impl FunctionInfo {
         self.scope.is_none()
     }
 
+    /// What lies between the function and the global scope.
+    pub fn outer_scope(&self) -> Option<&Rc<StaticScope>> {
+        self.scope.as_ref()
+    }
+
     pub fn origin(&self) -> Origin {
         self.origin
     }

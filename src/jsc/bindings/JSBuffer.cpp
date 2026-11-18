@@ -69,7 +69,6 @@
 #include <windows.h>
 #endif
 
-#include <JavaScriptCore/DOMJITAbstractHeap.h>
 #include <JavaScriptCore/DFGAbstractHeap.h>
 
 // #include <JavaScriptCore/JSTypedArrayViewPrototype.h>

@@ -10,7 +10,6 @@ class JSGlobalObjectInspectorController;
 
 namespace JSC {
 
-class JSGlobalObjectDebuggable;
 class JSModuleRecord;
 class WebAssemblyCompileOptions;
 enum class ArrayBufferSharingMode : bool;
@@ -241,12 +240,11 @@ public:
     ConsoleClient* consoleClient() const { return m_consoleClient; }
     void setConsoleClient(ConsoleClient* client) { m_consoleClient = client; }
     OptionSet<CodeGenerationMode> defaultCodeGenerationMode() const;
-    Debugger* debugger() const;
-    bool hasDebugger() const { return debugger(); }
-    bool inspectable() const;
-    void setInspectable(bool);
-    Inspector::JSGlobalObjectInspectorController& inspectorController() const;
-    JSGlobalObjectDebuggable& inspectorDebuggable();
+    bool hasDebugger() const { return m_inspectorController && Engine::global_has_debugger(this); }
+    bool inspectable() const { return m_isInspectable; }
+    void setInspectable(bool isInspectable) { m_isInspectable = isInspectable; }
+    bool hasInspectorController() const { return !!m_inspectorController; }
+    Inspector::JSGlobalObjectInspectorController& inspectorController();
 
     static constexpr RealmClass<Engine::RealmSlot::error_shape, Engine::RealmSlot::error_constructor> m_errorStructure {};
     static constexpr RealmClass<Engine::RealmSlot::eval_error_shape, Engine::RealmSlot::eval_error_constructor> m_evalErrorStructure {};
@@ -293,10 +291,9 @@ public:
 private:
     Engine::Opaque<(Engine::RealmSlot::COUNT - namedSlotCount) * sizeof(JSCell*) + Engine::Layout::globalObjectSizeAfterSlots> m_rest;
 
-public:
     // From here on, what only C++ has.
     std::unique_ptr<Inspector::JSGlobalObjectInspectorController> m_inspectorController;
-    RefPtr<JSGlobalObjectDebuggable> m_inspectorDebuggable;
+    bool m_isInspectable { false };
 };
 ENGINE_CLASS_HAS_TYPE(JSGlobalObject, GlobalObjectType);
 

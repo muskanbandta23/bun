@@ -11,7 +11,6 @@ class ControlFlowProfiler;
 class DecoderStringTable;
 class DeferredWorkTimer;
 class EntryFrame;
-class FunctionHasExecutedCache;
 class HeapProfiler;
 class JSONCache;
 class MicrotaskQueue;
@@ -233,8 +232,8 @@ public:
     IsoSubspace& ropeStringSpace() { return heap.ropeStringSpace(); }
     CompleteSubspace& destructibleObjectSpace() { return heap.destructibleObjectSpace(); }
 
-    NativeExecutable* getHostFunction(NativeFunction function, ImplementationVisibility visibility, NativeFunction constructor, unsigned length, const String& name) { return getHostFunction(function, visibility, NoIntrinsic, constructor, nullptr, length, name); }
-    NativeExecutable* getHostFunction(NativeFunction function, ImplementationVisibility visibility, Intrinsic intrinsic, NativeFunction constructor, const DOMJIT::Signature*, unsigned length, const String& name) { return Engine::native_executable_shared(*this, length, name, function, constructor, intrinsic, visibility); }
+    NativeExecutable* getHostFunction(NativeFunction function, ImplementationVisibility visibility, NativeFunction constructor, unsigned length, const String& name) { return getHostFunction(function, visibility, NoIntrinsic, constructor, length, name); }
+    NativeExecutable* getHostFunction(NativeFunction function, ImplementationVisibility visibility, Intrinsic intrinsic, NativeFunction constructor, unsigned length, const String& name) { return Engine::native_executable_shared(*this, length, name, function, constructor, intrinsic, visibility); }
     ExecutableBase* internalFunctionExecutable() const { return m_internalFunctionExecutable; }
     // Makes `@name` in the source of a built-in stand for the symbol.
     void registerPrivateName(const Identifier& name, const Identifier& symbol) { Engine::vm_register_private_name(*this, name, symbol); }
@@ -270,12 +269,11 @@ public:
     PersistentBytecodePayloads* persistentBytecodePayloadsIfExists();
     JSONCache& jsonCache();
 
-    bool enableControlFlowProfiler();
+    void enableControlFlowProfiler();
     ControlFlowProfiler* controlFlowProfiler();
-    FunctionHasExecutedCache* functionHasExecutedCache();
     HeapProfiler& ensureHeapProfiler();
     HeapProfiler* heapProfiler();
-    SamplingProfiler& ensureSamplingProfiler(Ref<Stopwatch>&&);
+    SamplingProfiler& ensureSamplingProfiler();
     SamplingProfiler* samplingProfiler();
 
     static constexpr Engine::CommonNamesPointer propertyNames {};

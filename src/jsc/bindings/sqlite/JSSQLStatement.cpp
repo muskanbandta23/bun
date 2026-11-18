@@ -31,7 +31,6 @@
 #include <wtf/URL.h>
 #include <JavaScriptCore/TypedArrayInlines.h>
 
-#include <JavaScriptCore/DOMJITAbstractHeap.h>
 #include "JSBuffer.h"
 #include <JavaScriptCore/DFGAbstractHeap.h>
 #include "wtf/SIMDUTF.h"

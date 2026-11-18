@@ -332,6 +332,13 @@ ENGINE_CONSTANT(MicrotaskQueue_end, 24, MicrotaskQueue::OFFSET_OF_END)
 // Modules, scopes and cached bytecode
 
 // Inspector, profilers and options
+ENGINE_SIZE(BlockRange, 24)
+ENGINE_CONSTANT(BlockRange_has_executed, 8, offset_of!(BlockRange, has_executed))
+ENGINE_CONSTANT(BlockRange_is_in_loop_header, 9, offset_of!(BlockRange, is_in_loop_header))
+ENGINE_CONSTANT(BlockRange_execution_count, 16, offset_of!(BlockRange, execution_count))
+ENGINE_SIZE(CodeRange, 12)
+ENGINE_CONSTANT(CodeRange_kind, 8, offset_of!(CodeRange, kind))
+ENGINE_CONSTANT(CodeRange_has_executed, 9, offset_of!(CodeRange, has_executed))
 
 } // namespace Engine::Layout
 

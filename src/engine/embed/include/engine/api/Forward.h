@@ -2,8 +2,9 @@
 
 // Names and small types that the other headers share.
 
-#include "EngineConstants.h"
 #include "engine/Support.h"
+
+#include "EngineConstants.h"
 #include "engine/api/Layout.h"
 
 #define ENGINE_STRINGIFY_EXPANDED(text) #text

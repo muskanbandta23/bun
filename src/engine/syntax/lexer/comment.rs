@@ -1,0 +1,124 @@
+//! Comments, and the directives in them.
+
+use super::{Flaw, Lexer};
+use crate::chars::{self, Start};
+use crate::token::{Detail, TokenKind};
+
+impl Lexer<'_> {
+    /// Where the line ends.
+    #[inline(never)]
+    pub(super) fn skip_line(&mut self, mut offset: usize) -> usize {
+        loop {
+            offset = self.stop(offset, |stops| stops.in_string);
+            match self.bytes.get(offset) {
+                Some(&byte) if !chars::is_newline(byte) => offset = self.skip_stop(offset),
+                _ => return offset,
+            }
+        }
+    }
+
+    /// Past a stop that means nothing here, and past the characters that are not ASCII after it.
+    #[inline(always)]
+    pub(super) fn skip_stop(&self, mut offset: usize) -> usize {
+        offset += 1;
+        while !self.byte(offset).is_ascii() {
+            offset += 1;
+        }
+        offset
+    }
+
+    /// Where the next token starts. None if a comment does not end.
+    #[inline(always)]
+    pub(super) fn skip_trivia(
+        &mut self,
+        mut offset: usize,
+        mut lead: Detail,
+    ) -> Option<(usize, Detail)> {
+        loop {
+            match chars::start(self.byte(offset)) {
+                Start::Blank => offset += 1,
+                Start::Newline => {
+                    lead = Detail::FOLLOWS_NEWLINE;
+                    offset = self.stop(offset + 1, |stops| stops.after_blanks);
+                }
+                Start::Slash if self.byte(offset + 1) == b'/' => {
+                    if matches!(self.byte(offset + 2), b'#' | b'@') {
+                        self.directive(offset + 3);
+                    }
+                    offset = self.skip_line(offset + 2);
+                }
+                Start::Slash if self.byte(offset + 1) == b'*' => {
+                    offset = self.skip_block_comment(offset, &mut lead)?;
+                }
+                Start::Less if self.opens_html_comment(offset) => offset = self.skip_line(offset),
+                Start::Minus if self.closes_html_comment(offset, lead) => {
+                    offset = self.skip_line(offset);
+                }
+                _ => return Some((offset, lead)),
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn skip_block_comment(&mut self, start: usize, lead: &mut Detail) -> Option<usize> {
+        let rest = &self.bytes[start + 2..];
+        let length = bun_highway::memmem(rest, b"*/");
+        let text = &rest[..length.unwrap_or(rest.len())];
+        if !lead.follows_newline() && bun_highway::index_of_any_char(text, b"\n\r").is_some() {
+            *lead = Detail::FOLLOWS_NEWLINE;
+        }
+        if length.is_none() {
+            let flaw = Flaw {
+                kind: TokenKind::UnterminatedMultiline,
+                end: self.bytes.len(),
+                message: "Multiline comment was not closed properly",
+            };
+            self.fail(start, *lead, flaw);
+        }
+        Some(start + length? + 4)
+    }
+
+    /// ECMA-262 B.1.1.
+    #[inline(always)]
+    pub(super) fn opens_html_comment(&self, offset: usize) -> bool {
+        !self.is_module && self.bytes[offset..].starts_with(b"<!--")
+    }
+
+    #[inline(always)]
+    pub(super) fn closes_html_comment(&self, offset: usize, lead: Detail) -> bool {
+        self.bytes[offset..].starts_with(b"-->")
+            && !self.is_module
+            && (lead.follows_newline() || self.previous_end == self.first_offset)
+    }
+
+    fn skip_blanks(&self, mut offset: usize) -> usize {
+        while chars::start(self.byte(offset)) == Start::Blank {
+            offset += 1;
+        }
+        offset
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn directive(&mut self, offset: usize) {
+        if chars::start(self.byte(offset)) != Start::Blank {
+            return;
+        }
+        let rest = &self.bytes[offset + 1..];
+        if let Some(value) = rest.strip_prefix(b"sourceURL=") {
+            self.source_url = self.directive_value(self.bytes.len() - value.len());
+        } else if let Some(value) = rest.strip_prefix(b"sourceMappingURL=") {
+            self.source_mapping_url = self.directive_value(self.bytes.len() - value.len());
+        }
+    }
+
+    fn directive_value(&self, offset: usize) -> Option<(u32, u32)> {
+        let start = self.skip_blanks(offset);
+        let rest = &self.bytes[start..];
+        let length = bun_highway::index_of_any_char(rest, b"\t\n\x0b\x0c\r \"'\xa0");
+        let end = start + length.unwrap_or(rest.len());
+        let ends_line =
+            (self.bytes.get(self.skip_blanks(end))).is_none_or(|&byte| chars::is_newline(byte));
+        ends_line.then_some((start as u32, end as u32))
+    }
+}

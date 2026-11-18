@@ -2,7 +2,8 @@ use super::constant::ConstantMove;
 use super::immediate::{ArithmeticImm, FloatImm};
 use super::load_store::AccessSize;
 use super::macro_assembler::MacroAssembler;
-use super::neon_basic::BasicBitwise;
+use super::neon::VectorImm;
+use super::neon_opcode::NeonBitwise;
 use super::opcode::{
     AddSub, Cc, ConditionalCompare, Extend, FloatBinary, FloatFormat, FloatUnary, Nzcv, Select,
 };
@@ -103,7 +104,7 @@ impl FloatAssembly for MacroAssembler {
     #[inline]
     fn move_vector(&mut self, dst: Fpr, src: Fpr) {
         if dst != src {
-            self.asm.basic_bitwise(BasicBitwise::Orr, dst, src, src);
+            self.asm.neon_bitwise(NeonBitwise::Orr, dst, src, src);
         }
     }
 
@@ -122,7 +123,7 @@ impl FloatAssembly for MacroAssembler {
     fn move_float_constant(&mut self, width: FloatWidth, dst: Fpr, bits: u64) {
         let bits = bits & u64::MAX >> (64 - width.width().bits());
         if bits == 0 {
-            return self.asm.basic_zero(dst);
+            return self.asm.movi(dst, VectorImm::ZERO);
         }
         if let Some(imm) = FloatImm::new(width, bits) {
             return self.asm.fmov_imm(dst, imm);
@@ -218,20 +219,20 @@ impl FloatAssembly for MacroAssembler {
             dst
         };
         match width {
-            FloatWidth::F32 => self.asm.basic_sign_bits32(mask),
+            FloatWidth::F32 => self.asm.movi(mask, VectorImm::SIGNS32),
             FloatWidth::F64 => {
-                self.asm.basic_zero(mask);
+                self.asm.movi(mask, VectorImm::ZERO);
                 self.neg_f64(mask, mask);
             }
         }
         if dst == magnitude {
-            self.asm.basic_bitwise(BasicBitwise::Bit, dst, sign, mask);
+            self.asm.neon_bitwise(NeonBitwise::Bit, dst, sign, mask);
         } else if dst == sign {
             self.asm
-                .basic_bitwise(BasicBitwise::Bif, dst, magnitude, mask);
+                .neon_bitwise(NeonBitwise::Bif, dst, magnitude, mask);
         } else {
             self.asm
-                .basic_bitwise(BasicBitwise::Bsl, dst, sign, magnitude);
+                .neon_bitwise(NeonBitwise::Bsl, dst, sign, magnitude);
         }
     }
 
@@ -396,7 +397,7 @@ impl FloatAssembly for MacroAssembler {
             }
             (NegativeZero::Reject, _) => {
                 let difference = self.data_scratch();
-                self.asm.basic_bitwise(BasicBitwise::Eor, back, back, src);
+                self.asm.neon_bitwise(NeonBitwise::Eor, back, back, src);
                 self.move_f64_to_bits(difference, back);
                 if width == Width::W32 {
                     return self.asm.cbnz(Width::W64, difference, failure);

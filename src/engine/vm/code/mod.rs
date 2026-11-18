@@ -1,0 +1,27 @@
+//! Source text, what it compiles to, and the state that running code keeps.
+
+mod code_block;
+mod compile;
+mod executable;
+pub mod metadata;
+mod profile;
+mod source;
+mod speculation;
+
+pub use code_block::{CodeBlock, CodeOrigin, CompiledCode, InlineFrame, Tier};
+pub use compile::{evaluate_script, throw_compile_error};
+pub use executable::{
+    EvalExecutable, Executable, FunctionExecutable, ModuleExecutable, NativeExecutable,
+    ProgramExecutable, ScriptExecutable,
+};
+pub(crate) use executable::{NativeExecutableKey, native_source_text};
+pub use profile::{Arithmetic, ArithmeticProfile, ArrayModes, ArrayProfile, ValueProfile};
+pub use speculation::SpeculatedType;
+pub use source::{
+    LineColumn, SourceCode, SourceProvider, SourceProviderBuilder, SourceProviderRef, SourceType,
+};
+
+#[derive(Default)]
+pub(crate) struct State {}
+
+impl crate::services::Service for State {}

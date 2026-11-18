@@ -7,7 +7,7 @@ use smallvec::SmallVec;
 
 use crate::error::Status;
 use crate::ffi::{fill, filled, length, open};
-use crate::{Buffer, Result};
+use crate::{Buffer, Error, Result};
 
 bun_opaque::opaque_ffi! { struct UDateTimePatternGenerator; }
 
@@ -45,6 +45,15 @@ const UDATPG_MATCH_HOUR_FIELD_LENGTH: i32 = 1 << Field::Hour as i32;
 
 /// Has room for nearly all of them, because one that does not fit is looked up twice.
 pub type Pattern = SmallVec<[u16; 64]>;
+
+/// Of a pattern or a skeleton, which is short.
+pub(crate) fn pattern_length(pattern: &[u16]) -> Result<i32> {
+    const LONGEST: usize = 1024;
+    if pattern.len() > LONGEST {
+        return Err(Error::ILLEGAL_ARGUMENT);
+    }
+    length(pattern)
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(i32)]
@@ -84,7 +93,7 @@ impl PatternGenerator {
 
     /// The hour is as wide as in `skeleton`, unless the locale has a pattern for that very width.
     pub fn best_pattern(&mut self, skeleton: &[u16]) -> Result<Pattern> {
-        let length = length(skeleton)?;
+        let length = pattern_length(skeleton)?;
         let mut pattern = Pattern::new();
         // SAFETY: the generator is open, `skeleton` has `length` units, and `out` has room for `capacity`.
         fill(&mut pattern, |out, capacity, status| unsafe {
@@ -112,7 +121,7 @@ impl PatternGenerator {
 
 /// Of the first 50 items of `pattern`, where an item is a field or one unit of anything else.
 pub fn skeleton(pattern: &[u16]) -> Result<Buffer<u16>> {
-    let length = length(pattern)?;
+    let length = pattern_length(pattern)?;
     // SAFETY: `pattern` has `length` units, and `out` has room for `capacity`.
     filled(|out, capacity, status| unsafe {
         udatpg_getSkeleton(

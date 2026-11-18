@@ -16,7 +16,7 @@ mod vector;
 pub mod x64;
 
 pub use assembly::{
-    Argument, CallAssembly, FloatAssembly, MacroAssembly, Options, Scratch, ScratchNeeds,
+    Argument, CallAssembly, FloatAssembly, MacroAssembly, Options, Reuse, Scratch, ScratchNeeds,
     ValueAssembly, VectorAssembly,
 };
 pub use features::{Arm64Features, X64Features};
@@ -27,7 +27,9 @@ pub use operand::{
     Width,
 };
 pub use register::{Bank, Fpr, Gpr, Reg, RegisterSet, RegisterSetIter};
-pub use vector::{VectorBinary, VectorReduce, VectorShift, VectorTernary, VectorUnary};
+pub use vector::{
+    Relaxed, VectorBinary, VectorReduce, VectorShift, VectorTernary, VectorUnary, lanes,
+};
 
 #[cfg(target_arch = "aarch64")]
 pub use {arm64 as host, features::Arm64Features as Features};

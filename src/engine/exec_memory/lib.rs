@@ -12,4 +12,4 @@ pub use code::{
     transfer_target,
 };
 pub use instruction_cache::synchronize_instructions;
-pub use pool::{Usage, contains, is_available, usage};
+pub use pool::{Usage, address_range, contains, is_available, usage};

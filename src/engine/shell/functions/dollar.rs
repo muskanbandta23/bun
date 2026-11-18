@@ -4,6 +4,7 @@ use bun_engine_text::PropertyName;
 use bun_engine_vm::heap::Scope;
 use bun_engine_vm::{CustomGetterSetter, GlobalProxy};
 
+use super::heap::clear_kept_objects;
 use super::scripts::{evaluate_in, script_from_caller};
 use super::values::create_masquerader;
 use super::{object_with, put};
@@ -14,6 +15,7 @@ const FUNCTIONS: Functions = &[
     ("createRealm", create_realm, 0),
     ("evalScript", eval_script, 1),
     ("gc", gc, 0),
+    ("clearKeptObjects", clear_kept_objects, 0),
     ("globalObjectFor", global_object_for, 1),
 ];
 

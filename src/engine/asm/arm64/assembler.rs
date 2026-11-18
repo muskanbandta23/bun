@@ -69,6 +69,8 @@ pub struct Assembler {
     pub(crate) features: Arm64Features,
     /// By the index of an external target, the jump after the code that leads there.
     pub(super) routes: Vec<Option<Label>>,
+    /// The latest instructions in a row that may still be taken back.
+    pub(super) revocable: core::ops::Range<u32>,
 }
 
 impl Assembler {
@@ -77,6 +79,7 @@ impl Assembler {
             buffer: CodeBuffer::new(MAX_CODE_SIZE),
             features,
             routes: Vec::new(),
+            revocable: 0..0,
         }
     }
 
@@ -126,6 +129,7 @@ impl Assembler {
     #[inline]
     pub fn bind(&mut self, label: Label) {
         self.leave_replaceable_bytes();
+        self.keep_what_is_there();
         self.buffer.bind(label);
     }
 
@@ -137,6 +141,7 @@ impl Assembler {
     }
 
     pub fn replaceable_point(&mut self) -> Label {
+        self.keep_what_is_there();
         self.buffer.replaceable_end = self.buffer.len + super::patch::REPLACEMENT_JUMP_SIZE as u32;
         self.buffer.mark()
     }
@@ -234,6 +239,11 @@ impl Assembler {
 
     pub fn dmb(&mut self, barrier: Barrier) {
         self.emit(0xd503_30bf | (barrier as u32) << 8);
+    }
+
+    /// The label of words of 32 bits after the code, each the distance from it to a target.
+    pub fn jump_table(&mut self, targets: &[Label]) -> Label {
+        self.buffer.jump_table(targets)
     }
 
     pub fn adr(&mut self, dst: Gpr, target: Label) {

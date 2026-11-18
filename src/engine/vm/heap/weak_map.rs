@@ -58,7 +58,7 @@ impl<K: PlainKey, T: CellKind> WeakValueMap<K, T> {
         // SAFETY: only the address is looked at.
         let is_live = |address| survivors.contains(unsafe { Gc::<T>::from_address(address) });
         let (mut map, added) = (self.map.borrow_mut(), self.added_since_collection.take());
-        if survivors.scope() == Scope::Full {
+        if survivors.scope() == Scope::Full || added.len() * 4 > map.len() {
             map.retain(|_, &mut address| is_live(address));
             if map.len() * 8 < map.capacity() {
                 map.shrink_to_fit();

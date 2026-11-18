@@ -202,4 +202,3 @@ fn ffi_invocation_run(_: &mut FfiInvocation) {}
 
 #[export]
 unsafe fn ffi_invocation_destroy(_: *mut FfiInvocation) {}
-}

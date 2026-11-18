@@ -7,16 +7,18 @@ use bun_engine_vm::call::native_not_a_constructor;
 use bun_engine_vm::{
     Attributes, CellType, Class, CustomGetter, CustomGetterSetter, CustomSetter, Cx, DontEnumMode,
     Gc, GetterSetter, GlobalObject, IndexingMode, IntegrityLevel, InternalFieldTuple,
-    InternalMethod, Intrinsic, JsArray, JsFinalObject, JsFunction, JsObject, JsResult, JsString,
-    NativeFunction, Properties, PropertyDescriptor, PropertyEntry, PropertyNameList,
-    PropertyNameMode, PropertyOffset, PropertySlot, PutDirectIndexMode, PutPropertySlot, Shape,
-    ShapeSpec, StaticProperty, StaticTable, TypeFlags, Value, Vm, function_name,
+    InternalMethod, Intrinsic, JsArray, JsFinalObject, JsFunction, JsObject, JsObjectInit,
+    JsResult, JsString, NativeFunction, Properties, PropertyDescriptor, PropertyEntry,
+    PropertyNameList, PropertyNameMode, PropertyOffset, PropertySlot, PutDirectIndexMode,
+    PutPropertySlot, Shape, ShapeSpec, StaticProperty, StaticTable, Storage, TypeFlags, Value, Vm,
+    function_name,
 };
 
 use crate::abi::returned_by_value;
 
 returned_by_value! {
     PropertyOffset = PropertyOffset::INVALID,
+    Storage = Storage::NONE,
 }
 
 /// For the functions that C++ calls without a realm.
@@ -225,6 +227,11 @@ fn name_list_first(list: &PropertyNameList) -> *mut c_void {
 #[export]
 fn name_list_length(list: &PropertyNameList) -> usize {
     list.len()
+}
+
+#[export]
+fn storage_create(vm: &Vm, shape: Gc<Shape>) -> Storage {
+    JsObjectInit::new(vm, shape).storage()
 }
 
 #[export]

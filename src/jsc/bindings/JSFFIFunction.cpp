@@ -34,7 +34,6 @@
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/CallData.h>
-#include <JavaScriptCore/DOMJITAbstractHeap.h>
 
 extern "C" Zig::JSFFIFunction* Bun__CreateFFIFunctionWithData(Zig::GlobalObject* globalObject, const EncodedSlice* symbolName, unsigned argCount, Zig::FFIFunction functionPointer, void* data)
 {

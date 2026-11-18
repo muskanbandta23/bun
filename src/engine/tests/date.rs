@@ -140,6 +140,23 @@ fn constructor(cx: &mut Cx) {
     }
 }
 
+fn conversions(cx: &mut Cx) {
+    let (date, other) = (new_date(cx, &[5.into()]), new_date(cx, &[5.into()]));
+    let year = date.get(cx, names::getUTCFullYear).unwrap();
+    assert_eq!(date.to_number(cx).unwrap(), 5.0);
+    assert_eq!(
+        date.to_string_view(cx).unwrap().text().to_string(),
+        invoke(cx, date, names::toString, &[])
+    );
+    let other = other.as_object().unwrap();
+    other.set(cx, names::valueOf, year, true).unwrap();
+    assert_eq!(other.as_value().to_number(cx).unwrap(), 1970.0);
+    assert_eq!(date.to_number(cx).unwrap(), 5.0);
+    let prototype = cx.date_prototype();
+    prototype.set(cx, names::valueOf, year, true).unwrap();
+    assert_eq!(date.to_number(cx).unwrap(), 1970.0);
+}
+
 fn change_of_zone(cx: &mut Cx) {
     let old = new_date(cx, &[0.into()]);
     assert_eq!(invoke(cx, old, names::getHours, &[]), "19");
@@ -167,6 +184,7 @@ fn dates() {
         getters_and_strings(cx);
         setters(cx);
         constructor(cx);
+        conversions(cx);
         change_of_zone(cx);
     });
 }

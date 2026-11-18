@@ -346,7 +346,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::largeHeapSize() = 8 * 1024 * 1024;
             // Node.js defaults Error.stackTraceLimit to 10.
             JSC::Options::defaultErrorStackTraceLimit() = DEFAULT_ERROR_STACK_TRACE_LIMIT;
-            JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getBytecodeCacheVersion());
+            JSC::setBytecodeCacheVersion(getBytecodeCacheVersion());
 
 #ifdef BUN_DEBUG
             JSC::Options::showPrivateScriptsInStackTraces() = true;
@@ -776,7 +776,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     oldGlobal->onResolvePlugins.clear();
     // If JSC's CodeCache holds fewer entries than a file loads modules, each file evicts what the next one needs.
     // Capped because an entry keeps 20 to 100 KB of unlinked and Baseline code alive.
-    size_t loadedModules = oldGlobal->moduleLoader()->moduleMap().size() + oldGlobal->requireMap()->size();
+    size_t loadedModules = oldGlobal->moduleLoader()->moduleCount() + oldGlobal->requireMap()->size();
     if (size_t entries = std::min<size_t>(2 * loadedModules, 16384); entries > vm.codeCache()->workingSetMaxEntries())
         vm.codeCache()->setWorkingSetMaxEntries(entries);
     // Drop the finished file's module registry and require.cache now rather than whenever the
@@ -857,7 +857,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) BunString Bun__evict
         auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());
         if (!entry->record())
             fetching.append(key.string());
-        else if (cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::EvaluatingAsync && cyclic->hasTLA() && !cyclic->pendingAsyncDependencies().value_or(0)) {
+        else if (cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::EvaluatingAsync && cyclic->hasTLA() && !cyclic->pendingAsyncDependencies()) {
             int64_t order = loader->asyncEvaluationOrderForKey(key);
             size_t index = awaiting.size();
             while (index && awaiting[index - 1].first > order)
@@ -1414,7 +1414,6 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, const JSC::Gl
     , m_bunVM(Bun__getVM())
     , m_constructors(makeUnique<WebCore::DOMConstructors>())
     , m_world(static_cast<JSVMClientData*>(vm.clientData)->normalWorld())
-    , m_builtinInternalFunctions(makeUnique<WebCore::JSBuiltinInternalFunctions>(vm))
     , globalEventScope(Bun::GlobalEventScope::create())
     , m_scriptExecutionContext(adoptRef(*new WebCore::ScriptExecutionContext(&vm, this)))
 {
@@ -1427,7 +1426,6 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
     , m_bunVM(Bun__getVM())
     , m_constructors(makeUnique<WebCore::DOMConstructors>())
     , m_world(static_cast<JSVMClientData*>(vm.clientData)->normalWorld())
-    , m_builtinInternalFunctions(makeUnique<WebCore::JSBuiltinInternalFunctions>(vm))
     , globalEventScope(Bun::GlobalEventScope::create())
     , m_scriptExecutionContext(adoptRef(*new WebCore::ScriptExecutionContext(&vm, this, contextId)))
 {
@@ -2326,7 +2324,7 @@ JSC_DEFINE_CUSTOM_GETTER(moduleNamespacePrototypeGetESModuleMarker, (JSGlobalObj
     if (thisValue.isCell() && globalObject->vm().hasCompiledCode() && JSC::AOT::isModuleNamespace(thisValue.asCell()))
         return JSC::JSValue::encode(JSC::AOT::hasESModuleMarker(thisValue.asCell()) ? jsBoolean(true) : jsUndefined());
     JSModuleNamespaceObject* moduleNamespaceObject = dynamicDowncast<JSModuleNamespaceObject>(thisValue);
-    if (!moduleNamespaceObject || moduleNamespaceObject->m_hasESModuleMarker != WTF::TriState::True) {
+    if (!moduleNamespaceObject || !moduleNamespaceObject->hasESModuleMarker()) {
         return JSC::JSValue::encode(jsUndefined());
     }
 
@@ -2345,10 +2343,7 @@ JSC_DEFINE_CUSTOM_SETTER(moduleNamespacePrototypeSetESModuleMarker, (JSGlobalObj
     if (!moduleNamespaceObject) {
         return false;
     }
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue value = JSValue::decode(encodedValue);
-    WTF::TriState triState = value.toBoolean(globalObject) ? WTF::TriState::True : WTF::TriState::False;
-    moduleNamespaceObject->m_hasESModuleMarker = triState;
+    moduleNamespaceObject->setHasESModuleMarker(JSValue::decode(encodedValue).toBoolean(globalObject));
     return true;
 }
 
@@ -3217,6 +3212,7 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleStderr, (JSGlobalObject * globalObject, Encod
 BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getRequireESMBuiltin, commonJSRequireESMCodeGenerator, PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly)
 BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getLoadEsmIntoCjsBuiltin, commonJSLoadEsmIntoCjsCodeGenerator, PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly)
 BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getInternalRequireBuiltin, commonJSInternalRequireCodeGenerator, PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly)
+BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getCreateFIFOBuiltin, fifoCreateFIFOCodeGenerator, PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly)
 #undef BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -3407,8 +3403,6 @@ private:
 void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    m_builtinInternalFunctions->initialize(*this);
-
     auto clientData = WebCore::clientData(vm);
     auto& builtinNames = WebCore::builtinNames(vm);
 
@@ -3462,7 +3456,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     // TODO: most/all of these private properties can be made as static globals.
     // i've noticed doing it as is will work somewhat but getDirect() wont be able to find them
 
-    putDirectBuiltinFunction(vm, this, builtinNames.createFIFOPrivateName(), fifoCreateFIFOCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    putDirectCustomAccessor(vm, builtinNames.createFIFOPrivateName(), JSC::CustomGetterSetter::create(vm, getCreateFIFOBuiltin, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
     // These three are CommonJS-only and never reached on an ESM startup path; install
     // lazy getters so their source isn't parsed during global object construction.
     // (See getRequireESMBuiltin / getLoadEsmIntoCjsBuiltin / getInternalRequireBuiltin above.)
@@ -3735,7 +3729,7 @@ template<class Visitor, class T> static void visitGlobalObjectMember(Visitor& vi
 
 template<class Visitor, class T> static void visitGlobalObjectMember(Visitor& visitor, std::unique_ptr<T>& ptr)
 {
-    // The two unique_ptr members (m_builtinInternalFunctions, m_constructors) are
+    // The unique_ptr member (m_constructors) is
     // populated in the constructor initializer list, so in steady state this is
     // never null. The guard exists because the concurrent marker can visit a
     // Zig::GlobalObject picked up via conservative stack scan while its own
@@ -4422,213 +4416,12 @@ static void releaseModuleInfo(Zig::GlobalObject* globalObject, JSSourceCode* jsS
     }
 }
 
-extern "C" uint32_t Bun__standalonePrelinkedModuleIndex(const Latin1Character*, size_t);
-extern "C" const Latin1Character* Bun__standalonePrelinkedModuleName(uint32_t moduleIndex, size_t* outLength);
-
-// The VM's PrelinkedModuleGraph when the executable has one and `key` is one of its modules; sets `moduleIndex`.
-static PrelinkedModuleGraph* prelinkedGraphFor(Zig::GlobalObject* globalObject, const String& key, uint32_t& moduleIndex)
-{
-    if (!key.is8Bit())
-        return nullptr;
-    PrelinkedModuleGraph* graph = WebCore::clientData(globalObject->vm())->prelinkedModuleGraph(globalObject->vm());
-    if (!graph)
-        return nullptr;
-    moduleIndex = Bun__standalonePrelinkedModuleIndex(key.span8().data(), key.length());
-    return moduleIndex < graph->moduleCount() ? graph : nullptr;
-}
-
-// The registry key of graph module `moduleIndex`: the key the bundle's importers spell (already an atom of the shared
-// string table), unless the embedded file's canonical name differs (separator form on Windows), in which case that.
-static Identifier prelinkedModuleKey(VM& vm, PrelinkedModuleGraph& graph, uint32_t moduleIndex)
-{
-    Identifier key = graph.identifier(graph.module(moduleIndex).keySid);
-    size_t length = 0;
-    const Latin1Character* canonical = Bun__standalonePrelinkedModuleName(moduleIndex, &length);
-    RELEASE_ASSERT(canonical, moduleIndex);
-    std::span<const Latin1Character> name { canonical, length };
-    if (equal(StringView(key.string()), name)) [[likely]]
-        return key;
-    return Identifier::fromString(vm, String(name));
-}
-
-// For the by-name registration path (collectStandaloneClosure): the record of an embedded ES module the loader can
-// build without parsing, from its serialized module_info or, for a module of the pre-resolved graph, with its entries
-// copied out of the graph (that path wires [[LoadedModules]] by specifier, not by index). Null for anything else
-// (CommonJS wrappers, JSON, ... take JSC's normal path).
+// The record of an embedded ES module the loader can build without parsing, from its serialized module_info. Null for
+// anything else (CommonJS wrappers, JSON, ... take the normal path).
 static JSModuleRecord* createEmbeddedModuleRecord(Zig::GlobalObject* globalObject, JSModuleLoader* loader, const Identifier& key, JSSourceCode* source)
 {
-    VM& vm = globalObject->vm();
-    if (auto* provider = transpiledModuleProvider(source))
-        return zig__ModuleInfoDeserialized__toJSModuleRecord(globalObject, vm, loader, key, source->sourceCode(), provider->m_moduleInfo.get());
-    uint32_t moduleIndex = PrelinkedModuleGraph::noModule;
-    PrelinkedModuleGraph* graph = prelinkedGraphFor(globalObject, key.string(), moduleIndex);
-    if (!graph || source->sourceCode().provider()->sourceType() != JSC::SourceProviderSourceType::BunTranspiledModule)
-        return nullptr;
-    JSModuleRecord* record = JSModuleRecord::createPrelinked(globalObject, vm, globalObject->moduleRecordStructure(), loader, key, source->sourceCode(), *graph, moduleIndex);
-    if (record->isPrelinked())
-        record->convertPrelinkedToEager();
-    return record;
-}
-
-static bool isLoadedForPrelinking(AbstractModuleRecord* record)
-{
-    auto* cyclic = dynamicDowncast<CyclicModuleRecord>(record);
-    return !cyclic || cyclic->status() != CyclicModuleRecord::Status::New;
-}
-
-// Options::usePrelinkedModuleInfo(): `root` is a freshly created, registered prelinked record. Create and register (as
-// fetched) every graph module statically reachable from it that the registry does not have yet, by module index -- no
-// resolve, no registry lookup per edge -- and wire each record's requested modules by index. Builtins the bundle imports
-// are made synchronously and wired the same way. When that covers every edge of the new subgraph, the records are what
-// a finished LoadRequestedModules leaves (Status::Unlinked, entries loaded), so JSC's graph walk over them is O(1);
-// otherwise they stay New and JSC's walk fetches just the edges left unwired (a typed import, an external file, a module
-// some other load has in flight).
-static void registerPrelinkedSubgraph(Zig::GlobalObject* globalObject, JSModuleLoader* loader, PrelinkedModuleGraph& graph, JSModuleRecord* root, ModuleRegistryEntry* rootEntry)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    ASSERT(Options::usePrelinkedModuleInfo() && root->isPrelinked() && root->prelinkedGraph() == &graph);
-
-    Vector<AbstractModuleRecord*, 64> created { root };
-    Vector<ModuleRegistryEntry*, 64> createdEntries { rootEntry }; // null for a root the caller's pipeline registers
-    BitVector createdIndices;
-    createdIndices.ensureSize(graph.moduleCount());
-    createdIndices.quickSet(root->prelinkedIndex());
-    Vector<AbstractModuleRecord*, 16> builtinRecords; // by builtin alias index: the loaded record, once looked up (all are registered, hence GC-reachable)
-    bool complete = true;
-
-    for (size_t n = 0; n < created.size(); ++n) {
-        AbstractModuleRecord* record = created[n];
-        auto requests = graph.requests(graph.module(record->prelinkedIndex()));
-        for (unsigned i = 0; i < requests.size(); ++i) {
-            if (record->prelinkedRequestedModule(i))
-                continue;
-            const auto& request = requests[i];
-            AbstractModuleRecord* target = nullptr;
-            if (request.moduleIndex != PrelinkedModuleGraph::noModule) {
-                target = loader->prelinkedRecord(request.moduleIndex);
-                if (target) {
-                    if (!createdIndices.quickGet(request.moduleIndex) && !isLoadedForPrelinking(target))
-                        complete = false; // registered by an earlier, incomplete batch JSC is still loading
-                } else {
-                    Identifier key = prelinkedModuleKey(vm, graph, request.moduleIndex);
-                    // Typed probe: graph modules and builtins are registered as JavaScript (here); a same-key entry of
-                    // another type (`with { type: "text" }`) is a different module and gets a JavaScript sibling.
-                    if (auto* entry = loader->getRegisteredMayBeNull(key, ScriptFetchParameters::Type::JavaScript)) {
-                        // Registered some other way (before the graph was set up, or re-imported after a registry delete).
-                        if (!entry->record() || !isLoadedForPrelinking(entry->record())) {
-                            complete = false;
-                            continue;
-                        }
-                        target = entry->record();
-                    } else {
-                        JSSourceCode* source = fetchSourceSync(globalObject, loader, key);
-                        RETURN_IF_EXCEPTION(scope, void());
-                        if (!source || source->sourceCode().provider()->sourceType() != JSC::SourceProviderSourceType::BunTranspiledModule) [[unlikely]] {
-                            complete = false;
-                            continue;
-                        }
-                        JSModuleRecord* dependency = JSModuleRecord::createPrelinked(globalObject, vm, globalObject->moduleRecordStructure(), loader, key, source->sourceCode(), graph, request.moduleIndex);
-                        entry = loader->ensureRegistered(globalObject, key, ScriptFetchParameters::Type::JavaScript);
-                        RETURN_IF_EXCEPTION(scope, void());
-                        entry->provideModule(vm, dependency);
-                        loader->setPrelinkedRecord(vm, request.moduleIndex, dependency);
-                        created.append(dependency);
-                        createdEntries.append(entry);
-                        createdIndices.quickSet(request.moduleIndex);
-                        target = dependency;
-                    }
-                }
-            } else if (request.fetchKind() == PrelinkedModuleGraph::FetchKind::None || request.fetchKind() == PrelinkedModuleGraph::FetchKind::JavaScript) {
-                // Outside the graph: one of Bun's builtin modules (made synchronously here), or something JSC has to load.
-                const String& specifier = record->requestedModules()[i].m_specifier.string();
-                int alias = specifier.is8Bit() ? ModuleLoader__builtinAliasIndex(specifier.span8().data(), specifier.length()) : -1;
-                if (alias < 0) {
-                    complete = false;
-                    continue;
-                }
-                if (static_cast<unsigned>(alias) < builtinRecords.size() && builtinRecords[alias]) {
-                    record->setImportedModule(globalObject, record->requestedModules()[i], builtinRecords[alias]);
-                    RETURN_IF_EXCEPTION(scope, void());
-                    continue;
-                }
-                Identifier key = Identifier::fromString(vm, Bun::builtinModuleKeys[alias]);
-                if (auto* entry = loader->getRegisteredMayBeNull(key, ScriptFetchParameters::Type::JavaScript)) {
-                    if (!entry->record() || !isLoadedForPrelinking(entry->record())) {
-                        complete = false;
-                        continue;
-                    }
-                    target = entry->record();
-                } else {
-                    JSSourceCode* source = fetchSourceSync(globalObject, loader, key);
-                    RETURN_IF_EXCEPTION(scope, void());
-                    if (!source || source->sourceCode().provider()->sourceType() != JSC::SourceProviderSourceType::Synthetic) {
-                        complete = false;
-                        continue;
-                    }
-                    JSPromise* made = loader->makeModule(globalObject, key, source);
-                    RETURN_IF_EXCEPTION(scope, void());
-                    auto* builtin = made && made->status() == JSPromise::Status::Fulfilled ? dynamicDowncast<AbstractModuleRecord>(made->result()) : nullptr;
-                    if (!builtin) {
-                        complete = false;
-                        continue;
-                    }
-                    entry = loader->ensureRegistered(globalObject, key, ScriptFetchParameters::Type::JavaScript);
-                    RETURN_IF_EXCEPTION(scope, void());
-                    entry->provideModule(vm, builtin);
-                    entry->markLoaded(); // a synthetic record requests nothing
-                    target = builtin;
-                }
-                while (builtinRecords.size() <= static_cast<unsigned>(alias))
-                    builtinRecords.append(nullptr);
-                builtinRecords[alias] = target;
-            } else {
-                complete = false; // a typed import: JSC's pipeline makes that record
-                continue;
-            }
-            // A graph module in the loader's index table is found by index; anything else goes through [[LoadedModules]].
-            if (request.moduleIndex == PrelinkedModuleGraph::noModule || loader->prelinkedRecord(request.moduleIndex) != target) {
-                record->setImportedModule(globalObject, record->requestedModules()[i], target);
-                RETURN_IF_EXCEPTION(scope, void());
-            }
-        }
-    }
-
-    if (!complete)
-        return;
-    for (AbstractModuleRecord* record : created)
-        uncheckedDowncast<CyclicModuleRecord>(record)->setStatus(CyclicModuleRecord::Status::Unlinked);
-    for (ModuleRegistryEntry* entry : createdEntries) {
-        if (entry)
-            entry->markLoaded();
-    }
-}
-
-// makeModule for a graph module JSC fetched through its own pipeline (a static edge from a module outside the graph):
-// the record is prelinked all the same, and its subgraph registered by index.
-extern "C" JSModuleRecord* Bun__createPrelinkedModuleRecordForPipeline(Zig::GlobalObject* globalObject, JSModuleLoader* loader, const Identifier& key, const SourceCode& sourceCode)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    uint32_t moduleIndex = PrelinkedModuleGraph::noModule;
-    PrelinkedModuleGraph* graph = prelinkedGraphFor(globalObject, key.string(), moduleIndex);
-    if (!graph)
-        return nullptr;
-    JSModuleRecord* record = JSModuleRecord::createPrelinked(globalObject, vm, globalObject->moduleRecordStructure(), loader, key, sourceCode, *graph, moduleIndex);
-    if (!record->isPrelinked())
-        return record; // Options::usePrelinkedModuleInfo() is off: an ordinary record
-    if (loader->prelinkedModuleGraph() && loader->prelinkedModuleGraph() != graph)
-        return record;
-    loader->setPrelinkedModuleGraph(*graph);
-    if (AbstractModuleRecord* existing = loader->prelinkedRecord(moduleIndex); existing && existing != record) {
-        // The same key registered twice (a registry delete + re-import): index resolution into it is off from here on.
-        loader->forgetPrelinkedRecord(moduleIndex);
-        return record;
-    }
-    loader->setPrelinkedRecord(vm, moduleIndex, record);
-    registerPrelinkedSubgraph(globalObject, loader, *graph, record, nullptr);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    return record;
+    auto* provider = transpiledModuleProvider(source);
+    return provider ? zig__ModuleInfoDeserialized__toJSModuleRecord(globalObject, globalObject->vm(), loader, key, source->sourceCode(), provider->m_moduleInfo.get()) : nullptr;
 }
 
 namespace {
@@ -4749,8 +4542,7 @@ static void registerStandaloneClosure(Zig::GlobalObject* globalObject, JSModuleL
         for (size_t i = 0; i < requests.size(); ++i) {
             AbstractModuleRecord* target = closure.records.get(m.resolvedRequests[i].impl());
             RELEASE_ASSERT(target);
-            m.record->setImportedModule(globalObject, requests[i], target);
-            RETURN_IF_EXCEPTION(scope, void());
+            m.record->setImportedModule(requests[i].key(), target);
         }
     }
     for (auto& m : closure.modules)
@@ -4779,25 +4571,6 @@ JSC::JSPromise* StandaloneGlobalObject::moduleLoaderFetch(JSGlobalObject* jsGlob
     RETURN_IF_EXCEPTION(scope, rejectedInternalPromise(globalObject, scope.exception()->value()));
     if (!rootSource)
         RELEASE_AND_RETURN(scope, GlobalObject::moduleLoaderFetch(jsGlobalObject, loader, key, referrer, WTF::move(parameters), WTF::move(fetcher)));
-
-    uint32_t rootIndex = PrelinkedModuleGraph::noModule;
-    if (PrelinkedModuleGraph* graph = Options::usePrelinkedModuleInfo() ? prelinkedGraphFor(globalObject, keyString, rootIndex) : nullptr) {
-        if (!loader->prelinkedModuleGraph() || loader->prelinkedModuleGraph() == graph) {
-            loader->setPrelinkedModuleGraph(*graph);
-            // When HostLoadImportedModule already created the root's entry it drives fetch -> makeModule itself once this
-            // hook returns; makeModule (Bun__analyzeTranspiledModule) then builds the root prelinked and registers its subgraph.
-            if (!loader->getRegisteredMayBeNull(rootKey, ScriptFetchParameters::Type::JavaScript) && !loader->prelinkedRecord(rootIndex) && rootSource->sourceCode().provider()->sourceType() == JSC::SourceProviderSourceType::BunTranspiledModule) {
-                JSModuleRecord* rootRecord = JSModuleRecord::createPrelinked(globalObject, vm, globalObject->moduleRecordStructure(), loader, rootKey, rootSource->sourceCode(), *graph, rootIndex);
-                auto* rootEntry = loader->ensureRegistered(globalObject, rootKey, ScriptFetchParameters::Type::JavaScript);
-                RETURN_IF_EXCEPTION(scope, rejectedInternalPromise(globalObject, scope.exception()->value()));
-                rootEntry->provideModule(vm, rootRecord);
-                loader->setPrelinkedRecord(vm, rootIndex, rootRecord);
-                registerPrelinkedSubgraph(globalObject, loader, *graph, rootRecord, rootEntry);
-                RETURN_IF_EXCEPTION(scope, rejectedInternalPromise(globalObject, scope.exception()->value()));
-            }
-            RELEASE_AND_RETURN(scope, resolvedInternalPromise(globalObject, rootSource));
-        }
-    }
 
     MarkedArgumentBuffer keepAlive;
     keepAlive.append(rootSource);
@@ -4909,28 +4682,9 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     RETURN_IF_EXCEPTION(scope, result);
 
     if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(key))) {
-        // For a module with top-level `await`, JSC compiles the body as a
-        // generator and the first call into evaluate() yields the awaited
-        // value — NOT the module's final completion value. If we captured
-        // that yielded value here, `bun -p '(await 1) + 1'` would print `1`
-        // instead of `2`. The resume path (asyncModuleExecutionResume in
-        // WebKit) calls module->evaluate() directly and bypasses this hook,
-        // so we can't rely on a later call to overwrite the captured value.
-        //
-        // Instead, when the module yielded, capture the async capability's
-        // promise. Its resolution value is the module's final completion
-        // value; the --print loop in run_command.rs already unwraps promises
-        // via asAnyPromise + Bun__onResolveEntryPointResult.
-        JSC::JSValue valueToStore = result;
-        if (auto* moduleRecord = dynamicDowncast<JSC::AbstractModuleRecord>(moduleRecordValue)) {
-            JSC::JSValue state = moduleRecord->internalField(JSC::AbstractModuleRecord::Field::State).get();
-            bool moduleYielded = state.isNumber() && state.asNumber() != static_cast<int32_t>(JSC::JSGenerator::State::Executing);
-            if (moduleYielded) {
-                if (auto* capability = moduleRecord->asyncCapability())
-                    valueToStore = capability;
-            }
-        }
-        Bun__VM__setEntryPointEvalResultESM(globalObject->bunVM(), JSValue::encode(valueToStore));
+        // For a module with top-level `await` this is a promise for the completion value, which the --print loop in
+        // run_command.rs unwraps via asAnyPromise + Bun__onResolveEntryPointResult.
+        Bun__VM__setEntryPointEvalResultESM(globalObject->bunVM(), JSValue::encode(result));
     }
 
     return result;

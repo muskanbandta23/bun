@@ -104,10 +104,9 @@ extern "C" bool Bun__FFI__closeFunctions(Zig::GlobalObject* globalObject, JSC::E
     auto& vm = JSC::getVM(globalObject);
     bool isRunning = false;
     JSC::StackVisitor::visit(vm.topCallFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-        JSC::CalleeBits callee = visitor->callee();
-        if (!callee.isCell() || !callee.asCell())
+        JSC::JSValue calleeValue = visitor->callee();
+        if (!calleeValue)
             return WTF::IterationStatus::Continue;
-        JSC::JSValue calleeValue = callee.asCell();
         for (unsigned i = 0; i < length; ++i) {
             if (functions->getIndexQuickly(i) == calleeValue) {
                 isRunning = true;

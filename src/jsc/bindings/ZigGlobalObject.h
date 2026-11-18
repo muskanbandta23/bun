@@ -28,7 +28,6 @@ class DOMWrapperWorld;
 class GlobalEventScope;
 class EventTarget;
 class Performance;
-class JSBuiltinInternalFunctions;
 } // namespace WebCore
 
 namespace Bun {
@@ -466,7 +465,6 @@ public:
     V(public, JSC::LazyClassStructure, m_JSStatFSBigIntClassStructure)                                       \
     V(public, JSC::LazyClassStructure, m_JSDirentClassStructure)                                             \
                                                                                                              \
-    V(private, std::unique_ptr<WebCore::JSBuiltinInternalFunctions>, m_builtinInternalFunctions)             \
     V(private, std::unique_ptr<WebCore::DOMConstructors>, m_constructors)                                    \
     V(private, Bun::MarkdownTagStrings, m_markdownTagStrings)                                                \
                                                                                                              \
@@ -666,7 +664,6 @@ public:
 private:
     void addBuiltinGlobals(JSC::VM&);
 
-    friend class WebCore::JSBuiltinInternalFunctions;
     JSC::WriteBarrier<JSC::Structure> m_domStructures[static_cast<size_t>(WebCore::DOMStructureSlot::Count)];
     Lock m_gcLock;
     Ref<WebCore::DOMWrapperWorld> m_world;

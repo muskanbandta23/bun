@@ -379,6 +379,7 @@ fn shared_words(cx: &Cx, contents: &Arc<SharedArrayBufferContents>) -> Gc<TypedA
 }
 
 fn new_shared(byte_length: usize, max: usize) -> Arc<SharedArrayBufferContents> {
+    set_options(Options::default());
     let contents = ArrayBufferContents::try_resizable(byte_length, max).unwrap();
     Arc::clone(contents.into_shared().shared_contents().unwrap())
 }

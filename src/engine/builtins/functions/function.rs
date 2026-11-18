@@ -178,7 +178,7 @@ fn unrestricted_function(cx: &Cx, this: Value) -> JsResult<Gc<JsFunction>> {
 
 #[native_abi]
 fn get_arguments(cx: &mut Cx, this: Value, _: PropertyName<'_>) -> JsResult<Value> {
-    let function = unrestricted_function(cx, this)?.upcast();
+    let function = unrestricted_function(cx, this)?.as_object();
     let Some(frame) = StackVisitor::frames(cx).find(|it| it.callee == Some(function)) else {
         return Ok(Value::NULL);
     };
@@ -190,7 +190,7 @@ fn get_arguments(cx: &mut Cx, this: Value, _: PropertyName<'_>) -> JsResult<Valu
 
 #[native_abi]
 fn get_caller(cx: &mut Cx, this: Value, _: PropertyName<'_>) -> JsResult<Value> {
-    let function = unrestricted_function(cx, this)?.upcast();
+    let function = unrestricted_function(cx, this)?.as_object();
     let only_passes_on = |callee: &Gc<JsObject>| match callee.downcast::<JsFunction>() {
         Some(it) => {
             it.executable().visibility() != Visibility::Public || it.is::<JsRemoteFunction>()

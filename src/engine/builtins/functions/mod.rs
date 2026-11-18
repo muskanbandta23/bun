@@ -12,7 +12,7 @@ use bun_engine_vm::{
 use crate::prelude::*;
 use crate::watchpoints::Conditions;
 
-fn function_shape<T: CellKind>(cx: &Cx) -> Gc<Shape> {
+fn shape_of<T: CellKind>(cx: &Cx) -> Gc<Shape> {
     let prototype = cx.function_prototype().into();
     Shape::create(cx, Some(cx.global()), prototype, ShapeSpec::of::<T>())
 }
@@ -27,19 +27,19 @@ pub(crate) fn initialize_slot(cx: &Cx, slot: RealmSlot) -> bool {
         function_prototype_has_instance => function::initialize_has_instance(cx),
         throw_type_error_function | throw_type_error_accessor => function::initialize_thrower(cx),
         bound_function_shape => {
-            global.init_bound_function_shape(function_shape::<JsBoundFunction>(cx));
+            global.init_bound_function_shape(shape_of::<JsBoundFunction>(cx));
         }
         custom_getter_function_shape => {
-            global.init_custom_getter_function_shape(function_shape::<JsCustomGetterFunction>(cx));
+            global.init_custom_getter_function_shape(shape_of::<JsCustomGetterFunction>(cx));
         }
         custom_setter_function_shape => {
-            global.init_custom_setter_function_shape(function_shape::<JsCustomSetterFunction>(cx));
+            global.init_custom_setter_function_shape(shape_of::<JsCustomSetterFunction>(cx));
         }
         native_closure_shape => {
-            global.init_native_closure_shape(function_shape::<JsNativeClosure>(cx));
+            global.init_native_closure_shape(shape_of::<JsNativeClosure>(cx));
         }
         remote_function_shape => {
-            global.init_remote_function_shape(function_shape::<JsRemoteFunction>(cx));
+            global.init_remote_function_shape(shape_of::<JsRemoteFunction>(cx));
         }
         eval_function => eval::initialize(cx),
         _ => return error::initialize_slot(cx, slot),

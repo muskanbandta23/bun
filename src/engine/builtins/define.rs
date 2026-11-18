@@ -1,5 +1,13 @@
 //! Most prototypes, constructors and namespaces are nothing but a class with a static table.
 
+use crate::prelude::*;
+
+/// `get [Symbol.species]`
+#[native_abi]
+pub(crate) fn species_getter(_: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    Ok(frame.this_value())
+}
+
 /// `define_object!(Name, "ClassName", TABLE)` declares the type. `Name::create(cx, prototype)` makes the object.
 macro_rules! define_object {
     ($name:ident, $class_name:literal, $table:ident) => {

@@ -153,3 +153,10 @@ pub fn throw_getter_type_error(cx: &Cx, class: &Class, name: PropertyName<'_>) -
     error.set_native_getter_type_error();
     cx.throw(error.into())
 }
+
+#[cold]
+pub fn throw_called_without_new(cx: &Cx, constructor: &str) -> Thrown {
+    cx.throw_type_error(format_args!(
+        "calling {constructor} constructor without new is invalid"
+    ))
+}

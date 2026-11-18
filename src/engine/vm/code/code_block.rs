@@ -13,6 +13,7 @@ use bun_engine_macros::cell;
 use bun_engine_text::{Identifier, PropertyName, names};
 
 use super::metadata;
+use super::optimization::Optimization;
 use super::profile::ValueProfile;
 use crate::heap::Survivors;
 use crate::{
@@ -134,6 +135,7 @@ pub struct CodeBlock {
     /// One for each of the coverage blocks.
     coverage_counts: Box<[CoverageCount]>,
     pub(crate) caches: metadata::SideTables,
+    pub(super) optimization: Optimization,
 }
 
 impl CodeBlock {
@@ -187,6 +189,7 @@ impl CodeBlock {
             compiled: RefCell::new(None),
             coverage_counts,
             caches: metadata::SideTables::default(),
+            optimization: Optimization::default(),
         });
         if !code_block.coverage_counts.is_empty() {
             code_block.link_coverage_counts();
@@ -225,6 +228,7 @@ impl CodeBlock {
             compiled: RefCell::new(None),
             coverage_counts: Box::default(),
             caches: metadata::SideTables::default(),
+            optimization: Optimization::default(),
         })
     }
 

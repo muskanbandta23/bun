@@ -62,6 +62,7 @@ impl GlobalBinding {
 const CHUNK_SIZE: usize = 32;
 
 #[derive(Default)]
+#[cfg_attr(rootcheck, rootcheck::allow("a value gets in only through the owner"))]
 pub struct GlobalBindings {
     #[expect(clippy::vec_box, reason = "handed out by address")]
     chunks: RefCell<Vec<Box<[GlobalBinding; CHUNK_SIZE]>>>,

@@ -1,7 +1,7 @@
 //! Who is waiting for whom.
 
 use crate::{
-    Gc, InternalMicrotask, InternalReaction, JsAsyncFromSyncIterator, JsAsyncFunctionGenerator,
+    FastHashSet, Gc, InternalMicrotask, InternalReaction, JsAsyncFromSyncIterator, JsAsyncFunctionGenerator,
     JsFunction, JsPromise, PromiseCombinator, StackFrame, Value,
 };
 
@@ -38,26 +38,21 @@ impl JsPromise {
 impl JsAsyncFunctionGenerator {
     /// Those that wait for this one, one for the other, directly or through a combinator. It ends.
     pub fn awaiters(&self) -> impl Iterator<Item = Gc<JsAsyncFunctionGenerator>> + use<> {
-        let next = |generator: &Gc<JsAsyncFunctionGenerator>| generator.awaiter();
-        // Brent's way to notice a cycle.
-        let (mut marker, mut steps) = (Gc::from(self), 0_u32);
-        core::iter::successors(self.awaiter(), next).take_while(move |&generator| {
-            let is_new = generator != marker;
-            steps += 1;
-            if steps.is_power_of_two() {
-                marker = generator;
-            }
-            is_new
-        })
+        // Each awaits one promise, so only that of a combinator can close a cycle.
+        let mut combined = FastHashSet::default();
+        let first = self.awaiter(&mut combined);
+        core::iter::successors(first, move |generator| generator.awaiter(&mut combined))
     }
 
-    fn awaiter(&self) -> Option<Gc<JsAsyncFunctionGenerator>> {
+    fn awaiter(&self, combined: &mut FastHashSet<usize>) -> Option<Gc<JsAsyncFunctionGenerator>> {
         let reaction = self.promise().reactions().next()?;
         match reaction.task {
             InternalMicrotask::PromiseRaceElement
             | InternalMicrotask::PromiseAllElement
             | InternalMicrotask::PromiseAllSettledElement
-            | InternalMicrotask::PromiseAnyElement => reaction.dependent_promise()?.awaiter(),
+            | InternalMicrotask::PromiseAnyElement => (reaction.dependent_promise())
+                .filter(|promise| combined.insert(promise.address()))?
+                .awaiter(),
             _ => reaction.context.downcast(),
         }
     }
@@ -66,7 +61,7 @@ impl JsAsyncFunctionGenerator {
     pub fn stack_frame(&self) -> Option<StackFrame> {
         let function = self.callee().downcast::<JsFunction>()?;
         let executable = function.script_executable()?;
-        if executable.visibility() != bun_engine_bytecode::Visibility::Public {
+        if executable.is_private_builtin() {
             return None;
         }
         let code_block = executable.code_block(bun_engine_bytecode::Specialization::Call);

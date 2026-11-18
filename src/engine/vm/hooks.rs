@@ -24,6 +24,7 @@ pub struct Hooks {
     pub tier_up: fn(&Vm, &CodeBlock, &CallFrame, Option<u32>) -> usize,
     /// The last argument is the scope.
     pub debug: fn(&mut Cx, &CallFrame, DebugHook, crate::Value) -> crate::JsResult<()>,
+    pub debug_await: fn(&mut Cx, &CallFrame, DebugHook, Gc<crate::Coroutine>) -> JsResult<()>,
     /// Code that counts its blocks is being linked. Returns a count for each.
     pub cover: fn(&Vm, &ScriptExecutable, &Code) -> Box<[CoverageCount]>,
     /// Sets the eager slots but `global_this`.

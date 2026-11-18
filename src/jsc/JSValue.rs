@@ -476,7 +476,8 @@ impl JSValue {
     /// must see the original bit pattern (e.g. [`from_ptr_address`]).
     #[inline]
     pub fn js_double_number(n: f64) -> JSValue {
-        JSValue::from_raw((n.to_bits() as i64).wrapping_add(DOUBLE_ENCODE_OFFSET))
+        let bits = Self::purify_nan(n).to_bits();
+        JSValue::from_raw((bits as i64).wrapping_add(DOUBLE_ENCODE_OFFSET))
     }
     pub fn js_empty_string(global: &JSGlobalObject) -> JSValue {
         JSC__JSValue__jsEmptyString(global)

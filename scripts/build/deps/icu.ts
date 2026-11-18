@@ -184,8 +184,10 @@ export const icu: Dependency = {
         },
 
   patches: [
+    "patches/icu/calendar-known-region.patch",
     "patches/icu/data-item-hook.patch",
     "patches/icu/decnum-resize-status.patch",
+    "patches/icu/likely-subtags-lazy.patch",
     "patches/icu/round-to-five-carry.patch",
   ],
 

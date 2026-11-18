@@ -357,6 +357,14 @@ impl JsArrayBufferView {
         (!self.is_auto_length()).then_some(view.declared_length)
     }
 
+    /// What the length will never exceed.
+    pub fn max_length(&self) -> usize {
+        self.declared_length().unwrap_or_else(|| {
+            let max = self.existing_buffer().and_then(|it| it.max_byte_length());
+            max.unwrap_or(0) >> self.size_shift()
+        })
+    }
+
     /// IsValidIntegerIndex
     #[inline(always)]
     pub fn is_valid_index(&self, index: usize) -> bool {

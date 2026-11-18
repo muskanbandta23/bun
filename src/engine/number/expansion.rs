@@ -1,52 +1,44 @@
 //! Every decimal digit of a binary number.
 
-use crate::digit_words::{ZEROS, eight_digits, split_sixteen_digits, store};
+use core::hint::select_unpredictable;
+
 use crate::powers_of_ten::floor_log10_of_power_of_two;
 
 pub(crate) const BLOCK_DIGITS: usize = 19;
 const BLOCK: u64 = 10_000_000_000_000_000_000;
-/// 2^1025 has 309 digits.
-const MAX_WHOLE_BLOCKS: usize = 17;
-/// At most 768 binary places are left once a value is scaled past the zeros after its decimal point.
-const MAX_FRACTION_LIMBS: usize = 12;
+/// 2^1025 has 309 digits. A value that is scaled past the zeros after its point has at most 768 binary places.
+const WORDS: usize = 17;
 
-/// Yields blocks of 19 characters, the most significant first, until only zeros are left. The first is not all zeros.
+/// Yields blocks of 19 digits, the most significant first, until only zeros are left. The first is not zero.
 pub(crate) struct Expansion {
-    /// In base 10^19, the least significant first.
-    whole: [u64; MAX_WHOLE_BLOCKS],
+    /// At the start the integer part in base 10^19, at the end the fraction in base 2^64, the least significant first.
+    words: [u64; WORDS],
     whole_count: usize,
-    /// In base 2^64, the least significant first, with the point after the last limb of the array.
-    fraction: [u64; MAX_FRACTION_LIMBS],
-    /// The limbs below this one are zero.
     fraction_start: usize,
-    /// How many digits of the blocks precede the decimal point.
     point: i32,
 }
 
 impl Expansion {
     /// `significand * 2^exponent`, from 2^-1075 to below 2^1025, with a significand below 2^54.
+    #[inline]
     pub(crate) fn new(significand: u64, exponent: i32) -> Expansion {
         let mut expansion = Expansion {
-            whole: [0; _],
+            words: [0; WORDS],
             whole_count: 0,
-            fraction: [0; _],
-            fraction_start: MAX_FRACTION_LIMBS,
+            fraction_start: WORDS,
             point: 0,
         };
+        let places = exponent.unsigned_abs();
         if exponent >= 0 {
-            expansion.set_integer(significand, exponent as usize);
+            expansion.set_integer(significand, places as usize);
+        } else if let whole @ 1.. = significand.unbounded_shr(places) {
+            expansion.words[0] = whole;
+            expansion.whole_count = 1;
+            expansion.point = BLOCK_DIGITS as i32;
+            expansion.fraction_start = WORDS - 1;
+            expansion.words[WORDS - 1] = significand << (64 - places);
         } else {
-            let places = exponent.unsigned_abs();
-            let whole = significand.checked_shr(places).unwrap_or(0);
-            if whole == 0 {
-                expansion.set_fraction(significand, places);
-            } else {
-                expansion.whole[0] = whole;
-                expansion.whole_count = 1;
-                expansion.point = BLOCK_DIGITS as i32;
-                expansion.fraction_start -= 1;
-                expansion.fraction[expansion.fraction_start] = significand << (64 - places);
-            }
+            expansion.set_fraction(significand, places);
         }
         expansion
     }
@@ -66,7 +58,7 @@ impl Expansion {
             for limb in limbs[..count].iter_mut().rev() {
                 (*limb, remainder) = divide_by_block(remainder, *limb);
             }
-            self.whole[self.whole_count] = remainder;
+            self.words[self.whole_count] = remainder;
             self.whole_count += 1;
         }
         self.point = (self.whole_count * BLOCK_DIGITS) as i32;
@@ -84,7 +76,7 @@ impl Expansion {
         let limbs = places.div_ceil(64);
         self.fraction_start -= limbs as usize;
         let shifted = u128::from(significand) << (limbs * 64 - places);
-        let fraction = &mut self.fraction[self.fraction_start..];
+        let fraction = &mut self.words[self.fraction_start..];
         fraction[0] = shifted as u64;
         let mut count = 1;
         let mut carry = (shifted >> 64) as u64;
@@ -103,39 +95,25 @@ impl Expansion {
         }
     }
 
-    /// Takes the first block.
-    pub(crate) fn head(&mut self) -> Head {
-        let block = self.next().unwrap_or([b'0'; BLOCK_DIGITS]);
-        let zeros = block.iter().take_while(|&&digit| digit == b'0').count();
-        Head {
-            block,
-            zeros,
-            point: self.point - zeros as i32,
-        }
+    /// How many digits of the blocks precede the decimal point.
+    pub(crate) fn point(&self) -> i32 {
+        self.point
     }
 }
 
-pub(crate) struct Head {
-    pub(crate) block: [u8; BLOCK_DIGITS],
-    /// How many zeros the block starts with.
-    pub(crate) zeros: usize,
-    /// How many digits from the first nonzero one precede the decimal point.
-    pub(crate) point: i32,
-}
-
 impl Iterator for Expansion {
-    type Item = [u8; BLOCK_DIGITS];
+    type Item = u64;
 
-    fn next(&mut self) -> Option<[u8; BLOCK_DIGITS]> {
+    #[inline]
+    fn next(&mut self) -> Option<u64> {
         if self.whole_count > 0 {
             self.whole_count -= 1;
-            return Some(block_characters(self.whole[self.whole_count]));
+            return Some(self.words[self.whole_count]);
         }
-        while *self.fraction.get(self.fraction_start)? == 0 {
+        while *self.words.get(self.fraction_start)? == 0 {
             self.fraction_start += 1;
         }
-        let block = multiply(&mut self.fraction[self.fraction_start..], BLOCK);
-        Some(block_characters(block))
+        Some(multiply(&mut self.words[self.fraction_start..], BLOCK))
     }
 }
 
@@ -156,26 +134,14 @@ fn divide_by_block(high: u64, low: u64) -> (u64, u64) {
     const RECIPROCAL: u64 = (u128::MAX / BLOCK as u128 - (1 << 64)) as u64;
     let estimate =
         u128::from(RECIPROCAL) * u128::from(high) + (u128::from(high) << 64 | u128::from(low));
-    let mut quotient = ((estimate >> 64) as u64).wrapping_add(1);
-    let mut remainder = low.wrapping_sub(quotient.wrapping_mul(BLOCK));
-    if remainder > estimate as u64 {
-        quotient = quotient.wrapping_sub(1);
-        remainder = remainder.wrapping_add(BLOCK);
-    }
+    let quotient = ((estimate >> 64) as u64).wrapping_add(1);
+    let remainder = low.wrapping_sub(quotient.wrapping_mul(BLOCK));
+    let is_too_large = remainder > estimate as u64;
+    let mut quotient = quotient.wrapping_sub(u64::from(is_too_large));
+    let mut remainder = remainder.wrapping_add(select_unpredictable(is_too_large, BLOCK, 0));
     if remainder >= BLOCK {
         quotient += 1;
         remainder -= BLOCK;
     }
     (quotient, remainder)
-}
-
-fn block_characters(block: u64) -> [u8; BLOCK_DIGITS] {
-    const SIXTEEN_DIGITS: u64 = 10_000_000_000_000_000;
-    let mut characters = [0; BLOCK_DIGITS];
-    let (middle, lower) = split_sixteen_digits(block % SIXTEEN_DIGITS);
-    let upper = eight_digits((block / SIXTEEN_DIGITS) as u32);
-    store(&mut characters, 0, upper >> 40 | ZEROS);
-    store(&mut characters, 3, eight_digits(middle));
-    store(&mut characters, 11, eight_digits(lower));
-    characters
 }

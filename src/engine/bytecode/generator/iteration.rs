@@ -8,7 +8,7 @@ use smallvec::SmallVec;
 use super::control::{Control, Exit};
 use super::{Dest, Generator, Suspension};
 use crate::assembler::Site;
-use crate::code::HandlerKind;
+use crate::code::{CoverageKind, HandlerKind};
 use crate::instruction::Opcode;
 use crate::operand::{
     CloseMode, DebugHook, Operand, Register, ResumeMode, ScopeIndex, StaticError, SuspendKind,
@@ -180,7 +180,8 @@ impl Generator<'_> {
 
     fn cover_target(&mut self, it: &Enumeration) {
         if self.covers {
-            self.emit_cover(it.target_start as i32, it.divot as i32, true);
+            let (start, end) = (it.target_start as i32, it.divot as i32);
+            self.emit_cover(start, end, CoverageKind::LoopHeader);
         }
     }
 
@@ -491,7 +492,9 @@ impl Generator<'_> {
 
     #[inline(never)]
     pub(super) fn await_value(&mut self, dst: Register, value: Operand, position: u32) {
-        self.position_at(position);
+        if self.debugs {
+            self.position_at(position);
+        }
         self.suspend(value, SuspendKind::Await);
         self.asm().resume_after_await(dst);
     }

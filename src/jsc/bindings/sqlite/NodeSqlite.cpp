@@ -49,7 +49,6 @@ static constexpr bool lazy_sqlite3_has_session = true;
 #include "BunString.h"
 #include "JSDOMBinding.h"
 #include "JSDOMGlobalObjectInlines.h"
-#include "DOMIsoSubspaces.h"
 #include "DOMClientIsoSubspaces.h"
 #include "BunClientData.h"
 

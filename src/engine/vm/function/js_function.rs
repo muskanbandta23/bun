@@ -10,8 +10,8 @@ use crate::{
     Attributes, CallData, CellType, CustomGetterSetter, Cx, DeletePropertySlot, DontEnumMode,
     Executable, Field, FunctionExecutable, FunctionRareData, Gc, GlobalObject, InternalFunction,
     Intrinsic, JsBoundFunction, JsCell, JsObject, JsObjectInit, JsRemoteFunction, JsResult,
-    JsString, JsSymbol, NativeExecutable, NativeFunction, PropertyDescriptor, PropertyNameList, PropertySlot,
-    PutPropertySlot, ScriptExecutable, Shape, ShapeFlags, TypeFlags, Value, Vm,
+    JsString, JsSymbol, NativeExecutable, NativeFunction, PropertyDescriptor, PropertyNameList,
+    PropertySlot, PutPropertySlot, ScriptExecutable, Shape, ShapeFlags, TypeFlags, Value, Vm,
     scope::realm_of_scope,
 };
 
@@ -651,7 +651,7 @@ pub fn display_name(object: &JsObject) -> StringRef {
 impl JsObject {
     /// Defines `prototype` on a constructor of the library, and `constructor` on the prototype unless that is in its
     /// static table: a script may have got there first.
-    pub(super) fn link_with_prototype(&self, vm: &Vm, prototype: &JsObject) {
+    pub fn link_with_prototype(&self, vm: &Vm, prototype: &JsObject) {
         self.put_direct(vm, names::prototype, prototype.into(), Attributes::CONSTANT);
         let shape = prototype.shape();
         let table = shape.class().static_table();

@@ -1,8 +1,8 @@
 use bun_engine_macros::cell;
 
 use crate::{
-    Class, CustomGetter, CustomSetter, Cx, Gc, JsCell, JsObject, JsResult, TypeFlags, Value, Vm,
-    errors,
+    Class, CustomGetter, CustomSetter, Cx, Gc, GlobalObject, JsCell, JsObject, JsResult, TypeFlags,
+    Value, Vm, errors,
 };
 
 /// What the slot of an accessor property has.
@@ -11,6 +11,11 @@ pub struct GetterSetter {
     base: JsCell,
     getter: Option<Gc<JsObject>>,
     setter: Option<Gc<JsObject>>,
+}
+
+#[inline(always)]
+fn as_seen_by_scripts(receiver: Value) -> Value {
+    (receiver.downcast::<GlobalObject>()).map_or(receiver, |global| global.global_this().into())
 }
 
 impl GetterSetter {
@@ -41,7 +46,7 @@ impl GetterSetter {
 
     pub fn call_getter(&self, cx: &mut Cx, this: Value) -> JsResult<Value> {
         match self.getter {
-            Some(getter) => cx.call(getter.into(), this, &[]),
+            Some(getter) => cx.call(getter.into(), as_seen_by_scripts(this), &[]),
             None => Ok(Value::UNDEFINED),
         }
     }
@@ -54,7 +59,10 @@ impl GetterSetter {
         should_throw: bool,
     ) -> JsResult<bool> {
         match self.setter {
-            Some(setter) => cx.call(setter.into(), this, &[value]).map(|_| true),
+            Some(setter) => {
+                cx.call(setter.into(), as_seen_by_scripts(this), &[value])?;
+                Ok(true)
+            }
             None => cx.reject(should_throw, errors::READ_ONLY_PROPERTY_WRITE),
         }
     }

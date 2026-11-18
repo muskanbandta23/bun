@@ -32,10 +32,10 @@ pub(crate) const fn split_sixteen_digits(number: u64) -> (u32, u32) {
     ((number / 100_000_000) as u32, (number % 100_000_000) as u32)
 }
 
-/// A unit above 0xff becomes 0xff.
+/// A unit above 0xff becomes zero or 0xff.
 #[inline(always)]
 pub(crate) fn load<T: CodeUnit>(units: &[T; 8]) -> u64 {
-    u64::from_le_bytes(units.map(|unit| unit.to_u16().min(0xff) as u8))
+    u64::from_le_bytes(units.map(|unit| (unit.to_u16() as i16).clamp(0, 0xff) as u8))
 }
 
 /// The top bit of the first byte that is not a digit is the lowest bit set.

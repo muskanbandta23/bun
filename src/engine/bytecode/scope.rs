@@ -138,20 +138,30 @@ impl StaticScope {
         parent: Option<Rc<StaticScope>>,
         names: Box<[Identifier]>,
     ) -> Rc<StaticScope> {
-        Self::of_slots(kind, SlotKind::Variable, parent, names)
+        let (slot, undefined_slots) = ((SlotKind::Variable, SlotFlags::empty()), names.len());
+        Self::without_source(kind, parent, names, slot, undefined_slots as u32)
     }
 
-    /// Its one slot has the `this` of the code inside.
+    /// For a module that has no code. The slots start empty.
+    pub fn of_exports(names: Box<[Identifier]>) -> Rc<StaticScope> {
+        let flags = SlotFlags::IMMUTABLE | SlotFlags::EXPORTED;
+        let slot = (SlotKind::Variable, flags);
+        Self::without_source(ScopeKind::Module, None, names, slot, 0)
+    }
+
+    /// Its one slot, which starts empty, has the `this` of the code inside.
     pub fn for_this(parent: Option<Rc<StaticScope>>) -> Rc<StaticScope> {
-        let name = Identifier::new(known_text(Name::THIS_VALUE));
-        Self::of_slots(ScopeKind::Block, SlotKind::Internal, parent, [name].into())
+        let names = [Identifier::new(known_text(Name::THIS_VALUE))];
+        let slot = (SlotKind::Internal, SlotFlags::empty());
+        Self::without_source(ScopeKind::Block, parent, names.into(), slot, 0)
     }
 
-    fn of_slots(
+    fn without_source(
         kind: ScopeKind,
-        slot_kind: SlotKind,
         parent: Option<Rc<StaticScope>>,
         names: Box<[Identifier]>,
+        (slot_kind, flags): (SlotKind, SlotFlags),
+        undefined_slots: u32,
     ) -> Rc<StaticScope> {
         let slots: Box<[Slot]> = (0..)
             .zip(&names)
@@ -162,7 +172,7 @@ impl StaticScope {
                 index,
                 detail: 0,
                 kind: slot_kind,
-                flags: SlotFlags::empty(),
+                flags,
             })
             .collect();
         Rc::new(StaticScope {
@@ -174,7 +184,7 @@ impl StaticScope {
             body_start: None,
             entered_at: None,
             slot_count: slots.len() as u32,
-            undefined_slots: slots.len() as u32,
+            undefined_slots,
             mapped_parameters: 0,
             table: Self::table_for(&slots),
             slots,

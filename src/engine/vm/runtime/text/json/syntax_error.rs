@@ -107,9 +107,10 @@ fn describe<T: CodeUnit>(units: &[T], expected: Expected) -> StringBuilder {
             quote("Unexpected identifier \"", &units[start..shown], after);
             return message;
         }
-        (Expected::Value | Expected::Element, Token::Punctuator(b'[' | b'{') | Token::Primitive) => {
-            "Could not parse value expression"
-        }
+        (
+            Expected::Value | Expected::Element,
+            Token::Punctuator(b'[' | b'{') | Token::Primitive,
+        ) => "Could not parse value expression",
         (Expected::Value | Expected::Element, Token::Punctuator(_)) => {
             quote("Unexpected token '", &units[start..end], "'");
             return message;

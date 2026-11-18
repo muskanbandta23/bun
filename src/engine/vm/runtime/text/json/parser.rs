@@ -311,7 +311,10 @@ impl<'a, E: Encoding, R: Recorder> Parser<'a, E, R> {
     fn string(&mut self, rest: &[E::Unit]) -> Result<(Value, usize), Failure> {
         let cx = self.cx;
         let (string, length) = self.with_characters(rest, StringRef::try_narrowed)?;
-        Ok((JsString::new(cx, cx.or_out_of_memory(string)?).into(), length))
+        Ok((
+            JsString::new(cx, cx.or_out_of_memory(string)?).into(),
+            length,
+        ))
     }
 
     /// Lends the characters of the literal that `rest` starts with. Returns its length too.

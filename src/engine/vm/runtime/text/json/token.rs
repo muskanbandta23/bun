@@ -59,9 +59,8 @@ fn lex_first<T: CodeUnit>(units: &[T]) -> (usize, Result<Token, Malformed>) {
             }
         },
         b'a'..=b'z' | b'A'..=b'Z' | b'$' | b'_' => lex_word(units),
-        punctuator @ (b'[' | b']' | b'{' | b'}' | b'(' | b')' | b':' | b',' | b'.' | b'=' | b';') => {
-            (1, Ok(Token::Punctuator(punctuator)))
-        }
+        punctuator @ (b'[' | b']' | b'{' | b'}' | b'(' | b')' | b':' | b',' | b'.' | b'='
+        | b';') => (1, Ok(Token::Punctuator(punctuator))),
         _ => (0, Err(Malformed::UnknownCharacter)),
     }
 }

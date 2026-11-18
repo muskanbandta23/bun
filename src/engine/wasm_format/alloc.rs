@@ -16,14 +16,20 @@ pub(crate) trait TryPush<T> {
 }
 
 impl<T> TryPush<T> for Vec<T> {
-    #[inline]
+    #[inline(always)]
     fn try_push(&mut self, item: T) -> Result<(), OutOfMemory> {
         if self.len() == self.capacity() {
-            self.try_reserve(1)?;
+            grow(self)?;
         }
         self.push(item);
         Ok(())
     }
+}
+
+#[cold]
+#[inline(never)]
+fn grow<T>(vec: &mut Vec<T>) -> Result<(), OutOfMemory> {
+    Ok(vec.try_reserve(1)?)
 }
 
 pub(crate) fn try_boxed<T>(

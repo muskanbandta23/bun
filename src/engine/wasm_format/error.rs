@@ -27,7 +27,7 @@ struct Details {
     missing: Option<Missing>,
 }
 
-/// What the validator leaves to the decoder, which knows where it is.
+/// What the validator leaves to the decoder, which knows where it is, and the other way round.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Missing {
     OffsetAfterInstruction,
@@ -37,6 +37,10 @@ pub(crate) enum Missing {
     OpcodeName,
     /// In front of the reason.
     SecondOpcodeNumber,
+    /// For an error in the immediates.
+    InstructionStart,
+    /// Whether the operands of the instruction at this offset have an error that comes first.
+    OperandCheck(usize),
 }
 
 impl Error {

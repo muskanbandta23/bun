@@ -2,7 +2,7 @@
 
 use bun_engine_asm::Bank;
 
-use super::code::{Code, LOCAL, NEVER, early};
+use super::code::{Code, LOCAL, NEVER};
 use crate::TooComplex;
 use crate::analysis::{Cfg, Frequencies, Loop};
 use crate::bitset;
@@ -15,6 +15,8 @@ pub(crate) type Distance = u32;
 
 pub(crate) const BEYOND_LOOP: Distance = 1 << 16;
 pub(crate) const BEYOND_RARE_EDGE: Distance = 1 << 22;
+/// All registers are lost on the way.
+pub(crate) const BEYOND_BARRIER: Distance = 1 << 24;
 pub(crate) const FARTHEST: Distance = 1 << 28;
 
 #[derive(Default)]
@@ -335,13 +337,21 @@ impl Liveness {
                 let rank = self
                     .rank(cfg.position(foreign.block) as usize, global as usize)
                     .unwrap();
-                self.first_warm[rank] =
-                    (foreign.first_warm - early(code.blocks[foreign.block].first as usize)) / 2;
+                let block = &code.blocks[foreign.block];
+                let distance = (foreign.first_warm - block.entry()) / 2;
+                let barrier = block.barrier[code.vregs[foreign.vreg].class.bank() as usize];
+                let is_beyond = barrier != 0 && distance >= barrier;
+                self.first_warm[rank] = distance + if is_beyond { BEYOND_BARRIER } else { 0 };
             }
         }
         for _ in 0..if cfg.loops().len() == 0 { 1 } else { 2 } {
             for (position, &block) in cfg.order().iter().enumerate().rev() {
-                let length = code.blocks[block].end - code.blocks[block].first;
+                let data = &code.blocks[block];
+                let lengths = data.barrier.map(|barrier| {
+                    data.end - data.first + if barrier == 0 { 0 } else { BEYOND_BARRIER }
+                });
+                let length_for =
+                    |global| lengths[usize::from(!bitset::contains(&self.in_gpr_bank, global))];
                 let range = self.range(position);
                 let first = self.ranks[range.start] as usize;
                 let mut distances = core::mem::take(&mut self.row);
@@ -349,7 +359,7 @@ impl Liveness {
                 distances.extend(bitset::iter(&self.live_in[range]).enumerate().map(
                     |(index, global)| {
                         u64::from(match self.first_warm[first + index] {
-                            FARTHEST => (length
+                            FARTHEST => (length_for(global)
                                 + self.distance_after(function, cfg, block, global as u32))
                             .min(FARTHEST),
                             own => own,

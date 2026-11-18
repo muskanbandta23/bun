@@ -168,6 +168,28 @@ impl JsFunction {
         }
     }
 
+    /// For a constructor of the library that is written in JavaScript and extends this type.
+    /// `finish_builtin_constructor` follows.
+    pub fn builtin_init(
+        cx: &Cx,
+        shape: Gc<Shape>,
+        executable: Gc<FunctionExecutable>,
+    ) -> JsFunctionInit {
+        assert!(executable.info().has_no_outer_scope());
+        JsFunctionInit {
+            base: JsObjectInit::new(cx, shape),
+            scope: cx.global().cell(),
+            target: executable.upcast(),
+        }
+    }
+
+    pub fn finish_builtin_constructor(&self, vm: &Vm, prototype: &JsObject) {
+        self.executable()
+            .cast::<FunctionExecutable>()
+            .did_create(vm, self.into());
+        self.link_with_prototype(vm, prototype);
+    }
+
     pub fn shape_for(vm: &Vm, global: &GlobalObject, executable: &FunctionExecutable) -> Gc<Shape> {
         let info = executable.info();
         match (info.is_async(), info.is_generator()) {
@@ -552,6 +574,18 @@ pub fn display_name(object: &JsObject) -> StringRef {
 }
 
 impl JsObject {
+    /// Defines `prototype` on a constructor of the library, and `constructor` on the prototype unless that is in its
+    /// static table: a script may have got there first.
+    pub(super) fn link_with_prototype(&self, vm: &Vm, prototype: &JsObject) {
+        self.put_direct(vm, names::prototype, prototype.into(), Attributes::CONSTANT);
+        let shape = prototype.shape();
+        let table = shape.class().static_table();
+        if table.is_none_or(|table| table.find(names::constructor).is_none()) {
+            let this = self.as_value();
+            prototype.put_direct(vm, names::constructor, this, Attributes::DONT_ENUM);
+        }
+    }
+
     /// Defines a method.
     pub fn put_direct_native_function(
         &self,

@@ -22,7 +22,7 @@ pub const RESULT_GPRS: &[Gpr] = &abi::RETURN_GPRS;
 pub const RESULT_FPRS: &[Fpr] = abi::ARGUMENT_FPRS.split_at(2).0;
 
 /// Offsets from the frame pointer. The caller makes room for the two words above the return address, and the
-/// function fills them in.
+/// function fills them in. That goes for calls of operations too.
 pub mod frame {
     pub const INSTANCE: i32 = 16;
     pub const CALLEE: i32 = 24;
@@ -39,6 +39,9 @@ pub const fn callee_word(func: FuncIndex) -> u32 {
     func.0 << 2 | CALLEE_TAG
 }
 
+/// In the frames of stubs, in place of a [`callee_word`].
+pub const STUB_CALLEE: u32 = i32::MAX as u32;
+
 /// References are JavaScript values. An `i31ref` is an int32 whose sign is extended from 31 bits, and below `any`
 /// there is no other int32.
 pub const NULL: i32 = 0x02;
@@ -47,6 +50,8 @@ pub const INT32_TAG: u64 = 0xfffe_0000_0000_0000;
 pub const PAGE_SIZE_LOG2: u8 = 16;
 /// What follows the 4 GiB of a guarded memory. An access with `offset + size` up to this needs no check.
 pub const GUARD_SIZE: u64 = 1 << 31;
+/// What precedes a guarded memory. An access faults there too.
+pub const LOW_GUARD_SIZE: u64 = 1 << 21;
 /// A function that calls nothing and has a frame up to this size does not check the stack.
 pub const UNCHECKED_FRAME_SIZE: u32 = 256;
 /// How far the stack pointer may go below an address that was checked.
@@ -254,22 +259,24 @@ pub struct HostLayout {
     /// One more than `struct_kind`.
     pub array_kind: u8,
     /// A byte of every cell. After a reference is stored in the cell, [`Operation::WriteBarrier`] is due if the byte
-    /// is not above `barrier_threshold`.
+    /// is not above the one at `barrier_threshold_address`.
     pub cell_state: i32,
-    pub barrier_threshold: u8,
+    /// While the byte there is not zero the collector may be reading objects. So a reference is stored at once, and
+    /// after the stores that initialize what it refers to. It becomes so only while a cell is allocated.
+    pub barrier_threshold_address: usize,
     /// The address of the `Rtt` of a struct or an array.
     pub object_rtt: i32,
     pub struct_fields: i32,
     /// 32 bits.
     pub array_length: i32,
     pub array_elements: i32,
-    /// The [`Callable`] in the object that a `funcref` is.
+    /// The [`Callable`] in the object that a `funcref` is. A word with [`Signature::stack_bytes`] follows.
     pub function_callable: i32,
     /// In the object that an `exnref` is, the word that identifies its tag.
     pub exception_tag: i32,
     /// See [`payload_offsets`].
     pub exception_payload: i32,
-    /// In the VM, the frame pointer of the code that last called the host, and after it the return address.
+    /// In the VM, the frame pointer of the stub that last called the host.
     pub vm_top_frame: i32,
     /// An access to null plus an offset below this faults. Zero if faults are not handled.
     pub null_guard_size: u32,

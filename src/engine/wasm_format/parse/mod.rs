@@ -95,12 +95,6 @@ enum State {
     FunctionBody { size: u32 },
 }
 
-enum Number {
-    Read(u32),
-    Incomplete,
-    Malformed,
-}
-
 /// Errors have a fixed order, however the bytes arrive and whenever the bodies are validated: those of the parser
 /// come first, then that of the first invalid function.
 pub struct Parser {
@@ -252,14 +246,16 @@ impl Parser {
         if self.open_batch.size() >= LEAST_BATCH_SIZE {
             self.close_batch()?;
         }
-        if self.closed_batches.is_empty() {
-            return Ok(());
-        }
-        if self.functions_read < self.function_count {
-            self.seal(self.open_batch.start)
+        let done = if self.functions_read < self.function_count {
+            self.open_batch.start
         } else {
-            self.seal(self.offset)
+            self.offset
+        };
+        // What is done does not move again when the buffer grows.
+        if !self.closed_batches.is_empty() || done - self.buffer_start >= FULL_BATCH_SIZE {
+            self.seal(done)?;
         }
+        Ok(())
     }
 
     #[inline]
@@ -294,21 +290,16 @@ impl Parser {
         next: impl FnOnce(&mut Self, u32, usize) -> Result<State, Error>,
     ) -> Result<Option<State>, Error> {
         let mut reader = Reader::new(self.unread(), 0);
-        let number = match reader.u32() {
-            Some(number) => Number::Read(number),
-            None if reader.bytes().len() < MAX_U32_SIZE => Number::Incomplete,
-            None => Number::Malformed,
+        let Some(number) = reader.u32() else {
+            return match reader.bytes().len() {
+                ..MAX_U32_SIZE => Ok(None),
+                _ => Err(self.missing()),
+            };
         };
         let end = self.offset + reader.position();
-        match number {
-            Number::Read(number) => {
-                let state = next(self, number, end)?;
-                self.offset = end;
-                Ok(Some(state))
-            }
-            Number::Incomplete => Ok(None),
-            Number::Malformed => Err(self.missing()),
-        }
+        let state = next(self, number, end)?;
+        self.offset = end;
+        Ok(Some(state))
     }
 
     /// The error for not getting what `state` names.

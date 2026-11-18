@@ -4,6 +4,7 @@ mod allocation_profile;
 mod argument_list;
 mod array_iterator;
 mod helpers;
+mod join;
 mod mode;
 mod new_array;
 mod protocol;
@@ -33,6 +34,8 @@ pub use spread::{spread, try_spread_directly};
 pub use string_iterator::JsStringIterator;
 
 #[derive(Default)]
-pub(crate) struct State {}
+pub(crate) struct State {
+    being_joined: join::InProgress,
+}
 
 impl crate::services::Service for State {}

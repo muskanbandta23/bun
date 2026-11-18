@@ -70,16 +70,19 @@ impl Text<'_> {
 
     /// `setFromHex`. What comes before an invalid pair is written, and the rest of `target` is as it was.
     pub fn decode_hex_into(self, target: &mut [u8]) -> Result<Progress, BinarySyntaxError> {
+        let mut result = Ok(0);
+        let written = Cursor::fill(target, |to| result = self.decode_hex_that_fits(to));
+        result.map(|read| Progress { read, written })
+    }
+
+    /// The same, for a caller that wants to know what is written before an error. Returns how many units it has read.
+    pub fn decode_hex_that_fits(self, to: &mut Cursor<'_, u8>) -> Result<usize, BinarySyntaxError> {
         if !self.len().is_multiple_of(2) {
             return Err(BinarySyntaxError::OddLengthForSetFromHex);
         }
-        let mut is_valid = false;
-        let written = Cursor::fill(target, |to| {
-            is_valid = with_text!(self, |units| decode(units, to));
-        });
-        let read = 2 * written;
-        is_valid
-            .then_some(Progress { read, written })
+        let room = to.remaining();
+        with_text!(self, |units| decode(units, to))
+            .then(|| 2 * (room - to.remaining()))
             .ok_or(BinarySyntaxError::NoDigitForSetFromHex)
     }
 }

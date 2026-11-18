@@ -90,7 +90,13 @@ impl StoreCache {
         self.clear_inline_case();
     }
 
-    fn ensure_cases(&self, vm: &Vm, owner: &CodeBlock) -> &AccessCases {
+    /// `inline_key` is the name that the inline case is for, where that varies.
+    pub(super) fn ensure_cases(
+        &self,
+        vm: &Vm,
+        owner: &CodeBlock,
+        inline_key: Option<PropertyName<'_>>,
+    ) -> &AccessCases {
         if let Some(lookup) = self.inline_lookup() {
             let mut case =
                 AccessCase::new(AccessKind::Transition, self.shape()).with_lookup(lookup);
@@ -98,32 +104,46 @@ impl StoreCache {
             self.clear_inline_case();
             if lookup.is_valid() {
                 let overflow = AccessKind::Generic;
-                self.cases_or_lookup.add(vm, owner, case, None, overflow);
+                (self.cases_or_lookup).add(vm, owner, case, inline_key, overflow);
             }
         }
         &self.cases_or_lookup
     }
 
-    fn add(&self, vm: &Vm, owner: &CodeBlock, case: AccessCase) {
+    /// Gives the case back if it has to go in the list.
+    pub(super) fn try_set_inline(
+        &self,
+        owner: &CodeBlock,
+        case: AccessCase,
+    ) -> Result<(), AccessCase> {
         if self.inline_lookup().is_some_and(|it| !it.is_valid()) {
             self.clear_inline_case();
         }
-        if self.shape().is_none() {
-            let is_only = self.cases_or_lookup.first().is_none();
-            let kind = case.kind();
-            if kind == AccessKind::Replace || (kind == AccessKind::Transition && is_only) {
-                self.shape.set(case.shape());
-                self.new_shape.set(case.new_shape);
-                self.byte_offset.set(case.byte_offset);
-                if kind == AccessKind::Transition {
-                    self.cases_or_lookup.set_bits(case.lookup);
-                    owner.caches.has_transitions.set(true);
-                }
-                return owner.write_barrier_for_cell();
-            }
+        let kind = case.kind();
+        let fits = match kind {
+            AccessKind::Replace | AccessKind::HasOwn => true,
+            AccessKind::Transition => self.cases_or_lookup.first().is_none(),
+            _ => false,
+        };
+        if !self.shape().is_none() || !fits {
+            return Err(case);
         }
-        let cases = self.ensure_cases(vm, owner);
-        cases.add(vm, owner, case, None, AccessKind::Megamorphic);
+        self.shape.set(case.shape());
+        self.new_shape.set(case.new_shape);
+        self.byte_offset.set(case.byte_offset);
+        if kind == AccessKind::Transition {
+            self.cases_or_lookup.set_bits(case.lookup);
+            owner.caches.has_transitions.set(true);
+        }
+        owner.write_barrier_for_cell();
+        Ok(())
+    }
+
+    fn add(&self, vm: &Vm, owner: &CodeBlock, case: AccessCase) {
+        if let Err(case) = self.try_set_inline(owner, case) {
+            let cases = self.ensure_cases(vm, owner, None);
+            cases.add(vm, owner, case, None, AccessKind::Megamorphic);
+        }
     }
 
     /// For when the inline case does not apply.
@@ -174,7 +194,7 @@ impl StoreCache {
         match plan(cx, object, old, name, slot, needs_setter_miss) {
             Ok(case) => self.add(cx, owner, case),
             Err(Plan::Fail) => {
-                self.ensure_cases(cx, owner)
+                self.ensure_cases(cx, owner, None)
                     .did_fail_to_cache(cx, owner, Key::Fixed)
             }
             Err(_) => {}
@@ -232,7 +252,7 @@ fn put_uncached(
     Ok(slot)
 }
 
-fn plan(
+pub(super) fn plan(
     cx: &Cx,
     object: Gc<JsObject>,
     old: Gc<Shape>,
@@ -376,7 +396,8 @@ fn try_cases(
     mode: StoreMode,
 ) -> Option<JsResult<()>> {
     if let Some(case) = cases.find(object.shape_id(), key) {
-        return execute(cx, case, object, name, value, mode);
+        let (StoreMode::Set { is_strict } | StoreMode::Define { is_strict }) = mode;
+        return execute(cx, case, object, name, value, is_strict);
     }
     match mode {
         StoreMode::Set { is_strict } if cases.is_megamorphic() => Some(
@@ -387,15 +408,14 @@ fn try_cases(
 }
 
 /// `None` if the case no longer holds. `object` has its shape.
-fn execute(
+pub(super) fn execute(
     cx: &mut Cx,
     case: &AccessCase,
     object: Gc<JsObject>,
     name: PropertyName<'_>,
     value: Value,
-    mode: StoreMode,
+    is_strict: bool,
 ) -> Option<JsResult<()>> {
-    let (StoreMode::Set { is_strict } | StoreMode::Define { is_strict }) = mode;
     // SAFETY: each has what its kind says.
     unsafe {
         match case.kind() {

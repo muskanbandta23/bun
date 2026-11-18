@@ -19,9 +19,9 @@ use crate::primitive::StringCaches;
 use crate::services::Service;
 use crate::{
     CallFrame, CellKind, CellType, Cx, ElementKind, EntryRecord, Exception, Executable,
-    FastHashMap, Gc, GcFree, GlobalObject, Hooks, IndexingMode,
-    JsBoundFunction, JsCell, JsFunction, JsSymbol, MicrotaskQueueRef, NativeExecutable, Shape,
-    ShapeSpec, SmallStrings, Traps, TypeFlags, Value, Visitor, call, options,
+    FastHashMap, Gc, GcFree, GlobalObject, Hooks, IndexingMode, JsBoundFunction, JsCell,
+    JsFunction, JsSymbol, MicrotaskQueueRef, NativeExecutable, Shape, ShapeSpec, SmallStrings,
+    Traps, TypeFlags, Value, Visitor, call, options,
 };
 
 /// A cell that the `Vm` keeps alive.
@@ -136,7 +136,10 @@ pub struct Embedder {
     pub reconcile_weak_references: Cell<Option<fn(&Vm, &Survivors)>>,
     /// After the last cell.
     pub destroy_members: Cell<Option<fn(&Vm)>>,
+    /// AgentCanSuspend is false.
+    pub must_not_block: Cell<bool>,
     pub errors: crate::ErrorHooks,
+    pub console: Cell<Option<&'static crate::ConsoleHooks>>,
     pub microtasks: crate::MicrotaskHooks,
 }
 
@@ -179,8 +182,6 @@ pub struct Vm {
     stack_bounds: StackBounds,
     lowest_stack_pointer: Cell<usize>,
     is_handling_error: Cell<bool>,
-    termination_deferral_depth: Cell<u32>,
-    did_defer_termination: Cell<bool>,
     debugger_count: Cell<u32>,
     seed: Cell<u64>,
     when_idle: RefCell<Vec<Box<dyn FnOnce(&Vm) + GcFree>>>,
@@ -190,7 +191,6 @@ pub struct Vm {
     shapes_by_class: RefCell<FastHashMap<usize, usize>>,
     extensions: RefCell<FastHashMap<TypeId, Rc<dyn Any>>>,
     default_microtask_queue: MicrotaskQueueRef,
-    divisor_cache: bun_engine_bigint::DivisorCache,
     pub(crate) string_caches: StringCaches,
     pub(crate) shape_cache: ShapeCache,
     pub(crate) symbols: WeakValueMap<usize, JsSymbol>,
@@ -238,8 +238,6 @@ impl VmRef {
             stack_bounds: StackBounds::current(),
             lowest_stack_pointer: Cell::new(stack_pointer()),
             is_handling_error: Cell::new(false),
-            termination_deferral_depth: Cell::new(0),
-            did_defer_termination: Cell::new(false),
             is_execution_forbidden: Cell::new(false),
             deletes_unconfigurable_properties: Cell::new(false),
             is_async_context_tracked: Cell::new(false),
@@ -254,7 +252,6 @@ impl VmRef {
             shapes_by_class: RefCell::default(),
             extensions: RefCell::default(),
             default_microtask_queue: MicrotaskQueueRef::unregistered(),
-            divisor_cache: Default::default(),
             string_caches: StringCaches::new(),
             shape_cache: ShapeCache::default(),
             symbols: WeakValueMap::default(),
@@ -307,12 +304,18 @@ impl Drop for VmRef {
     }
 }
 
-pub struct DeferTermination(NonNull<Vm>);
+pub struct SuspendException {
+    vm: NonNull<Vm>,
+    exception: Option<Gc<Exception>>,
+    last_exception: Option<Gc<Exception>>,
+}
 
-impl Drop for DeferTermination {
+impl Drop for SuspendException {
     fn drop(&mut self) {
         // SAFETY: made and dropped inside a call that has the `Vm`.
-        unsafe { self.0.as_ref() }.end_termination_deferral();
+        let vm = unsafe { self.vm.as_ref() };
+        vm.exception.set(self.exception);
+        vm.last_exception.set(self.last_exception);
     }
 }
 
@@ -359,6 +362,8 @@ impl Vm {
         );
         self.internal_function_executable
             .set(Some(self.allocate::<Executable>(init)));
+        self.termination_exception
+            .set(Some(Exception::create_termination(self)));
         self.services.initialize(self);
         self.heap.notify_is_safe_to_collect();
     }
@@ -481,11 +486,6 @@ impl Vm {
         })
     }
 
-    #[inline(always)]
-    pub fn divisor_cache(&self) -> &bun_engine_bigint::DivisorCache {
-        &self.divisor_cache
-    }
-
     pub fn default_microtask_queue(&self) -> &MicrotaskQueueRef {
         &self.default_microtask_queue
     }
@@ -522,12 +522,22 @@ impl Vm {
         exception
     }
 
+    /// While it is alive no exception is pending, and then the one that was is again.
+    pub fn suspend_exception(&self) -> SuspendException {
+        let (exception, last_exception) = (self.clear_exception(), self.last_exception());
+        self.clear_last_exception();
+        SuspendException {
+            vm: NonNull::from(self),
+            exception,
+            last_exception,
+        }
+    }
+
+    #[inline]
     pub fn termination_exception(&self) -> Gc<Exception> {
-        self.termination_exception.get().unwrap_or_else(|| {
-            let exception = Exception::create_termination(self);
-            self.termination_exception.set(Some(exception));
-            exception
-        })
+        self.termination_exception
+            .get()
+            .expect("set when the Vm is made")
     }
 
     #[inline]
@@ -538,40 +548,6 @@ impl Vm {
     #[inline]
     pub fn has_pending_termination_exception(&self) -> bool {
         self.has_exception() && self.exception.get() == self.termination_exception.get()
-    }
-
-    #[inline]
-    pub fn is_termination_requested(&self) -> bool {
-        self.traps.termination_flag().load(Ordering::Relaxed) && !self.is_termination_deferred()
-    }
-
-    pub fn defer_termination(&self) -> DeferTermination {
-        self.begin_termination_deferral();
-        DeferTermination(NonNull::from(self))
-    }
-
-    pub fn begin_termination_deferral(&self) {
-        let depth = self.termination_deferral_depth.get();
-        self.termination_deferral_depth.set(depth + 1);
-        if depth == 0 && self.has_pending_termination_exception() {
-            self.clear_exception();
-            self.did_defer_termination.set(true);
-        }
-    }
-
-    pub fn end_termination_deferral(&self) {
-        self.termination_deferral_depth.update(|depth| depth - 1);
-        if !self.is_termination_deferred() && self.did_defer_termination.take() {
-            self.traps.fire(crate::Trap::TERMINATION);
-        }
-    }
-
-    pub fn is_termination_deferred(&self) -> bool {
-        self.termination_deferral_depth.get() != 0
-    }
-
-    pub(crate) fn did_defer_termination(&self) {
-        self.did_defer_termination.set(true);
     }
 
     pub fn is_execution_forbidden(&self) -> &Cell<bool> {
@@ -664,6 +640,7 @@ impl Vm {
 
     pub(crate) fn did_leave(&self) {
         self.entry_global.set(None);
+        self.reset_termination_request();
         if !self.when_idle.borrow().is_empty() {
             for callback in self.when_idle.take() {
                 callback(self);

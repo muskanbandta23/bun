@@ -3,8 +3,8 @@
 use core::ops::Deref;
 
 use super::{
-    Join, LoopId, MAX_LENGTH, Op, Pairs, Place, Program, Room, Scope, ScopeId, ScopeKind, Slot,
-    Target, Width,
+    Join, LoopId, MAX_LENGTH, Op, Pairs, Place, Program, Room, Scan, Scope, ScopeId, ScopeKind,
+    Slot, Target, Width,
 };
 
 /// A program that can run without checks of its own.
@@ -189,6 +189,13 @@ impl<'a> Verifier<'a> {
         self.room_at_slot(state, place.slot)?.moved(place.delta)
     }
 
+    fn save(&self, state: &mut State, slot: Slot) -> Option<()> {
+        match self.enter(state, slot)? {
+            ScopeKind::Position(promised) => require(state.room.covers(promised)),
+            _ => None,
+        }
+    }
+
     fn check_pairs(&self, pairs: Pairs) -> Option<()> {
         require(pairs.first <= pairs.end && pairs.end <= self.program.pair_count)
     }
@@ -305,10 +312,25 @@ impl<'a> Verifier<'a> {
                 require(length <= MAX_LENGTH)?;
                 state.room.ahead = room.ahead.min(length);
             }
-            Op::Save { slot } => match self.enter(&mut state, slot)? {
-                ScopeKind::Position(promised) => require(room.covers(promised))?,
-                _ => return None,
-            },
+            Op::Scan { id, fail } => {
+                let scan = program.scans.get(id.index())?;
+                require(scan.need != 0 && scan.need <= MAX_LENGTH)?;
+                require(
+                    scan.others.len() <= Scan::MAX_PROBES
+                        && scan.rows.len() <= Scan::MAX_ROW_PROBES,
+                )?;
+                has_class(scan.first.class)?;
+                scan.others.iter().try_for_each(|it| has_class(it.class))?;
+                state.room.ahead = 0;
+                self.go(state, fail)?;
+                state.room.ahead = scan.need;
+                require(scan.offsets().all(|it| state.room.has(it.into(), 1)))?;
+            }
+            Op::Save { slot } => self.save(&mut state, slot)?,
+            Op::SaveStart { slot, fail } => {
+                self.go(state, fail)?;
+                self.save(&mut state, slot)?;
+            }
             Op::Load { from, .. } => state.room = self.room_at(state, from)?,
             Op::ComparePlace {
                 when,

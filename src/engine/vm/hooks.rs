@@ -4,8 +4,9 @@ use bun_engine_text::{Identifier, PropertyName};
 
 use crate::heap::{Scope, Survivors};
 use crate::{
-    BuiltinId, CallFrame, CodeBlock, CompileError, Cx, Gc, GlobalObject, Intrinsic, JsObject,
-    JsResult, PropertyCondition, RealmSlot, RealmWatchpoint, SourceProvider, Value, Visitor, Vm,
+    BuiltinId, CallFrame, CodeBlock, CompileError, Cx, Gc, GlobalObject, Intrinsic, JsCell,
+    JsObject, JsResult, PropertyCondition, RealmSlot, RealmWatchpoint, SourceProvider, Value,
+    Visitor, Vm, WasmFrame, WasmNames,
 };
 
 /// What this crate needs from those above it.
@@ -23,6 +24,7 @@ pub struct Hooks {
     pub tier_up: fn(&Vm, &CodeBlock, &CallFrame, Option<u32>) -> usize,
     /// The last argument is the scope.
     pub debug: fn(&mut Cx, &CallFrame, DebugHook, crate::Value) -> crate::JsResult<()>,
+    pub debug_await: fn(&mut Cx, &CallFrame, DebugHook, Gc<crate::Coroutine>) -> JsResult<()>,
     pub cover: fn(&Vm, &CodeBlock, CoverageBlockIndex, &crate::code::metadata::Word),
     /// Sets the eager slots but `global_this`.
     pub initialize_realm: fn(&Cx),
@@ -35,6 +37,11 @@ pub struct Hooks {
     /// `toLocaleString` of an instance of a class of `Temporal`, with the locales and the options.
     pub temporal_to_locale_string: fn(&mut Cx, Gc<JsObject>, Value, Value) -> JsResult<Value>,
     pub find_wasm_handler: fn(&Vm, &CallFrame) -> Option<(usize, u32)>,
+    /// With the address that the callee returns to, or zero if the frame has called an operation, and the number of
+    /// inlined functions that have been visited.
+    pub wasm_frame: fn(&Vm, &CallFrame, usize, u32) -> WasmFrame,
+    /// Of the function with that index. The cell may have just died.
+    pub wasm_names: fn(Gc<JsCell>, u32) -> WasmNames,
     pub debugger_did_parse: fn(&Cx, &SourceProvider, Option<&CompileError>),
     /// With a number that tells the task from all others.
     pub debugger_microtask_event: fn(&Vm, &GlobalObject, crate::MicrotaskEvent, u64),

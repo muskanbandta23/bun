@@ -101,14 +101,10 @@ fn normalize_utf16(units: &[u16], form: NormalizationForm) -> Result<Option<Stri
         NormalizationForm::Nfkc => (Form::Nfkc, 0xa0),
         NormalizationForm::Nfkd => (Form::Nfkd, 0xa0),
     };
-    let unaffected = count_below(units, first_affected);
-    if unaffected == units.len() {
+    let mut unchanged = normalized_prefix(units, form, first_affected)?;
+    if unchanged == units.len() {
         return Ok(None);
     }
-    // The last of them can combine with what follows.
-    let mut unchanged = unaffected.saturating_sub(1);
-    unchanged += (form.normalized_prefix(&units[unchanged..])).map_err(|_| Error::OutOfMemory)?;
-
     let mut out: Option<StringBuilder> = None;
     form.normalize_pieces(&units[unchanged..], |piece, normalized| match &mut out {
         Some(out) => out.push_utf16(normalized),
@@ -123,13 +119,29 @@ fn normalize_utf16(units: &[u16], form: NormalizationForm) -> Result<Option<Stri
     Ok(out.map(StringBuilder::finish).transpose()?)
 }
 
-/// How many units come before the first that is `limit` or more.
-fn count_below(units: &[u16], limit: u16) -> usize {
+/// Asks ICU only about the stretches that have a unit from `first_affected` on.
+fn normalized_prefix(units: &[u16], form: Form, first_affected: u16) -> Result<usize> {
     const CHUNK_LENGTH: usize = 16;
 
-    let (chunks, _) = units.as_chunks::<CHUNK_LENGTH>();
-    let is_below = |chunk: &&[u16; CHUNK_LENGTH]| chunk.iter().fold(0, |a, &b| b.max(a)) < limit;
-    let skipped = chunks.iter().take_while(is_below).count() * CHUNK_LENGTH;
-    let rest = units[skipped..].iter();
-    skipped + rest.take_while(|&&unit| unit < limit).count()
+    let run_end = |start: usize, is_affected: bool| {
+        let highest = |chunk: &[u16]| chunk.iter().fold(0, |highest, &unit| unit.max(highest));
+        let chunks = (units[start..].chunks(CHUNK_LENGTH))
+            .take_while(|chunk| (highest(chunk) >= first_affected) == is_affected);
+        start + chunks.map(<[u16]>::len).sum::<usize>()
+    };
+    let mut checked = 0;
+    loop {
+        let unaffected_end = run_end(checked, false);
+        if unaffected_end == units.len() {
+            return Ok(unaffected_end);
+        }
+        checked = run_end(unaffected_end, true);
+        // The last unaffected unit can combine with what follows.
+        let start = unaffected_end.saturating_sub(1);
+        let prefix = form.normalized_prefix(&units[start..checked]);
+        let normalized_end = start + prefix.map_err(|_| Error::OutOfMemory)?;
+        if normalized_end < checked {
+            return Ok(normalized_end);
+        }
+    }
 }

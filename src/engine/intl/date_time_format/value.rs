@@ -1,7 +1,7 @@
 use bun_engine_date::time_clip;
 use bun_engine_temporal::{
     CalendarId, Instant, IsoDate, PlainDate, PlainDateTime, PlainMonthDay, PlainTime,
-    PlainYearMonth,
+    PlainYearMonth, TemporalValue,
 };
 
 use crate::{Error, Result};
@@ -63,6 +63,20 @@ fn noon(date: IsoDate) -> f64 {
 }
 
 impl DateTimeValue {
+    /// IsTemporalObject, which does not hold for a duration.
+    pub(crate) fn from_temporal(value: &TemporalValue) -> Option<DateTimeValue> {
+        Some(match *value {
+            TemporalValue::Duration(_) => return None,
+            TemporalValue::Instant(it) => DateTimeValue::Instant(it),
+            TemporalValue::PlainDate(it) => DateTimeValue::PlainDate(it),
+            TemporalValue::PlainDateTime(it) => DateTimeValue::PlainDateTime(it),
+            TemporalValue::PlainMonthDay(it) => DateTimeValue::PlainMonthDay(it),
+            TemporalValue::PlainTime(it) => DateTimeValue::PlainTime(it),
+            TemporalValue::PlainYearMonth(it) => DateTimeValue::PlainYearMonth(it),
+            TemporalValue::ZonedDateTime(_) => DateTimeValue::ZonedDateTime,
+        })
+    }
+
     pub(super) fn moment(self) -> Result<Moment> {
         let unless_iso = |calendar| Some(calendar).filter(|&it| it != CalendarId::Iso8601);
         let (temporal_type, time, calendar) = match self {

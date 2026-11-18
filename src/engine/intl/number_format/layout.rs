@@ -5,7 +5,10 @@ use bun_icu::Buffer;
 use smallvec::SmallVec;
 
 use super::digits::Digits;
-use super::{CurrencyDisplay, Notation, Options, RoundingType, StyleOptions, TrailingZeroDisplay};
+use super::{
+    CurrencyDisplay, Notation, Options, RoundingPriority, RoundingType, StyleOptions,
+    TrailingZeroDisplay,
+};
 use crate::{PartKind, Parts, Result};
 
 #[derive(Default)]
@@ -98,6 +101,7 @@ impl Layout {
         if has_plurals
             || options.notation != Notation::Standard
             || options.digits.rounding_increment.get() != 1
+            || options.digits.rounding_type.priority() != RoundingPriority::Auto
         {
             return None;
         }

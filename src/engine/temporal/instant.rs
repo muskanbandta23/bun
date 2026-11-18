@@ -19,8 +19,9 @@ const SECONDS_PER_DAY: i64 = NANOSECONDS_PER_DAY / NANOSECONDS_PER_SECOND;
 const DAY_LIMIT: i64 = 100_000_000;
 const LIMIT: i128 = DAY_LIMIT as i128 * NANOSECONDS_PER_DAY as i128;
 
-/// An exact time: nanoseconds since the epoch, at most 10^8 days from it.
+/// An exact time: nanoseconds since the epoch, at most 10^8 days from it. It is aligned as a word is, like a cell.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+#[repr(C, packed(8))]
 pub struct Instant(i128);
 
 impl Instant {
@@ -30,6 +31,11 @@ impl Instant {
         (-LIMIT..=LIMIT)
             .contains(&epoch_nanoseconds)
             .then_some(Instant(epoch_nanoseconds))
+    }
+
+    #[inline]
+    pub(crate) fn clamped(epoch_nanoseconds: i128) -> Instant {
+        Instant(epoch_nanoseconds.clamp(-LIMIT, LIMIT))
     }
 
     #[inline]
@@ -57,11 +63,6 @@ impl Instant {
         ))
     }
 
-    /// `Date.prototype.toTemporalInstant`
-    pub fn from_time_value(time_value: f64) -> Result<Instant> {
-        Instant::from_clipped_milliseconds(time_value).ok_or(Error::InvalidTimeValue)
-    }
-
     /// The current time, when the embedder has set it in milliseconds.
     pub fn from_overridden_clock(milliseconds: f64) -> Result<Instant, InputError<'static>> {
         Instant::from_clipped_milliseconds(milliseconds).ok_or(InputError::Number(
@@ -72,11 +73,10 @@ impl Instant {
 
     /// SystemUTCEpochNanoseconds
     pub fn now() -> Instant {
-        let nanoseconds = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Instant::clamped(match SystemTime::now().duration_since(UNIX_EPOCH) {
             Ok(since) => since.as_nanos() as i128,
             Err(before) => -(before.duration().as_nanos() as i128),
-        };
-        Instant(nanoseconds.clamp(-LIMIT, LIMIT))
+        })
     }
 
     pub fn parse(text: Text<'_>) -> Result<Instant, InputError<'_>> {

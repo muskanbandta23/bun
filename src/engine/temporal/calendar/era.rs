@@ -1,4 +1,4 @@
-use bun_engine_text::Text;
+use bun_engine_text::{PropertyName, Text, names};
 
 use crate::{CalendarId, IsoDate};
 
@@ -41,31 +41,31 @@ const JAPANESE_ERAS: [(Era, IsoDate); 5] = [
 ];
 
 impl Era {
-    pub const fn code(self) -> &'static str {
+    pub const fn code(self) -> PropertyName<'static> {
         match self {
-            Era::Aa => "aa",
-            Era::Ah => "ah",
-            Era::Am => "am",
-            Era::Ap => "ap",
-            Era::Bce => "bce",
-            Era::Be => "be",
-            Era::Bh => "bh",
-            Era::Broc => "broc",
-            Era::Ce => "ce",
-            Era::Heisei => "heisei",
-            Era::Meiji => "meiji",
-            Era::Reiwa => "reiwa",
-            Era::Roc => "roc",
-            Era::Shaka => "shaka",
-            Era::Showa => "showa",
-            Era::Taisho => "taisho",
+            Era::Aa => names::aa,
+            Era::Ah => names::ah,
+            Era::Am => names::am,
+            Era::Ap => names::ap,
+            Era::Bce => names::bce,
+            Era::Be => names::be,
+            Era::Bh => names::bh,
+            Era::Broc => names::broc,
+            Era::Ce => names::ce,
+            Era::Heisei => names::heisei,
+            Era::Meiji => names::meiji,
+            Era::Reiwa => names::reiwa,
+            Era::Roc => names::roc,
+            Era::Shaka => names::shaka,
+            Era::Showa => names::showa,
+            Era::Taisho => names::taisho,
         }
     }
 
-    const fn alias(self) -> Option<&'static str> {
+    const fn alias(self) -> Option<Text<'static>> {
         match self {
-            Era::Ce => Some("ad"),
-            Era::Bce => Some("bc"),
+            Era::Ce => Some(Text::from_ascii("ad")),
+            Era::Bce => Some(Text::from_ascii("bc")),
             _ => None,
         }
     }
@@ -122,10 +122,10 @@ impl CalendarId {
 
     /// CanonicalizeEraInCalendar, ignoring ASCII case.
     pub(crate) fn find_era(self, name: Text<'_>) -> Option<Era> {
-        let is_named = |code| name.eq_ignore_ascii_case(Text::from_ascii(code));
+        let is_named = |code| name.eq_ignore_ascii_case(code);
         (self.eras_around_epoch()?.into_iter())
             .chain(self.mid_year_eras().iter().map(|&(era, _)| era))
-            .find(|era| is_named(era.code()) || era.alias().is_some_and(is_named))
+            .find(|era| is_named(era.code().text()) || era.alias().is_some_and(is_named))
     }
 
     /// CalendarDateArithmeticYearForEraYear

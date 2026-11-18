@@ -246,6 +246,15 @@ enum class ScriptExecutionStatus : uint32_t {
     Stopped = Engine::ScriptExecutionStatus::Stopped,
 };
 
+enum class SourceProviderSourceType : uint8_t {
+    Program = Engine::SourceType::Program,
+    Module = Engine::SourceType::Module,
+    WebAssembly = Engine::SourceType::WebAssembly,
+    JSON = Engine::SourceType::Json,
+    Synthetic = Engine::SourceType::Synthetic,
+    BunTranspiledModule = Engine::SourceType::AnalyzedModule,
+};
+
 enum class SubspaceAccess { OnMainThread,
     Concurrently };
 

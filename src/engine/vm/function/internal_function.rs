@@ -101,20 +101,31 @@ impl InternalFunction {
 }
 
 /// GetFunctionRealm
+#[inline]
 pub fn function_realm(cx: &Cx, object: Gc<JsObject>) -> JsResult<Gc<GlobalObject>> {
+    try_function_realm(cx, object)
+        .ok_or_else(|| cx.throw_type_error("Cannot get function realm from revoked Proxy"))
+}
+
+/// `None` where `function_realm` throws.
+pub fn try_function_realm(cx: &Cx, object: Gc<JsObject>) -> Option<Gc<GlobalObject>> {
     let mut object = object;
     loop {
-        if let Some(bound) = object.downcast::<JsBoundFunction>() {
-            object = bound.target_function();
+        if let Some(function) = object.downcast::<JsFunction>() {
+            if !function.is_native() {
+                return Some(function.function_realm());
+            }
+            match function.downcast::<JsBoundFunction>() {
+                Some(bound) => object = bound.target_function(),
+                None => return Some(function.function_realm()),
+            }
         } else if let Some(proxy) = object.downcast::<ProxyObject>() {
             if proxy.is_revoked() {
-                return Err(cx.throw_type_error("Cannot get function realm from revoked Proxy"));
+                return None;
             }
             object = proxy.target();
-        } else if let Some(function) = object.downcast::<JsFunction>() {
-            return Ok(function.function_realm());
         } else {
-            return Ok(object.realm().unwrap_or_else(|| cx.global()));
+            return Some(object.realm().unwrap_or_else(|| cx.global()));
         }
     }
 }

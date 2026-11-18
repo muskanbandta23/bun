@@ -10,15 +10,6 @@ class CachedBytecode;
 
 using SourceTaintedness = SourceTaintedOrigin;
 
-enum class SourceProviderSourceType : uint8_t {
-    Program = Engine::SourceType::Program,
-    Module = Engine::SourceType::Module,
-    WebAssembly = Engine::SourceType::WebAssembly,
-    JSON = Engine::SourceType::Json,
-    Synthetic = Engine::SourceType::Synthetic,
-    BunTranspiledModule = Engine::SourceType::AnalyzedModule,
-};
-
 enum class SourceProvenance : bool { Static,
     GeneratedAtRuntime };
 

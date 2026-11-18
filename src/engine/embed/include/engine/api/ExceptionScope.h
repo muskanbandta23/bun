@@ -48,6 +48,7 @@ public:
 
 protected:
     friend class Engine::MayThrow;
+    friend class ThrowScope;
 
     ExceptionScope(VM&, ExceptionEventLocation);
     ~ExceptionScope();
@@ -203,7 +204,17 @@ private:
     VM& m_vm;
 };
 
-using DeferTraps = DeferTerminationForAWhile;
+// Requests stay pending.
+class DeferTraps {
+public:
+    ALWAYS_INLINE DeferTraps(VM& vm)
+        : m_areDeferred(vm.traps().m_areDeferred, true)
+    {
+    }
+
+private:
+    SetForScope<bool> m_areDeferred;
+};
 
 // Making an error may use some of the stack that is otherwise held back.
 class ErrorHandlingScope {

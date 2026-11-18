@@ -4,9 +4,9 @@
 
 #include "engine/api/Value.h"
 
-extern "C" const WTF::StaticStringImpl engine_static_atoms[];
-extern "C" const WTF::SymbolImpl::StaticSymbolImpl engine_symbols[];
-extern "C" const WTF::SymbolImpl::StaticSymbolImpl engine_private_names[];
+extern "C" const WTF::StaticStringImpl engine_static_atoms[Engine::StaticAtom::COUNT];
+extern "C" const WTF::SymbolImpl::StaticSymbolImpl engine_symbols[Engine::WellKnownSymbol::COUNT];
+extern "C" const WTF::SymbolImpl::StaticSymbolImpl engine_private_names[Engine::PrivateName::COUNT];
 ENGINE_CHECK_SIZE(WTF::StaticStringImpl, sizeOfStaticString);
 ENGINE_CHECK_SIZE(WTF::SymbolImpl::StaticSymbolImpl, sizeOfStaticSymbol);
 
@@ -128,7 +128,7 @@ ALWAYS_INLINE std::optional<uint32_t> parseIndex(PropertyName name)
 
 ALWAYS_INLINE std::optional<uint32_t> parseIndex(const Identifier& identifier) { return parseIndex(PropertyName(identifier)); }
 
-bool isCanonicalNumericIndexString(UniquedStringImpl*, std::optional<uint64_t>* index = nullptr);
+bool isCanonicalNumericIndexString(UniquedStringImpl*);
 JSValue identifierToJSValue(VM&, const Identifier&);
 // A private name is given as the string of its description.
 JSValue identifierToSafePublicJSValue(VM&, const Identifier&);

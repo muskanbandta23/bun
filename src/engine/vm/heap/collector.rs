@@ -255,6 +255,9 @@ impl Heap {
             .borrow_mut()
             .extract_if(first.., |allocation| !allocation.is_marked())
             .collect();
+        for (index, allocation) in self.precise.borrow().iter().enumerate().skip(first) {
+            allocation.index.set(index as u32);
+        }
         self.first_young_precise.set(self.precise.borrow().len());
         for allocation in dead {
             self.precise_bytes

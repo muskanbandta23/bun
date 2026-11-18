@@ -1,8 +1,8 @@
 use bun_engine_macros::cell;
 
 use crate::{
-    Class, CustomGetter, CustomSetter, Cx, Gc, GlobalObject, JsCell, JsObject, JsResult, TypeFlags, Value, Vm,
-    errors,
+    Class, CustomGetter, CustomSetter, Cx, Gc, GlobalObject, JsCell, JsObject, JsResult, TypeFlags,
+    Value, Vm, errors,
 };
 
 /// What the slot of an accessor property has.

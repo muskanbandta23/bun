@@ -30,7 +30,6 @@
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
 #include <JavaScriptCore/TypedArrayInlines.h>
-#include "GCDefferalContext.h"
 
 #include <JavaScriptCore/DOMJITAbstractHeap.h>
 #include "JSBuffer.h"

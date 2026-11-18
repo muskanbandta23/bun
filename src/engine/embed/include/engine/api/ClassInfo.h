@@ -211,3 +211,8 @@ template<IsJSCellType To> ALWAYS_INLINE To* uncheckedDowncast(const JSC::JSValue
 template<IsJSCellType To> ALWAYS_INLINE To* uncheckedDowncast(JSC::JSValue& value) { return uncheckedDowncast<To>(std::as_const(value)); }
 
 } // namespace WTF
+
+using WTF::downcast;
+using WTF::dynamicDowncast;
+using WTF::is;
+using WTF::uncheckedDowncast;

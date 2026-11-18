@@ -1,3 +1,5 @@
+use bun_alloc::default_alloc;
+
 use super::allocator::Allocator;
 use super::block::{ATOM_SIZE, PAYLOAD_SIZE};
 use super::block_memory::BlockSource;
@@ -114,8 +116,14 @@ impl Space {
             let class = size_class(size);
             self.allocators[class].try_allocate_sized(heap, SIZE_CLASSES[class])
         } else {
-            heap.allocate_precisely(size, self.allocators[0].attributes)
+            heap.allocate_precisely(size, self.allocators[0].attributes, default_alloc::malloc)
         }
+    }
+
+    /// The same, of more than `LARGE_CUTOFF` bytes that are zero. Pages that come from the system are not touched.
+    pub(crate) fn try_allocate_large_zeroed(&self, heap: &Heap, size: usize) -> usize {
+        assert!(size > LARGE_CUTOFF);
+        heap.allocate_precisely(size, self.allocators[0].attributes, default_alloc::zalloc)
     }
 }
 

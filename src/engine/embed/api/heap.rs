@@ -152,7 +152,8 @@ unsafe fn heap_add_marking_constraint(
     depends_on_marking: bool,
 ) {
     // SAFETY: as above.
-    let constraint = unsafe { MarkingConstraint::new(execute, destroy, context, depends_on_marking) };
+    let constraint =
+        unsafe { MarkingConstraint::new(execute, destroy, context, depends_on_marking) };
     heap.add_marking_constraint(constraint);
 }
 

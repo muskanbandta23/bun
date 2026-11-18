@@ -7,6 +7,8 @@ mod class;
 mod condition;
 mod define;
 mod descriptor;
+mod element_moves;
+mod element_search;
 mod element_writer;
 mod elements;
 mod final_object;
@@ -42,6 +44,7 @@ pub use condition::{
 pub(crate) use condition::may_be_special_property;
 pub use define::validate_property_descriptor;
 pub use descriptor::PropertyDescriptor;
+pub use element_search::{Direction, SearchResult};
 pub use element_writer::{ElementWriter, HoleMode};
 pub use elements::{Elements, ElementsMut, Int32Elements, PutDirectIndexMode};
 pub use final_object::JsFinalObject;

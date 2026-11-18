@@ -16,7 +16,8 @@ returned_by_value! {
 
 /// Scripts never see a global object but through its proxy.
 fn this_for(callee: Value, this: Value) -> Value {
-    if this.is::<GlobalObject>() && (callee.downcast::<JsFunction>()).is_some_and(|it| !it.is_native())
+    if this.is::<GlobalObject>()
+        && (callee.downcast::<JsFunction>()).is_some_and(|it| !it.is_native())
     {
         return Value::UNDEFINED;
     }
@@ -62,7 +63,15 @@ fn native_executable_shared(
     visibility: Visibility,
 ) -> Gc<NativeExecutable> {
     let name = StringRef::retain(name);
-    NativeExecutable::shared(vm, length, name, function, constructor, intrinsic, visibility)
+    NativeExecutable::shared(
+        vm,
+        length,
+        name,
+        function,
+        constructor,
+        intrinsic,
+        visibility,
+    )
 }
 
 #[export]
@@ -76,7 +85,15 @@ fn function_create_native(
     visibility: Visibility,
 ) -> Gc<JsFunction> {
     let name = StringRef::retain(name);
-    JsFunction::native_with(cx, length, &name, function, constructor, intrinsic, visibility)
+    JsFunction::native_with(
+        cx,
+        length,
+        &name,
+        function,
+        constructor,
+        intrinsic,
+        visibility,
+    )
 }
 
 #[export]
@@ -157,7 +174,10 @@ fn bound_function_create(
     length: f64,
     name: Option<Gc<JsString>>,
 ) -> JsResult<Gc<JsBoundFunction>> {
-    let (this, length) = (this_for(target.into(), bound_this), (!length.is_nan()).then_some(length));
+    let (this, length) = (
+        this_for(target.into(), bound_this),
+        (!length.is_nan()).then_some(length),
+    );
     JsBoundFunction::create(cx, target, this, arguments, length, name)
 }
 

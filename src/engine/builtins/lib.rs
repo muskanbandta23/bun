@@ -1,7 +1,7 @@
 //! The standard library.
 
 #![forbid(unsafe_code)]
-#![feature(negative_impls)]
+#![feature(adt_const_params, macro_metavar_expr_concat, negative_impls)]
 #![allow(improper_ctypes_definitions)]
 
 mod arrays;

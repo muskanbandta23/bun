@@ -186,12 +186,8 @@ private:
 
     static int32_t truncateOrZero(double number) { return number >= INT32_MIN && number <= INT32_MAX ? static_cast<int32_t>(number) : 0; }
     static constexpr int64_t encodeInt32(int32_t number) { return NumberTag | static_cast<uint32_t>(number); }
-    static constexpr int64_t encodeDouble(double number)
-    {
-        constexpr uint64_t firstWithoutEncoding = static_cast<uint64_t>(NumberTag) - DoubleEncodeOffset;
-        uint64_t bits = std::bit_cast<uint64_t>(number);
-        return (bits >= firstWithoutEncoding ? PNaNAsBits : bits) + DoubleEncodeOffset;
-    }
+    // A boxed NaN is the canonical one.
+    static constexpr int64_t encodeDouble(double number) { return std::bit_cast<uint64_t>(purifyNaN(number)) + DoubleEncodeOffset; }
 
     int64_t m_bits { ValueEmpty };
 };

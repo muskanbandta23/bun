@@ -2,8 +2,8 @@ use bun_engine_macros::FieldOffsets;
 use bun_engine_text::{PropertyName, names};
 
 use crate::{
-    Attributes, Cx, Gc, GetterSetter, JsFinalObject, JsFunction, JsObject, JsResult, PropertySlot,
-    Value, Vm, errors,
+    Attributes, CellType, Cx, Gc, GetterSetter, JsFinalObject, JsFunction, JsObject, JsResult,
+    PropertySlot, RealmWatchpoint, Shape, ShapeFlags, Value, Vm, errors,
 };
 
 bitflags::bitflags! {
@@ -110,29 +110,52 @@ impl PropertyDescriptor {
         Ok(Self::data(slot.value(cx, name)?, attributes))
     }
 
+    /// Whether `from_value` can take the fields straight from the object, so that no script runs.
+    #[inline]
+    pub fn is_plain_description(cx: &Cx, object: &JsObject) -> bool {
+        let shape = object.shape();
+        object.cell_type() == CellType::FinalObject
+            && !shape.has(ShapeFlags::HAS_ANY_ACCESSOR)
+            && (shape.prototype().is_null()
+                || (shape.prototype() == cx.object_prototype().into()
+                    && cx.holds(RealmWatchpoint::PropertyDescriptorFields)))
+    }
+
     /// ToPropertyDescriptor
     pub fn from_value(cx: &mut Cx, value: Value) -> JsResult<PropertyDescriptor> {
         let Some(object) = value.as_object() else {
             return Err(cx.throw_type_error("Property description must be an object."));
         };
+        if Self::is_plain_description(cx, &object) {
+            Self::from_fields(cx, |_, name| Ok(object.get_direct(name)))
+        } else {
+            Self::from_fields(cx, |cx, name| object.get_if_has_property(cx, name))
+        }
+    }
+
+    #[inline(always)]
+    fn from_fields(
+        cx: &mut Cx,
+        field: impl Fn(&mut Cx, PropertyName<'static>) -> JsResult<Option<Value>>,
+    ) -> JsResult<PropertyDescriptor> {
         let mut descriptor = PropertyDescriptor::default();
-        if let Some(value) = object.get_if_has_property(cx, names::enumerable)? {
+        if let Some(value) = field(cx, names::enumerable)? {
             descriptor.set_enumerable(value.to_boolean(cx));
         }
-        if let Some(value) = object.get_if_has_property(cx, names::configurable)? {
+        if let Some(value) = field(cx, names::configurable)? {
             descriptor.set_configurable(value.to_boolean(cx));
         }
-        descriptor.value = object.get_if_has_property(cx, names::value)?;
-        if let Some(value) = object.get_if_has_property(cx, names::writable)? {
+        descriptor.value = field(cx, names::value)?;
+        if let Some(value) = field(cx, names::writable)? {
             descriptor.set_writable(value.to_boolean(cx));
         }
-        if let Some(getter) = object.get_if_has_property(cx, names::get)? {
+        if let Some(getter) = field(cx, names::get)? {
             if !getter.is_undefined() && !getter.is_callable() {
                 return Err(cx.throw_type_error("Getter must be a function."));
             }
             descriptor.set_getter(getter);
         }
-        if let Some(setter) = object.get_if_has_property(cx, names::set)? {
+        if let Some(setter) = field(cx, names::set)? {
             if !setter.is_undefined() && !setter.is_callable() {
                 return Err(cx.throw_type_error("Setter must be a function."));
             }
@@ -151,6 +174,16 @@ impl PropertyDescriptor {
             }
         }
         Ok(descriptor)
+    }
+
+    pub fn create_shapes(cx: &Cx) {
+        let shape = |first, second| {
+            let names = [first, second, names::enumerable, names::configurable];
+            Shape::for_object_literal(cx, &names.map(PropertyName::to_identifier), 0)
+        };
+        let global = cx.global();
+        global.init_data_descriptor_shape(shape(names::value, names::writable));
+        global.init_accessor_descriptor_shape(shape(names::get, names::set));
     }
 
     /// FromPropertyDescriptor

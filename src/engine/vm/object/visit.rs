@@ -128,7 +128,7 @@ impl JsObject {
         }
     }
 
-    pub(super) fn storage_size(&self) -> usize {
+    pub(crate) fn storage_size(&self) -> usize {
         let has_elements = self.indexing_mode().has_elements();
         // SAFETY: it has elements.
         let words = has_elements.then(|| unsafe { self.element_words() });

@@ -40,10 +40,12 @@ public:
     bool isDeferringTermination() const { return Engine::vm_is_termination_deferred(Engine::fieldAt<VM>(this, -Engine::Layout::Vm_traps)); }
 
 private:
+    friend class DeferTraps;
     friend class VM;
 
     std::atomic<BitField> m_pending;
     std::atomic<bool> m_isTerminationRequested;
+    bool m_areDeferred;
     Engine::Opaque<8> m_stackLimit;
     void* m_realStackLimit;
 };
@@ -347,6 +349,7 @@ inline void VM::checkLayout()
     ENGINE_CHECK_SIZE(VMTraps, sizeOfTraps);
     ENGINE_CHECK_OFFSET(VMTraps, m_pending, Traps_pending);
     ENGINE_CHECK_OFFSET(VMTraps, m_isTerminationRequested, Traps_is_termination_requested);
+    ENGINE_CHECK_OFFSET(VMTraps, m_areDeferred, Traps_are_deferred);
     ENGINE_CHECK_OFFSET(VMTraps, m_realStackLimit, Traps_real_stack_limit);
     ENGINE_CHECK_OFFSET(SmallStrings, m_empty, SmallStrings_empty);
     ENGINE_CHECK_OFFSET(SmallStrings, m_ofStaticAtoms, SmallStrings_static_atoms);

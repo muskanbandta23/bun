@@ -281,6 +281,12 @@ impl ShapeSpec {
         self
     }
 
+    pub(super) fn identity(self) -> (&'static Class, u32) {
+        let header = instance_header(self.indexing_mode, self.cell_type, self.flags);
+        let capacity = u32::from(self.inline_capacity);
+        (self.class, header & 0x00ff_ffff | capacity << 24)
+    }
+
     fn initial_flags(self) -> ShapeFlags {
         let mut flags = ShapeFlags::empty();
         if self
@@ -607,15 +613,20 @@ impl Shape {
                 .contains(TypeFlags::GET_OWN_PROPERTY_SLOT_IS_IMPURE_FOR_ABSENCE)
     }
 
-    /// Every own property with a name is in the table, is enumerable, has a string for a key and a plain value.
-    pub fn can_access_properties_quickly_for_enumeration(&self) -> bool {
+    /// Each property in the table is enumerable, has a string for a key, and a plain value in the slot whose number is
+    /// its position.
+    #[inline]
+    pub fn has_properties_in_slot_order(&self) -> bool {
         !self.has(
             ShapeFlags::PREVENTS_QUICK_ENUMERATION
                 | ShapeFlags::HAS_ANY_ACCESSOR
                 | ShapeFlags::UNCACHEABLE_DICTIONARY,
-        ) && !self
-            .type_flags()
-            .contains(TypeFlags::OVERRIDES_OWN_PROPERTY_NAMES)
+        )
+    }
+
+    pub fn can_access_properties_quickly_for_enumeration(&self) -> bool {
+        self.has_properties_in_slot_order()
+            && !(self.type_flags()).contains(TypeFlags::OVERRIDES_OWN_PROPERTY_NAMES)
     }
 
     /// The table and the elements have all own properties, and reading those of the table runs no code.

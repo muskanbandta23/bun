@@ -40,9 +40,25 @@ unsafe fn shape_create(
     assert!(inline_capacity as usize <= JsFinalObject::MAX_INLINE_CAPACITY);
     let mode = IndexingMode::from_bits(indexing_mode);
     // SAFETY: what the class says of itself.
-    let spec = unsafe { ShapeSpec::from_parts(class, cell_type, flags, mode, inline_capacity as u8) };
+    let spec =
+        unsafe { ShapeSpec::from_parts(class, cell_type, flags, mode, inline_capacity as u8) };
     let prototype = prototype.filter(|it| it.is_object()).unwrap_or(Value::NULL);
     Shape::create(vm, global, prototype, spec)
+}
+
+/// One for all who ask for the same.
+#[export]
+unsafe fn shape_for_class(
+    cx: &Cx,
+    prototype: Gc<JsObject>,
+    cell_type: CellType,
+    flags: TypeFlags,
+    class: &'static Class,
+) -> Gc<Shape> {
+    // SAFETY: as above.
+    let spec =
+        unsafe { ShapeSpec::from_parts(class, cell_type, flags, IndexingMode::NON_ARRAY, 0) };
+    Shape::cached(cx, cx.global(), prototype, spec)
 }
 
 #[export]
@@ -109,7 +125,10 @@ fn shape_did_replace_property(shape: &Shape, vm: &Vm, offset: PropertyOffset) {
 }
 
 #[export]
-fn static_table_find(table: &StaticTable, name: PropertyName<'_>) -> Option<&'static StaticProperty> {
+fn static_table_find(
+    table: &StaticTable,
+    name: PropertyName<'_>,
+) -> Option<&'static StaticProperty> {
     table.find(name)
 }
 
@@ -511,7 +530,10 @@ fn object_put_direct(
 
 #[cold]
 fn put_direct_at_index(object: &JsObject, index: u32, value: Value, attributes: Attributes) {
-    let (attributes, mode) = (attributes.for_stored(value), PutDirectIndexMode::LikePutDirect);
+    let (attributes, mode) = (
+        attributes.for_stored(value),
+        PutDirectIndexMode::LikePutDirect,
+    );
     // What it throws stays pending.
     let _ = object.put_direct_index_with(realm_of(object), index, value, attributes, mode);
 }
@@ -550,7 +572,9 @@ fn object_put_direct_may_be_index(
     name: PropertyName<'_>,
     value: Value,
 ) -> JsResult<bool> {
-    object.put_direct_may_be_index(cx, name, value).map(|()| true)
+    object
+        .put_direct_may_be_index(cx, name, value)
+        .map(|()| true)
 }
 
 #[export]
@@ -582,8 +606,15 @@ fn object_put_direct_native_function(
         StringRef::retain(name.string())
     };
     let constructor = native_not_a_constructor;
-    let function =
-        JsFunction::native_with(cx, length, &text, function, constructor, intrinsic, visibility);
+    let function = JsFunction::native_with(
+        cx,
+        length,
+        &text,
+        function,
+        constructor,
+        intrinsic,
+        visibility,
+    );
     object_put_direct(object, cx, name, function.into(), attributes);
 }
 

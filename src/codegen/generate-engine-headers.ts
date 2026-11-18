@@ -227,7 +227,7 @@ function result(type: string): { cpp: string; convert: (call: string) => string 
   const known = types.get(bare);
   if (known?.kind === "counted")
     return isOptional
-      ? { cpp: `WTF::RefPtr<${known.cpp}>`, convert: call => `adoptRef(${call})` }
+      ? { cpp: `WTF::RefPtr<${known.cpp}>`, convert: call => `adoptRef<${known.cpp}>(${call})` }
       : { cpp: `WTF::Ref<${known.cpp}>`, convert: call => `adoptRef(*${call})` };
   if (known?.kind === "wrapped") return { cpp: known.cpp, convert: call => call };
   return { cpp: raw(type, false), convert: call => call };

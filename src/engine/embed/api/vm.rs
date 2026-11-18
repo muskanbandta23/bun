@@ -1,14 +1,16 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
-use core::sync::atomic::Ordering;
 
 use bun_engine_macros::export;
 use bun_engine_text::{PropertyName, STATIC_ATOM_COUNT};
 use bun_engine_vm::heap::{HeapKind, Scope};
-use bun_engine_vm::{Cx, Exception, Gc, RealmSlot, Trap, Value, Vm, VmRef};
+use bun_engine_vm::{
+    AfterDeferral, Cx, Exception, Gc, RealmSlot, SourceProvider, Trap, Value, Vm, VmRef,
+};
 
 unsafe extern "C" {
     safe fn engine_host_destroy_vm_members(vm: &Vm);
+    fn engine_host_delete_source_provider(provider: *mut SourceProvider);
     safe fn engine_host_reconcile_weak_references(vm: &Vm, scope: Scope);
 }
 
@@ -16,6 +18,8 @@ unsafe extern "C" {
 #[export]
 fn vm_create(kind: HeapKind, static_atom_count: usize, realm_slot_count: usize) -> *mut Vm {
     assert!(static_atom_count == STATIC_ATOM_COUNT && realm_slot_count == RealmSlot::COUNT);
+    // SAFETY: what it does.
+    unsafe { SourceProvider::set_embedder_deleter(engine_host_delete_source_provider) };
     let vm = bun_engine::create_vm(kind);
     // SAFETY: nothing else has it.
     let embedder = unsafe { vm.get() }.embedder();
@@ -78,17 +82,10 @@ fn throw_value(cx: &Cx, value: Value) -> Option<Gc<Exception>> {
 }
 
 #[export]
-fn vm_has_exception_after_handling_traps(vm: &Vm) -> bool {
-    if vm.traps().is_pending(Trap::SHELL_TIMEOUT_CHECK)
-        && let (Some(global), Some(check)) =
-            (vm.entry_global(), vm.embedder().shell_timeout_check.get())
-    {
-        vm.traps().clear(Trap::SHELL_TIMEOUT_CHECK);
-        // SAFETY: C++ has the right to use the heap, and lends it for the call.
-        check(unsafe { Cx::from_global(global) });
-    }
-    if vm.traps().is_pending(Trap::TERMINATION) {
-        vm.handle_termination_trap();
+unsafe fn vm_has_exception_after_handling_traps(vm: &Vm) -> bool {
+    if vm.traps().need_handling() {
+        // SAFETY: C++ has the right to run scripts, and lends it for the call.
+        unsafe { vm.handle_traps_without_realm() };
     }
     vm.has_exception()
 }
@@ -96,10 +93,7 @@ fn vm_has_exception_after_handling_traps(vm: &Vm) -> bool {
 /// From any thread.
 #[export]
 fn vm_fire_trap(vm: &Vm, trap: u32) {
-    match Trap::from_bits_retain(trap) {
-        Trap::TERMINATION => vm.traps().request_termination(),
-        trap => vm.traps().fire(trap),
-    }
+    vm.traps().fire(Trap::from_bits_retain(trap));
 }
 
 #[export]
@@ -109,19 +103,13 @@ fn vm_termination_exception(vm: &Vm) -> Gc<Exception> {
 
 #[export]
 fn vm_throw_termination(vm: &Vm) {
-    vm.raise_termination();
+    vm.throw_termination_exception();
 }
 
 /// Whether there was anything to cancel.
 #[export]
 fn vm_cancel_termination(vm: &Vm) -> bool {
-    let was_pending = vm.traps().clear(Trap::TERMINATION);
-    let was_thrown = vm.has_pending_termination_exception();
-    if was_thrown {
-        vm.clear_exception();
-    }
-    let was_requested = vm.traps().termination_flag().swap(false, Ordering::SeqCst);
-    was_pending || was_thrown || was_requested
+    vm.cancel_termination()
 }
 
 #[export]
@@ -131,11 +119,11 @@ fn vm_begin_termination_deferral(vm: &Vm) {
 
 #[export]
 fn vm_end_termination_deferral(vm: &Vm, throws_now: bool) {
-    if throws_now {
-        vm.end_termination_deferral_and_throw();
+    vm.end_termination_deferral(if throws_now {
+        AfterDeferral::Throw
     } else {
-        vm.end_termination_deferral();
-    }
+        AfterDeferral::RaiseTrap
+    });
 }
 
 #[export]

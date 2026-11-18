@@ -40,12 +40,7 @@ fn global_slot(cx: &Cx, slot: RealmSlot) -> Gc<JsCell> {
 }
 
 #[export]
-fn global_add_static_global(
-    cx: &Cx,
-    name: PropertyName<'_>,
-    value: Value,
-    attributes: Attributes,
-) {
+fn global_add_static_global(cx: &Cx, name: PropertyName<'_>, value: Value, attributes: Attributes) {
     (cx.global()).add_static_global(cx, name, value, attributes.for_shape());
 }
 
@@ -68,7 +63,7 @@ fn global_set_webassembly_enabled(global: &GlobalObject, is_enabled: bool, messa
 
 #[export]
 fn global_stack_trace_limit(global: &GlobalObject, limit: &mut u32) -> bool {
-    let found = global.stack_trace_limit().get();
+    let found = global.stack_trace_limit();
     found.map(|found| *limit = found).is_some()
 }
 

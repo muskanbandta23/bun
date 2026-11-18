@@ -135,11 +135,22 @@ impl NumberFormat {
     }
 
     pub fn format_to_parts(&self, value: &MathematicalValue) -> Result<Parts> {
+        self.parts_with_source(value, None)
+    }
+
+    fn parts_with_source(
+        &self,
+        value: &MathematicalValue,
+        source: Option<Source>,
+    ) -> Result<Parts> {
         let failure = "Failed to format a number.";
         self.0.formatter.format(value, failure, |result| {
             let mut parts = Parts::default();
             let number = result.value().or_type_error(failure)?;
-            push_number_parts(&mut parts, number, self.context(value), Part::from)?;
+            push_number_parts(&mut parts, number, self.context(value), |kind| Part {
+                source,
+                ..kind.into()
+            })?;
             Ok(parts)
         })
     }
@@ -167,6 +178,10 @@ impl NumberFormat {
         let text = range.text().or_type_error(failure)?;
         let mut fields = collect_fields(range, failure)?;
         let [start_span, end_span] = align_spans(&mut fields);
+        // The approximately sign has a field of its own from ICU 71 on.
+        if start_span.is_empty() && bun_icu::library_version().major < 71 {
+            return self.parts_with_source(start, Some(Source::Shared));
+        }
 
         let mut parts = Parts::default();
         push_flattened(&mut parts, text, fields, |field, at| {

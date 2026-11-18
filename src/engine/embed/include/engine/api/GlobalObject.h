@@ -214,7 +214,6 @@ public:
     Structure* originalArrayStructureForIndexingType(IndexingType type) const { return m_originalArrayStructures[type >> 1]; }
     Structure* arrayStructureForIndexingTypeDuringAllocation(IndexingType type) const { return m_arrayStructuresForAllocation[type >> 1]; }
     StructureCache structureCache() { return {}; }
-    Structure* nativeStdFunctionStructure();
 
     Structure* arrayBufferStructure(ArrayBufferSharingMode mode = {}) const { return lazySlot<Structure>(static_cast<bool>(mode) ? Engine::RealmSlot::shared_array_buffer_shape : Engine::RealmSlot::array_buffer_shape); }
     template<ArrayBufferSharingMode mode> Structure* arrayBufferStructureWithSharingMode() const { return arrayBufferStructure(mode); }
@@ -269,7 +268,7 @@ public:
     static constexpr RealmClass<Engine::RealmSlot::uint8_array_shape, Engine::RealmSlot::uint8_array_constructor> m_typedArrayUint8 {};
 
 protected:
-    JSGlobalObject(VM&, Structure*, const GlobalObjectMethodTable*);
+    JSGlobalObject(VM&, Structure*, const GlobalObjectMethodTable* = nullptr);
 
     void finishCreation(VM& vm) { Engine::global_finish_creation(this, vm); }
 

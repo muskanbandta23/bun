@@ -3,8 +3,8 @@
 use bun_engine_text::{CodeUnit, StringRef, StringWriter, Text};
 
 use crate::civil::{days_from_civil, year_month_day};
-use crate::fields::{DateFields, MS_PER_DAY, split_at_midnight};
-use crate::time_value::TIME_VALUES;
+use crate::fields::DateFields;
+use crate::time_value::{DAY, split_at_midnight, time_as_integer};
 
 pub const MAX_ISO_STRING_LENGTH: usize = 27;
 pub const MAX_UTC_STRING_LENGTH: usize = 32;
@@ -224,15 +224,9 @@ struct IsoString(i64);
 
 impl IsoString {
     #[inline(always)]
-    fn new(time: f64) -> Option<IsoString> {
-        let time = time.to_int_checked()?;
-        TIME_VALUES.contains(&time).then_some(IsoString(time))
-    }
-
-    #[inline(always)]
     fn has_extended_year(&self) -> bool {
-        const START: i64 = days_from_civil(0, 1, 1) * MS_PER_DAY as i64;
-        const END: i64 = days_from_civil(10_000, 1, 1) * MS_PER_DAY as i64;
+        const START: i64 = days_from_civil(0, 1, 1) * DAY;
+        const END: i64 = days_from_civil(10_000, 1, 1) * DAY;
         !(START..END).contains(&self.0)
     }
 }
@@ -293,7 +287,7 @@ pub fn write_utc_string(fields: DateFields, out: &mut [u8; MAX_UTC_STRING_LENGTH
 
 /// `2022-02-01T13:05:09.123Z`. `None` if `time` is not in the range of time values.
 pub fn iso_string(time: f64) -> Option<StringRef> {
-    Some(IsoString::new(time)?.writer::<u8>(0).finish())
+    Some(IsoString(time_as_integer(time)?).writer::<u8>(0).finish())
 }
 
 /// Returns the length.
@@ -302,5 +296,5 @@ pub fn write_iso_string<T: CodeUnit>(
     time: f64,
     out: &mut [T; MAX_ISO_STRING_LENGTH],
 ) -> Option<usize> {
-    Some(IsoString::new(time)?.write_to_array(out))
+    Some(IsoString(time_as_integer(time)?).write_to_array(out))
 }

@@ -38,7 +38,6 @@
 #include "JavaScriptCore/JSWeakMapInlines.h"
 #include "JavaScriptCore/JSWithScope.h"
 #include "JavaScriptCore/JSGlobalProxyInlines.h"
-#include "GCDefferalContext.h"
 #include "JSBuffer.h"
 #include "xxhash3.h"
 

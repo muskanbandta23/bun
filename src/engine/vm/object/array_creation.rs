@@ -4,7 +4,8 @@ use bun_alloc::AllocError;
 
 use crate::{
     Cx, ElementKind, ElementWriter, Gc, HoleMode, ImmutableArray, IndexingMode, JsArray,
-    JsArrayInit, JsObject, JsObjectInit, JsResult, NoGc, Shape, Storage, Value, Vm,
+    JsArrayInit, JsObject, JsObjectInit, JsResult, NoGc, PropertyOffset, Shape, ShapeFlags,
+    Storage, Value, Vm,
 };
 
 /// `new Array(n)` is sparse from here on.
@@ -135,6 +136,44 @@ impl JsArray {
         // SAFETY: at most the vector length.
         unsafe { array.storage().set_public_length(length) };
         Ok(array)
+    }
+
+    /// With a value for each property of the shape, in order. No collection runs while `element` makes the elements.
+    /// Panics unless the shape is for elements of any type and has that many plain properties.
+    #[inline(always)]
+    pub fn try_from_fn<const N: usize>(
+        vm: &Vm,
+        shape: Gc<Shape>,
+        properties: [Value; N],
+        length: usize,
+        mut element: impl FnMut(usize) -> Value,
+    ) -> Result<Gc<JsArray>, AllocError> {
+        assert!(
+            writable_dense_kind(&shape) == ElementKind::Contiguous
+                && shape.out_of_line_size() == N
+                && !shape.has(ShapeFlags::HAS_ANY_ACCESSOR)
+        );
+        if length > Storage::MAX_VECTOR_LENGTH as usize {
+            return Err(AllocError);
+        }
+        let capacity = const { PropertyOffset::capacity_for(N) };
+        let vector_length = (length as u32).max(1);
+        let storage = Storage::try_allocate(vm, 0, capacity, Some(vector_length))?;
+        let _defer = vm.heap.defer_collection();
+        // SAFETY: new and of that size. Each word is written before the next collection.
+        unsafe {
+            storage.set_lengths(length as u32, vector_length);
+            storage.clear_slots(N, capacity);
+            for (slot, value) in storage.slots(N).iter().rev().zip(properties) {
+                slot.set_without_barrier(Some(value));
+            }
+            storage.elements_ptr().write(0);
+            for index in 0..length {
+                let value = element(index);
+                storage.elements_ptr().add(index).write(value.to_bits());
+            }
+            Ok(Self::create_with_storage(vm, shape, storage))
+        }
     }
 
     /// The kind of the elements becomes as general as the values need.

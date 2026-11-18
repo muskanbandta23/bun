@@ -125,9 +125,13 @@ impl Builder<'_> {
         if template.singleton_watchpoints().is_still_valid() {
             return self.interpret();
         }
+        let size = Environment::allocation_size(template.slot_count());
+        let Some(allocator) = self.allocator_for(size) else {
+            return self.interpret();
+        };
         let shape = self.global().environment_shape();
         let operands = [self.get(op.parent), self.cell(template.cell())];
-        let data = self.allocation(shape, Environment::allocation_size(template.slot_count()));
+        let data = self.allocation(shape, size, allocator);
         let scope = self.node(Kind::NewScope, &operands, data);
         for slot in 0..template.slot_count() {
             let value = if slot < template.undefined_slots() {

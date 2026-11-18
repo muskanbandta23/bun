@@ -260,6 +260,7 @@ impl SourceTextModuleRecord {
         let _scope = (loader.async_context()).map(|it| AsyncContextScope::enter(cx, it));
         let evaluate = cx.global().hooks().modules.evaluate;
         let key = Value::from_name(cx, self.key().name());
+        super::loader::log("evaluate", key);
         evaluate(cx, loader, key, self.into())
     }
 

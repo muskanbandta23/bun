@@ -3,7 +3,7 @@ use bun_engine_vm::{Attributes, JsPromise, PromiseCapability, RealmSlot};
 
 use super::promise_combinators::{all, all_settled, any, race};
 use super::promise_prototype::PromisePrototype;
-use crate::define::define_builtin_constructor;
+use crate::define::{define_builtin_constructor, species_getter};
 use crate::js;
 use crate::prelude::*;
 
@@ -52,11 +52,6 @@ fn resolve(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 fn reject(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let constructor = this_object(cx, frame)?;
     JsPromise::reject_with_constructor(cx, constructor, frame.argument(0)).map(Into::into)
-}
-
-#[native_abi]
-fn species_getter(_: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
-    Ok(frame.this_value())
 }
 
 #[native_abi]

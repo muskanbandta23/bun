@@ -5,7 +5,7 @@
  */
 
 import { $, Glob } from "bun";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
@@ -35,23 +35,37 @@ const configurations = {
   optimized: { cxx: ["-O2", "-DNDEBUG"], rust: "" },
 };
 
+const modified = (path: string) => statSync(path, { throwIfNoEntry: false })?.mtimeMs ?? 0;
+const headers = new Glob("**/*.h").scanSync({ cwd: embed, absolute: true });
+const sharedInputsModified = Math.max(modified(import.meta.path), ...Array.from(headers, modified));
+
+async function run(command: $.ShellPromise) {
+  const { exitCode } = await command.nothrow();
+  if (exitCode) process.exit(exitCode);
+}
+
 for (const [name, { cxx, rust }] of Object.entries(configurations)) {
   if (values.only && values.only !== name) continue;
   const directory = join(root, "target", `embed-tests-${name}`);
   mkdirSync(directory, { recursive: true });
 
+  const objectOf = (source: string) => join(directory, `${basename(dirname(source))}-${basename(source)}.o`);
+  const stale = sources.filter(source => modified(objectOf(source)) < Math.max(modified(source), sharedInputsModified));
+  const compileStale = async () => {
+    for (let source; (source = stale.pop()); ) {
+      await run($`${compiler} ${flags} ${cxx} -c ${source} -o ${objectOf(source)}`);
+    }
+  };
   const library = $`cargo build -q -p bun_engine_embed --example native_tests --target ${host} --target-dir ${directory}`
     .cwd(root)
     .env({ ...process.env, RUSTFLAGS: rust });
-  const objects = sources.map(source => join(directory, `${basename(dirname(source))}-${basename(source)}.o`));
-  await Promise.all([library, ...sources.map((source, i) => $`${compiler} ${flags} ${cxx} -c ${source} -o ${objects[i]}`)]);
+  await Promise.all([run(library), ...Array.from({ length: 6 }, compileStale)]);
 
   const program = join(directory, "tests");
   const archive = join(directory, host, "debug/examples/libnative_tests.a");
   const deadStrip = process.platform === "darwin" ? "-Wl,-dead_strip" : "-Wl,--gc-sections";
-  await $`${compiler} ${cxx} ${objects} ${archive} ${libraries} ${deadStrip} -o ${program}`;
+  await run($`${compiler} ${cxx} ${sources.map(objectOf)} ${archive} ${libraries} ${deadStrip} -o ${program}`);
 
   console.log(`${name}:`);
-  const { exitCode } = await $`${program} ${positionals}`.nothrow();
-  if (exitCode) process.exit(exitCode);
+  await run($`${program} ${positionals}`);
 }

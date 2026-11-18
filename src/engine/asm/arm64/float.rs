@@ -107,10 +107,8 @@ impl MacroAssembler {
 impl FloatAssembly for MacroAssembler {
     #[inline]
     fn move_float(&mut self, dst: Fpr, src: Fpr) {
-        if dst != src {
-            self.asm
-                .float_unary(FloatUnary::Fmov, FloatWidth::F64, dst, src);
-        }
+        // Some processors take no time for this, and do for `fmov`.
+        self.move_vector(dst, src);
     }
 
     #[inline]

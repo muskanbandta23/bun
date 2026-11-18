@@ -15,6 +15,7 @@ use crate::{Visitor, Vm};
 #[derive(Default)]
 pub(crate) struct State {
     dates: bun_engine_date::DateCache,
+    json: json::State,
     regexps: regexp::State,
     strings: string::State,
 }
@@ -30,10 +31,12 @@ impl crate::services::Service for State {
     }
 
     fn visit(&self, visitor: &mut Visitor) {
+        self.json.visit(visitor);
         self.regexps.visit(visitor);
     }
 
     fn reconcile_weak_references(&self, vm: &Vm, survivors: &Survivors) {
+        self.json.reconcile_weak_references(vm, survivors);
         self.regexps.reconcile_weak_references(vm, survivors);
         self.strings.clear_caches();
     }

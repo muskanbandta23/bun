@@ -120,7 +120,13 @@ impl Space {
         }
     }
 
-    /// The same, of more than `LARGE_CUTOFF` bytes that are zero. Pages that come from the system are not touched.
+    /// As `Allocator::try_bump`, for a cell of so many atoms. Panics if that is more than `EXACT_CUTOFF`.
+    #[inline(always)]
+    pub(crate) fn try_bump_atoms(&self, atoms: usize) -> Option<usize> {
+        self.allocators[..EXACT_CUTOFF / ATOM_SIZE][atoms - 1].try_bump_sized(atoms * ATOM_SIZE)
+    }
+
+    /// As `try_allocate`, of more than `LARGE_CUTOFF` bytes that are zero. Pages that come from the system are not touched.
     pub(crate) fn try_allocate_large_zeroed(&self, heap: &Heap, size: usize) -> usize {
         assert!(size > LARGE_CUTOFF);
         heap.allocate_precisely(size, self.allocators[0].attributes, default_alloc::zalloc)

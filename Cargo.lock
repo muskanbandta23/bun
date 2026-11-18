@@ -704,6 +704,7 @@ dependencies = [
  "bun_engine_bigint",
  "bun_engine_bytecode",
  "bun_engine_date",
+ "bun_engine_exec_memory",
  "bun_engine_inspector",
  "bun_engine_macros",
  "bun_engine_number",
@@ -865,6 +866,7 @@ version = "0.0.0"
 dependencies = [
  "bun_engine",
  "bun_engine_bytecode",
+ "bun_engine_date",
  "bun_engine_inspector",
  "bun_engine_intl",
  "bun_engine_macros",
@@ -902,6 +904,7 @@ dependencies = [
 name = "bun_engine_temporal"
 version = "0.0.0"
 dependencies = [
+ "bun_core",
  "bun_engine_date",
  "bun_engine_macros",
  "bun_engine_number",
@@ -953,6 +956,7 @@ dependencies = [
  "bun_engine_text",
  "bun_engine_unicode",
  "bun_highway",
+ "bun_pod",
  "bun_simdutf_sys",
  "bun_threading",
  "getrandom",

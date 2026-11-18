@@ -284,7 +284,6 @@ fn finish_retained_files(
             }
             file.bytecode_index = u32::MAX;
             file.module_info_index = u32::MAX;
-            file.prelinked_module_index = u32::MAX;
             file.load_order = u32::MAX;
             file.loads_at_startup = false;
             file.bytecode_entry_offset = 0;
@@ -562,7 +561,6 @@ mod tests {
         let mut output = create_output(b"a.js", b"/a.js", b"a", u32::MAX);
         output.bytecode_index = 1;
         output.module_info_index = 2;
-        output.prelinked_module_index = 3;
         output.load_order = 4;
         output.loads_at_startup = true;
         output.bytecode_entry_offset = 5;
@@ -572,7 +570,6 @@ mod tests {
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].bytecode_index, u32::MAX);
         assert_eq!(files[0].module_info_index, u32::MAX);
-        assert_eq!(files[0].prelinked_module_index, u32::MAX);
         assert_eq!(files[0].load_order, u32::MAX);
         assert!(!files[0].loads_at_startup);
         assert_eq!(files[0].bytecode_entry_offset, 0);

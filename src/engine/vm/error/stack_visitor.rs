@@ -1,4 +1,3 @@
-use core::cell::Cell;
 use std::rc::Rc;
 
 use bun_engine_bytecode::{CodeKind, HandlerKind, Opcode, RawInstruction, Visibility};
@@ -333,58 +332,38 @@ impl Vm {
     }
 }
 
-/// What a call from native code is made on behalf of.
-pub(super) struct EntryContext {
-    context: Value,
-    /// The one around that of the call.
-    outer_entry_frame: usize,
-    previous: *const EntryContext,
-}
-
-pub(super) struct EntryContexts(Cell<*const EntryContext>);
-
-impl Default for EntryContexts {
-    fn default() -> EntryContexts {
-        EntryContexts(Cell::new(core::ptr::null()))
-    }
-}
-
 impl Cx {
-    /// `enter` makes one call, whose entry frame gets the context: the async function that it resumes, for one.
-    #[inline(always)]
-    pub fn with_entry_context<R>(&mut self, context: Value, enter: impl FnOnce(&mut Cx) -> R) -> R {
-        let entry = EntryContext {
-            context,
-            outer_entry_frame: self.top_entry_frame(),
-            previous: self.services.errors.entry_contexts.0.get(),
+    /// For what a call throws before the context of the callee is there or after it has gone. The innermost `skip`
+    /// frames are those of the callee.
+    pub(super) fn in_realm_of_caller(&self, skip: usize) -> &Cx {
+        let caller = StackVisitor::frames(self).nth(skip);
+        match caller.and_then(|it| it.callee?.realm()) {
+            Some(realm) => self.in_realm_shared(realm),
+            None => self,
+        }
+    }
+
+    /// Whether the innermost code is a constructor at the last of the steps that `[[Construct]]` takes.
+    pub(super) fn is_leaving_constructor(&self) -> bool {
+        let next_opcode = |frame: VisitedFrame<'_>| {
+            let code_block = frame
+                .code_block
+                .filter(|it| it.body().kind() == CodeKind::Construct)?;
+            let bytes = code_block.body().instructions();
+            let current = RawInstruction::read(bytes, frame.bytecode_offset)?;
+            code_block.opcode_at(frame.bytecode_offset + u32::from(current.size))
         };
-        self.services.errors.entry_contexts.0.set(&raw const entry);
-        let result = enter(self);
-        self.services.errors.entry_contexts.0.set(entry.previous);
-        result
+        StackVisitor::frames(self).next().and_then(next_opcode) == Some(Opcode::Return)
     }
 }
 
 impl Vm {
-    fn entries_with_context(&self) -> impl Iterator<Item = &EntryContext> {
-        // SAFETY: each is in the frame of a call of `with_entry_context` that has not returned.
-        let at = |entry: *const EntryContext| unsafe { entry.as_ref() };
-        let innermost = at(self.services.errors.entry_contexts.0.get());
-        core::iter::successors(innermost, move |entry| at(entry.previous))
-    }
-
-    /// Of the calls that have not returned, innermost first.
+    /// Of the calls from native code that have one and have not returned, innermost first.
     pub fn entry_contexts(&self) -> impl Iterator<Item = Value> {
-        self.entries_with_context().map(|entry| entry.context)
-    }
-
-    /// # Safety
-    /// The address of an entry frame that is on the stack.
-    pub unsafe fn entry_context(&self, entry_frame: usize) -> Option<Value> {
-        // SAFETY: the caller's.
-        let outer = unsafe { EntryRecord::of(entry_frame) }.previous_top_entry_frame;
-        (self.entries_with_context())
-            .find(|entry| entry.outer_entry_frame == outer)
-            .map(|entry| entry.context)
+        // SAFETY: on the stack.
+        let at = |entry_frame| (entry_frame != 0).then(|| unsafe { EntryRecord::of(entry_frame) });
+        let innermost = at(self.top_entry_frame());
+        core::iter::successors(innermost, move |it| at(it.previous_top_entry_frame))
+            .filter_map(EntryRecord::context)
     }
 }

@@ -25,6 +25,8 @@ use crate::types::Types;
 
 pub struct Calls<'a, 'tcx> {
     cx: &'a Types<'tcx>,
+    /// Code that cannot be followed is taken to allocate only with what it is given.
+    goes_by_signatures: bool,
     collects: RefCell<FxHashMap<Instance<'tcx>, Option<Way<'tcx>>>>,
     mentions_upper: RefCell<FxHashMap<GenericArgs<'tcx>, bool>>,
 }
@@ -38,7 +40,12 @@ pub enum Way<'tcx> {
 
 impl<'a, 'tcx> Calls<'a, 'tcx> {
     pub fn new(cx: &'a Types<'tcx>) -> Self {
-        Calls { cx, collects: Default::default(), mentions_upper: Default::default() }
+        let (collects, mentions_upper) = Default::default();
+        Calls { cx, goes_by_signatures: false, collects, mentions_upper }
+    }
+
+    pub fn going_by_signatures(cx: &'a Types<'tcx>) -> Self {
+        Calls { goes_by_signatures: true, ..Calls::new(cx) }
     }
 
     pub fn is_generic(&self, def_id: DefId) -> bool {
@@ -66,7 +73,7 @@ impl<'a, 'tcx> Calls<'a, 'tcx> {
         })
     }
 
-    fn frame(&self, instance: Instance<'tcx>, env: TypingEnv<'tcx>) -> Option<Frame<'a, 'tcx>> {
+    pub fn frame(&self, instance: Instance<'tcx>, env: TypingEnv<'tcx>) -> Option<Frame<'a, 'tcx>> {
         let tcx = self.cx.tcx;
         let has_body = match instance.def {
             InstanceKind::Item(def_id) => match tcx.def_kind(def_id) {
@@ -140,7 +147,9 @@ impl<'a, 'tcx> Calls<'a, 'tcx> {
                 let ty = frame.place_type(*place);
                 // What a cell can own is dropped by the sweeper too.
                 if ty.is_trait() {
-                    return cx.has_unknown_code(frame.env, ty) && !cx.is_gc_free(frame.env, ty);
+                    return !self.goes_by_signatures
+                        && cx.has_unknown_code(frame.env, ty)
+                        && !cx.is_gc_free(frame.env, ty);
                 }
                 if !cx.can_allocate(frame.env, ty) && !cx.has_unknown_code(frame.env, ty) {
                     return false;
@@ -148,7 +157,7 @@ impl<'a, 'tcx> Calls<'a, 'tcx> {
                 ((!ty.has_param()).then(|| Instance::resolve_drop_glue(tcx, ty)), vec![ty])
             }
             TerminatorKind::InlineAsm { options, .. } => {
-                return !options.contains(InlineAsmOptions::NOSTACK);
+                return !options.contains(InlineAsmOptions::NOSTACK) && !self.goes_by_signatures;
             }
             _ => return false,
         };
@@ -158,7 +167,8 @@ impl<'a, 'tcx> Calls<'a, 'tcx> {
         };
         let callee = callee.filter(|it| !it.args.has_param());
         if let Some(def_id) = callee.map(|it| it.def_id())
-            && (def_id == cx.engine.collect || tcx.is_foreign_item(def_id))
+            && (def_id == cx.engine.collect
+                || (tcx.is_foreign_item(def_id) && !self.goes_by_signatures))
         {
             return cx.engine.is_upper(def_id);
         }
@@ -167,7 +177,7 @@ impl<'a, 'tcx> Calls<'a, 'tcx> {
         {
             return false;
         }
-        let has_unknown_code = |ty| cx.has_unknown_code(frame.env, ty);
+        let has_unknown_code = |ty| !self.goes_by_signatures && cx.has_unknown_code(frame.env, ty);
         let followed = callee.and_then(|it| self.frame(it, frame.env));
         // What comes in through a type parameter is seen again inside.
         let hands_over_unknown_code = match followed {
@@ -183,7 +193,9 @@ impl<'a, 'tcx> Calls<'a, 'tcx> {
             return true;
         }
         let Some(Frame { instance: callee, .. }) = followed else {
-            return given.iter().any(|&it| cx.can_allocate(frame.env, it));
+            let suffices =
+                if self.goes_by_signatures { Types::has_capability } else { Types::can_allocate };
+            return given.iter().any(|&it| suffices(cx, frame.env, it));
         };
         if is_upper(callee)
             || self.mentions_upper(callee.args)
@@ -402,6 +414,11 @@ pub type Instantiations<'tcx> = FxHashMap<DefId, Vec<Instance<'tcx>>>;
 /// Returns what has become of the generic functions.
 pub fn check<'a, 'tcx>(calls: &Calls<'a, 'tcx>, cx: &'a Types<'tcx>) -> Instantiations<'tcx> {
     let tcx = cx.tcx;
+    tcx.par_hir_body_owners(|def_id| {
+        if tcx.def_kind(def_id).is_fn_like() {
+            tcx.instance_mir(InstanceKind::Item(def_id.to_def_id()));
+        }
+    });
     let mut nodes = Vec::new();
     let mut index_of = FxHashMap::default();
     let node = |instance| Node { instance, findings: Vec::new(), callers: Vec::new() };
@@ -439,6 +456,43 @@ pub fn check<'a, 'tcx>(calls: &Calls<'a, 'tcx>, cx: &'a Types<'tcx>) -> Instanti
         instantiations.entry(node.instance.def_id()).or_default().push(node.instance);
     }
     instantiations
+}
+
+/// `NoGc` and `GcRefMut` count on other crates having no safe way from a cell to an allocation.
+pub fn check_signatures<'tcx>(calls: &Calls<'_, 'tcx>, instantiations: &Instantiations<'tcx>) {
+    let (cx, tcx, env) = (calls.cx, calls.cx.tcx, TypingEnv::fully_monomorphized());
+    for def_id in tcx.hir_body_owners() {
+        if !matches!(tcx.def_kind(def_id), DefKind::Fn | DefKind::AssocFn)
+            || !tcx.effective_visibilities(()).is_reachable(def_id)
+            || tcx.fn_sig(def_id).skip_binder().safety().is_unsafe()
+            || !tcx.fn_sig(def_id).skip_binder().abi().is_rustic_abi()
+        {
+            continue;
+        }
+        let instances = instantiations.get(&def_id.to_def_id()).into_iter().flatten();
+        for frame in instances.filter_map(|&it| calls.frame(it, env)) {
+            let given = || frame.declared_parameters().map(|it| frame.instantiate(it));
+            if !given().any(|it| cx.refers(env, it))
+                || given().any(|it| cx.can_allocate(env, it) || cx.has_unknown_code(env, it))
+            {
+                continue;
+            }
+            let collects = calls.may_collect(frame.instance);
+            if (collects || cx.names_capability(frame.instantiate(frame.body.return_ty())))
+                && !cx.allows.is_on(tcx, def_id.to_def_id())
+            {
+                let message =
+                    "this allocates, or lets its caller, without being given the right to";
+                let span = tcx.def_span(def_id).source_callsite();
+                let mut diagnostic = cx.report("signature", span, message.into());
+                if collects {
+                    calls.explain(Way::Through(frame.instance), &mut diagnostic);
+                }
+                diagnostic.with_help("take a `&Vm`, a `&Cx` or a `&mut Cx`").emit();
+                break;
+            }
+        }
+    }
 }
 
 fn report<'tcx>(calls: &Calls<'_, 'tcx>, nodes: &[Node<'tcx>]) {

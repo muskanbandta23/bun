@@ -121,7 +121,7 @@ function options(): string {
 
 writeIfNotChanged(
   join(outDir, "EngineConstants.h"),
-  `${header("src/engine")}\nnamespace Engine {\n\n${[...mirrors.map(it => mirror(...it)), staticNames(), options()].join("\n")}\n}\n`,
+  `${header("src/engine")}\n#include <cstddef>\n#include <cstdint>\n\nnamespace Engine {\n\n${[...mirrors.map(it => mirror(...it)), staticNames(), options()].join("\n")}\n}\n`,
 );
 
 // ─── Functions ───

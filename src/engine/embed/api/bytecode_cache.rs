@@ -57,6 +57,7 @@ returned_as_pointer! {
 }
 
 impl CompiledScript {
+    #[expect(dead_code)]
     fn compile(
         cx: &Cx,
         source: &SourceCode,

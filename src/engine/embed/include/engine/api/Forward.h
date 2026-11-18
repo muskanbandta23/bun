@@ -86,6 +86,7 @@ class JSString;
 class JSValue;
 class NativeExecutable;
 class ObjectInitializationScope;
+class ParserError;
 class PrivateName;
 class PropertyDescriptor;
 class PropertyName;

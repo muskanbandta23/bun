@@ -151,7 +151,7 @@ fn microtask_queue_create(vm: &Vm) -> MicrotaskQueueRef {
 #[export]
 unsafe fn microtask_queue_retain(queue: *const MicrotaskQueue) {
     // SAFETY: from C++.
-    core::mem::forget(MicrotaskQueueRef::clone(&*unsafe { borrowed(queue) }));
+    let _ = ManuallyDrop::new(MicrotaskQueueRef::clone(&*unsafe { borrowed(queue) }));
 }
 
 #[export]

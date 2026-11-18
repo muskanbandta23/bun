@@ -46,6 +46,15 @@ impl JsObject {
         descriptor: &PropertyDescriptor,
         should_throw: bool,
     ) -> JsResult<bool> {
+        let shape = self.shape();
+        if self.cell_type() == CellType::FinalObject
+            && shape.is_extensible()
+            && shape.get(name).is_none()
+        {
+            let (value, attributes) = descriptor.apply_to(cx, None);
+            self.put_direct_stored(cx, name, value, attributes);
+            return Ok(true);
+        }
         let current = self.get_own_property_descriptor(cx, name)?;
         let current = current.as_ref();
         let is_extensible = self.is_extensible(cx)?;

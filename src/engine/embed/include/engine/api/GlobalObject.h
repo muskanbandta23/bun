@@ -24,10 +24,6 @@ namespace AOT {
 struct ModuleHost;
 }
 
-namespace FFI {
-class FFIContext;
-}
-
 class RuntimeFlags {};
 enum class CompilationType { Eval };
 
@@ -220,10 +216,6 @@ public:
     Structure* typedArrayStructure(TypedArrayType, bool isResizableOrGrowableShared) const;
     template<TypedArrayType type> Structure* typedArrayStructureWithTypedArrayType() const { return typedArrayStructure(type, false); }
     template<TypedArrayType type> Structure* resizableOrGrowableSharedTypedArrayStructureWithTypedArrayType() const { return typedArrayStructure(type, true); }
-    Structure* webAssemblyMemoryStructure() const;
-    Structure* webAssemblyModuleStructure() const;
-    Structure* ffiFunctionStructure() const;
-    FFI::FFIContext& ffiContext();
 
     InlineWatchpointSet promiseSpeciesWatchpointSet() { return { this, Engine::RealmWatchpoint::PromiseSpecies }; }
     InlineWatchpointSet promiseThenWatchpointSet() { return { this, Engine::RealmWatchpoint::PromiseThen }; }
@@ -234,7 +226,6 @@ public:
     void setMicrotaskRunnability(QueuedTaskResult);
     bool isAsyncContextTrackingEnabled() const;
     void setAsyncContextTrackingEnabled(bool);
-    void clearWeakTickets();
 
     void setEvalEnabled(bool enabled, const String& errorMessage = {}) { Engine::global_set_eval_enabled(this, enabled, errorMessage); }
     void setWebAssemblyEnabled(bool enabled, const String& errorMessage = {}) { Engine::global_set_webassembly_enabled(this, enabled, errorMessage); }

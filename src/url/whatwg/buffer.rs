@@ -56,7 +56,7 @@ impl Buffer {
 
     /// The next `count` bytes, for the caller to write.
     #[inline(always)]
-    fn append(&mut self, count: usize) -> Result<&mut [u8], AllocError> {
+    pub(crate) fn append(&mut self, count: usize) -> Result<&mut [u8], AllocError> {
         let start = self.length;
         if count > self.storage().len() - start {
             self.grow(count)?;
@@ -77,8 +77,10 @@ impl Buffer {
     }
 
     pub(crate) fn insert(&mut self, index: usize, bytes: &[u8]) -> Result<(), AllocError> {
-        self.extend(bytes)?;
-        self[index..].rotate_right(bytes.len());
+        let end = self.length;
+        self.append(bytes.len())?;
+        self.copy_within(index..end, index + bytes.len());
+        self[index..][..bytes.len()].copy_from_slice(bytes);
         Ok(())
     }
 

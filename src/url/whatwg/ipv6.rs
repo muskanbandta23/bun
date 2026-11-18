@@ -36,7 +36,7 @@ pub(crate) fn parse(input: &[u8]) -> Result<Address> {
             (value << 4 | digit as u16, length + 1)
         });
         match &rest[length..] {
-            [b'.', ..] if count <= 6 && ipv4::is_serialized(rest) => {
+            [b'.', ..] if count <= 6 && ipv4::serialized_length(rest) == Some(rest.len()) => {
                 let embedded = ipv4::parse(rest)?;
                 address[count] = (embedded >> 16) as u16;
                 address[count + 1] = embedded as u16;

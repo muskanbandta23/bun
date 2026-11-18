@@ -129,22 +129,20 @@ pub fn parse(input: Text<'_>, limit: usize) -> Result<Vec<Pair>, AllocError> {
 
 fn encode(text: Text<'_>, out: &mut Buffer) -> Result<(), AllocError> {
     let mut transcoder = Transcoder::new();
-    let Source { bytes, encoding } = transcoder.source(text)?;
+    let source = transcoder.source(text)?;
+    let bytes = source.bytes;
     let mut pending = 0;
     let mut scan = FORM_SERIALIZER_SCAN.scan(bytes, 0);
     while let Some(start) = scan.next() {
         out.extend(&bytes[pending..start])?;
-        pending = start;
-        for &byte in bytes[start..]
-            .iter()
-            .take_while(|&&byte| class::is_in(FORM, byte))
-        {
-            match byte {
-                b' ' => out.push(b'+')?,
-                _ => percent::push_escaped(out, byte, encoding)?,
-            }
-            pending += 1;
+        if bytes[start] == b' ' {
+            out.push(b'+')?;
+            pending = start + 1;
+            continue;
         }
+        let is_escaped = |byte: &&u8| class::is_in(FORM, **byte) && **byte != b' ';
+        pending = start + bytes[start..].iter().take_while(is_escaped).count();
+        percent::escape_all(source.with_bytes(&bytes[start..pending]), out)?;
         scan.skip_to(pending);
     }
     out.extend(&bytes[pending..])

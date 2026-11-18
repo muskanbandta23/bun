@@ -1,1 +1,43 @@
 //! What runs WebAssembly without knowing of JavaScript: memories, tables, instances, code and its tiers.
+
+mod alloc;
+mod call;
+mod code;
+mod compile;
+mod engine;
+mod faults;
+mod frames;
+mod global;
+mod host;
+mod instance;
+mod memory;
+mod module;
+mod objects;
+mod operations;
+mod outcome;
+mod queue;
+mod registry;
+mod slot;
+mod store;
+mod stubs;
+mod table;
+mod tag;
+mod value;
+pub mod waiters;
+mod words;
+
+pub use call::{HostCall, Incoming, Outgoing};
+pub use code::{Compilers, Optimizer, optimize_fully};
+pub use compile::{CompileError, Compiled, StreamingCompiler};
+pub use engine::{Engine, Options, Tiering};
+pub use frames::{Catch, Frame};
+pub use global::Global;
+pub use host::{Host, Owned, Thrown, Urgency, Vm};
+pub use instance::{InitializeError, Instance, LinkError, SegmentError};
+pub use memory::{GrowError, Memory, MemoryUsage, Pages, SharedMemory, memory_usage};
+pub use module::Module;
+pub use queue::wait_for_background_work;
+pub use store::{STACK_RESERVE, Store};
+pub use table::{Table, TableType};
+pub use tag::Tag;
+pub use value::{Bits, HostCell, Reference};

@@ -365,7 +365,7 @@ top_level_executables! {
 }
 
 /// The records of a module in several loaders can have one together.
-#[cell(cell_type = ModuleExecutable, export = "engine_class_ModuleExecutable")]
+#[cell(name = "ModuleProgramExecutable", cell_type = ModuleExecutable, export = "engine_class_ModuleExecutable")]
 pub struct ModuleExecutable {
     base: ScriptExecutable,
     global: Gc<GlobalObject>,

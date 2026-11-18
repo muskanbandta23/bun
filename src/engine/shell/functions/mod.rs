@@ -5,6 +5,7 @@ mod coverage;
 mod dollar;
 mod dollar_vm;
 mod heap;
+mod heap_profiler;
 mod io;
 mod scripts;
 mod tasks;
@@ -47,6 +48,7 @@ pub(crate) fn define_globals(cx: &Cx) {
     for functions in [
         agent::GLOBAL_FUNCTIONS,
         heap::FUNCTIONS,
+        heap_profiler::FUNCTIONS,
         io::FUNCTIONS,
         scripts::FUNCTIONS,
         tasks::FUNCTIONS,

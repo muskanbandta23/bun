@@ -284,6 +284,12 @@ impl JsCell {
         container::of(self.address()).cell_size()
     }
 
+    /// With what it owns.
+    pub fn estimated_size(&self, vm: &crate::Vm) -> usize {
+        // SAFETY: the method of its class.
+        unsafe { (self.class().ops().estimated_size)(self, vm) }
+    }
+
     /// The first word of a new instance of `shape`.
     #[inline(always)]
     pub fn header_for(shape: &Shape) -> u64 {

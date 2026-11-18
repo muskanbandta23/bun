@@ -437,10 +437,4 @@ private:
     DeferGC m_deferral;
 };
 
-class TerminationDeadline : public ThreadSafeRefCounted<TerminationDeadline> {
-public:
-    void cancel(VM&);
-    bool didFire() const;
-};
-
 } // namespace JSC

@@ -5,7 +5,7 @@ use core::cell::Cell;
 use bun_engine_macros::native_abi;
 use bun_engine_text::{PropertyName, StringRef, names};
 
-use super::error_instance::Flags;
+use super::error_instance::ErrorFlags;
 use crate::{
     Attributes, CustomGetterSetter, Cx, ErrorInstance, Gc, JsObject, JsResult, JsString,
     LineColumn, PropertyDescriptor, SourceProvider, StackFrame, StackTrace, StackTraceRequest,
@@ -55,13 +55,13 @@ impl ErrorInstance {
     }
 
     pub fn is_materialized(&self) -> bool {
-        self.has(Flags::IS_MATERIALIZED)
+        self.has(ErrorFlags::IS_MATERIALIZED)
     }
 
     /// Leaves `stack` to the caller.
     pub fn set_stack_is_provided(&self) {
         if !self.is_materialized() {
-            self.set(Flags::STACK_IS_PROVIDED);
+            self.set(ErrorFlags::STACK_IS_PROVIDED);
         }
     }
 
@@ -78,7 +78,7 @@ impl ErrorInstance {
     }
 
     pub(super) fn materializing_may_run_script(&self, vm: &Vm) -> bool {
-        !self.has(Flags::IS_MATERIALIZED | Flags::STACK_IS_PROVIDED)
+        !self.has(ErrorFlags::IS_MATERIALIZED | ErrorFlags::STACK_IS_PROVIDED)
             && self.has_any_frame()
             && vm.embedder().errors.compute_stack.get().is_some()
     }
@@ -94,7 +94,7 @@ impl ErrorInstance {
 
     /// An error that has nothing to tell yet can still be given frames.
     pub fn materialize(&self, cx: &mut Cx) -> JsResult<bool> {
-        let captured = self.has(Flags::HAS_CAPTURED_FRAMES);
+        let captured = self.has(ErrorFlags::HAS_CAPTURED_FRAMES);
         if captured && let Some(text) = self.take_captured_text(cx) {
             self.define_stack(cx, JsString::new(cx, text).into());
         }
@@ -102,11 +102,11 @@ impl ErrorInstance {
             return Ok(captured);
         }
         let cx = cx.in_realm_of(self);
-        let needs_stack = !self.has(Flags::STACK_IS_PROVIDED);
+        let needs_stack = !self.has(ErrorFlags::STACK_IS_PROVIDED);
         if let Some(compute_stack) = cx.embedder().errors.compute_stack.get()
             && self.has_any_frame()
         {
-            self.set(Flags::IS_MATERIALIZED);
+            self.set(ErrorFlags::IS_MATERIALIZED);
             let stack = needs_stack.then(|| {
                 let _keeps_alive = self.stack_frames();
                 let mut location = self.take_location();
@@ -123,14 +123,14 @@ impl ErrorInstance {
             return cx.check_exception().map(|()| true);
         }
         self.turn_frames_into_info(cx);
-        if !self.has(Flags::HAS_INFO) {
+        if !self.has(ErrorFlags::HAS_INFO) {
             return Ok(true);
         }
-        self.set(Flags::IS_MATERIALIZED);
+        self.set(ErrorFlags::IS_MATERIALIZED);
         self.define_location(cx);
         if needs_stack {
             let mut text = Ok(self.take_stack_text().unwrap_or_default());
-            if self.has(Flags::TEXT_LACKS_HEADER) {
+            if self.has(ErrorFlags::TEXT_LACKS_HEADER) {
                 text = text.and_then(|frames| self.header_followed_by(cx, frames.text()));
             }
             match text {
@@ -199,7 +199,7 @@ pub fn define_captured_stack(
     let limit = cx.global().stack_trace_limit().unwrap_or(0) as usize;
     if let Some(error) = object.downcast::<ErrorInstance>() {
         error.set_stack_is_provided();
-        let has_placeholder = error.has(Flags::HAS_CAPTURED_FRAMES);
+        let has_placeholder = error.has(ErrorFlags::HAS_CAPTURED_FRAMES);
         let shape = error.shape();
         if has_placeholder || (shape.is_extensible() && shape.get(names::stack).is_none()) {
             if !has_placeholder {

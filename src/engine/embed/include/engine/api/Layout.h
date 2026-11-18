@@ -275,6 +275,21 @@ ENGINE_LIMIT(globalObjectSizeAfterSlots, 1536, size_of::<GlobalObject>() - Globa
 ENGINE_OFFSET(GlobalProxy, target, 16)
 
 // Errors, stack and code
+ENGINE_OFFSET(Exception, async_context, 16)
+ENGINE_OFFSET(Exception, stack, 24)
+ENGINE_CONSTANT(errorInstanceFlags, 0x48408, ErrorInstance::FLAGS.bits())
+ENGINE_OFFSET(ErrorInstance, position, 48)
+ENGINE_OFFSET(ErrorInstance, source_url, 56)
+ENGINE_OFFSET(ErrorInstance, flags, 72)
+ENGINE_OFFSET(ErrorInstance, error_type, 76)
+ENGINE_SIZE(StackFrame, 24)
+ENGINE_OFFSET(StackFrame, code_block, 8)
+ENGINE_OFFSET(StackFrame, bytecode_offset, 16)
+ENGINE_OFFSET(StackFrame, is_async, 20)
+ENGINE_OFFSET(StackFrame, is_wasm, 21)
+ENGINE_SIZE(StackTrace, 16)
+ENGINE_OFFSET(StackTrace, capacity, 8)
+ENGINE_OFFSET(StackTrace, length, 12)
 
 // Buffers, WebAssembly and FFI
 

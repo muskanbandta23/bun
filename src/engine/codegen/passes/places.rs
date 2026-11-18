@@ -93,13 +93,6 @@ impl Address {
         self.index = index;
     }
 
-    /// Those that are not `NONE`.
-    pub(super) fn values(&self) -> impl Iterator<Item = Value> + use<> {
-        [self.base, self.index]
-            .into_iter()
-            .filter_map(Value::expand)
-    }
-
     /// The low 32 bits of what is constant, for which it does not matter how the index is extended.
     fn low_distance(&self) -> i32 {
         let scaled = self.step.unbounded_shl(self.shift.into());

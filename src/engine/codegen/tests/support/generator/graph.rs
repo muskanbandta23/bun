@@ -105,11 +105,13 @@ impl Generator<'_> {
                     states,
                     spots,
                     conditions,
+                    nodes,
                 } = &left_behind[other];
                 self.scope.values.extend(values);
                 self.scope.states.extend(states);
                 self.scope.spots.extend(spots);
                 self.scope.conditions.extend(conditions);
+                self.scope.nodes.extend(nodes);
             }
             let mark = self.mark();
             let fuel = match node.checked_sub(roots.len()) {
@@ -145,6 +147,7 @@ impl Generator<'_> {
                 states: self.scope.states.split_off(mark.states),
                 spots: self.scope.spots.split_off(mark.spots),
                 conditions: self.scope.conditions.split_off(mark.conditions),
+                nodes: self.scope.nodes.split_off(mark.nodes),
             };
             self.restore(base);
         }

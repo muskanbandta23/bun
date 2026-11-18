@@ -57,14 +57,14 @@ impl<'a> Merges<'a> {
         1..self.tree.len() as u32
     }
 
-    /// The dominator of the block at `rank`, or that block, whose parent is `top`.
-    pub(super) fn child_toward(&self, top: u32, mut rank: u32) -> u32 {
+    /// Of the block at `rank`, which is the result if there is none.
+    pub(super) fn first_dominator_after(&self, passed: u32, mut rank: u32) -> u32 {
         loop {
             let Ancestry { parent, jump, .. } = self.tree[rank as usize];
-            if parent == top {
+            if parent <= passed {
                 return rank;
             }
-            rank = if jump > top { jump } else { parent };
+            rank = if jump > passed { jump } else { parent };
         }
     }
 

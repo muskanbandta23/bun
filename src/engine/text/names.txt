@@ -820,6 +820,7 @@ segmenterStringIterator = Segmenter String Iterator
 setIterator = Set Iterator
 starDefaultText = *default*
 stopBeforePartial = stop-before-partial
+notEqual = not-equal
 timedOut = timed-out
 useStrict = use strict
 @@asyncDispose

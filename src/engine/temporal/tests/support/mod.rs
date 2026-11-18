@@ -94,7 +94,8 @@ pub(crate) fn fields(set: FieldSet, calendar: CalendarId, source: &str) -> Field
         let (field, value) = properties
             .iter()
             .find_map(|&field| {
-                let value = pair.strip_prefix(field.property())?.strip_prefix('=')?;
+                let name = field.property().text().to_string();
+                let value = pair.strip_prefix(&name)?.strip_prefix('=')?;
                 Some((field, value))
             })
             .unwrap();

@@ -104,7 +104,7 @@ pub(super) unsafe extern "C" fn return_to_native_code_with_exception() {
 }
 
 #[unsafe(naked)]
-pub(super) unsafe extern "C" fn throw_from_frame() {
+pub unsafe extern "C" fn throw_from_frame() {
     naked_asm!(
         "mov x0, x21",
         "mov x1, x29",
@@ -239,7 +239,7 @@ rare_data_entry!(rare_data_call_entry, Call);
 rare_data_entry!(rare_data_construct_entry, Construct);
 
 #[unsafe(naked)]
-pub(super) unsafe extern "C" fn pad_arguments() {
+pub unsafe extern "C" fn pad_arguments() {
     naked_asm!(
         "ldr w1, [x29, #{argument_count}]",
         "add w1, w1, #{header}",

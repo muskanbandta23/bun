@@ -15,51 +15,35 @@ pub(crate) enum Start {
     Digit,
     Quote,
     Dot,
-    Equals,
-    Exclamation,
-    Question,
-    Less,
-    Greater,
-    Plus,
-    Minus,
-    Star,
     Slash,
-    Percent,
-    Ampersand,
-    Bar,
-    Caret,
+    Operator,
     Other,
+}
+
+pub(crate) const fn classify(byte: u8) -> Start {
+    match byte {
+        b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' => Start::Name,
+        b'(' | b')' | b'[' | b']' | b'{' | b'}' | b',' | b';' | b':' | b'~' | b'`' => {
+            Start::Punctuator
+        }
+        b' ' | b'\t' | 0x0b | 0x0c | 0xa0 => Start::Blank,
+        b'\n' | b'\r' => Start::Newline,
+        b'0'..=b'9' => Start::Digit,
+        b'"' | b'\'' => Start::Quote,
+        b'.' => Start::Dot,
+        b'/' => Start::Slash,
+        b'=' | b'!' | b'?' | b'<' | b'>' | b'+' | b'-' | b'*' | b'%' | b'&' | b'|' | b'^' => {
+            Start::Operator
+        }
+        _ => Start::Other,
+    }
 }
 
 static STARTS: [Start; 256] = {
     let mut starts = [Start::Other; 256];
     let mut index = 0;
     while index < 256 {
-        starts[index] = match index as u8 {
-            b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' => Start::Name,
-            b'(' | b')' | b'[' | b']' | b'{' | b'}' | b',' | b';' | b':' | b'~' | b'`' => {
-                Start::Punctuator
-            }
-            b' ' | b'\t' | 0x0b | 0x0c | 0xa0 => Start::Blank,
-            b'\n' | b'\r' => Start::Newline,
-            b'0'..=b'9' => Start::Digit,
-            b'"' | b'\'' => Start::Quote,
-            b'.' => Start::Dot,
-            b'=' => Start::Equals,
-            b'!' => Start::Exclamation,
-            b'?' => Start::Question,
-            b'<' => Start::Less,
-            b'>' => Start::Greater,
-            b'+' => Start::Plus,
-            b'-' => Start::Minus,
-            b'*' => Start::Star,
-            b'/' => Start::Slash,
-            b'%' => Start::Percent,
-            b'&' => Start::Ampersand,
-            b'|' => Start::Bar,
-            b'^' => Start::Caret,
-            _ => Start::Other,
-        };
+        starts[index] = classify(index as u8);
         index += 1;
     }
     starts

@@ -194,16 +194,10 @@ impl JsFunction {
         self.link_with_prototype(vm, prototype);
     }
 
+    #[inline(always)]
     pub fn shape_for(vm: &Vm, global: &GlobalObject, executable: &FunctionExecutable) -> Gc<Shape> {
-        let info = executable.info();
-        match (info.is_async(), info.is_generator()) {
-            (true, true) => global.async_generator_function_shape(vm),
-            (true, false) => global.async_function_shape(vm),
-            (false, true) => global.generator_function_shape(vm),
-            _ if executable.is_builtin() => global.builtin_function_shape(),
-            _ if executable.has_prototype_property() => global.function_shape(),
-            _ => global.method_shape(),
-        }
+        // SAFETY: a slot that has a shape.
+        unsafe { global.slot(vm, executable.shape_slot()).cast_unchecked() }
     }
 
     /// # Safety

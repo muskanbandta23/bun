@@ -26,12 +26,12 @@ pub struct JsObjectInit {
 }
 
 impl JsObjectInit {
-    /// The properties that the shape has are undefined. Panics if the shape is a dictionary that is taken.
+    /// The properties that the shape has are undefined. Panics if the shape belongs to another object.
     #[inline(always)]
     pub fn new(vm: &Vm, shape: Gc<Shape>) -> JsObjectInit {
         if shape.max_offset().is_inline()
             && !shape.instance_indexing_mode().has_elements()
-            && !shape.is_dictionary()
+            && !shape.has(ShapeFlags::DICTIONARY.union(ShapeFlags::IS_CLAIMED))
         {
             return JsObjectInit {
                 shape,
@@ -43,8 +43,8 @@ impl JsObjectInit {
 
     #[inline(never)]
     fn new_slow(vm: &Vm, shape: Gc<Shape>) -> JsObjectInit {
+        assert!(!shape.has(ShapeFlags::IS_CLAIMED));
         if shape.is_dictionary() {
-            assert!(!shape.has(ShapeFlags::IS_CLAIMED));
             shape.set_flags(ShapeFlags::IS_CLAIMED);
         }
         let (mode, capacity) = (shape.instance_indexing_mode(), shape.out_of_line_capacity());
@@ -263,12 +263,26 @@ impl JsObject {
         fn delete_property(name: PropertyName<'_>, slot: &mut DeletePropertySlot) -> bool;
         fn delete_property_by_index(index: u32) -> bool;
         fn get_own_property_slot_by_index(index: u32, slot: &mut PropertySlot) -> bool;
-        fn own_property_names(list: &mut PropertyNameList, mode: DontEnumMode) -> ();
         fn own_special_property_names(list: &mut PropertyNameList, mode: DontEnumMode) -> ();
         fn custom_has_instance(value: Value) -> bool;
         fn define_own_property(name: PropertyName<'_>, descriptor: &PropertyDescriptor, should_throw: bool) -> bool;
         fn prevent_extensions() -> bool;
         fn set_prototype_of(prototype: Value, should_throw: bool) -> bool;
+    }
+
+    pub fn own_property_names(
+        &self,
+        cx: &mut Cx,
+        list: &mut PropertyNameList,
+        mode: DontEnumMode,
+    ) -> JsResult<()> {
+        // SAFETY: the method of the class of the object.
+        unsafe { (self.class().ops().own_property_names)(self, cx, list, mode) };
+        cx.check_exception()?;
+        if list.has_overflowed() {
+            return Err(cx.throw_out_of_memory());
+        }
+        Ok(())
     }
 
     #[inline(always)]
@@ -646,6 +660,7 @@ impl JsObject {
             }
             self.set_shape(&new);
         }
+        self.did_change_as_prototype(vm, &new);
     }
 
     pub fn is_callable(&self) -> bool {

@@ -1,11 +1,15 @@
 //! The `Temporal` object.
 //!
 //! Each class has a type for what its instances hold, with a method for each of its functions that takes the arguments
-//! after their conversion. Checks that come between two reads of a property are functions of their own.
+//! after their conversion. Checks that come between two reads of a property are functions of their own. Only `classes`
+//! knows of objects.
 
 #![forbid(unsafe_code)]
+#![feature(negative_impls)]
+#![allow(improper_ctypes_definitions)]
 
 mod calendar;
+mod classes;
 mod duration;
 mod error;
 mod fields;
@@ -36,6 +40,10 @@ mod unresolved_zoned;
 mod zoned_date_time;
 
 pub use calendar::{CalendarDate, CalendarId, Era, EraYear};
+pub use classes::{
+    TemporalValue, initialize_slot, instant_from_epoch_milliseconds, to_temporal_date,
+    to_temporal_date_time, to_temporal_duration, to_temporal_instant, to_temporal_time,
+};
 pub use duration::{Duration, PartialDuration};
 pub use error::{Error, ErrorKind, Result};
 pub use fields::{Conversion, Field, FieldSet, Fields};

@@ -73,6 +73,11 @@ impl Traps {
     }
 
     #[inline(always)]
+    pub fn stack_limit(&self) -> usize {
+        self.stack_limit.load(Ordering::Relaxed)
+    }
+
+    #[inline(always)]
     pub fn need_handling(&self) -> bool {
         self.pending.load(Ordering::Relaxed) != 0
     }

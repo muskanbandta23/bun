@@ -8,12 +8,13 @@ use bun_engine_number::Random;
 use bun_engine_text::{PropertyName, StringRef, names};
 
 use super::watchpoints::RealmWatchpoints;
+use crate::runtime::control::RealmMicrotaskQueue;
 use crate::{
     Attributes, Cx, DeferredFire, DeletePropertySlot, DontEnumMode, ElementKind, Environment,
     Field, FieldArray, Gc, GcFree, GlobalBinding, GlobalBindings, GlobalProxy, IndexingMode,
     JsArray, JsCell, JsDestructibleObject, JsFinalObject, JsObject, JsObjectInit, JsResult,
     MicrotaskQueueRef, PropertyDescriptor, PropertyNameList, PropertySlot, PutPropertySlot,
-    RealmHooks, RealmSlot, RealmWatchpoint, RegExpGlobalState, Shape, ShapeSpec, StaticProperty,
+    RealmHooks, RealmSlot, RealmWatchpoint, RegExpGlobalState, Shape, ShapeFlags, ShapeSpec, StaticProperty,
     TracedVec, TransitionKind, TypeFlags, Value, Vm, errors, static_table,
     validate_property_descriptor,
 };
@@ -124,9 +125,10 @@ pub struct GlobalObject {
     lexical_epoch: Cell<u32>,
     is_initialized: Cell<bool>,
     needs_debug_hooks: Cell<bool>,
+    discards_microtasks: Cell<bool>,
     /// What other crates keep for the realm. See `extension_cell`.
     pub(self) extension_cells: TracedVec<Option<Gc<JsCell>>>,
-    microtask_queue: RefCell<MicrotaskQueueRef>,
+    microtask_queue: RealmMicrotaskQueue,
     regexp_state: RegExpGlobalState,
     random: Cell<Random>,
     eval_disabled_message: RefCell<Option<StringRef>>,
@@ -215,7 +217,7 @@ impl GlobalObject {
             unsafe { binding.set(cx, self, value) };
         }
         if descriptor.has_writable() && !descriptor.writable() && current.writable() {
-            binding.make_read_only();
+            binding.make_read_only(cx);
             self.watchpoints_unchecked(RealmWatchpoint::GlobalVariablesAreWritable)
                 .invalidate(cx);
         }
@@ -226,6 +228,7 @@ impl GlobalObject {
 impl GlobalObject {
     pub const OFFSET_OF_VM: usize = offset_of!(GlobalObject, vm);
     pub const OFFSET_OF_LEXICAL_EPOCH: usize = offset_of!(GlobalObject, lexical_epoch);
+    pub const OFFSET_OF_MICROTASK_QUEUE: usize = offset_of!(GlobalObject, microtask_queue);
     pub const OFFSET_OF_RANDOM: usize = offset_of!(GlobalObject, random);
 
     pub const fn offset_of_slot(slot: RealmSlot) -> usize {
@@ -259,8 +262,9 @@ impl GlobalObject {
             lexical_epoch: Cell::new(1),
             is_initialized: Cell::new(false),
             needs_debug_hooks: Cell::new(false),
+            discards_microtasks: Cell::new(false),
             scope_extension: None,
-            microtask_queue: RefCell::new(vm.default_microtask_queue().clone()),
+            microtask_queue: RealmMicrotaskQueue::new(vm.default_microtask_queue().clone()),
             regexp_state: RegExpGlobalState::default(),
             random: Cell::new(Random::new(vm.random_seed() as u32)),
             overridden_date_now: Cell::new(f64::NAN),
@@ -297,6 +301,17 @@ impl GlobalObject {
             last.set_prototype_direct(vm, self.object_prototype().into());
         }
         self.init_global_this(GlobalProxy::create(vm, self.into()));
+        for only_instance in [
+            self.as_object(),
+            self.object_prototype(),
+            self.function_prototype(),
+            self.array_prototype(),
+            self.string_prototype(),
+            self.iterator_prototype(),
+            self.array_iterator_prototype(),
+        ] {
+            only_instance.shape().set_flags(ShapeFlags::IS_CLAIMED);
+        }
         self.is_initialized.set(true);
         self.watchpoints(vm, RealmWatchpoint::ArrayPrototypeChainIsSane);
         self.watchpoints(vm, RealmWatchpoint::ArrayIteratorProtocol);
@@ -370,6 +385,9 @@ impl GlobalObject {
     pub(crate) fn add_lexical(&self, vm: &Vm, name: PropertyName<'_>, attributes: Attributes) {
         self.lexicals.add(self, name, attributes, false);
         self.lexical_epoch.update(|epoch| epoch + 1);
+        if self.shape().get(name).is_some() {
+            self.change_shape_id(vm);
+        }
         (vm.hooks().did_declare_global_lexical)(vm, self, name);
     }
 
@@ -409,6 +427,11 @@ impl GlobalObject {
                 let shape = shape.non_property_transition(vm, kind, &mut DeferredFire::new(vm));
                 shapes.set(index, Some(shape));
             }
+        }
+        if self.slot_if_initialized(RealmSlot::cloned_arguments_shape).is_some() {
+            let shape = self.cloned_arguments_shape(vm);
+            let shape = shape.non_property_transition(vm, kind, &mut DeferredFire::new(vm));
+            self.init_cloned_arguments_shape(shape);
         }
         (vm.hooks().did_start_having_a_bad_time)(vm, self);
     }
@@ -456,11 +479,22 @@ impl GlobalObject {
     }
 
     pub fn microtask_queue(&self) -> MicrotaskQueueRef {
-        self.microtask_queue.borrow().clone()
+        self.microtask_queue.get()
     }
 
     pub fn set_microtask_queue(&self, queue: MicrotaskQueueRef) {
-        self.microtask_queue.replace(queue);
+        self.microtask_queue.set(queue);
+    }
+
+    #[inline(always)]
+    pub(crate) fn realm_microtask_queue(&self) -> &RealmMicrotaskQueue {
+        &self.microtask_queue
+    }
+
+    /// Whether the microtasks of the realm are dropped when it is their turn.
+    #[inline(always)]
+    pub fn discards_microtasks(&self) -> &Cell<bool> {
+        &self.discards_microtasks
     }
 
     pub fn regexp_state(&self) -> crate::heap::Owned<'_, RegExpGlobalState> {

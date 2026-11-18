@@ -48,6 +48,12 @@ impl FunctionRareData {
         self.executable
     }
 
+    #[inline(always)]
+    pub fn object_allocator(&self) -> Option<&Allocator> {
+        // SAFETY: null, or a part of the heap.
+        unsafe { self.object_allocator.get().as_ref() }
+    }
+
     pub fn allocation_watchpoints(&self) -> &InlineWatchpointSet {
         &self.allocation_watchpoints
     }

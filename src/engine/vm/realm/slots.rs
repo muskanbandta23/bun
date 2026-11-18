@@ -5,7 +5,8 @@ use bun_engine_bytecode::LinkTimeConstant;
 use bun_engine_text::{PropertyName, private_names};
 
 use crate::{
-    Cx, Gc, GlobalObject, GlobalProxy, InternalFieldTuple, JsCell, JsFunction, JsObject, JsSymbol,
+    Cx, Gc, GetterSetter, GlobalObject, GlobalProxy, InternalFieldTuple, JsCell, JsFunction,
+    JsObject, JsSymbol,
     ModuleLoader, Shape, Vm,
 };
 
@@ -109,6 +110,7 @@ realm_slots! {
         function_prototype_apply: JsFunction = @applyFunction,
         function_prototype_has_instance: JsFunction,
         throw_type_error_function: JsFunction,
+        throw_type_error_accessor: GetterSetter,
         bound_function_shape: Shape,
         custom_getter_function_shape: Shape,
         custom_setter_function_shape: Shape,
@@ -233,6 +235,10 @@ realm_slots! {
         promise_constructor: JsObject = @Promise,
         promise_shape: Shape,
         promise_prototype_then: JsFunction = @defaultPromiseThen,
+        promise_capability_shape: Shape,
+        fulfilled_outcome_shape: Shape,
+        rejected_outcome_shape: Shape,
+        function_with_fields_shape: Shape,
         generator_function_prototype: JsObject,
         generator_function_shape: Shape,
         generator_prototype: JsObject,
@@ -244,6 +250,9 @@ realm_slots! {
         async_generator_function_shape: Shape,
         async_generator_prototype: JsObject,
         async_generator_shape: Shape,
+        async_generator_prototype_next: JsFunction,
+        async_iterator_prototype_async_iterator: JsFunction,
+        async_from_sync_iterator_prototype_next: JsFunction,
         disposable_stack_constructor: JsObject = @DisposableStack,
         disposable_stack_shape: Shape,
         async_disposable_stack_constructor: JsObject = @AsyncDisposableStack,
@@ -366,6 +375,7 @@ realm_slots! {
         private_collect_for_spread: JsFunction = @collectForSpread,
         private_flat_into_array: JsFunction = @flatIntoArray,
         private_is_typed_array_view: JsFunction = @isTypedArrayView,
+        private_json_parse: JsFunction = @jsonParse,
         private_make_type_error: JsFunction = @makeTypeError,
         private_min: JsFunction = @min,
         private_to_length: JsFunction = @toLength,

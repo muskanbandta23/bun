@@ -60,9 +60,11 @@ impl JsObject {
 
     #[inline(always)]
     fn nothing_intercepts_put(&self, name: PropertyName<'_>) -> bool {
-        if name == names::__proto__ {
-            return false;
-        }
+        name != names::__proto__ && self.nothing_intercepts_put_except_to_proto()
+    }
+
+    #[inline(always)]
+    pub(crate) fn nothing_intercepts_put_except_to_proto(&self) -> bool {
         let mut shape = self.shape();
         let mut intercepting = TypeFlags::OVERRIDES_GET_PROTOTYPE;
         loop {
@@ -343,7 +345,9 @@ impl JsObject {
         debug_assert!(name.as_index().is_none());
         self.ensure_writable_elements(vm);
         let shape = self.shape();
-        if let Some(target) = shape.existing_add_transition(name, attributes) {
+        if (MODE == PutMode::Define || shape.is_extensible())
+            && let Some(target) = shape.existing_add_transition(name, attributes)
+        {
             self.add_with_transition(vm, &shape, &target, target.transition_offset(), value);
             slot.set(PutKind::NewProperty, self, target.transition_offset());
             return Ok(());
@@ -445,6 +449,21 @@ impl JsObject {
         value: Value,
         attributes: Attributes,
     ) -> PropertyOffset {
+        // SAFETY: the caller's.
+        let offset = unsafe { self.add_property_in_place(vm, name, value, attributes) };
+        self.did_change_as_prototype(vm, &self.shape());
+        offset
+    }
+
+    /// # Safety
+    /// As above, and that goes for the caches of lookups along prototype chains too.
+    pub(super) unsafe fn add_property_in_place(
+        &self,
+        vm: &Vm,
+        name: PropertyName<'_>,
+        value: Value,
+        attributes: Attributes,
+    ) -> PropertyOffset {
         let shape = self.shape();
         let offset = shape.add_property_in_place(name, attributes);
         let (old, new) = (shape.max_offset(), shape.max_offset().max(offset));
@@ -461,7 +480,6 @@ impl JsObject {
             }
             self.put_direct_unchecked(offset, value);
         }
-        self.did_change_as_prototype(vm, &shape);
         offset
     }
 
@@ -599,7 +617,8 @@ impl JsObject {
         }
         let respects_configurable = !cx.deletes_unconfigurable_properties();
         if self.shape().has_non_reified_static_properties()
-            && let Some((_, entry)) = self.shape().find_static_property(name)
+            && let Some(entry) = (self.class().ancestry())
+                .find_map(|class| class.static_table()?.find_entry_or_position(name))
         {
             if !entry.attributes().is_configurable() && respects_configurable {
                 return Ok(false);

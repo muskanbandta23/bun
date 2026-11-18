@@ -1,4 +1,5 @@
 use bun_engine_bytecode::{BuiltinFunction, FunctionKind, FunctionRef, Visibility};
+use bun_engine_bytecode::{CoverageBlockIndex, DebugHook};
 use bun_engine_text::{Identifier, PropertyName};
 
 use crate::heap::{Scope, Survivors};
@@ -18,8 +19,12 @@ pub struct Hooks {
     pub jettison: fn(&Vm, &CodeBlock),
     /// The code that baseline code jumps to for the case, or zero if there is no such tier.
     pub access_handler: fn(&Vm, &crate::ic::AccessCase, crate::ic::Key) -> usize,
-    /// The counter of the code block has run out at that instruction. Returns where to go on in the same frame, or zero.
-    pub tier_up: fn(&Vm, &CodeBlock, &CallFrame, u32) -> usize,
+    /// The counter of the code block has run out, at the entry or at the head of a loop. Returns where to go on in the
+    /// same frame, or zero.
+    pub tier_up: fn(&Vm, &CodeBlock, &CallFrame, Option<u32>) -> usize,
+    /// The last argument is the scope.
+    pub debug: fn(&mut Cx, &CallFrame, DebugHook, crate::Value) -> crate::JsResult<()>,
+    pub cover: fn(&Vm, &CodeBlock, CoverageBlockIndex, &crate::code::metadata::Word),
     /// Sets the eager slots but `global_this`.
     pub initialize_realm: fn(&Cx),
     pub initialize_realm_slot: fn(&Cx, RealmSlot),
@@ -37,6 +42,8 @@ pub struct Hooks {
     /// Of the function with that index. The cell may have just died.
     pub wasm_names: fn(Gc<JsCell>, u32) -> WasmNames,
     pub debugger_did_parse: fn(&Cx, &SourceProvider, Option<&CompileError>),
+    /// With a number that tells the task from all others.
+    pub debugger_microtask_event: fn(&Vm, &GlobalObject, crate::MicrotaskEvent, u64),
     pub debugger_will_unwind: fn(&Vm, &CallFrame),
     pub debugger_did_unwind_frame: fn(&Vm, &CallFrame),
     pub visit_roots: fn(&Vm, &mut Visitor),

@@ -266,10 +266,12 @@ impl FunctionExecutable {
         }
         if let Some(code) = function.code(specialization) {
             let flags = code.body.flags();
-            if flags.contains(CodeFlags::HAS_DEBUG_HOOKS)
-                == instrumentation.contains(Instrumentation::DEBUGGER)
-                && flags.contains(CodeFlags::HAS_COVERAGE)
-                    == instrumentation.contains(Instrumentation::COVERAGE)
+            // Coroutines have saved its registers.
+            if flags.contains(CodeFlags::SUSPENDS)
+                || (flags.contains(CodeFlags::HAS_DEBUG_HOOKS)
+                    == instrumentation.contains(Instrumentation::DEBUGGER)
+                    && flags.contains(CodeFlags::HAS_COVERAGE)
+                        == instrumentation.contains(Instrumentation::COVERAGE))
             {
                 return Ok(code);
             }

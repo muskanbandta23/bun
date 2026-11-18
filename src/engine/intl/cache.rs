@@ -16,7 +16,7 @@ use crate::{Error, LanguageTag, Result, relative_time_format};
 
 const CANONICAL_TAG_SLOTS: usize = 32;
 const MAX_CACHED_TAG_LENGTH: usize = 100;
-const MAX_DEFAULT_LOCALE_LENGTH: usize = 64;
+const MAX_DEFAULT_LOCALE_LENGTH: usize = 32;
 
 /// What the constructors and the locale-sensitive functions of one VM share.
 #[derive(Default)]

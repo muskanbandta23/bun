@@ -28,6 +28,8 @@ realm_watchpoints! {
     NoObjectMasqueradesAsUndefined,
     /// No global variable has been made read-only.
     GlobalVariablesAreWritable,
+    /// `RegExp.prototype.compile` has not given any object another pattern.
+    NoRegExpIsRecompiled,
     /// `Array.prototype` and `Object.prototype` have no elements, and their prototypes are the original ones.
     ArrayPrototypeChainIsSane,
     ObjectPrototypeChainIsSane,
@@ -124,6 +126,7 @@ impl RealmWatchpoints {
             RealmWatchpoint::NotHavingABadTime,
             RealmWatchpoint::NoObjectMasqueradesAsUndefined,
             RealmWatchpoint::GlobalVariablesAreWritable,
+            RealmWatchpoint::NoRegExpIsRecompiled,
         ] {
             watchpoints.sets[fired_directly as usize].start_watching();
         }

@@ -1,9 +1,7 @@
-use super::rules::{Offset, Side, Span};
+use super::rules::{Offset, SECONDS_PER_DAY, Side, Span};
 use crate::civil::{
     CivilDate, civil_from_days, day_of_year, days_from_civil, days_in_month, is_leap_year, week_day,
 };
-
-const SECONDS_PER_DAY: i32 = 86_400;
 
 /// A moment that every year has, such as 02:00 on the second Sunday of March.
 #[derive(Clone, Copy)]
@@ -32,7 +30,7 @@ impl YearlyMoment {
         if let Some(week_day) = self.week_day {
             days += (i32::from(week_day) - i32::from(first_week_day) - days).rem_euclid(7);
         }
-        days * SECONDS_PER_DAY + self.seconds
+        days * SECONDS_PER_DAY as i32 + self.seconds
     }
 }
 
@@ -94,12 +92,12 @@ impl AnnualRule {
 
     #[inline]
     fn span_in_year(&self, time: i64) -> Span {
-        let (day, standard) = (i64::from(SECONDS_PER_DAY), i64::from(self.standard));
-        let year = civil_from_days((time + standard).div_euclid(day) as i32).year;
+        let standard = i64::from(self.standard);
+        let year = civil_from_days((time + standard).div_euclid(SECONDS_PER_DAY) as i32).year;
         let first_day = days_from_civil(year, 1, 1);
         let is_leap = is_leap_year(year);
-        let year_start = first_day * day - standard;
-        let year_end = year_start + (365 + i64::from(is_leap)) * day;
+        let year_start = first_day * SECONDS_PER_DAY - standard;
+        let year_end = year_start + (365 + i64::from(is_leap)) * SECONDS_PER_DAY;
         let [first, second] = self.changes[usize::from(is_leap)]
             [usize::from(week_day(first_day as i32))]
         .map(|seconds| year_start + i64::from(seconds));

@@ -2,6 +2,7 @@
 name = "bun_engine_text"
 version.workspace = true
 edition.workspace = true
+build = "build.rs"
 
 [lib]
 path = "lib.rs"
@@ -14,8 +15,11 @@ bun_alloc.workspace = true
 bun_highway.workspace = true
 bun_pod.workspace = true
 bun_simdutf_sys.workspace = true
-bitflags.workspace = true
-libc.workspace = true
+hashbrown.workspace = true
+smallvec.workspace = true
+
+[build-dependencies]
+bun_pod.workspace = true
 
 [dev-dependencies]
 bun_engine_standalone.workspace = true

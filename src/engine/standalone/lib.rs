@@ -3,3 +3,8 @@
 
 #[global_allocator]
 static ALLOCATOR: bun_alloc::Mimalloc = bun_alloc::Mimalloc;
+
+#[unsafe(no_mangle)]
+fn __bun_crash_handler_out_of_memory() -> ! {
+    std::process::abort()
+}

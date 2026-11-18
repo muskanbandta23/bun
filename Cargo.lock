@@ -931,13 +931,13 @@ dependencies = [
 name = "bun_engine_text"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bun_alloc",
  "bun_engine_standalone",
  "bun_highway",
  "bun_pod",
  "bun_simdutf_sys",
- "libc",
+ "hashbrown 0.15.5",
+ "smallvec",
 ]
 
 [[package]]

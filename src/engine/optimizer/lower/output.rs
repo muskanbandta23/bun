@@ -14,6 +14,7 @@ pub(crate) mod symbol {
 /// Where the code that leaves leaves the number of the exit. The back end never allocates it.
 #[cfg(target_arch = "x86_64")]
 pub(crate) const EXIT_REGISTER: Gpr = abi::SCRATCH_GPR;
+/// Not the first of them: a jump that leaves the code may overwrite that one.
 #[cfg(not(target_arch = "x86_64"))]
 pub(crate) const EXIT_REGISTER: Gpr = abi::SCRATCH_GPRS[1];
 
@@ -106,11 +107,29 @@ pub(crate) struct Output {
     /// The cells the code names. It dies with any of them.
     pub(crate) weak_references: Vec<usize>,
     /// What to register before the code is installed. A `Stable` names a position in `Dependencies::shapes`.
-    pub(crate) assumptions: Vec<Assumption>,
+    pub(crate) assumptions: Vec<ResolvedAssumption>,
     /// Moved out of the graph.
     pub(crate) frames: Vec<crate::graph::FrameInfo>,
     pub(crate) layouts: Vec<Layout>,
     pub(crate) layout_registers: Vec<Register>,
     /// What an `Origin` stands for, which is what `Layout::resume` needs.
     pub(crate) positions: Vec<Position>,
+}
+
+/// An [`Assumption`] with its shape resolved to an address.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ResolvedAssumption {
+    /// No instance of the shape at this address changes to another.
+    Stable(usize),
+    /// The watchpoint of the realm whose global object is at this address.
+    Realm(usize, bun_engine_vm::RealmWatchpoint),
+}
+
+impl ResolvedAssumption {
+    pub(crate) fn of(assumption: Assumption, address_of_shape: impl Fn(u32) -> usize) -> Self {
+        match assumption {
+            Assumption::Stable(shape) => Self::Stable(address_of_shape(shape.0)),
+            Assumption::Realm(global, which) => Self::Realm(global, which),
+        }
+    }
 }

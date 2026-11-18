@@ -9,7 +9,8 @@ use bun_engine_codegen::{
 use bun_engine_vm::{CallFrame, Vm, call};
 
 use super::output::{
-    CallSite, EXIT_REGISTER, ExitRecord, ExitValue, InvalidationPoint, Output, Place, symbol,
+    CallSite, EXIT_REGISTER, ExitRecord, ExitValue, InvalidationPoint, Output, Place,
+    ResolvedAssumption, symbol,
 };
 use super::sites::{Site, Sites};
 use crate::graph::{Entry, ExitKind, Format, Graph, NO_LAYOUT, Position};
@@ -129,6 +130,12 @@ pub(super) fn finish(
             .collect();
         let weak_references = graph.cells.keys().map(|&bits| bits as usize).collect();
         let positions = graph.sites.iter().map(|site| site.position).collect();
+        let shapes = graph.shapes.all();
+        let assumptions = (graph.assumptions.iter())
+            .map(|&assumption| {
+                ResolvedAssumption::of(assumption, |shape| shapes[shape as usize].address)
+            })
+            .collect();
         Output {
             entry: at(compiled.emitted.entries[0]),
             frame_size: compiled.frame.size,
@@ -139,7 +146,7 @@ pub(super) fn finish(
             handlers: Vec::new(),
             invalidation_points,
             weak_references,
-            assumptions: core::mem::take(&mut graph.assumptions),
+            assumptions,
             frames: core::mem::take(&mut graph.frames),
             layouts: core::mem::take(&mut graph.layouts),
             layout_registers: core::mem::take(&mut graph.layout_registers),

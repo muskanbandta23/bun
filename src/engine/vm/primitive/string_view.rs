@@ -8,7 +8,7 @@ use bun_engine_text::{StringImpl, StringRef, Text};
 
 use super::string::impl_at;
 use crate::heap::keep_alive;
-use crate::{Cx, Gc, JsResult, JsRopeString, JsString, Vm};
+use crate::{Cx, Gc, JsResult, JsRopeString, JsString, NoGc, Vm};
 
 /// The characters of a string, which stay where they are while this is alive.
 pub struct StringView {
@@ -129,6 +129,12 @@ impl JsString {
         view.offset = offset;
         view.text = (view.text).slice(offset as usize..(offset + rope.rope_length()) as usize);
         Some(view)
+    }
+
+    /// The same, without a guard.
+    #[inline(always)]
+    pub fn try_text<'a>(&self, _: &'a NoGc<'_>) -> Option<Text<'a>> {
+        self.try_view().map(|view| view.text)
     }
 
     #[inline(always)]

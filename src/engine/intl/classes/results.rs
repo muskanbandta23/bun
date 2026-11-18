@@ -2,7 +2,7 @@ use bun_engine_text::StringRef;
 use bun_engine_vm::{Attributes, JsFinalObject, ValueVec};
 
 use super::prelude::*;
-use crate::{LanguageTag, Named, Part, Parts};
+use crate::{Named, Part, Parts};
 
 pub(super) fn initialize(cx: &Cx) {
     let global = cx.global();
@@ -86,8 +86,7 @@ impl<'a> Record<'a> {
     }
 
     /// The start of a result of `resolvedOptions`.
-    pub(super) fn with_locale(cx: &'a Cx, locale: &LanguageTag) -> Record<'a> {
-        let locale = locale.string().clone();
+    pub(super) fn with_locale(cx: &'a Cx, locale: StringRef) -> Record<'a> {
         let record = Record::new(cx);
         record.put_string(names::locale, locale);
         record

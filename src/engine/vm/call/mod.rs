@@ -3,6 +3,8 @@
 #[cfg_attr(target_arch = "aarch64", path = "stubs_aarch64.rs")]
 #[cfg_attr(target_arch = "x86_64", path = "stubs_x86_64.rs")]
 pub mod stubs;
+mod section;
+mod repeated;
 mod unwind;
 
 use std::rc::Rc;
@@ -10,6 +12,8 @@ use std::rc::Rc;
 use bun_engine_bytecode::{Code, Specialization};
 use bun_engine_macros::{FieldOffsets, native_abi};
 
+pub use section::code_in_call_frames;
+pub use repeated::RepeatedCall;
 pub use unwind::unwind;
 
 use crate::heap::stack::stack_pointer;
@@ -122,15 +126,12 @@ impl CallData {
                 .native_function(specialization)
                 .map_or(CallData::NONE, CallData::native);
         }
-        if !object
-            .inline_flags()
-            .contains(TypeFlags::OVERRIDES_CALL_DATA)
-        {
-            CallData::NONE
-        } else if is_call {
+        if !is_call {
+            object.construct_data_of_class()
+        } else if (object.inline_flags()).contains(TypeFlags::OVERRIDES_CALL_DATA) {
             object.call_data_of_class()
         } else {
-            object.construct_data_of_class()
+            CallData::NONE
         }
     }
 

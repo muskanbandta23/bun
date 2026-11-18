@@ -10,7 +10,7 @@ using ErrorString = String;
 using CommandResult = std::expected<Ref<JSON::Object>, ErrorString>;
 
 enum class AsyncCallType : uint8_t {
-    DOMTimer = Engine::AsyncCallType::DOMTimer,
+    DOMTimer = Engine::AsyncCallType::DomTimer,
     EventListener = Engine::AsyncCallType::EventListener,
     PostMessage = Engine::AsyncCallType::PostMessage,
     RequestAnimationFrame = Engine::AsyncCallType::RequestAnimationFrame,
@@ -78,6 +78,8 @@ class JSGlobalObjectInspectorController {
 public:
     explicit JSGlobalObjectInspectorController(JSC::JSGlobalObject&);
     ~JSGlobalObjectInspectorController();
+
+    JSC::JSGlobalObject& globalObject() const { return m_globalObject; }
 
     // The client outlives the realm.
     void connectFrontend(FrontendChannel&, InspectorClient&);

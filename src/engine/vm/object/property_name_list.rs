@@ -74,12 +74,16 @@ impl PropertyNameList {
     }
 
     /// There was no memory for all of them.
-    pub(super) fn has_overflowed(&self) -> bool {
+    pub(crate) fn has_overflowed(&self) -> bool {
         self.has_overflowed
     }
 
     #[inline]
     fn push(&mut self, name: PropertyName<'_>) {
+        if self.names.try_reserve(1).is_err() {
+            self.has_overflowed = true;
+            return;
+        }
         self.has_only_indices = self.has_only_indices && name.as_index().is_some();
         self.names.push(name.to_identifier());
     }
@@ -103,13 +107,17 @@ impl PropertyNameList {
     }
 
     pub fn add(&mut self, name: PropertyName<'_>) {
-        if !self.accepts(name) {
+        if !self.accepts(name) || self.has_overflowed {
             return;
         }
         let is_new = if self.names.len() < Self::LINEAR_LIMIT {
             !self.names.iter().any(|it| *it == name)
         } else {
             let unseen = &self.names[self.seen.len()..];
+            if self.seen.try_reserve(unseen.len() + 1).is_err() {
+                self.has_overflowed = true;
+                return;
+            }
             self.seen
                 .extend(unseen.iter().map(|it| it.name().address()));
             self.seen.insert(name.address())

@@ -109,6 +109,7 @@ fn install(
         code,
         entry,
         frame_size,
+        origins: Vec::new(),
         call_sites: Vec::new(),
         call_site_values: Vec::new(),
         exits: vec![ExitRecord {
@@ -289,6 +290,7 @@ fn tables(layouts: Vec<Layout>, registers: Vec<Register>, positions: Vec<Positio
         code: assembler().finish().unwrap(),
         entry: 0,
         frame_size: 0,
+        origins: Vec::new(),
         call_sites: Vec::new(),
         call_site_values: Vec::new(),
         exits: Vec::new(),

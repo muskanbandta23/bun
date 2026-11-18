@@ -2,12 +2,14 @@ use core::ffi::{c_char, c_void};
 use core::mem::ManuallyDrop;
 
 use bun_engine_inspector::profiling::{
-    AnyRealm, BlockRange, CodeRange, Coverage, Gaps, HeapProfiler, SnapshotKind, count_cells,
-    count_protected_cells,
+    AnyRealm, BlockRange, CodeRange, Coverage, Gaps, HeapProfiler, SamplingProfiler, SnapshotKind,
+    count_cells, count_protected_cells,
 };
 use bun_engine_macros::export;
-use bun_engine_text::StringRef;
-use bun_engine_vm::{FastHashSet, ScriptExecutable, SourceProvider, Vm};
+use bun_engine_text::{StringImpl, StringRef};
+use bun_engine_vm::{
+    Executable, FastHashSet, Gc, LineColumn, ScriptExecutable, SourceProvider, Vm,
+};
 
 #[export]
 fn coverage_enable(vm: &Vm) {
@@ -120,4 +122,70 @@ unsafe fn heap_v8_snapshot_bytes(vm: &Vm, length: &mut usize) -> *mut u8 {
     };
     *length = bytes.len();
     ManuallyDrop::new(bytes).as_mut_ptr()
+}
+
+#[export]
+fn sampling_profiler_exists(vm: &Vm) -> bool {
+    SamplingProfiler::exists(vm)
+}
+
+#[export]
+fn sampling_profiler_set_interval(vm: &Vm, microseconds: f64) {
+    SamplingProfiler::set_interval_microseconds(vm, microseconds);
+}
+
+#[export]
+fn sampling_profiler_start(vm: &Vm) {
+    SamplingProfiler::start(vm);
+}
+
+#[export]
+fn sampling_profiler_pause(vm: &Vm) {
+    SamplingProfiler::pause(vm);
+}
+
+#[export]
+fn sampling_profiler_clear(vm: &Vm) {
+    SamplingProfiler::clear(vm);
+}
+
+/// A frame has a name, an executable, the start of its code and where in the code it was.
+#[export]
+unsafe fn sampling_profiler_release_traces(
+    vm: &Vm,
+    context: *mut c_void,
+    add_trace: unsafe extern "C" fn(*mut c_void, f64, usize),
+    add_frame: unsafe extern "C" fn(
+        *mut c_void,
+        &StringImpl,
+        Option<Gc<Executable>>,
+        Option<&LineColumn>,
+        Option<&LineColumn>,
+    ),
+) {
+    for trace in SamplingProfiler::take_profile(vm).traces() {
+        // SAFETY: they go together.
+        unsafe { add_trace(context, trace.timestamp, trace.frames().count()) };
+        for frame in trace.frames() {
+            let (name, executable) = (frame.name(), frame.executable());
+            let (start, position) = (frame.start_of_code(), frame.position());
+            // SAFETY: as above.
+            unsafe { add_frame(context, name, executable, start.as_ref(), position.as_ref()) };
+        }
+    }
+}
+
+#[export]
+fn sampling_profiler_take_traces_as_json(vm: &Vm) -> Option<StringRef> {
+    SamplingProfiler::take_traces_as_json(vm).ok()
+}
+
+#[export]
+fn sampling_profiler_top_functions(vm: &Vm) -> StringRef {
+    SamplingProfiler::top_functions_report(vm)
+}
+
+#[export]
+fn sampling_profiler_top_bytecodes(vm: &Vm) -> StringRef {
+    SamplingProfiler::top_bytecodes_report(vm)
 }

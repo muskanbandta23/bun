@@ -24,7 +24,7 @@ pub enum SourceType {
     Css,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 #[repr(C)]
 pub struct LineColumn {
     pub line: u32,

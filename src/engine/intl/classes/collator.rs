@@ -94,7 +94,7 @@ fn compare(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 fn resolved_options(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let this: Gc<JsCollator> = this!(cx, frame.this_value(), "Collator", "resolvedOptions")?;
     let collator = this.collator.clone();
-    let options = Record::with_locale(cx, collator.locale());
+    let options = Record::with_locale(cx, collator.locale().string().clone());
     options.put_named(names::usage, collator.usage());
     options.put_named(names::sensitivity, collator.sensitivity());
     options.put(names::ignorePunctuation, collator.ignores_punctuation());

@@ -9,8 +9,8 @@ use super::spread::list_of_code_points;
 use super::string_iterator::code_point_string_at;
 use crate::{
     CellType, ClonedArguments, Cx, ElementKind, Gc, HoleMode, IterationKind, IterationMode,
-    JsArray, JsArrayIterator, JsCell, JsMap, JsMapIterator, JsObject, JsResult,
-    JsSet, JsSetIterator, JsString, JsStringIterator, JsTypedArray, MapKind, MappedArguments,
+    JsArray, JsArrayIterator, JsCell, JsMap, JsMapIterator, JsObject, JsResult, JsSet,
+    JsSetIterator, JsString, JsStringIterator, JsTypedArray, MapKind, MappedArguments,
     OrderedCursor, RealmSlot, RealmWatchpoint, SetKind, TableKind, Thrown, Value, errors,
     iterator_complete, iterator_value, throw_not_iterable,
 };
@@ -153,7 +153,7 @@ impl IteratorRecord {
         if caller == Caller::Syntax && !method.is_callable() {
             return Err(throw_not_iterable(cx, iterable));
         }
-        let iterator = caller.call(cx, method, iterable, &[])?;
+        let iterator = caller.call(cx, method, iterable, [])?;
         if !iterator.is_object() {
             return Err(cx.throw_type_error(match caller {
                 Caller::Library => errors::TYPE_ERROR,
@@ -343,7 +343,7 @@ impl IteratorRecord {
         if self.is_done() {
             return Ok(None);
         }
-        let result = caller.next(cx, self.subject, self.next, &[])?;
+        let result = caller.next(cx, self.subject, self.next, [])?;
         if iterator_complete(cx, &result)? {
             self.position = Self::DONE;
             return Ok(None);

@@ -131,6 +131,7 @@ opaque  MicrotaskQueue class JSC::MicrotaskQueue
 counted MicrotaskQueueRef JSC::MicrotaskQueue
 opaque  Ticket class JSC::DeferredWorkTicket
 opaque  DeferredTask class Engine::DeferredTask
+value   InternalMicrotask JSC::InternalMicrotask
 value   WorkKind uint8_t
 
 # Modules, scopes and cached bytecode

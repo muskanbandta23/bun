@@ -255,6 +255,8 @@ enum class SourceProviderSourceType : uint8_t {
     BunTranspiledModule = Engine::SourceType::AnalyzedModule,
 };
 
+enum class InternalMicrotask : uint8_t;
+
 enum class SubspaceAccess { OnMainThread,
     Concurrently };
 

@@ -148,7 +148,7 @@ private:
     VM& m_vm;
 };
 
-inline MicrotaskQueue& JSGlobalObject::microtaskQueue() const { return Engine::fieldAt<MicrotaskQueue&>(this, Engine::Layout::GlobalObject_microtask_queue); }
+inline MicrotaskQueue& JSGlobalObject::microtaskQueue() const { return *Engine::global_microtask_queue(this); }
 inline void JSGlobalObject::setMicrotaskQueue(Ref<MicrotaskQueue>&& queue) { Engine::global_set_microtask_queue(this, WTF::move(queue)); }
 inline QueuedTaskResult JSGlobalObject::microtaskRunnability() const { return Engine::global_discards_microtasks(this) ? QueuedTaskResult::Discard : QueuedTaskResult::Executed; }
 inline void JSGlobalObject::setMicrotaskRunnability(QueuedTaskResult result) { Engine::global_set_discards_microtasks(this, result == QueuedTaskResult::Discard); }
@@ -182,13 +182,19 @@ public:
     using Ticket = DeferredWorkTicket;
     using Task = Function<void(Ticket&)>;
 
-    static Ref<DeferredWorkTimer> create(VM&);
+    static Ref<DeferredWorkTimer> create() { return adoptRef(*new DeferredWorkTimer); }
+
+    // Once the functions are set. Until then nothing that is deferred runs.
+    void start(VM& vm) { Engine::vm_set_event_loop(vm, this); }
+    void runDueTimers(VM& vm) { Engine::vm_run_due_timers(vm); }
 
     // On the thread of the VM.
     Function<void(Ref<Ticket>&&, WorkType)> onAddPendingWork;
     // On any thread.
     Function<void(Ref<Ticket>&&, Task&&)> onScheduleWorkSoon;
     Function<void(Ticket&)> onCancelPendingWork;
+    // When to call runDueTimers(), instead of the time that was set before.
+    Function<void(std::optional<Seconds>)> onSetTimer;
 };
 
 } // namespace JSC

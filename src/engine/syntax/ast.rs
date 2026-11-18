@@ -228,6 +228,18 @@ impl Ast {
         }
     }
 
+    /// A list of the elements since `open` whose index is `first` more than a multiple of three.
+    pub(crate) fn every_third<T>(&mut self, open: OpenList, first: usize) -> List<T> {
+        let start = self.lists.len() as u32;
+        let elements = self.open_lists[open.0..].iter().skip(first).step_by(3);
+        self.lists.extend(elements);
+        List {
+            start,
+            length: self.lists.len() as u32 - start,
+            element: PhantomData,
+        }
+    }
+
     /// Drops what went into lists since `open`.
     #[inline(always)]
     pub(crate) fn abandon_list(&mut self, open: OpenList) {

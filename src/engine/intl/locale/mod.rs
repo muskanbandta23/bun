@@ -11,6 +11,9 @@ use crate::language_tag::subtag::{Subtags, is_region, is_script, is_variant};
 use crate::language_tag::{Key, LanguageId, LocaleId};
 use crate::{Cache, Error, LanguageTag, Result};
 
+/// The values of the `fw` key.
+const WEEKDAYS: [&str; 7] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+
 #[derive(Clone)]
 pub struct Locale(LanguageTag);
 

@@ -51,11 +51,32 @@ impl RootOrder {
     /// `None` if it depends on a character that this does not order.
     #[inline]
     pub(super) fn compare(self, a: Text<'_>, b: Text<'_>) -> Option<Ordering> {
-        let common = common_prefix_length(a, b);
+        let (Text::Latin1(a), Text::Latin1(b)) = (a, b) else {
+            return self.compare_wide(a, b);
+        };
+        let common = common_bytes(a, b);
+        if let (Some(&x), Some(&y), false) = (a.get(common), b.get(common), self.is_numeric)
+            && let (Some(x), Some(y)) = (weight(x), weight(y))
+            && (x ^ y) >> PRIMARY_SHIFT != 0
+        {
+            return Some(x.cmp(&y));
+        }
+        self.compare_from(common, a, b)
+    }
+
+    fn compare_wide(self, a: Text<'_>, b: Text<'_>) -> Option<Ordering> {
+        let common = match (a, b) {
+            (Text::Utf16(a), Text::Utf16(b)) => {
+                common_bytes(bun_pod::slice_as_bytes(a), bun_pod::slice_as_bytes(b)) / 2
+            }
+            _ => (a.code_units().zip(b.code_units()))
+                .take_while(|(a, b)| a == b)
+                .count(),
+        };
         with_text!(a, |a| with_text!(b, |b| self.compare_from(common, a, b)))
     }
 
-    #[inline(always)]
+    /// The first `start` units are the same.
     fn compare_from<A: CodeUnit, B: CodeUnit>(
         self,
         mut start: usize,
@@ -125,19 +146,6 @@ fn take_number<'a, T: CodeUnit>(units: &mut &'a [T]) -> Option<&'a [T]> {
 
 fn compare_numbers<A: CodeUnit, B: CodeUnit>(a: &[A], b: &[B]) -> Ordering {
     (a.len().cmp(&b.len())).then_with(|| A::text(a).cmp(&B::text(b)))
-}
-
-#[inline(always)]
-fn common_prefix_length(a: Text<'_>, b: Text<'_>) -> usize {
-    match (a, b) {
-        (Text::Latin1(a), Text::Latin1(b)) => common_bytes(a, b),
-        (Text::Utf16(a), Text::Utf16(b)) => {
-            common_bytes(bun_pod::slice_as_bytes(a), bun_pod::slice_as_bytes(b)) / 2
-        }
-        (Text::Latin1(a), Text::Utf16(b)) | (Text::Utf16(b), Text::Latin1(a)) => (a.iter().zip(b))
-            .take_while(|&(&a, &b)| u16::from(a) == b)
-            .count(),
-    }
 }
 
 #[inline(always)]

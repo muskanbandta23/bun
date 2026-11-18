@@ -1,7 +1,7 @@
 use core::num::NonZeroU64;
 
-use crate::civil::{civil_from_days, week_day};
-use crate::time_value::{MAX_LOCAL_TIME, make_date, make_day, make_time};
+use crate::civil::{week_day, year_month_day};
+use crate::time_value::{TIME_VALUES, make_date, make_day, make_time};
 use crate::zone::Offset;
 
 /// Where a field is in the bits of `DateFields`.
@@ -43,65 +43,75 @@ pub enum Component {
     Millisecond,
 }
 
-/// The offset of a zone as `DateFields::new` takes it.
-#[derive(Clone, Copy)]
-pub(crate) struct PackedOffset {
-    pub(crate) milliseconds: i32,
-    bits: u32,
+pub(crate) const MS_PER_DAY: u32 = 86_400_000;
+
+/// The days since the epoch and the milliseconds since midnight. `time` is within a day of the range of time values.
+#[inline(always)]
+pub(crate) const fn split_at_midnight(time: i64) -> (i32, u32) {
+    const DAYS_BEFORE_EPOCH: u64 = 100_000_001;
+    let since_start = (time as u64).wrapping_add(DAYS_BEFORE_EPOCH * MS_PER_DAY as u64);
+    (
+        (since_start / MS_PER_DAY as u64).wrapping_sub(DAYS_BEFORE_EPOCH) as i32,
+        (since_start % MS_PER_DAY as u64) as u32,
+    )
 }
 
-impl PackedOffset {
-    pub(crate) const fn new(offset: Offset) -> PackedOffset {
-        let minutes = (offset.seconds / 60) as u64 & DateFields::OFFSET_MINUTES.mask();
-        PackedOffset {
-            milliseconds: offset.seconds * 1000,
-            bits: (minutes << DateFields::OFFSET_MINUTES.shift) as u32 | offset.is_daylight as u32,
-        }
+/// The fields that an offset decides.
+#[derive(Clone, Copy)]
+pub(crate) struct OffsetBits(u32);
+
+impl OffsetBits {
+    pub(crate) const UTC: OffsetBits = OffsetBits(0);
+
+    #[inline]
+    pub(crate) const fn new(offset: Offset) -> OffsetBits {
+        let minutes = (offset.seconds / 60) as u32 & DateFields::OFFSET_MINUTES.mask() as u32;
+        OffsetBits(minutes << DateFields::OFFSET_MINUTES.shift | offset.is_daylight as u32)
     }
 }
 
 impl DateFields {
     pub const IS_DAYLIGHT: BitField = BitField { shift: 0, width: 1 };
     /// Signed.
-    pub const OFFSET_MINUTES: BitField = Self::IS_DAYLIGHT.above(13);
+    pub const OFFSET_MINUTES: BitField = Self::IS_DAYLIGHT.above(14);
     pub const SECOND: BitField = Self::OFFSET_MINUTES.above(6);
     pub const MINUTE: BitField = Self::SECOND.above(6);
     pub const HOUR: BitField = Self::MINUTE.above(5);
+    /// The first of the upper half of the word.
     pub const WEEK_DAY: BitField = Self::HOUR.above(3);
     pub const DAY: BitField = Self::WEEK_DAY.above(5);
     pub const MONTH: BitField = Self::DAY.above(4);
-    /// Signed, and at the top.
-    pub const YEAR: BitField = Self::MONTH.above(21);
+    /// Signed.
+    pub const YEAR: BitField = Self::MONTH.above(20);
 
-    /// `None` unless `time` is within a day of the range of time values.
+    /// `None` if `time` is not in the range of time values.
     #[inline]
     pub fn utc(time: f64) -> Option<DateFields> {
-        const UTC: PackedOffset = PackedOffset::new(Offset::UTC);
-        (time.abs() <= MAX_LOCAL_TIME).then(|| DateFields::new(time as i64, UTC))
+        let time = (time.to_int_checked()).filter(|time| TIME_VALUES.contains(time))?;
+        let (days, since_midnight) = split_at_midnight(time);
+        Some(DateFields::at_midnight(days, OffsetBits::UTC).later(since_midnight))
     }
 
-    /// `time` is within a day of the range of time values.
-    #[inline]
-    pub(crate) fn new(time: i64, offset: PackedOffset) -> DateFields {
-        const DAYS_BEFORE_EPOCH: u64 = 100_000_002;
-        const MS_PER_DAY: u64 = 86_400_000;
+    #[inline(always)]
+    pub(crate) const fn at_midnight(days: i32, offset: OffsetBits) -> DateFields {
+        let (year, month, day) = year_month_day(days);
+        let date = (year as u32) << (Self::YEAR.shift - 32)
+            | (month - 1) << (Self::MONTH.shift - 32)
+            | day << (Self::DAY.shift - 32)
+            | week_day(days) as u32;
+        match NonZeroU64::new((date as u64) << 32 | offset.0 as u64) {
+            Some(bits) => DateFields(bits),
+            None => DateFields(NonZeroU64::MIN),
+        }
+    }
 
-        let local_time = time + i64::from(offset.milliseconds);
-        let since_start = (local_time as u64).wrapping_add(DAYS_BEFORE_EPOCH * MS_PER_DAY);
-        let days_since_start = since_start / MS_PER_DAY;
-        let in_day = (since_start % MS_PER_DAY) as u32;
-        let days = days_since_start.wrapping_sub(DAYS_BEFORE_EPOCH) as i32;
-        let date = civil_from_days(days);
-        // hour * 4096 + minute * 64 + second, from the seconds, minutes and hours since midnight.
-        let clock = in_day / 1000 + in_day / 60_000 * 4 + in_day / 3_600_000 * 256;
-
-        let bits = (date.year as u64) << Self::YEAR.shift
-            | u64::from(date.month - 1) << Self::MONTH.shift
-            | u64::from(date.day) << Self::DAY.shift
-            | u64::from(week_day(days)) << Self::WEEK_DAY.shift
-            | u64::from(clock) << Self::SECOND.shift
-            | u64::from(offset.bits);
-        DateFields(NonZeroU64::new(bits).unwrap_or(NonZeroU64::MIN))
+    /// From fields at midnight to those of a time on the same day.
+    #[inline(always)]
+    pub(crate) fn later(self, milliseconds: u32) -> DateFields {
+        // hour * 4096 + minute * 64 + second, from the whole seconds, minutes and hours.
+        let clock =
+            milliseconds / 1000 + milliseconds / 60_000 * 4 + milliseconds / 3_600_000 * 256;
+        DateFields(self.0 | u64::from(clock) << Self::SECOND.shift)
     }
 
     #[inline(always)]
@@ -191,4 +201,4 @@ impl DateFields {
     }
 }
 
-const _: () = assert!(DateFields::YEAR.shift + DateFields::YEAR.width == 64);
+const _: () = assert!(DateFields::WEEK_DAY.shift == 32 && DateFields::YEAR.above(0).shift == 64);

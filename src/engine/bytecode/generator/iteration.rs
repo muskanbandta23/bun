@@ -548,11 +548,13 @@ impl Generator<'_> {
         self.asm().bind(on_return);
         let (has_method, leave) = (self.asm().label(), self.asm().label());
         self.get_by_id(scratch, iterator, Name::RETURN);
-        self.asm().jump_if_not_nullish(scratch, has_method);
         if is_async {
+            self.asm().jump_if_not_nullish(scratch, has_method);
             self.await_value(value, value.into(), divot);
+            self.asm().jump(leave);
+        } else {
+            self.asm().jump_if_nullish(scratch, leave);
         }
-        self.asm().jump(leave);
         self.asm().bind(has_method);
         self.position(divot, node.start, end);
         self.call_method(value, scratch, iterator, Some(value.into()));

@@ -40,6 +40,18 @@ pub(crate) const fn floor_log10_of_power_of_two(n: i32) -> i32 {
     (n * 315_653) >> 20
 }
 
+/// The largest `power` with `2^n * 10^power < 1`, and by how many bits the product is short of 1/2 or more.
+#[inline(always)]
+pub(crate) const fn power_just_below_inverse_of_power_of_two(n: i32) -> (i32, u32) {
+    // -log10(2^n) with 20 binary places, moved up to be positive.
+    let logarithm = ((-MIN_POWER << 20) - 1 - n * 315_653) as u32;
+    let fraction = logarithm & ((1 << 20) - 1);
+    (
+        (logarithm >> 20) as i32 + MIN_POWER,
+        (fraction * 3401) >> 30,
+    )
+}
+
 const LIMBS: usize = 15;
 
 /// `limbs`, most significant first, plus a fraction if `has_fraction`.

@@ -339,7 +339,7 @@ impl Generator<'_> {
                 self.await_value(result, value, start);
                 result.into()
             }
-            Some(value) => self.expr(value, Dest::Any),
+            Some(value) => self.expr(value, self.return_dest()),
         };
         self.exit(Exit::Return(value));
     }
@@ -627,8 +627,10 @@ impl Generator<'_> {
         self.top -= 1;
         let catch = self.asm().last();
         let scope = parameter.and(parameter_scope);
-        if let (Some(parameter), Some(scope)) = (parameter, scope) {
+        if let Some(scope) = scope {
             self.enter_block_scope(scope);
+        }
+        if let Some(parameter) = parameter {
             match (self.resolve_pattern_register(parameter), catch) {
                 (Some(register), Some((site, _))) => {
                     use crate::operand::Field;

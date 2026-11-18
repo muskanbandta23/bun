@@ -5,6 +5,7 @@
 
 mod assembler;
 mod code;
+mod compiler;
 mod constant;
 mod dump;
 mod effects;
@@ -25,6 +26,7 @@ mod verifier;
 
 pub use bun_engine_syntax::{EvalContext, FunctionKind};
 pub use code::*;
+pub use compiler::{BuiltinFunction, Compiler, Instrumentation, Request};
 pub use constant::*;
 pub use dump::Dump;
 pub use effects::{EdgeKind, Run, Written};

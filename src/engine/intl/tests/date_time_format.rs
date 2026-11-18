@@ -18,8 +18,9 @@ fn text(ascii: &str) -> Text<'_> {
 }
 
 /// From `name=value` pairs. The time zone is UTC unless they name one.
-fn options(pairs: &str) -> Result<Options> {
-    let mut options = Options::new(TimeZone::Named(TimeZoneId::UTC));
+fn options(pairs: &str) -> Result<(Options, TimeZone)> {
+    let mut options = Options::default();
+    let mut time_zone = TimeZone::Named(TimeZoneId::UTC);
     for pair in pairs.split_ascii_whitespace() {
         let (name, value) = pair.split_at(pair.bytes().take_while(|&it| it != b'=').count());
         let value = text(&value[1..]);
@@ -30,7 +31,7 @@ fn options(pairs: &str) -> Result<Options> {
             }
             "hour12" => options.hour12 = Some(value.eq_ascii("true")),
             "hourCycle" => options.hour_cycle = Some(HourCycle::parse(value)?),
-            "timeZone" => options.time_zone = parse_time_zone(value)?,
+            "timeZone" => time_zone = parse_time_zone(value)?,
             "fractionalSecondDigits" => (options.components)
                 .set_fractional_second_digits(value.to_string().parse().unwrap())?,
             "dateStyle" => options.date_style = Some(Style::parse_date_style(value)?),
@@ -43,7 +44,7 @@ fn options(pairs: &str) -> Result<Options> {
             }
         }
     }
-    Ok(options)
+    Ok((options, time_zone))
 }
 
 struct Format {
@@ -53,7 +54,8 @@ struct Format {
 
 fn make(cache: &Cache, locale: &str, pairs: &str, purpose: Purpose) -> Result<DateTimeFormat> {
     let tag = cache.canonicalize(&StringRef::from_str(locale))?;
-    DateTimeFormat::new(cache, &[tag], &options(pairs)?, purpose)
+    let (options, time_zone) = options(pairs)?;
+    DateTimeFormat::new(cache, &[tag], &options, time_zone, purpose)
 }
 
 fn describe(parts: &Parts) -> String {

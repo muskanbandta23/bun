@@ -56,6 +56,13 @@ impl ResourceBundle {
             .map(ResourceBundle)
     }
 
+    /// The names of time zones that `locale` does not share with its parents.
+    pub fn open_zone_names(locale: &CStr) -> Result<ResourceBundle> {
+        // SAFETY: both strings are terminated, and the first names a part of the data of ICU itself.
+        open(|status| unsafe { ures_openDirect(c"ICUDATA-zone".as_ptr(), locale.as_ptr(), status) })
+            .map(ResourceBundle)
+    }
+
     /// Of a table or an array.
     pub fn item_count(&self) -> usize {
         // SAFETY: the bundle is open.

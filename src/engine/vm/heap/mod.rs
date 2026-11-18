@@ -190,6 +190,8 @@ impl Drop for DeferCollection<'_> {
 }
 
 impl Heap {
+    pub const OFFSET_OF_BARRIER_THRESHOLD: usize = core::mem::offset_of!(Heap, barrier_threshold);
+
     /// What a `Vm` sets aside for it.
     pub const SIZE_LIMIT: usize = 10240;
 

@@ -134,8 +134,8 @@ JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64BE);
 JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64LE);
 JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64BE);
 
-// Fixed-width readers / writers. Each is registered as a JSC "buffer accessor" (BufferAccessorIntrinsic +
-// runtime/BufferAccessorRegistry.h) so DFG/FTL compile call sites into bounds-checked loads / stores.
+// Fixed-width readers / writers. Each is registered as a "buffer accessor" (BufferAccessorIntrinsic +
+// registerBufferAccessor) so the JIT compiles call sites into bounds-checked loads / stores.
 JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_readInt8);
 JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_readUInt8);
 JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_readInt16LE);

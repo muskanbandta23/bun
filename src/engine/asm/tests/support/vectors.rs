@@ -110,14 +110,15 @@ impl Boundaries {
         })
     }
 
-    /// Every pair of values is in the same lane of the first two vectors of some item.
+    /// Every pair of values is in the same lane of the first two vectors of some item. The values move through the
+    /// lanes of the second.
     fn pairs(&self, random: &mut Random) -> Vec<[u128; 3]> {
         let (len, count) = (self.values.len(), usize::from(lanes::count(self.lanes)));
         let items = (0..len * len).step_by(count).map(|first| {
             let (mut a, mut b) = (first.., first..);
             [
                 self.vector(|| a.next().unwrap() / len),
-                self.vector(|| b.next().unwrap()),
+                self.vector(|| b.next().map(|pair| pair + pair / len).unwrap()),
                 self.vector(|| random.below(len)),
             ]
         });

@@ -27,6 +27,7 @@ pub(super) enum Control {
         state: Register,
         /// Outside of the handler that closes it.
         try_depth: u32,
+        range: (u32, u32, u32),
     },
     /// An index into `finallys`.
     Finally(usize),
@@ -134,8 +135,13 @@ impl Generator<'_> {
         let mut finally = None;
         for index in (depth..self.b.controls.len()).rev() {
             match self.b.controls[index] {
-                Control::Iterator { state, try_depth } => {
+                Control::Iterator {
+                    state,
+                    try_depth,
+                    range,
+                } => {
                     suspended.push(self.asm().suspend_tries(try_depth));
+                    self.position(range.0, range.1, range.2);
                     self.asm().iterator_close(state, CloseMode::Normal);
                 }
                 Control::Finally(index) => {

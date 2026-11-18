@@ -1,7 +1,6 @@
-use bun_engine_vm::call::MAX_ARGUMENTS;
 use bun_engine_vm::{
     DontEnumMode, JsFunction, PropertyDescriptor, PropertyNameMode, PutContext, PutPropertySlot,
-    RealmSlot, ValueVec,
+    RealmSlot, arguments_from_array_like,
 };
 
 use super::object_constructor::describe_own_property;
@@ -64,15 +63,7 @@ fn construct(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
         let message = "Reflect.construct requires the second argument be an object";
         return Err(cx.throw_type_error(message));
     };
-    let length = list.length_of_array_like(cx)?;
-    if length > MAX_ARGUMENTS as u64 {
-        return Err(cx.throw_stack_overflow());
-    }
-    let mut arguments = ValueVec::new();
-    cx.or_out_of_memory(arguments.try_reserve(length as usize))?;
-    for index in 0..length {
-        arguments.push(list.get_index(cx, index)?);
-    }
+    let arguments = arguments_from_array_like(cx, &list)?;
     cx.construct(target, &arguments, new_target).map(Into::into)
 }
 

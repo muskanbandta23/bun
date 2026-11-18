@@ -17,7 +17,7 @@ pub(crate) use variables::VariableScope;
 use crate::heap::{HeapAnalyzer, Owned, barrier, visit_children_of};
 use crate::{
     CellKind, CellType, CellTypeRange, Class, ClassOps, Cx, Extends, Field, Gc, GcFree,
-    GlobalObject, InlineWatchpointSet, JsCell, JsObject, Shape, ShapeSpec, Trace, TypeFlags, Value,
+    GlobalObject, InlineWatchpointSet, JsCell, JsObject, ScriptExecutable, Shape, ShapeSpec, Trace, TypeFlags, Value,
     Visitor, Vm, WatchpointState, WeakField, ascii_literal,
 };
 
@@ -32,6 +32,8 @@ pub struct ScopeTemplate {
     pub(self) first_instance: WeakField<Option<Gc<Environment>>>,
     /// Valid while nothing but the code of the scope has written to an instance. `SlotFlags` tell what that code does.
     foreign_write_watchpoints: InlineWatchpointSet,
+    /// The code that the scope is in, if that has debug hooks.
+    pub owner: Field<Option<Gc<ScriptExecutable>>>,
     scope: Rc<StaticScope>,
 }
 
@@ -52,6 +54,7 @@ impl ScopeTemplate {
             singleton_watchpoints: InlineWatchpointSet::new(WatchpointState::Clear),
             first_instance: None,
             foreign_write_watchpoints: InlineWatchpointSet::new(WatchpointState::Watched),
+            owner: None,
             scope,
         })
     }
@@ -287,6 +290,21 @@ impl Environment {
         let template = ScopeTemplate::create(vm, StaticScope::with(static_scope_of(parent)));
         // SAFETY: made for this parent.
         unsafe { Self::create_with(vm, parent, template, object) }
+    }
+
+    /// For code that is to have that `this`.
+    pub(crate) fn create_for_this(
+        vm: &Vm,
+        parent: Gc<JsCell>,
+        this: Option<Value>,
+    ) -> Gc<Environment> {
+        let template = ScopeTemplate::create(vm, StaticScope::for_this(static_scope_of(parent)));
+        // SAFETY: made for this parent, and what the slot is for.
+        unsafe {
+            let environment = Self::create(vm, &realm_of_scope(parent), parent, template);
+            environment.set(0, this);
+            environment
+        }
     }
 
     pub fn copy(&self, vm: &Vm) -> Gc<Environment> {

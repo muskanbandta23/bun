@@ -594,10 +594,18 @@ impl Heap {
         }
     }
 
-    /// Of a type that needs no destruction. `visit` does not allocate.
+    /// Of a type that needs no destruction or whose shape is immortal. `visit` does not allocate.
     pub fn for_each_live<T: CellKind>(&self, mut visit: impl FnMut(Gc<T>)) {
-        const { assert!(!core::mem::needs_drop::<T>() && size_of::<T>() <= space::LARGE_CUTOFF) };
-        let Some(allocator) = self.cells.allocator_for(size_of::<T>()) else {
+        use core::mem::needs_drop;
+        const {
+            assert!(size_of::<T>() <= space::LARGE_CUTOFF);
+            assert!(!needs_drop::<T>() || T::FLAGS.contains(crate::TypeFlags::SHAPE_IS_IMMORTAL));
+        };
+        let space = match needs_drop::<T>() {
+            true => &self.destructible_cells,
+            false => &self.cells,
+        };
+        let Some(allocator) = space.allocator_for(size_of::<T>()) else {
             return;
         };
         allocator.stop_allocating(self);

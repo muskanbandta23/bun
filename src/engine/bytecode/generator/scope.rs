@@ -1,6 +1,5 @@
 //! Where bindings live and how names find them.
 
-use core::cell::Cell;
 use core::num::NonZeroU32;
 use std::rc::Rc;
 
@@ -304,7 +303,6 @@ impl Generator<'_> {
             kind: layout.kind,
             eval_variables_slot: layout.eval_variables_slot,
             is_extensible_by_debugger_only: layout.is_extensible_by_debugger_only,
-            is_open_to_debugger: Cell::new(false),
             body_start: layout.body_start,
             entered_at,
             slot_count: layout.count,

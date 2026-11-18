@@ -5,14 +5,16 @@
 pub mod stubs;
 mod unwind;
 
-use bun_engine_bytecode::Specialization;
+use std::rc::Rc;
+
+use bun_engine_bytecode::{Code, Specialization};
 use bun_engine_macros::{FieldOffsets, native_abi};
 
 pub use unwind::unwind;
 
 use crate::heap::stack::stack_pointer;
 use crate::{
-    CallFrame, CellType, CodeBlock, Cx, Executable, FunctionExecutable, Gc, InternalFunction,
+    CallFrame, CellType, CodeBlock, Coroutine, Cx, Executable, FunctionExecutable, Gc, InternalFunction,
     JsBoundFunction, JsCell, JsFunction, JsObject, JsResult, NativeExecutable, ScriptExecutable,
     TypeFlags, Value, Vm, errors,
 };
@@ -42,6 +44,8 @@ addresses! {
     call_data_entry,
     link_call_entry,
     link_construct_entry,
+    watched_call_entry,
+    watched_construct_entry,
     rare_data_call_entry,
     rare_data_construct_entry,
     /// To jump to with an exception pending and the frame pointer at the frame that throws it.
@@ -312,21 +316,20 @@ impl Cx {
         self.enter(&target, callee.into(), 1, this, &[])
     }
 
-    /// Enters the code of `callee` where `generator` left it.
+    /// Enters the code of the coroutine where that left it.
     ///
     /// # Safety
-    /// The generator was suspended in that code and has just been marked as executing.
+    /// It was suspended, and has just been marked as executing.
+    #[inline(always)]
     pub(crate) unsafe fn resume(
         &mut self,
-        callee: Gc<JsObject>,
-        generator: Value,
+        coroutine: &Coroutine,
         value: Value,
         mode: Value,
     ) -> JsResult<Value> {
-        // SAFETY: what has suspended is a function or the callee of a module.
-        let executable = unsafe { JsFunction::executable_or_rare_data(callee.cell()) };
-        let target = CallTarget::of(&executable, Specialization::Call);
-        self.enter(&target, callee.into(), 0, generator, &[value, mode])
+        let target = CallTarget::of(&coroutine.executable(), Specialization::Call);
+        let callee = coroutine.callee().into();
+        self.enter(&target, callee, 0, coroutine.into(), &[value, mode])
     }
 }
 
@@ -368,7 +371,21 @@ fn link_executable(
         return Err(errors::throw_not_a_constructor(cx, callee.into()));
     }
     let code = executable.unlinked_code(cx, specialization)?;
+    install_code(cx, executable, specialization, code)
+}
+
+pub(crate) fn install_code(
+    cx: &mut Cx,
+    executable: Gc<ScriptExecutable>,
+    specialization: Specialization,
+    code: Rc<Code>,
+) -> JsResult<Gc<CodeBlock>> {
     let code_block = CodeBlock::link(cx, executable, code)?;
+    if code_block.has_debug_hooks()
+        && let Some(debugger) = cx.global().debugger()
+    {
+        debugger.did_link(cx, &code_block);
+    }
     // SAFETY: the interpreter runs any code block.
     unsafe {
         executable.install(

@@ -250,6 +250,7 @@ fast_handlers! {
     RethrowIfAny rethrow_if_any,
     ThrowIfNotObject throw_if_not_object,
     ThrowIfNullish throw_if_nullish,
+    Debug debug,
     ResumeDispatch resume_dispatch,
     Suspend suspend,
     Resume resume,

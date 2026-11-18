@@ -189,6 +189,7 @@ pub struct Vm {
     lowest_stack_pointer: Cell<usize>,
     is_handling_error: Cell<bool>,
     debugger_count: Cell<u32>,
+    stepping_debugger_count: Cell<u32>,
     seed: Cell<u64>,
     when_idle: RefCell<Vec<Box<dyn FnOnce(&Vm) + GcFree>>>,
     conservative_ranges: RefCell<Vec<Range<usize>>>,
@@ -248,6 +249,7 @@ impl VmRef {
             deletes_unconfigurable_properties: Cell::new(false),
             is_async_context_tracked: Cell::new(false),
             debugger_count: Cell::new(0),
+            stepping_debugger_count: Cell::new(0),
             did_enter: Cell::new(false),
             seed: Cell::new(seed.rotate_left(32) | 1),
             when_idle: RefCell::default(),
@@ -344,6 +346,7 @@ impl Vm {
     pub const OFFSET_OF_SCRATCH: usize = offset_of!(Vm, scratch);
     pub const OFFSET_OF_IS_ASYNC_CONTEXT_TRACKED: usize = offset_of!(Vm, is_async_context_tracked);
     pub const OFFSET_OF_DEBUGGER_COUNT: usize = offset_of!(Vm, debugger_count);
+    pub const OFFSET_OF_STEPPING_DEBUGGER_COUNT: usize = offset_of!(Vm, stepping_debugger_count);
     pub const OFFSET_OF_HEAP: usize = offset_of!(Vm, heap);
     pub const OFFSET_OF_SMALL_STRINGS: usize = offset_of!(Vm, small_strings);
 
@@ -520,6 +523,15 @@ impl Vm {
         self.last_exception.set(Some(exception));
     }
 
+    pub(crate) fn restore_exceptions(
+        &self,
+        pending: Option<Gc<Exception>>,
+        last: Option<Gc<Exception>>,
+    ) {
+        self.exception.set(pending);
+        self.last_exception.set(last);
+    }
+
     /// Whatever it is.
     #[inline]
     pub fn clear_exception(&self) -> Option<Gc<Exception>> {
@@ -574,8 +586,14 @@ impl Vm {
         self.debugger_count.get() != 0
     }
 
-    pub fn debugger_count(&self) -> &Cell<u32> {
+    pub(crate) fn debugger_count(&self) -> &Cell<u32> {
         &self.debugger_count
+    }
+
+    /// How many want to hear of every debug hook.
+    #[inline(always)]
+    pub fn stepping_debugger_count(&self) -> &Cell<u32> {
+        &self.stepping_debugger_count
     }
 
     #[inline(always)]

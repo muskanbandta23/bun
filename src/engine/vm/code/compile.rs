@@ -8,7 +8,7 @@ use bun_engine_bytecode::{
     Code, CodeFlags, Compiler, Dump, Eval, EvalContext, FunctionRef, Instrumentation, Module,
     Origin, Request, Script, Specialization, StaticScope, verify,
 };
-use bun_engine_syntax::SourceCache;
+use bun_engine_syntax::{PausePosition, SourceCache};
 pub use bun_engine_syntax::{
     Error as CompileError, ErrorKind as CompileErrorKind, Recovery as CompileErrorRecovery,
 };
@@ -17,7 +17,7 @@ use bun_engine_text::StringRef;
 use super::cache::{CodeCache, Goal, Key, Unit};
 use crate::{
     Cx, ErrorInstance, ErrorType, FastHashMap, FunctionExecutable, Gc, GlobalObject, JsResult,
-    Message, SourceProvider, Thrown, Vm, options,
+    Message, SourceProvider, SourceType, Thrown, Vm, options,
 };
 
 #[derive(Default)]
@@ -134,6 +134,18 @@ impl Vm {
         })
     }
 
+    /// Where a debugger can pause in a script or a module. None if the text is neither.
+    pub fn pause_positions(&self, provider: &SourceProvider) -> Vec<PausePosition> {
+        let is_module = match provider.source_type() {
+            SourceType::Program => false,
+            SourceType::Module | SourceType::AnalyzedModule => true,
+            _ => return Vec::new(),
+        };
+        self.with_compiler(provider, Instrumentation::empty(), |compiler, request| {
+            (compiler.pause_positions(&request, is_module)).unwrap_or_default()
+        })
+    }
+
     pub fn check_module_syntax(&self, provider: &SourceProvider) -> Result<(), CompileError> {
         self.with_compiler(provider, Instrumentation::empty(), |compiler, request| {
             compiler.check_syntax(request, true)
@@ -162,8 +174,8 @@ impl Cx {
     }
 
     fn did_parse<T>(&self, provider: &SourceProvider, result: &Result<T, CompileError>) {
-        if self.has_debugger() {
-            (self.hooks().debugger_did_parse)(self, provider, result.as_ref().err());
+        if let Some(debugger) = self.global().debugger() {
+            debugger.did_parse(self, provider, result.as_ref().err());
         }
     }
 
@@ -266,12 +278,10 @@ impl FunctionExecutable {
         }
         if let Some(code) = function.code(specialization) {
             let flags = code.body.flags();
-            // Coroutines have saved its registers.
-            if flags.contains(CodeFlags::SUSPENDS)
-                || (flags.contains(CodeFlags::HAS_DEBUG_HOOKS)
-                    == instrumentation.contains(Instrumentation::DEBUGGER)
-                    && flags.contains(CodeFlags::HAS_COVERAGE)
-                        == instrumentation.contains(Instrumentation::COVERAGE))
+            if flags.contains(CodeFlags::HAS_DEBUG_HOOKS)
+                == instrumentation.contains(Instrumentation::DEBUGGER)
+                && flags.contains(CodeFlags::HAS_COVERAGE)
+                    == instrumentation.contains(Instrumentation::COVERAGE)
             {
                 return Ok(code);
             }

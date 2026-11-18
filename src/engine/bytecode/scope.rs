@@ -1,6 +1,5 @@
 //! What is known at generation of the scopes that exist at run time.
 
-use core::cell::Cell;
 use core::num::NonZeroU32;
 use std::rc::Rc;
 
@@ -57,9 +56,9 @@ pub enum SlotKind {
 bitflags::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     pub struct SlotFlags: u8 {
-        /// See [`StaticScope::is_immutable`].
+        /// No code changes it once it is initialized.
         const IMMUTABLE = 1 << 0;
-        /// See [`StaticScope::is_written_once`].
+        /// No code changes it once it is anything but undefined.
         const WRITTEN_ONCE = 1 << 1;
         /// Clashes with a `var` of `eval` code.
         const LEXICAL = 1 << 2;
@@ -105,7 +104,6 @@ pub struct StaticScope {
     pub(crate) eval_variables_slot: Option<u32>,
     /// Only what a debugger evaluates adds variables, and only that sees them.
     pub(crate) is_extensible_by_debugger_only: bool,
-    pub(crate) is_open_to_debugger: Cell<bool>,
     pub(crate) body_start: Option<NonZeroU32>,
     /// Of the outermost scope of a function: where that function was created.
     pub(crate) entered_at: Option<u32>,
@@ -180,7 +178,6 @@ impl StaticScope {
             kind,
             eval_variables_slot: None,
             is_extensible_by_debugger_only: false,
-            is_open_to_debugger: Cell::new(false),
             body_start: None,
             entered_at: None,
             slot_count: slots.len() as u32,
@@ -220,29 +217,6 @@ impl StaticScope {
     /// Where the object with the variables that `eval` code adds goes, if it may add any. Starts empty.
     pub fn eval_variables_slot(&self) -> Option<u32> {
         self.eval_variables_slot
-    }
-
-    /// Whether no code changes the slot once it is initialized.
-    pub fn is_immutable(&self, slot: &Slot) -> bool {
-        slot.flags.contains(SlotFlags::IMMUTABLE) && self.keeps_promises_of(slot)
-    }
-
-    /// Whether no code changes the slot once it is anything but undefined.
-    pub fn is_written_once(&self, slot: &Slot) -> bool {
-        slot.flags.contains(SlotFlags::WRITTEN_ONCE) && self.keeps_promises_of(slot)
-    }
-
-    fn keeps_promises_of(&self, slot: &Slot) -> bool {
-        !self.is_open_to_debugger.get()
-            || !matches!(
-                slot.kind,
-                SlotKind::Variable | SlotKind::Let | SlotKind::LazyFunction
-            )
-    }
-
-    /// Code that the source does not have may assign to the variables from now on. False if that is no news.
-    pub fn open_to_debugger(&self) -> bool {
-        !self.is_open_to_debugger.replace(true)
     }
 
     /// Of the scope of a function with debug hooks: where its variables count as declared, if that is apart from

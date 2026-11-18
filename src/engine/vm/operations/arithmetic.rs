@@ -1,6 +1,5 @@
 //! The operators on values of any type.
 
-use bun_engine_bigint as bigint;
 use bun_engine_number::{math, to_int32};
 
 use crate::{Cx, Gc, JsBigInt, JsResult, JsString, Numeric, PreferredType, Value};
@@ -22,17 +21,14 @@ fn binary(
 }
 
 macro_rules! binary_operators {
-    ($($name:ident, $what:literal, |$a:ident, $b:ident| $on_numbers:expr, |$cx:ident, $x:ident, $y:ident| $on_bigints:expr;)*) => {$(
+    ($($name:ident, $what:literal, |$a:ident, $b:ident| $on_numbers:expr, $on_bigints:ident;)*) => {$(
         pub fn $name(cx: &mut Cx, lhs: Value, rhs: Value) -> JsResult<Value> {
             binary(
                 cx,
                 lhs,
                 rhs,
                 |$a, $b| Value::from($on_numbers),
-                |$cx, a, b| {
-                    let ($x, $y) = (a.value(), b.value());
-                    JsBigInt::from_outcome($cx, a, b, $on_bigints)
-                },
+                JsBigInt::$on_bigints,
                 concat!("Invalid mix of BigInt and other type in ", $what, "."),
             )
         }
@@ -40,19 +36,19 @@ macro_rules! binary_operators {
 }
 
 binary_operators! {
-    add_numeric, "addition", |a, b| a + b, |cx, x, y| Ok(bigint::add(x, y));
-    subtract, "subtraction", |a, b| a - b, |cx, x, y| Ok(bigint::subtract(x, y));
-    multiply, "multiplication", |a, b| a * b, |cx, x, y| bigint::multiply(x, y);
-    divide, "division", |a, b| a / b, |cx, x, y| bigint::divide(x, y, cx.divisor_cache());
-    remainder, "remainder", |a, b| math::remainder(a, b), |cx, x, y| bigint::remainder(x, y, cx.divisor_cache());
-    exponentiate, "exponentiation", |a, b| math::pow(a, b), |cx, x, y| bigint::exponentiate(x, y);
-    bit_and, "bitwise 'and' operation", |a, b| to_int32(a) & to_int32(b), |cx, x, y| Ok(bigint::bitwise_and(x, y));
-    bit_or, "bitwise 'or' operation", |a, b| to_int32(a) | to_int32(b), |cx, x, y| Ok(bigint::bitwise_or(x, y));
-    bit_xor, "bitwise 'xor' operation", |a, b| to_int32(a) ^ to_int32(b), |cx, x, y| Ok(bigint::bitwise_xor(x, y));
+    add_numeric, "addition", |a, b| a + b, add;
+    subtract, "subtraction", |a, b| a - b, subtract;
+    multiply, "multiplication", |a, b| a * b, multiply;
+    divide, "division", |a, b| a / b, divide;
+    remainder, "remainder", |a, b| math::remainder(a, b), remainder;
+    exponentiate, "exponentiation", |a, b| math::pow(a, b), exponentiate;
+    bit_and, "bitwise 'and' operation", |a, b| to_int32(a) & to_int32(b), bitwise_and;
+    bit_or, "bitwise 'or' operation", |a, b| to_int32(a) | to_int32(b), bitwise_or;
+    bit_xor, "bitwise 'xor' operation", |a, b| to_int32(a) ^ to_int32(b), bitwise_xor;
     shift_left, "left shift operation", |a, b| to_int32(a).wrapping_shl(to_int32(b) as u32),
-        |cx, x, y| bigint::left_shift(x, y);
+        left_shift;
     shift_right, "signed right shift operation", |a, b| to_int32(a).wrapping_shr(to_int32(b) as u32),
-        |cx, x, y| bigint::signed_right_shift(x, y);
+        signed_right_shift;
 }
 
 pub fn shift_right_unsigned(cx: &mut Cx, lhs: Value, rhs: Value) -> JsResult<u32> {
@@ -79,19 +75,19 @@ pub fn add(cx: &mut Cx, lhs: Value, rhs: Value) -> JsResult<Value> {
 }
 
 macro_rules! unary_operators {
-    ($($name:ident, |$a:ident| $on_number:expr, $on_bigint:path;)*) => {$(
+    ($($name:ident, |$a:ident| $on_number:expr, $on_bigint:ident;)*) => {$(
         pub fn $name(cx: &mut Cx, value: Value) -> JsResult<Value> {
             match value.to_numeric(cx)? {
                 Numeric::Number($a) => Ok(Value::from($on_number)),
-                Numeric::BigInt(a) => JsBigInt::from_outcome(cx, &a, &a, Ok($on_bigint(a.value()))).map(Into::into),
+                Numeric::BigInt(a) => JsBigInt::$on_bigint(cx, &a).map(Into::into),
             }
         }
     )*};
 }
 
 unary_operators! {
-    negate, |a| -a, bigint::unary_minus;
-    bit_not, |a| !to_int32(a), bigint::bitwise_not;
-    increment, |a| a + 1.0, bigint::increment;
-    decrement, |a| a - 1.0, bigint::decrement;
+    negate, |a| -a, unary_minus;
+    bit_not, |a| !to_int32(a), bitwise_not;
+    increment, |a| a + 1.0, increment;
+    decrement, |a| a - 1.0, decrement;
 }

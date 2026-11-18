@@ -40,7 +40,6 @@ impl Unit {
         Unit::Nanosecond,
     ];
 
-    /// The order in which ToTemporalPartialDurationRecord reads properties.
     pub const ALPHABETICAL: [Unit; 10] = [
         Unit::Day,
         Unit::Hour,
@@ -54,24 +53,19 @@ impl Unit {
         Unit::Year,
     ];
 
-    pub const fn plural(self) -> &'static str {
-        match self {
-            Unit::Year => "years",
-            Unit::Month => "months",
-            Unit::Week => "weeks",
-            Unit::Day => "days",
-            Unit::Hour => "hours",
-            Unit::Minute => "minutes",
-            Unit::Second => "seconds",
-            Unit::Millisecond => "milliseconds",
-            Unit::Microsecond => "microseconds",
-            Unit::Nanosecond => "nanoseconds",
-        }
-    }
-
     pub const fn singular(self) -> &'static str {
-        let plural = self.plural();
-        plural.split_at(plural.len() - 1).0
+        match self {
+            Unit::Year => "year",
+            Unit::Month => "month",
+            Unit::Week => "week",
+            Unit::Day => "day",
+            Unit::Hour => "hour",
+            Unit::Minute => "minute",
+            Unit::Second => "second",
+            Unit::Millisecond => "millisecond",
+            Unit::Microsecond => "microsecond",
+            Unit::Nanosecond => "nanosecond",
+        }
     }
 
     /// By the singular or the plural name.

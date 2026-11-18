@@ -4,6 +4,7 @@ use core::ffi::c_void;
 use core::mem::offset_of;
 
 use bun_engine_macros::{cell, object_ops};
+use bun_engine_number::Random;
 use bun_engine_text::{PropertyName, StringRef, names};
 
 use super::watchpoints::RealmWatchpoints;
@@ -123,7 +124,7 @@ pub struct GlobalObject {
     pub(self) extension_cells: TracedVec<Option<Gc<JsCell>>>,
     microtask_queue: RefCell<MicrotaskQueueRef>,
     regexp_state: RegExpGlobalState,
-    random: Cell<[u64; 2]>,
+    random: Cell<Random>,
     stack_trace_limit: Cell<Option<u32>>,
     overridden_date_now: Cell<f64>,
     eval_disabled_message: RefCell<Option<StringRef>>,
@@ -267,7 +268,7 @@ impl GlobalObject {
             scope_extension: None,
             microtask_queue: RefCell::new(vm.default_microtask_queue().clone()),
             regexp_state: RegExpGlobalState::default(),
-            random: Cell::new([vm.random_seed(), vm.random_seed() | 1]),
+            random: Cell::new(Random::new(vm.random_seed() as u32)),
             stack_trace_limit: Cell::new(Some(crate::options().default_error_stack_trace_limit)),
             overridden_date_now: Cell::new(f64::NAN),
             eval_disabled_message: RefCell::new(None),
@@ -451,7 +452,8 @@ impl GlobalObject {
         unsafe { crate::heap::Owned::new(self, &self.regexp_state) }
     }
 
-    pub fn random_state(&self) -> &Cell<[u64; 2]> {
+    /// That of `Math.random`.
+    pub fn random_state(&self) -> &Cell<Random> {
         &self.random
     }
 

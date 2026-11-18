@@ -46,6 +46,7 @@ use crate::{
 };
 
 pub(crate) const ESTIMATED_FORMATTER_SIZE: usize = 8 << 10;
+const ESTIMATED_COMPACT_FORMATTER_SIZE: usize = 30 << 10;
 pub(crate) const ESTIMATED_RANGE_FORMATTER_SIZE: usize = 20 << 10;
 
 /// To learn a layout takes about as long as so many calls.
@@ -75,7 +76,10 @@ impl NumberFormat {
         cache.number_formats.find_or_insert(
             |it| it.0.options == options && it.0.locale == locale,
             || {
-                cache.note_allocation(ESTIMATED_FORMATTER_SIZE);
+                cache.note_allocation(match options.notation {
+                    Notation::Compact => ESTIMATED_COMPACT_FORMATTER_SIZE,
+                    _ => ESTIMATED_FORMATTER_SIZE,
+                });
                 let skeleton = Skeleton::from(&options);
                 let formatter =
                     ReusingFormatter::open(&skeleton, &locale.icu_locale()?, &options.digits)

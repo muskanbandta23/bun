@@ -212,9 +212,9 @@ fn resolved_options(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let this = frame.this_value();
     let this = legacy::unwrap::<JsDateTimeFormat>(cx, this, Cx::date_time_format_constructor)?;
     let this: Gc<JsDateTimeFormat> = this!(cx, this, "DateTimeFormat", "resolvedOptions")?;
-    let resolved = this.format.resolved_options().or_throw(cx)?;
+    let resolved = this.anchor().format.resolved_options().or_throw(cx)?;
 
-    let options = Record::with_locale(cx, resolved.locale);
+    let options = Record::with_locale(cx, resolved.locale.string().clone());
     let calendar = StringRef::from_literal(resolved.calendar.identifier());
     options.put_string(names::calendar, calendar);
     let numbering_system = resolved.numbering_system.to_string_ref();

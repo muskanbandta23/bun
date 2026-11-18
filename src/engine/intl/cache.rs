@@ -2,6 +2,7 @@ use core::cell::RefCell;
 
 use bun_engine_text::{StaticString, StringImpl, StringRef, Text};
 
+use crate::date_time_format::DateCache;
 use crate::{Error, LanguageTag, Result};
 
 const CANONICAL_TAG_SLOTS: usize = 32;
@@ -14,6 +15,7 @@ pub struct Cache {
     /// By the hash of the tag as it was written.
     canonical_tags: RefCell<[Option<(StringRef, LanguageTag)>; CANONICAL_TAG_SLOTS]>,
     default_locale: RefCell<Option<LanguageTag>>,
+    pub(crate) dates: DateCache,
 }
 
 impl Cache {

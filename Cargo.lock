@@ -737,7 +737,6 @@ dependencies = [
  "bitflags",
  "bun_engine_asm",
  "bun_engine_exec_memory",
- "hashbrown 0.15.5",
  "smallvec",
 ]
 

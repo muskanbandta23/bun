@@ -260,7 +260,8 @@ impl Session<'_> {
         }
         self.next();
         let value = self.property_value::<BUILD>()?;
-        let may_set_prototype = token.is_elaborate() || matches!(token.end() - token.start(), 9 | 11);
+        let may_set_prototype =
+            token.is_elaborate() || matches!(token.end() - token.start(), 9 | 11);
         if !BUILD && !may_set_prototype {
             return Ok(());
         }
@@ -306,7 +307,12 @@ impl Session<'_> {
             } else {
                 PropertyKey::None
             };
-            return self.method_property::<BUILD>(state, key, token.start(), FunctionFlags::empty());
+            return self.method_property::<BUILD>(
+                state,
+                key,
+                token.start(),
+                FunctionFlags::empty(),
+            );
         }
         if token.kind() == TokenKind::String {
             return Err(self.fail("Expected an identifier as property name"));
@@ -323,7 +329,11 @@ impl Session<'_> {
                 if self.follows_newline() {
                     return Err(self.fail("Expected a property name following keyword 'async'"));
                 }
-                return self.elaborate_property::<BUILD>(state, token.start(), FunctionFlags::ASYNC);
+                return self.elaborate_property::<BUILD>(
+                    state,
+                    token.start(),
+                    FunctionFlags::ASYNC,
+                );
             }
             name => {
                 return Err(

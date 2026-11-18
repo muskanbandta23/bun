@@ -167,7 +167,9 @@ impl Session<'_> {
         if self.kind().is_assignment() {
             return Err(self.reject_target(value));
         }
-        if BUILD && (operator.kind() == TokenKind::Assign || operator.kind().is_logical_assignment()) {
+        if BUILD
+            && (operator.kind() == TokenKind::Assign || operator.kind().is_logical_assignment())
+        {
             self.name_after_target(value.id(), target.id());
         }
         let kind = ExprKind::Assign {

@@ -558,7 +558,10 @@ impl Names {
                         Storage::Source => source.bytes,
                         Storage::Latin1 | Storage::Utf16 => &self.latin1,
                     };
-                    are_equal(&storage[entry.start as usize..][..characters.len()], characters)
+                    are_equal(
+                        &storage[entry.start as usize..][..characters.len()],
+                        characters,
+                    )
                 })
         })
     }

@@ -164,7 +164,14 @@ static PRECEDENCES: [u8; 256] = {
         &[T::BitXor],
         &[T::BitAnd],
         &[T::Equal, T::NotEqual, T::StrictEqual, T::StrictNotEqual],
-        &[T::Less, T::LessEqual, T::Greater, T::GreaterEqual, T::Instanceof, T::In],
+        &[
+            T::Less,
+            T::LessEqual,
+            T::Greater,
+            T::GreaterEqual,
+            T::Instanceof,
+            T::In,
+        ],
         &[T::ShiftLeft, T::ShiftRight, T::ShiftRightUnsigned],
         &[T::Plus, T::Minus],
         &[T::Star, T::Slash, T::Percent],
@@ -265,12 +272,12 @@ pub(crate) struct Detail(u64);
 
 impl Detail {
     pub(crate) const NONE: Detail = Detail(0);
-    pub(crate) const FOLLOWS_NEWLINE: Detail = Detail(1 << 40);
-    pub(crate) const ELABORATE: Detail = Detail(1 << 48);
+    pub(crate) const FOLLOWS_NEWLINE: Detail = Detail(1 << 8);
+    pub(crate) const ELABORATE: Detail = Detail(1 << 16);
 
     #[inline(always)]
     pub(crate) fn value(value: u32) -> Detail {
-        Detail(u64::from(value))
+        Detail(u64::from(value) << 32)
     }
 
     #[inline(always)]
@@ -297,33 +304,23 @@ pub(crate) struct Token {
 }
 
 impl Token {
-    const KIND_SHIFT: u32 = 32;
-
     #[inline(always)]
     pub(crate) fn new(kind: TokenKind, start: usize, end: usize, detail: Detail) -> Token {
         Token {
             range: (end as u64) << 32 | start as u64,
-            detail: u64::from(kind.0) << Token::KIND_SHIFT | detail.0,
+            detail: u64::from(kind.0) | detail.0,
         }
     }
 
     #[inline(always)]
     pub(crate) fn with_kind(self, kind: TokenKind) -> Token {
-        let detail = Detail(self.detail & !(0xff << Token::KIND_SHIFT));
+        let detail = Detail(self.detail & !0xff);
         Token::new(kind, self.start() as usize, self.end() as usize, detail)
     }
 
     #[inline(always)]
-    pub(crate) fn with_lead(self, lead: Detail) -> Token {
-        Token {
-            detail: self.detail | lead.0,
-            ..self
-        }
-    }
-
-    #[inline(always)]
     pub(crate) fn kind(self) -> TokenKind {
-        TokenKind((self.detail >> Token::KIND_SHIFT) as u8)
+        TokenKind(self.detail as u8)
     }
 
     #[inline(always)]
@@ -339,7 +336,7 @@ impl Token {
     /// Of a word, the index of its [`Name`]. Of a number that is not elaborate, the number.
     #[inline(always)]
     pub(crate) fn value(self) -> u32 {
-        self.detail as u32
+        (self.detail >> 32) as u32
     }
 
     /// What it has from the text before it.
@@ -368,7 +365,7 @@ impl Token {
     #[inline(always)]
     pub(crate) fn is_contextual(self, name: Name) -> bool {
         const { assert!(TokenKind::Identifier.0 == 0) };
-        self.detail & !Detail::FOLLOWS_NEWLINE.0 == name.index() as u64
+        self.detail & !Detail::FOLLOWS_NEWLINE.0 == Detail::value(name.index() as u32).0
     }
 
     /// `let`, `yield` or `await`, with or without escapes.

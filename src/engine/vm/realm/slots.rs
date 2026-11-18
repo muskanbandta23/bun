@@ -254,11 +254,12 @@ realm_slots! {
         async_generator_shape: Shape,
         async_generator_prototype_next: JsFunction,
         async_iterator_prototype_async_iterator: JsFunction,
-        async_from_sync_iterator_prototype_next: JsFunction,
         disposable_stack_constructor: JsObject = @DisposableStack,
         disposable_stack_shape: Shape,
+        disposable_stack_prototype_dispose: JsFunction,
         async_disposable_stack_constructor: JsObject = @AsyncDisposableStack,
         async_disposable_stack_shape: Shape,
+        async_disposable_stack_prototype_dispose: JsFunction,
         shadow_realm_constructor: JsObject = @ShadowRealm,
         shadow_realm_shape: Shape,
         remote_function_shape: Shape,
@@ -427,6 +428,11 @@ realm_slots! {
         private_resolve_promise_once: JsFunction = @resolvePromiseWithFirstResolvingFunctionCallCheck,
         private_reject_promise_once: JsFunction = @rejectPromiseWithFirstResolvingFunctionCallCheck,
         private_perform_promise_then: JsFunction = @performPromiseThen,
+        private_promise_resolve: JsFunction = @promiseResolve,
+        private_promise_reject: JsFunction = @promiseReject,
+        private_generator_resume: JsFunction = @generatorResume,
+        private_async_from_sync_iterator_create: JsFunction = @asyncFromSyncIteratorCreate,
+        private_dispose_async_stack: JsFunction = @disposeAsyncStack,
     }
 }
 

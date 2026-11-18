@@ -4,6 +4,10 @@ use super::{Trace, Visitor};
 
 /// A box that is made on demand and then stays, so that a marker can read it at any time.
 #[repr(transparent)]
+#[cfg_attr(
+    rootcheck,
+    rootcheck::allow("made empty, and what is `Trace` changes only through its owner")
+)]
 pub struct OnceBox<T>(AtomicPtr<T>, core::marker::PhantomData<Box<T>>);
 
 impl<T> Default for OnceBox<T> {
@@ -27,9 +31,10 @@ impl<T> OnceBox<T> {
     }
 
     #[inline]
+    #[cfg_attr(rootcheck, rootcheck::allow("the box becomes the content"))]
     pub fn get_or_default(&self) -> &T
     where
-        T: Default,
+        T: Default + Trace,
     {
         if let Some(value) = self.get() {
             return value;

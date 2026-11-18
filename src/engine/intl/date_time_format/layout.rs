@@ -21,6 +21,7 @@ pub(super) const FORMAT_FAILURE: &str = "failed to format date value";
 /// A DateTime Format Record.
 pub(super) struct Layout {
     pub(super) pattern: Pattern,
+    pub(super) shows_time_zone: bool,
     /// Only if the pattern shows the era.
     early_era: Option<EarlyEra>,
     template: OnceCell<Option<Template>>,
@@ -29,9 +30,11 @@ pub(super) struct Layout {
 
 impl Layout {
     pub(super) fn new(pattern: Pattern, locale: &LocaleData) -> Result<Layout> {
-        let shows_era = pattern::fields(&pattern).any(|it| it.component() == Some(Component::Era));
+        let shows =
+            |component| pattern::fields(&pattern).any(|it| it.component() == Some(component));
         Ok(Layout {
-            early_era: if shows_era {
+            shows_time_zone: shows(Component::TimeZoneName),
+            early_era: if shows(Component::Era) {
                 EarlyEra::of(locale.calendar()?)
             } else {
                 None

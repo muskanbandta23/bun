@@ -1,13 +1,13 @@
-use bun_engine_bytecode::op;
-use bun_engine_vm::code::metadata::{GetById, GetLength};
+use bun_engine_bytecode::{Width, op};
+use bun_engine_vm::code::metadata::{ArrayAccess, GetById, GetByVal, GetLength};
 use bun_engine_vm::ic::{self, AccessCases, AccessKind, StoreCache};
 use bun_engine_vm::{
-    IndexingMode, JsCell, JsObject, JsString, OFFSET_OF_INTERNAL_FIELDS, TypeFlags, Value,
+    IndexingMode, JsCell, JsObject, JsString, JsSymbol, OFFSET_OF_INTERNAL_FIELDS, TypeFlags, Value,
     ValueProfile,
 };
 
 use super::barrier_and_next;
-use crate::machine::{EMPTY, boolean, cell, go, handler, jump, next, slow};
+use crate::machine::{EMPTY, Machine, boolean, cell, go, handler, jump, next, slow};
 
 macro_rules! loads {
     ($($name:ident, $from_cases:ident, $Op:ident, $Entry:ident, $base:ident;)*) => { handler! {$(
@@ -171,4 +171,105 @@ handler! {
         core::sync::atomic::AtomicU64::from_ptr(field).store(value, core::sync::atomic::Ordering::Relaxed);
         barrier_and_next!(m, op: op::PutInternalField, cell::<JsCell>(base), value)
     }
+}
+
+impl<W: Width> Machine<W> {
+    /// The address of the name that a key stands for, if it is an atom or a symbol.
+    #[inline(always)]
+    unsafe fn name_of_key(&self, key: u64) -> Option<usize> {
+        // SAFETY: not empty. Both have the name in the word after the header.
+        unsafe {
+            let cell = self.as_cell(key)?;
+            ((cell.is_string() && cell.per_cell_bit()) || cell.is_symbol())
+                .then(|| *core::ptr::with_exposed_provenance::<usize>(key as usize).add(1))
+        }
+    }
+}
+
+const _: () = assert!(JsString::OFFSET_OF_FIBER == 8 && JsSymbol::OFFSET_OF_NAME == 8);
+
+handler! {
+    #[inline(never)]
+    fn get_by_name(m, op: op::GetByVal) {
+        let base = m.get(op.base);
+        let (true, Some(name)) = (m.is_cell(base), m.name_of_key(m.get(op.key))) else { slow!(m, op::GetByVal) };
+        let (object, entry) = (cell::<JsObject>(base), m.entry::<GetByVal>(op.metadata));
+        let case = entry.cases.find(object.shape_id(), name);
+        let Some(value) = case.and_then(|it| it.try_load(object)) else { slow!(m, op::GetByVal) };
+        entry.value.record(value);
+        m.set(op.dst, value.to_bits());
+        next!(m, op)
+    }
+
+    fn in_by_id(m, op: op::InById) {
+        let Some(object) = m.as_cell(m.get(op.base)) else { slow!(m, op::InById) };
+        let case = m.entry::<AccessCases>(op.metadata).find(object.shape_id(), 0);
+        let Some(case) = case.filter(|it| it.is_valid()) else { slow!(m, op::InById) };
+        m.set(op.dst, boolean(case.kind() != AccessKind::HasNot));
+        next!(m, op)
+    }
+
+    fn in_by_val(m, op: op::InByVal) {
+        let (Some(object), key) = (m.as_object(m.get(op.base)), m.get(op.key)) else { slow!(m, op::InByVal) };
+        let entry = m.entry::<ArrayAccess>(op.metadata);
+        if m.is_int32(key) {
+            if object.try_get_dense(key as u32).is_none() {
+                slow!(m, op::InByVal)
+            }
+            entry.array.record_shape(&object);
+            m.set(op.dst, boolean(true));
+            next!(m, op)
+        }
+        let case = m.name_of_key(key).and_then(|name| entry.cases.find(object.shape_id(), name));
+        let Some(case) = case.filter(|it| it.is_valid()) else { slow!(m, op::InByVal) };
+        m.set(op.dst, boolean(case.kind() != AccessKind::HasNot));
+        next!(m, op)
+    }
+
+    fn instanceof(m, op: op::Instanceof) {
+        let prototype = m.reg(op.prototype);
+        let (Some(mut object), Some(_)) = (m.as_object(m.get(op.value)), m.as_object(prototype)) else {
+            slow!(m, op::Instanceof)
+        };
+        let result = loop {
+            if object.overrides_get_prototype() {
+                slow!(m, op::Instanceof)
+            }
+            let next = object.prototype_direct().to_bits();
+            if next == prototype || !m.is_cell(next) {
+                break next == prototype;
+            }
+            object = cell(next);
+        };
+        m.set(op.dst, boolean(result));
+        next!(m, op)
+    }
+}
+
+macro_rules! stores_by_name {
+    ($($name:ident, $Op:ident;)*) => { handler! {$(
+        #[inline(never)]
+        fn $name(m, op: op::$Op) {
+            let base = m.get(op.base);
+            let (true, Some(name)) = (m.is_cell(base), m.name_of_key(m.get(op.key))) else { slow!(m, op::$Op) };
+            let object = cell::<JsObject>(base);
+            let Some(case) = m.entry::<ArrayAccess>(op.metadata).cases.find(object.shape_id(), name) else {
+                slow!(m, op::$Op)
+            };
+            let kind = case.kind();
+            if kind != AccessKind::Replace && !(kind == AccessKind::Transition && case.lookup_unchecked().is_valid()) {
+                slow!(m, op::$Op)
+            }
+            ic::slot_at(&object, case.byte_offset()).set_without_barrier(Some(Value::from_bits(m.get(op.value))));
+            if kind == AccessKind::Transition {
+                object.set_shape_id_directly(case.new_shape());
+            }
+            barrier_and_next!(m, op: op::$Op, object)
+        }
+    )*} };
+}
+
+stores_by_name! {
+    put_by_name, PutByVal;
+    put_by_name_direct, PutByValDirect;
 }

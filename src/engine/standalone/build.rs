@@ -18,6 +18,10 @@ const KERNELS: &[&str] = &[
 const HEADERS: [&str; 2] = ["highway_dispatch.h", "BufferStringSearch.h"];
 
 fn main() {
+    // It links nothing.
+    if cfg!(rootcheck) {
+        return;
+    }
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let repository = manifest
         .ancestors()

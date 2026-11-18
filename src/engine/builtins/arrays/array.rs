@@ -1,7 +1,7 @@
 use bun_engine_text::{PropertyName, private_names};
 use bun_engine_vm::{
-    Attributes, IterationKind, JsArray, JsArrayIterator, JsFinalObject, JsFunction, JsObjectInit,
-    RealmSlot, Vm,
+    Attributes, IterationKind, JsArray, JsArrayIterator, JsFunction, JsObjectInit,
+    RealmSlot,
 };
 
 use super::{copy, join, mutate, search, sort};
@@ -111,12 +111,11 @@ const UNSCOPABLES: [PropertyName<'static>; 16] = [
     names::values,
 ];
 
-fn make_unscopables(vm: &Vm, prototype: &JsObject) -> Value {
-    let global = prototype.realm().expect("a realm");
-    let unscopables = JsFinalObject::create(vm, global.null_prototype_object_shape());
-    unscopables.convert_to_dictionary(vm);
+fn make_unscopables(cx: &Cx, _: &JsObject) -> Value {
+    let unscopables = cx.new_object_with_null_prototype();
+    unscopables.convert_to_dictionary(cx);
     for name in UNSCOPABLES {
-        unscopables.put_direct(vm, name, Value::TRUE, Attributes::NONE);
+        unscopables.put_direct(cx, name, Value::TRUE, Attributes::NONE);
     }
     unscopables.into()
 }

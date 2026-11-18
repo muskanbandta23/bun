@@ -10,7 +10,8 @@ use crate::code::metadata::Entry;
 use crate::heap::Survivors;
 use crate::{
     Attributes, CellType, CodeBlock, CustomGetter, Cx, Field, Gc, GetterSetter, GlobalProxy,
-    InternalMethod, JsObject, JsResult, PropertySlot, ShapeFlags, ShapeId, Value, Visitor, Vm,
+    InternalMethod, Intrinsic, JsFunction, JsObject, JsResult, JsTypedArray, PropertySlot,
+    ShapeFlags, ShapeId, Value, Visitor, Vm,
 };
 
 /// One case inline, and the others in a list.
@@ -335,10 +336,27 @@ fn plan_or_reason(
         _ if slot.is_custom() => return Err(Plan::Fail),
         None if slot.is_accessor() => AccessKind::CallOwnGetter,
         None => AccessKind::LoadOwn,
-        Some(_) if slot.is_accessor() => AccessKind::CallInheritedGetter,
+        Some(lookup) if slot.is_accessor() => kind_for_inherited_getter(base, &lookup),
         Some(lookup) if lookup.constant().is_some() => AccessKind::LoadConstant,
         Some(_) => AccessKind::LoadInherited,
     }))
+}
+
+fn kind_for_inherited_getter(base: Value, lookup: &PrototypeLookup) -> AccessKind {
+    let getter = lookup
+        .constant()
+        .and_then(|it| it.cast::<GetterSetter>().getter());
+    let function = getter.and_then(|it| it.downcast::<JsFunction>());
+    let array = base.downcast::<JsTypedArray>();
+    match function.map(|it| it.intrinsic()) {
+        _ if array.is_none_or(|it| it.is_resizable_or_growable()) => {
+            AccessKind::CallInheritedGetter
+        }
+        Some(Intrinsic::TypedArrayLength) => AccessKind::TypedArrayLength,
+        Some(Intrinsic::TypedArrayByteLength) => AccessKind::TypedArrayByteLength,
+        Some(Intrinsic::TypedArrayByteOffset) => AccessKind::TypedArrayByteOffset,
+        _ => AccessKind::CallInheritedGetter,
+    }
 }
 
 fn plan_through_global_proxy(
@@ -378,6 +396,20 @@ impl AccessCase {
                 AccessKind::LoadOwn => slot_at(&base, self.byte_offset).get(),
                 AccessKind::LoadConstant => self.lookup_unchecked().constant(),
                 AccessKind::LoadInherited => self.lookup_unchecked().stored_value(),
+                kind @ (AccessKind::TypedArrayLength
+                | AccessKind::TypedArrayByteLength
+                | AccessKind::TypedArrayByteOffset)
+                    if self.lookup_unchecked().is_valid() =>
+                {
+                    let array = base.cast_unchecked::<JsTypedArray>();
+                    Some(Value::from(match kind {
+                        AccessKind::TypedArrayLength => array.known_length(),
+                        AccessKind::TypedArrayByteLength => {
+                            array.known_length() << array.size_shift()
+                        }
+                        _ => array.declared_byte_offset(),
+                    }))
+                }
                 _ => None,
             }
         }
@@ -434,6 +466,13 @@ fn execute(
                 } else {
                     slot_at(&target, case.byte_offset).get().map(Ok)
                 }
+            }
+            AccessKind::TypedArrayLength
+            | AccessKind::TypedArrayByteLength
+            | AccessKind::TypedArrayByteOffset
+                if receiver != base =>
+            {
+                None
             }
             _ => case.try_load(object).map(Ok),
         }

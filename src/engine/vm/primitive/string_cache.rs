@@ -66,6 +66,13 @@ impl SmallStrings {
         })
     }
 
+    #[inline(always)]
+    pub fn existing_single_character(&self, character: u8) -> Option<Gc<JsString>> {
+        let address = self.of_static_atoms[usize::from(character)].get();
+        // SAFETY: a root.
+        (address != 0).then(|| unsafe { Gc::from_address(address) })
+    }
+
     /// For generated code, which does not look whether one exists.
     pub fn create_all_single_characters(&self, vm: &Vm) {
         for character in 0..=u8::MAX {

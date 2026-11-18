@@ -32,6 +32,10 @@ pub enum AccessKind {
     /// For any shape.
     ArrayLength,
     StringLength,
+    /// What the getter of the library returns, while the lookup is valid. The length of the buffer is fixed.
+    TypedArrayLength,
+    TypedArrayByteLength,
+    TypedArrayByteOffset,
     /// `pointer` is the namespace, `second_pointer` the address of the slot.
     LoadModuleBinding,
     /// `pointer` is the address of the `GlobalBinding`, and `new_shape` that of the target of the proxy.

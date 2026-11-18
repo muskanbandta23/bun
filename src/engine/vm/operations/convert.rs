@@ -186,7 +186,7 @@ impl Value {
         if let Some(integer) = self.as_int32() {
             return Ok(integer.max(0) as u64);
         }
-        Ok(self.to_number(cx)?.min(MAX_SAFE_INTEGER) as u64).map(|length| length.min((1 << 53) - 1))
+        Ok((self.to_number(cx)? as u64).min(MAX_SAFE_INTEGER as u64))
     }
 
     /// ToIndex. `name` is what the error calls the value.
@@ -218,25 +218,35 @@ impl Value {
         })
     }
 
+    #[inline(always)]
     pub fn to_bigint(self, cx: &mut Cx) -> JsResult<Gc<JsBigInt>> {
+        match self.as_bigint() {
+            Some(bigint) => Ok(bigint),
+            None => self.to_bigint_slow(cx),
+        }
+    }
+
+    #[inline(never)]
+    fn to_bigint_slow(self, cx: &mut Cx) -> JsResult<Gc<JsBigInt>> {
         let primitive = self.to_primitive(cx, PreferredType::Number)?;
         if let Some(bigint) = primitive.as_bigint() {
             return Ok(bigint);
         }
         if let Some(boolean) = primitive.as_boolean() {
-            return Ok(JsBigInt::from_small(cx, i64::from(boolean)));
+            return Ok(JsBigInt::from_small(cx, boolean));
         }
         if let Some(string) = primitive.as_string() {
-            let view = string.view(cx)?;
-            return JsBigInt::from_new(cx, bun_engine_bigint::from_string(view.text()));
+            return JsBigInt::parse(cx, string.view(cx)?.text());
         }
         Err(cx.throw_type_error("Invalid argument type in ToBigInt operation"))
     }
 
+    #[inline]
     pub fn to_bigint64(self, cx: &mut Cx) -> JsResult<i64> {
         Ok(self.to_bigint(cx)?.value().to_i64_wrapping())
     }
 
+    #[inline]
     pub fn to_biguint64(self, cx: &mut Cx) -> JsResult<u64> {
         Ok(self.to_bigint(cx)?.value().to_u64_wrapping())
     }
@@ -276,7 +286,7 @@ impl Value {
             return Ok(string);
         }
         match cell.downcast::<JsBigInt>() {
-            Some(bigint) => Ok(JsString::new(cx, bigint.to_string_ref(cx, 10)?)),
+            Some(bigint) => bigint.to_js_string(cx, 10),
             None => Err(cx.throw_type_error(errors::SYMBOL_TO_STRING)),
         }
     }

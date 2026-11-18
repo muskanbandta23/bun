@@ -11,8 +11,8 @@ use crate::heap::Owned;
 use crate::{
     Attributes, CellType, Cx, DeferredFire, DontEnumMode, ElementKind, Field, Gc, GetterSetter,
     GlobalObject, HoleMode, ImmutableArray, IndexingMode, JsArrayBufferView, JsObject, JsResult,
-    NoGc, PropertyDescriptor, PropertyNameList, PropertySlot, ProxyObject, ShapeFlags,
-    SparseElements, SparseEntry, Storage, TransitionKind, TypeFlags, Value, Vm, errors,
+    NoGc, PropertyDescriptor, PropertyNameList, PropertySlot, ProxyObject, PutPropertySlot,
+    ShapeFlags, SparseElements, SparseEntry, Storage, TransitionKind, TypeFlags, Value, Vm, errors,
 };
 
 pub(super) const MIN_SPARSE_INDEX: u32 = 100_000;
@@ -455,6 +455,7 @@ impl JsObject {
             fill(storage);
             self.set_shape_and_storage(&shape, storage, false);
         }
+        self.did_change_as_prototype(vm, &shape);
         Ok(())
     }
 
@@ -749,6 +750,11 @@ impl JsObject {
                 return proxy
                     .put_index_with_receiver(cx, this, index, value, should_throw)
                     .map(Some);
+            }
+            if prototype.cell_type() == CellType::ModuleNamespaceObject {
+                let mut slot = PutPropertySlot::new(this, should_throw);
+                let name = Identifier::from_index(index);
+                return prototype.put(cx, name.name(), value, &mut slot).map(Some);
             }
             if CellType::TYPED_ARRAYS.contains(prototype.cell_type()) {
                 let length = prototype.cast::<JsArrayBufferView>().length();

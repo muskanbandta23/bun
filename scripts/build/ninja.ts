@@ -70,6 +70,7 @@ const ruleVars = {
   dep_codegen: ["name", "cwd", "tool", "args"],
   dep_fetch: ["name", "repo", "commit", "dest", "cache", "patches"],
   dep_fetch_prebuilt: ["name", "url", "dest", "identity", "rm_paths"],
+  dep_fetch_tarball: ["name", "url", "sha256", "dest", "cache", "patches"],
   dep_gen: ["name", "desc", "opts", "cmd"],
   dep_host_cc: ["flags"],
   dep_subst: ["pairs"],

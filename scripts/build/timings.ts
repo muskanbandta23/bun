@@ -806,6 +806,7 @@ const ruleLane: Record<RuleName, Lane> = {
   dep_codegen: "dependencies",
   dep_fetch: "dependencies",
   dep_fetch_prebuilt: "dependencies",
+  dep_fetch_tarball: "dependencies",
   dep_gen: "dependencies",
   dep_host_cc: "dependencies",
   dep_subst: "dependencies",

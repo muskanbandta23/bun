@@ -35,6 +35,7 @@ pub(super) struct Record {
 
 /// To be used while no collection runs.
 #[derive(Default)]
+#[cfg_attr(rootcheck, rootcheck::allow("collection is deferred"))]
 pub(super) struct RecordBuilder {
     next_key: Option<Identifier>,
     /// Those whose holder is still open.

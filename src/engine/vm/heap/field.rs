@@ -6,6 +6,8 @@ use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{AtomicU64, Ordering};
 
+use bun_alloc::AllocError;
+
 use super::cell::CellLockGuard;
 use super::{Gc, GcFree, RootVec, Trace, Visitor, barrier, gc::keep_alive, root_vec};
 use crate::{CellKind, Cx, FastHashMap, JsCell, Value, Vm};
@@ -522,6 +524,14 @@ impl<K: PlainKey, V: Copy> Owned<'_, TracedMap<K, V>> {
         self.change(|map| map.insert(key, value))
     }
 
+    pub fn try_reserve(self, additional: usize) -> Result<(), AllocError> {
+        self.change(|map| map.try_reserve(additional).map_err(|_| AllocError))
+    }
+
+    pub fn capacity(self) -> usize {
+        self.read(FastHashMap::capacity)
+    }
+
     pub fn remove<Q: Hash + hashbrown::Equivalent<K> + ?Sized>(self, key: &Q) -> Option<V> {
         self.change(|map| map.remove(key))
     }
@@ -532,6 +542,14 @@ impl<K: PlainKey, V: Copy> Owned<'_, TracedMap<K, V>> {
 
     pub fn keys(self) -> Vec<K> {
         self.read(|map| map.keys().cloned().collect())
+    }
+
+    /// Of those that `filter`, which touches no cell, lets pass.
+    pub(crate) fn min_key(self, filter: impl Fn(&K) -> bool) -> Option<K>
+    where
+        K: Ord,
+    {
+        self.read(|map| map.keys().filter(|key| filter(key)).min().cloned())
     }
 
     pub fn entries(self) -> RootVec<(K, V)> {

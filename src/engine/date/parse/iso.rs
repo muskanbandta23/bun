@@ -56,7 +56,7 @@ pub(super) fn parse<T: CodeUnit>(cursor: &mut Cursor<'_, T>) -> Attempt {
     if cursor.is_at_end() {
         return Attempt::Complete(Parsed::Utc(midnight));
     }
-    if !cursor.skip_letter(b't') {
+    if !cursor.skip(b'T') && !cursor.skip(b't') {
         return unfinished(numbers, count);
     }
     time_of_day(cursor)
@@ -121,7 +121,7 @@ fn fraction<T: CodeUnit>(cursor: &mut Cursor<'_, T>, max_digits: i32) -> Option<
 /// Through the end of the text.
 #[inline(always)]
 fn zone<T: CodeUnit>(cursor: &mut Cursor<'_, T>, time: i64) -> Option<Parsed> {
-    let parsed = if cursor.skip_letter(b'z') {
+    let parsed = if cursor.skip(b'Z') || cursor.skip(b'z') {
         Parsed::Utc(time)
     } else if let Some(sign) = cursor.sign() {
         Parsed::Utc(time - i64::from(sign * offset_minutes(cursor)? * 60_000))

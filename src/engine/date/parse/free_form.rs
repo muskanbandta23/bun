@@ -259,8 +259,10 @@ impl Parts {
             zone.minutes = Some(value);
         } else if continues_clock {
             self.clock.push_last(value);
-            let is_set_off = matches!(cursor.peek(), 0 | b'\t'..=b'\r' | b' ' | b'+' | b'-')
-                || cursor.is_at_letter(b'z');
+            let is_set_off = matches!(
+                cursor.peek(),
+                0 | b'\t'..=b'\r' | b' ' | b'+' | b'-' | b'Z' | b'z'
+            );
             is_set_off.then_some(())?;
         } else {
             self.date.push(value)?;

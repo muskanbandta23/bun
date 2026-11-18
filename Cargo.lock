@@ -647,6 +647,7 @@ dependencies = [
  "bun_engine_regexp",
  "bun_engine_standalone",
  "bun_engine_syntax",
+ "bun_engine_temporal",
  "bun_engine_text",
  "bun_engine_unicode",
  "bun_engine_vm",

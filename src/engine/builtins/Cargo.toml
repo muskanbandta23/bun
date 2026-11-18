@@ -18,6 +18,7 @@ bun_engine_number.workspace = true
 bun_engine_bigint.workspace = true
 bun_engine_date.workspace = true
 bun_engine_intl.workspace = true
+bun_engine_temporal.workspace = true
 bun_engine_regexp.workspace = true
 bun_engine_syntax.workspace = true
 bun_engine_bytecode.workspace = true

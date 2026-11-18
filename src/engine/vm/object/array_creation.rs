@@ -2,10 +2,11 @@ use core::ops::Range;
 
 use bun_alloc::AllocError;
 
+use crate::heap::barrier;
 use crate::{
-    Cx, ElementKind, ElementWriter, Gc, HoleMode, ImmutableArray, IndexingMode, JsArray,
-    JsArrayInit, JsObject, JsObjectInit, JsResult, NoGc, PlainRange, PropertyOffset, Shape, ShapeFlags,
-    Storage, Value, Vm,
+    Cx, ElementKind, ElementWriter, Gc, GlobalObject, HoleMode, ImmutableArray, IndexingMode,
+    JsArray, JsArrayInit, JsObject, JsObjectInit, JsResult, NoGc, PlainRange, PropertyOffset,
+    Shape, ShapeFlags, Storage, Value, Vm,
 };
 
 /// `new Array(n)` is sparse from here on.
@@ -81,13 +82,44 @@ impl JsArray {
         room: usize,
         fill: impl FnOnce(&mut ElementWriter<'_>),
     ) -> Result<Gc<JsArray>, AllocError> {
-        let kind = writable_dense_kind(&shape);
+        let (kind, capacity) = (writable_dense_kind(&shape), shape.out_of_line_capacity());
+        // SAFETY: the caller's.
+        unsafe { Self::try_build_unchecked(vm, shape, kind, capacity, room, fill) }
+    }
+
+    /// With the shape that the realm has for new arrays of that kind.
+    ///
+    /// # Safety
+    /// As above.
+    #[inline(always)]
+    pub(crate) unsafe fn try_build_in_realm(
+        vm: &Vm,
+        global: &GlobalObject,
+        kind: ElementKind,
+        room: usize,
+        fill: impl FnOnce(&mut ElementWriter<'_>),
+    ) -> Result<Gc<JsArray>, AllocError> {
+        assert!(kind.is_dense());
+        // SAFETY: the caller's, and such a shape has no properties.
+        unsafe { Self::try_build_unchecked(vm, global.array_shape(kind), kind, 0, room, fill) }
+    }
+
+    /// # Safety
+    /// As above. The shape is for writable elements of that kind and for that many slots.
+    #[inline(always)]
+    unsafe fn try_build_unchecked(
+        vm: &Vm,
+        shape: Gc<Shape>,
+        kind: ElementKind,
+        capacity: usize,
+        room: usize,
+        fill: impl FnOnce(&mut ElementWriter<'_>),
+    ) -> Result<Gc<JsArray>, AllocError> {
         if room > Storage::MAX_VECTOR_LENGTH as usize {
             return Err(AllocError);
         }
-        let (room, capacity) = (room as u32, shape.out_of_line_capacity());
-        let vector_length = Storage::optimal_vector_length(capacity, room);
-        let storage = Storage::try_allocate(vm, 0, capacity, Some(vector_length))?;
+        let room = room as u32;
+        let (storage, vector_length) = Storage::try_allocate_optimal(vm, capacity, room)?;
         // SAFETY: a collection finds an empty array or none, and nothing else finds it before it is complete.
         unsafe {
             if capacity != 0 {
@@ -99,7 +131,10 @@ impl JsArray {
             let mut writer = ElementWriter::new(storage.uninitialized_elements(0, room), kind);
             fill(&mut writer);
             let length = room - writer.remaining() as u32;
-            storage.clear_elements(kind, length, vector_length);
+            for word in storage.uninitialized_elements(length, vector_length) {
+                word.as_mut_ptr().write_volatile(kind.hole());
+            }
+            barrier::publish_fence();
             storage.set_public_length(length);
             Ok(array)
         }
@@ -114,13 +149,25 @@ impl JsArray {
         room: usize,
         fill: impl FnOnce(&mut ElementWriter<'_>, &NoGc<'_>),
     ) -> JsResult<Gc<JsArray>> {
-        let (global, shape) = (cx.global(), cx.global().array_shape(kind));
-        let no_gc = cx.no_gc();
+        let (global, no_gc) = (cx.global(), cx.no_gc());
         // SAFETY: outlives its cells. `fill` cannot get at it, and uses the token only after the allocations.
         let array = unsafe {
             let vm = &*global.vm_ptr();
-            Self::try_build_with_shape(vm, shape, room, |writer| fill(writer, &no_gc))
+            Self::try_build_in_realm(vm, &global, kind, room, |writer| fill(writer, &no_gc))
         };
+        cx.or_out_of_memory(array)
+    }
+
+    /// CreateArrayFromList. `kind` can represent all values.
+    #[inline(always)]
+    pub(crate) fn from_values(
+        cx: &Cx,
+        kind: ElementKind,
+        values: &[Value],
+    ) -> JsResult<Gc<JsArray>> {
+        let fill = |writer: &mut ElementWriter<'_>| writer.extend_from_slice(values);
+        // SAFETY: only copies.
+        let array = unsafe { Self::try_build_in_realm(cx, &cx.global(), kind, values.len(), fill) };
         cx.or_out_of_memory(array)
     }
 
@@ -200,11 +247,11 @@ impl JsArray {
     pub fn from_immutable(cx: &Cx, elements: Gc<ImmutableArray>) -> JsResult<Gc<JsArray>> {
         let global = cx.global();
         if global.is_having_a_bad_time() {
-            let (shape, length) = (global.array_shape(elements.kind()), elements.len() as usize);
+            let (kind, length) = (elements.kind(), elements.len() as usize);
             let fill =
                 |writer: &mut ElementWriter<'_>| writer.extend(elements.elements(), HoleMode::Keep);
             // SAFETY: only copies.
-            let array = unsafe { Self::try_build_with_shape(cx, shape, length, fill) };
+            let array = unsafe { Self::try_build_in_realm(cx, &global, kind, length, fill) };
             return cx.or_out_of_memory(array);
         }
         let mode = IndexingMode::array(elements.kind()).copy_on_write();

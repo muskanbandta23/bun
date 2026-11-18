@@ -40,8 +40,7 @@ pub unsafe fn new_array(
     };
     let room = registers.len().max(vector_length as usize);
     // SAFETY: only copies.
-    let array =
-        unsafe { JsArray::try_build_with_shape(cx, cx.global().array_shape(kind), room, fill) };
+    let array = unsafe { JsArray::try_build_in_realm(cx, &cx.global(), kind, room, fill) };
     Ok(profile.did_allocate(cx.or_out_of_memory(array)?))
 }
 
@@ -221,9 +220,9 @@ pub fn new_array_with_spread(cx: &Cx, registers: &[Option<Value>]) -> JsResult<G
             }
         }
     };
-    let shape = cx.global().array_shape(spread_kind(registers));
+    let (kind, length) = (spread_kind(registers), spread_length(registers));
     // SAFETY: only copies.
-    let array = unsafe { JsArray::try_build_with_shape(cx, shape, spread_length(registers), fill) };
+    let array = unsafe { JsArray::try_build_in_realm(cx, &cx.global(), kind, length, fill) };
     cx.or_out_of_memory(array)
 }
 

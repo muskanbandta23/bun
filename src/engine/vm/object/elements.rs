@@ -665,12 +665,7 @@ impl JsObject {
 
     /// Adds or replaces a plain data element, whatever the attributes or prototypes say.
     #[inline(never)]
-    pub fn store_element(
-        &self,
-        vm: &Vm,
-        index: u32,
-        value: Value,
-    ) -> Result<(), AllocError> {
+    pub fn store_element(&self, vm: &Vm, index: u32, value: Value) -> Result<(), AllocError> {
         let needed = ElementKind::for_value(value);
         let vector_length = self.vector_length();
         let stays_dense = index < vector_length

@@ -1,7 +1,7 @@
 use bun_engine_text::PropertyName;
 use bun_engine_vm::{
-    Attributes, ErrorType, IteratorRecord, MAX_SAFE_INTEGER, RealmSlot, RopeBuilder, Thrown,
-    iterator_close_on_throw, iterator_close_quietly,
+    Attributes, ErrorType, IteratorRecord, MAX_SAFE_INTEGER, RealmSlot, RepeatedCall, RopeBuilder,
+    Thrown, iterator_close_on_throw, iterator_close_quietly,
 };
 
 use super::hidden_function;
@@ -100,9 +100,9 @@ fn for_each(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
         let message = "Iterator.prototype.forEach requires the callback argument to be callable.";
         return Err(cx.throw_type_error(message));
     }
-    let mut counter = 0u64;
+    let (callback, mut counter) = (RepeatedCall::new(cx, callback)?, 0u64);
     IteratorRecord::direct(cx, iterator)?.for_each(cx, |cx, value| {
-        cx.call(callback, Value::UNDEFINED, &[value, counter.into()])?;
+        callback.call(cx, Value::UNDEFINED, [value, counter.into()])?;
         counter += 1;
         Ok(())
     })?;

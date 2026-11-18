@@ -1,8 +1,6 @@
 use bun_engine_macros::cell;
 
-use crate::{
-    Cx, FieldArray, Gc, JsObject, JsObjectInit, JsResult, JsTypedArray, Shape, Value, Vm,
-};
+use crate::{Cx, FieldArray, Gc, JsObject, JsObjectInit, JsResult, JsTypedArray, Shape, Value, Vm};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]

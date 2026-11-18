@@ -63,7 +63,15 @@ fn hidden_function(
 ) -> Gc<JsFunction> {
     let (name, constructor) = (StringRef::from_text(name.text()), native_not_a_constructor);
     let visibility = Visibility::Private;
-    JsFunction::native_with(cx, length, &name, function, constructor, intrinsic, visibility)
+    JsFunction::native_with(
+        cx,
+        length,
+        &name,
+        function,
+        constructor,
+        intrinsic,
+        visibility,
+    )
 }
 
 pub(crate) fn initialize_slot(cx: &Cx, slot: RealmSlot) -> bool {

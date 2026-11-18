@@ -96,14 +96,9 @@ impl IndexingMode {
 
     #[inline(always)]
     pub const fn kind(self) -> ElementKind {
-        match self.0 & Self::KIND_MASK {
-            0x00 => ElementKind::None,
-            0x02 => ElementKind::Undecided,
-            0x04 => ElementKind::Int32,
-            0x06 => ElementKind::Double,
-            0x08 => ElementKind::Contiguous,
-            _ => ElementKind::Sparse,
-        }
+        let (bits, last) = (self.0 & Self::KIND_MASK, ElementKind::Sparse as u8);
+        // SAFETY: each even number up to the last is a kind.
+        unsafe { core::mem::transmute(if bits < last { bits } else { last }) }
     }
 
     #[inline(always)]

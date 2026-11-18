@@ -1,8 +1,8 @@
-use core::alloc::Allocator;
 use core::mem::ManuallyDrop;
 use core::ops::Deref;
 
 use bun_engine_macros::FieldOffsets;
+use smallvec::SmallVec;
 
 use crate::{
     Gc, GcFree, JsAsyncFunctionGenerator, JsObject, JsPromise, RootVec, StackFrame, StackVisitor,
@@ -58,10 +58,7 @@ impl StackTrace {
     }
 
     pub fn capture(vm: &Vm, request: StackTraceRequest<'_>) -> StackTrace {
-        let _defer = vm.heap.defer_collection();
-        let mut frames = Vec::new();
-        request.capture_into(vm, &mut frames);
-        Self::from_vec(frames)
+        Self::copy_of(&request.capture(vm))
     }
 
     /// The async functions that wait for the promise, one for the other.
@@ -130,16 +127,17 @@ pub struct StackTraceRequest<'a> {
 }
 
 impl StackTraceRequest<'_> {
-    fn capture_into<A: Allocator>(mut self, vm: &Vm, out: &mut Vec<StackFrame, A>) {
-        const USUAL_DEPTH: usize = 10;
-        if self.limit <= out.len() || vm.top_call_frame().is_none() {
-            return;
+    #[inline(always)]
+    fn capture(mut self, vm: &Vm) -> SmallVec<[StackFrame; 16]> {
+        let _defer = vm.heap.defer_collection();
+        let mut out = SmallVec::new();
+        if self.limit == 0 {
+            return out;
         }
         let mut frames = StackVisitor::frames(vm).skip(self.skip);
         if self.below.is_some() {
             frames.find(|frame| frame.callee == self.below);
         }
-        out.reserve_exact(self.limit.min(USUAL_DEPTH));
         // The entry frame of the last frame that is not private, and how many were listed with that.
         let mut last_visible = (0, 0);
         let mut resumed = None;
@@ -173,6 +171,7 @@ impl StackTraceRequest<'_> {
             out.extend(waiting.take(self.limit));
             out[position..].rotate_left(before - position);
         }
+        out
     }
 }
 
@@ -190,6 +189,6 @@ pub fn capture_stack_trace(
         below,
         filter: None,
     };
-    request.capture_into(vm, &mut frames);
+    frames.extend_from_slice(&request.capture(vm));
     frames
 }

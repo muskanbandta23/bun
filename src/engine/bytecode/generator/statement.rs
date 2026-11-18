@@ -638,7 +638,7 @@ impl Generator<'_> {
         let catch = self.asm().last();
         let scope = parameter.and(parameter_scope);
         if let Some(scope) = scope {
-            self.enter_block_scope(scope);
+            self.enter_catch_scope(scope);
         }
         if let Some(parameter) = parameter {
             match (self.resolve_pattern_register(parameter), catch) {

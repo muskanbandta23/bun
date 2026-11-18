@@ -118,10 +118,10 @@ pub fn describe_builtin(
         is_strict: outline.is_strict,
         is_async: outline.is_async,
         is_generator: outline.is_generator,
-        visibility: if outline.is_async {
-            visibility.max(Visibility::Private)
-        } else {
-            visibility
+        // The frame is that of the body too, which only `PrivateRecursive` hides.
+        visibility: match visibility {
+            Visibility::Private if outline.is_async => Visibility::Public,
+            _ => visibility,
         },
         has_positions: source.provider.url().is_some(),
     }

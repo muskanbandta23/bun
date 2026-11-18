@@ -2,7 +2,7 @@ use bun_engine_text::{Identifier, MAX_ARRAY_INDEX, PropertyName, names};
 
 use crate::{
     Attributes, CellType, ClonedArguments, CustomGetterSetter, Cx, DontEnumMode, Gc, GetterSetter,
-    InternalMethod, JsArray, JsArrayBufferView, JsObject, JsResult, MappedArguments,
+    InternalMethod, JsArray, JsArrayBufferView, JsObject, JsResult, JsTypedArray, MappedArguments,
     PropertyDescriptor, PropertyNameList, PropertyNameMode, PropertyOffset, PropertySlot, Shape,
     TypeFlags, Value,
 };
@@ -275,6 +275,9 @@ impl JsObject {
         };
         if self.try_get_dense(index).is_some() {
             return Ok(true);
+        }
+        if let Some(array) = self.downcast::<JsTypedArray>() {
+            return Ok(array.is_valid_index(index as usize));
         }
         let mut slot = PropertySlot::new(self.as_value(), InternalMethod::HasProperty);
         self.get_property_slot_by_index(cx, index, &mut slot)

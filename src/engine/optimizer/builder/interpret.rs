@@ -1,8 +1,11 @@
-//! Has the interpreter execute an instruction, on a copy of the registers that it names.
+//! Has the interpreter execute an instruction, on the registers that it names.
+//!
+//! The frame of the code keeps the slots of the bytecode frame of the function that it was made from, so an
+//! instruction of that function runs on the frame itself. One of a function that was inlined runs on an area that
+//! looks like a frame, whose header and arguments the code fills in.
 
-use bun_engine_asm::abi;
 use bun_engine_bytecode::{EdgeKind, Flow, RawInstruction, Register, Shape, Written};
-use bun_engine_codegen::ir::{Type, Value as Ssa};
+use bun_engine_codegen::ir::{State, Type, Value as Ssa};
 use bun_engine_interpreter::outcome;
 use bun_engine_vm::{CallFrame, SpeculatedType as T};
 use smallvec::SmallVec;
@@ -20,105 +23,80 @@ impl Builder<'_> {
         }
     }
 
-    fn copy_out(&mut self, shadow: Ssa, register: Register, value: Ssa) {
+    pub(super) fn frame_pointer(&mut self) -> Ssa {
+        self.graph
+            .function
+            .pinned(bun_engine_asm::abi::FRAME_POINTER)
+    }
+
+    /// Where the interpreter finds the registers of the current function.
+    fn registers(&mut self) -> Ssa {
+        if self.frame().is_root() {
+            return self.frame_pointer();
+        }
+        let area = self.insert_node(Kind::ShadowFrame, &[], 0, State::NONE);
+        let code_block = self.word(self.frame().code_block.address());
+        let header = [
+            (CODE_BLOCK, code_block),
+            (Register::CALLEE, self.frame().get(Register::CALLEE)),
+        ];
+        for (register, value) in header {
+            self.put(area, register, value);
+        }
+        if let ArgumentCount::Known(count) = self.frame().argument_count {
+            let count = self.word(count as usize);
+            self.put(area, ARGUMENT_COUNT, count);
+            for register in self.frame().argument_registers() {
+                self.put(area, register, self.frame().original_argument(register));
+            }
+        }
+        area
+    }
+
+    fn put(&mut self, area: Ssa, register: Register, value: Ssa) {
+        self.graph.shadow_frame.include(register);
+        let value = self.graph.root(value);
+        self.ir()
+            .store(value, area, register.offset() * 8, heaps::FRAME);
+    }
+
+    fn take(&mut self, area: Ssa, register: Register) -> Ssa {
         self.graph.shadow_frame.include(register);
         self.ir()
-            .store(value, shadow, register.offset() * 8, heaps::FRAME);
-    }
-
-    pub(super) fn frame_pointer(&mut self) -> Ssa {
-        self.graph.function.pinned(abi::FRAME_POINTER)
-    }
-
-    /// For the instructions that look at what the caller passed.
-    pub(super) fn interpret_with_arguments(&mut self) {
-        let ArgumentCount::Known(count) = self.frame().argument_count else {
-            return self.interpret_on(Kind::InterpretWithArguments);
-        };
-        let shadow = self.insert_node(
-            Kind::ShadowFrame,
-            &[],
-            0,
-            bun_engine_codegen::ir::State::NONE,
-        );
-        let count = self.word(count as usize);
-        self.copy_out(shadow, ARGUMENT_COUNT, count);
-        for register in self.frame().argument_registers() {
-            self.copy_out(shadow, register, self.frame().original_argument(register));
-        }
-        self.interpret();
-    }
-
-    /// A resumption passes the generator, the value and the mode.
-    pub(super) fn interpret_resumption(&mut self) {
-        let shadow = self.insert_node(
-            Kind::ShadowFrame,
-            &[],
-            0,
-            bun_engine_codegen::ir::State::NONE,
-        );
-        let frame_pointer = self.frame_pointer();
-        for offset in ARGUMENT_COUNT.offset()..=Register::argument(1).offset() {
-            let word = self
-                .ir()
-                .load(Type::I64, frame_pointer, offset * 8, heaps::FRAME);
-            self.copy_out(shadow, Register::from_offset(offset), word);
-        }
-        self.interpret();
+            .load(Type::I64, area, register.offset() * 8, heaps::FRAME)
     }
 
     pub(super) fn interpret(&mut self) {
-        self.interpret_on(Kind::Interpret);
-    }
-
-    fn interpret_on(&mut self, kind: Kind) {
         let frame = self.frame();
         let (code_block, offset) = (frame.code_block, frame.offset);
         let body = code_block.body();
-        let instruction = RawInstruction::read(body.instructions(), offset).unwrap();
+        let instruction = RawInstruction::read(body.instructions(), offset).expect("verified");
         let next = offset + u32::from(instruction.size);
         self.state();
 
-        let shadow = self.insert_node(
-            Kind::ShadowFrame,
-            &[],
-            0,
-            bun_engine_codegen::ir::State::NONE,
-        );
-        let header = [
-            (CODE_BLOCK, self.word(code_block.address())),
-            (Register::CALLEE, self.get(Register::CALLEE)),
-        ];
-        let mut read: SmallVec<[(Register, Ssa); 8]> = header.into_iter().collect();
-        instruction.for_each_use(body, |run| {
-            read.extend(
-                run.registers()
-                    .map(|register| (register, self.frame().get(register))),
-            )
-        });
-        for (register, value) in read {
-            let value = self.graph.root(value);
-            self.copy_out(shadow, register, value);
+        let area = self.registers();
+        let mut read: SmallVec<[Register; 8]> = SmallVec::new();
+        instruction.for_each_use(body, |run| read.extend(run.registers()));
+        for register in read {
+            self.put(area, register, self.frame().get(register));
         }
         let start = self.word(code_block.instructions_ptr().addr() + offset as usize);
-        let result = self.node(kind, &[shadow, start], instruction.opcode as u32);
+        let result = self.node(Kind::Interpret, &[area, start], instruction.opcode as u32);
         let code = self.ir().extract(result, 0);
 
-        let mut prediction = match instruction.opcode.metadata() {
-            Some(kind) if kind.has_value_profile() => {
-                Some(self.prediction_at(instruction.metadata)).filter(|seen| !seen.is_empty())
-            }
-            _ => None,
-        };
+        let has_profile = instruction
+            .opcode
+            .metadata()
+            .is_some_and(|kind| kind.has_value_profile());
+        let mut prediction = has_profile
+            .then(|| self.prediction_at(instruction.metadata))
+            .filter(|seen| !seen.is_empty());
         let mut written: SmallVec<[(Register, Written, Ssa); 4]> = SmallVec::new();
         instruction.for_each_def(body, |run, when| {
             written.extend(run.registers().map(|register| (register, when, Ssa::NONE)))
         });
         for (register, _, value) in &mut written {
-            self.graph.shadow_frame.include(*register);
-            *value = self
-                .ir()
-                .load(Type::I64, shadow, register.offset() * 8, heaps::FRAME);
+            *value = self.take(area, *register);
             self.graph
                 .predict(*value, prediction.take().unwrap_or(T::HEAP_TOP));
         }

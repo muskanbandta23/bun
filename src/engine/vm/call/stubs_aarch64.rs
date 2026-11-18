@@ -217,6 +217,33 @@ macro_rules! link_entry {
 link_entry!(link_call_entry, Call);
 link_entry!(link_construct_entry, Construct);
 
+macro_rules! watched_entry {
+    ($name:ident, $specialization:expr) => {
+        #[unsafe(naked)]
+        pub(super) unsafe extern "C" fn $name() {
+            naked_asm!(
+                "stp x29, x30, [sp, #-16]!",
+                "mov x29, sp",
+                "str x29, [x21, #{top_call_frame}]",
+                "str x9, [sp, #-16]!",
+                "mov x0, x21",
+                "mov x1, x29",
+                "mov w2, #{specialization}",
+                "bl {notify}",
+                "ldr x9, [sp], #16",
+                "ldp x29, x30, [sp], #16",
+                "br x0",
+                top_call_frame = const Vm::OFFSET_OF_TOP_CALL_FRAME,
+                specialization = const $specialization as u32,
+                notify = sym crate::debugger::will_call_native_function,
+            )
+        }
+    };
+}
+
+watched_entry!(watched_call_entry, Call);
+watched_entry!(watched_construct_entry, Construct);
+
 macro_rules! rare_data_entry {
     ($name:ident, $specialization:expr) => {
         #[unsafe(naked)]

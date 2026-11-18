@@ -1141,7 +1141,7 @@ void NodeVMGlobalObject::drainOwnMicrotasks()
     VM& vm = this->vm();
     // Same drain mode as VM::drainMicrotasks so process.nextTick interop
     // (onEachMicrotaskTick) keeps working inside the checkpoint.
-    microtaskQueue().performMicrotaskCheckpoint</* useCallOnEachMicrotask */ true>(vm, [](JSGlobalObject*, JSGlobalObject*) {});
+    microtaskQueue().performMicrotaskCheckpoint(vm);
 }
 
 // The contextified object can itself be another context's global, so forwarding can recurse arbitrarily deep.

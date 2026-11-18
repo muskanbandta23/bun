@@ -1,5 +1,6 @@
 //! What scripts find in the global object besides the standard library.
 
+mod async_context;
 mod dollar;
 mod heap;
 mod io;
@@ -35,6 +36,7 @@ fn put(cx: &Cx, object: &JsObject, name: &'static str, value: Value) {
 
 pub(crate) fn define_globals(cx: &Cx) {
     for functions in [
+        async_context::FUNCTIONS,
         heap::FUNCTIONS,
         io::FUNCTIONS,
         scripts::FUNCTIONS,

@@ -57,7 +57,8 @@ pub use lazy::{LazyClass, LazyField};
 pub use property_key::PropertyKey;
 pub use property_name_list::{DontEnumMode, PropertyNameList, PropertyNameMode};
 pub use property_offset::{Attributes, PropertyOffset};
-pub(crate) use reify::function_name;
+pub use property_table::PropertyEntry;
+pub use reify::function_name;
 pub use shape::{CachedNames, Properties, Shape, ShapeFlags, ShapeId, ShapeRareData, ShapeSpec};
 pub(crate) use shape_cache::ShapeCache;
 pub use slot::{

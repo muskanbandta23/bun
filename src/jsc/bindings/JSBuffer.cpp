@@ -19,7 +19,6 @@
 #include "JavaScriptCore/ExceptionScope.h"
 
 #include "ExtendedDOMClientIsoSubspaces.h"
-#include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
 // #include "JSBlob.h"
 #include "JSDOMAttribute.h"

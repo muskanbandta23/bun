@@ -10,7 +10,7 @@ use bun_engine_vm::heap::{HeapKind, Scope};
 use bun_engine_vm::*;
 
 static HOOKS: RealmHooks = RealmHooks {
-    modules: ModuleHooks {},
+    modules: ModuleHooks::DEFAULT,
     promise_rejection_tracker: |_, _, _| {},
     report_uncaught_exception: |_, _| {},
     current_script_execution_owner: |cx| cx.global().upcast(),

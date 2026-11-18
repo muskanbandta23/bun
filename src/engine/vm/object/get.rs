@@ -23,7 +23,7 @@ impl JsObject {
 
     /// From the shape and the static tables.
     #[inline(always)]
-    pub(crate) fn get_own_non_index_property_slot(
+    pub fn get_own_non_index_property_slot(
         &self,
         cx: &mut Cx,
         shape: &Shape,

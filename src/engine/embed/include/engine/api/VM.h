@@ -302,7 +302,10 @@ private:
     Exception* m_terminationException;
     Exception* m_lastException;
     ExecutableBase* m_internalFunctionExecutable;
-    mutable std::atomic<uint32_t> m_refCount;
+    // The constructor would reset it.
+    union {
+        mutable std::atomic<uint32_t> m_refCount;
+    };
 
 public:
     bool didEnterVM;
@@ -335,7 +338,10 @@ private:
     IsoSubspace* m_nativeStdFunctionSpace { nullptr };
 
 public:
-    alignas(Engine::Layout::Vm_embedder_members) Heap heap;
+    // Rust constructs and destroys it.
+    union {
+        alignas(Engine::Layout::Vm_embedder_members) Heap heap;
+    };
     SmallStrings smallStrings;
 };
 

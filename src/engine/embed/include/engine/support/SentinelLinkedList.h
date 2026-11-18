@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/support/FastMalloc.h"
+#include "engine/support/Assertions.h"
 #include "engine/support/Noncopyable.h"
 
 namespace WTF {
@@ -10,8 +10,6 @@ template<typename T, typename Node> class SentinelLinkedList;
 // The base of an object that is on at most one list, and takes itself off without knowing which.
 template<typename T>
 class BasicRawSentinelNode {
-    WTF_MAKE_TZONE_ALLOCATED(BasicRawSentinelNode);
-
 public:
     bool isOnList() const { return m_next; }
 

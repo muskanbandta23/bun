@@ -156,11 +156,8 @@ fn resolve(
     let mut resolver = LocaleResolver::new(cache, AvailableLocales::collator(), requested);
     let collation = match options.usage {
         Usage::Sort => {
-            let data_locale = resolver.data_locale()?;
             let option = options.collation.as_ref().map(KeywordValue::as_bytes);
-            resolver.keyword(Key::COLLATION, option, |value| {
-                collation::supported(&data_locale, value)
-            })
+            resolver.keyword_by_locale(Key::COLLATION, option, collation::supported)
         }
         Usage::Search => None,
     };

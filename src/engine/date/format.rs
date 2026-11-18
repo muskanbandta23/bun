@@ -1,6 +1,6 @@
 //! The strings of ECMA-262, 21.4.4. They are stored where they end up, several characters at a time.
 
-use bun_engine_text::{CodeUnit, StringRef, StringWriter, Text};
+use bun_engine_text::{CodeUnit, StringRef, StringWriter, Text, with_text};
 
 use crate::civil::{days_from_civil, year_month_day};
 use crate::fields::DateFields;
@@ -98,18 +98,11 @@ trait Format {
 
     #[inline(always)]
     fn followed_by(&self, suffix: Text<'_>) -> StringRef {
-        match suffix {
-            Text::Latin1(suffix) => {
-                let mut writer = self.writer(suffix.len());
-                writer.push_slice(suffix);
-                writer.finish()
-            }
-            Text::Utf16(suffix) => {
-                let mut writer = self.writer(suffix.len());
-                writer.push_slice(suffix);
-                writer.finish()
-            }
-        }
+        with_text!(suffix, |suffix| {
+            let mut writer = self.writer(suffix.len());
+            writer.push_slice(suffix);
+            writer.finish()
+        })
     }
 }
 

@@ -11,6 +11,9 @@ pub(crate) trait Service {
 
     fn visit(&self, _: &mut Visitor) {}
 
+    /// Again and again, until it marks nothing new.
+    fn visit_output_constraints(&self, _: &mut Visitor) {}
+
     fn reconcile_weak_references(&self, _: &Vm, _: &Survivors) {}
 
     fn did_collect(&self, _: &Vm, _: Scope) {}
@@ -39,6 +42,10 @@ macro_rules! services {
                 $(self.$name.visit(visitor);)*
             }
 
+            fn visit_output_constraints(&self, visitor: &mut Visitor) {
+                $(self.$name.visit_output_constraints(visitor);)*
+            }
+
             fn reconcile_weak_references(&self, vm: &Vm, survivors: &Survivors) {
                 $(self.$name.reconcile_weak_references(vm, survivors);)*
             }
@@ -62,6 +69,7 @@ services! {
     buffers: runtime::buffers::State,
     collections: runtime::collections::State,
     control: runtime::control::State,
+    deferred: runtime::deferred::State,
     exotic: runtime::exotic::State,
     iteration: runtime::iteration::State,
     modules: runtime::modules::State,

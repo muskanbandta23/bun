@@ -29,7 +29,7 @@ fn is_continuation(byte: u8) -> bool {
 /// The first character of `bytes`, which are not empty, and its length. The error is the length of the longest start
 /// of a sequence, or one.
 #[inline(always)]
-fn decode(bytes: &[u8]) -> Result<(u32, usize), usize> {
+pub(crate) fn decode(bytes: &[u8]) -> Result<(u32, usize), usize> {
     let bits = |byte: u8, mask: u8, shift: u32| u32::from(byte & mask) << shift;
     match *bytes {
         [a @ ..=0x7f, ..] => return Ok((u32::from(a), 1)),

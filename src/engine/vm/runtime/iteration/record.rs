@@ -4,13 +4,13 @@ use bun_engine_bytecode::CloseMode;
 use bun_engine_macros::Trace;
 use bun_engine_text::{names, symbols};
 
-use super::array_iterator::typed_array_length;
 use super::protocol::{Caller, iterator_close_on_throw, iterator_close_quietly};
+use super::spread::list_of_code_points;
 use super::string_iterator::code_point_string_at;
 use crate::{
     CellType, ClonedArguments, Cx, ElementKind, Gc, HoleMode, IterationKind, IterationMode,
-    JsArray, JsArrayBufferView, JsArrayIterator, JsCell, JsMap, JsMapIterator, JsObject, JsResult,
-    JsSet, JsSetIterator, JsString, JsStringIterator, MapKind, MappedArguments, OrderedCursor,
+    JsArray, JsArrayIterator, JsCell, JsMap, JsMapIterator, JsObject, JsResult,
+    JsSet, JsSetIterator, JsString, JsStringIterator, JsTypedArray, MapKind, MappedArguments, OrderedCursor,
     RealmSlot, RealmWatchpoint, SetKind, TableKind, Thrown, Value, errors, iterator_complete,
     iterator_value, throw_not_iterable,
 };
@@ -111,7 +111,11 @@ impl IteratorRecord {
                     Self::new(iterator.into(), IterationMode::ArrayValues.marker())
                 });
             }
-            _ => return Some(Self::new(iterable, mode_of_iterator(cx, cell)?.marker())),
+            _ => match cell.downcast::<JsTypedArray>() {
+                Some(array) => (array.is_iteration_pristine(cx) && is_of_realm())
+                    .then_some(RealmSlot::typed_array_prototype_values)?,
+                None => return Some(Self::new(iterable, mode_of_iterator(cx, cell)?.marker())),
+            },
         };
         Self::of_builtin_kind(cx, iterable, cx.global().slot(cx, slot).into())
     }
@@ -198,7 +202,15 @@ impl IteratorRecord {
                     && cx.holds(RealmWatchpoint::SetIteratorProtocol))
                 .then(|| Self::at(cell.cast::<JsSet>().cursor().parts(), IterationMode::Set));
             }
-            _ => None,
+            _ => {
+                let array = cell.downcast::<JsTypedArray>()?;
+                (is_slot(cx, RealmSlot::typed_array_prototype_values, method)
+                    && cx.global().array_iterator_protocol_is_pristine()
+                    && !array.is_resizable_or_growable()
+                    && !array.is_detached()
+                    && array.known_length() < u32::MAX as usize)
+                    .then_some(IterationMode::TypedArray)
+            }
         }?;
         Some(Self::new(cell.into(), mode.marker()))
     }
@@ -452,8 +464,10 @@ impl IteratorRecord {
 
     /// What is left, if getting it runs no script.
     pub(super) fn collect_at_once(&self, cx: &mut Cx) -> JsResult<Option<Gc<JsArray>>> {
-        let copy_from = |cx: &mut Cx, source: Gc<JsArray>, index: u64| {
-            let length = u64::from(source.length());
+        let copy_from = |cx: &mut Cx, source: Gc<JsObject>, index: u64| {
+            let Some(length) = plain_length(&source) else {
+                return Ok(None);
+            };
             let range = index.min(length)..length;
             JsArray::try_copy(cx, &source, range, HoleMode::FillWithUndefined)
         };
@@ -461,15 +475,20 @@ impl IteratorRecord {
         unsafe {
             match self.mode() {
                 _ if self.is_done() => Ok(None),
-                IterationMode::Array => copy_from(cx, self.subject_as(), self.index().into()),
+                IterationMode::Array | IterationMode::TypedArray => {
+                    copy_from(cx, self.subject_as(), self.index().into())
+                }
                 IterationMode::ArrayValues => {
                     let iterator = self.subject_as::<JsArrayIterator>();
-                    let source = iterator.iterated_object().downcast();
-                    let Some((source, index)) = source.zip(iterator.index()) else {
+                    let Some(index) = iterator.index() else {
                         return Ok(None);
                     };
-                    let array = copy_from(cx, source, index)?;
+                    let array = copy_from(cx, iterator.iterated_object(), index)?;
                     Ok(array.inspect(|_| iterator.set_index(None)))
+                }
+                IterationMode::String if self.position == Self::START => {
+                    let list = list_of_code_points(cx, &self.subject_as::<JsString>())?;
+                    JsArray::from_immutable(cx, list).map(Some)
                 }
                 IterationMode::Map => {
                     JsMapIterator::rest_to_array(cx, self.cursor(), IterationKind::Entries)
@@ -522,12 +541,10 @@ impl IteratorRecord {
                 }
                 _ if self.is_done() => None,
                 IterationMode::TypedArray => {
-                    let view = self.subject_as::<JsArrayBufferView>();
-                    if (index as usize) < typed_array_length(cx, &view)? {
-                        Some((view.get_index(cx, index.into())?, index + 1))
-                    } else {
-                        None
-                    }
+                    let array = self.subject_as::<JsTypedArray>();
+                    array.validate(cx)?;
+                    let element = array.get_element(cx, index as usize);
+                    element.map(|element| (element, index + 1))
                 }
                 IterationMode::Map => {
                     let mut cursor = self.cursor::<MapKind>();
@@ -604,6 +621,19 @@ impl IteratorRecord {
             CloseMode::Normal => Caller::Syntax.close(cx, iterator),
             CloseMode::Throw => iterator_close_quietly(cx, iterator),
         }
+    }
+}
+
+/// The length that an array iterator goes by, if getting it runs no script and throws nothing.
+pub(super) fn plain_length(object: &JsObject) -> Option<u64> {
+    if let Some(array) = object.downcast::<JsArray>() {
+        Some(array.length().into())
+    } else if let Some(array) = object.downcast::<JsTypedArray>() {
+        array.checked_length().map(|length| length as u64)
+    } else if let Some(arguments) = object.downcast::<MappedArguments>() {
+        arguments.original_length().map(u64::from)
+    } else {
+        (object.downcast::<ClonedArguments>()?.try_length()).map(u64::from)
     }
 }
 

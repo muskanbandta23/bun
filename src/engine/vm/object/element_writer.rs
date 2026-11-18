@@ -45,6 +45,20 @@ impl<'a> ElementWriter<'a> {
         }
     }
 
+    /// For the arguments of a call.
+    #[inline(always)]
+    pub(crate) fn for_values(values: &'a mut [MaybeUninit<Value>]) -> ElementWriter<'a> {
+        // SAFETY: what a value is represented as. None of them counts as initialized.
+        let words =
+            unsafe { core::slice::from_raw_parts_mut(values.as_mut_ptr().cast(), values.len()) };
+        Self::new(words, ElementKind::Contiguous)
+    }
+
+    #[inline(always)]
+    pub fn kind(&self) -> ElementKind {
+        self.kind
+    }
+
     #[inline(always)]
     pub fn remaining(&self) -> usize {
         self.rest.len()
@@ -59,9 +73,12 @@ impl<'a> ElementWriter<'a> {
 
     #[inline(always)]
     fn extend_words(&mut self, words: impl ExactSizeIterator<Item = u64>) {
-        for (target, word) in self.take(words.len()).iter_mut().zip(words) {
+        let mut written = 0;
+        for (target, word) in self.rest[..words.len()].iter_mut().zip(words) {
             target.write(word);
+            written += 1;
         }
+        self.take(written);
     }
 
     #[inline(always)]
@@ -110,6 +127,22 @@ impl<'a> ElementWriter<'a> {
         } else {
             values.iter().for_each(|&value| self.push(value));
         }
+    }
+
+    #[inline(always)]
+    pub fn extend_from_values(&mut self, values: impl ExactSizeIterator<Item = Value>) {
+        if self.kind == ElementKind::Contiguous {
+            self.extend_words(values.map(Value::to_bits));
+        } else {
+            values.for_each(|value| self.push(value));
+        }
+    }
+
+    /// NaN is a hole.
+    #[inline(always)]
+    pub fn extend_from_doubles(&mut self, numbers: impl ExactSizeIterator<Item = f64>) {
+        assert!(self.kind == ElementKind::Double);
+        self.extend_words(numbers.map(f64::to_bits));
     }
 
     /// Only contiguous elements can have holes filled.

@@ -238,11 +238,6 @@ fn length_to_starter(text: &[u16]) -> usize {
     start + marks.map(unit_count).sum::<usize>()
 }
 
-fn combining_class(code_point: u32) -> u8 {
-    // SAFETY: it takes any code point.
-    unsafe { u_getCombiningClass(code_point) }
-}
-
 /// The Canonical Ordering Algorithm.
 fn order_marks(mut text: &mut [u16]) -> Result<()> {
     const CLASS_SHIFT: u32 = 56;

@@ -134,13 +134,8 @@ unsafe fn array_buffer_transfer(
 }
 
 #[export]
-fn js_array_buffer_create(
-    vm: &Vm,
-    shape: Gc<Shape>,
-    buffer: &ArrayBuffer,
-    already_reported: usize,
-) -> Gc<JsArrayBuffer> {
-    JsArrayBuffer::create_with_reported_bytes(vm, shape, buffer, already_reported)
+fn js_array_buffer_create(vm: &Vm, shape: Gc<Shape>, buffer: &ArrayBuffer) -> Gc<JsArrayBuffer> {
+    JsArrayBuffer::create(vm, shape, buffer)
 }
 
 /// The shape, or its counterpart if it is for the other kind of buffer.

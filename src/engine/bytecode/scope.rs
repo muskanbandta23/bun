@@ -2,6 +2,7 @@
 
 use std::rc::Rc;
 
+use bun_engine_syntax::Name;
 use bun_engine_text::{Identifier, PropertyName, StringRef, Text};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -67,7 +68,7 @@ bitflags::bitflags! {
 #[derive(Clone, Copy, Debug)]
 pub struct Slot {
     pub(crate) hash: u32,
-    /// In the source, or in `StaticScope::names` if the length is `OWNED`.
+    /// In the source, or else what `OWNED` or `KNOWN` for a length say.
     pub(crate) name_start: u32,
     pub(crate) name_length: u32,
     pub index: u32,
@@ -78,7 +79,10 @@ pub struct Slot {
 }
 
 impl Slot {
+    /// The name is in `StaticScope::names`.
     pub(crate) const OWNED: u32 = u32::MAX;
+    /// The name is a constant of `Name`.
+    pub(crate) const KNOWN: u32 = u32::MAX - 1;
 
     /// Of a `LazyFunction`: an index into the functions of the code that the scope belongs to.
     pub fn function(&self) -> u32 {
@@ -199,13 +203,12 @@ impl StaticScope {
     }
 
     pub fn text_of(&self, slot: &Slot) -> Text<'_> {
-        if slot.name_length == Slot::OWNED {
-            return self.names[slot.name_start as usize].name().text();
-        }
         let start = slot.name_start as usize;
-        self.source
-            .text()
-            .slice(start..start + slot.name_length as usize)
+        match slot.name_length {
+            Slot::OWNED => self.names[start].name().text(),
+            Slot::KNOWN => Text::from_ascii(Name::known_text(start).unwrap_or_default()),
+            length => self.source.text().slice(start..start + length as usize),
+        }
     }
 
     pub fn name_of(&self, slot: &Slot) -> Identifier {

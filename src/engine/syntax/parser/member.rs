@@ -52,7 +52,7 @@ impl Session<'_> {
     #[inline(always)]
     fn common_primary<const BUILD: bool>(&mut self) -> Option<Parsed<Expression>> {
         let token = self.token();
-        let (class, result, kind) = match token.kind {
+        let (class, result, kind) = match token.kind() {
             TokenKind::Identifier if !(Name::ARGUMENTS..=Name::ASYNC).contains(&token.name()) => {
                 return Some(self.identifier::<BUILD>(Class::Identifier));
             }
@@ -63,19 +63,19 @@ impl Session<'_> {
             TokenKind::Number | TokenKind::String => return Some(Ok(self.scalar::<BUILD>())),
             TokenKind::Null => (Class::Other, ResultType::NULL, ExprKind::Null),
             TokenKind::True | TokenKind::False => {
-                let kind = ExprKind::Boolean(token.kind == TokenKind::True);
+                let kind = ExprKind::Boolean(token.kind() == TokenKind::True);
                 (Class::Other, ResultType::BOOLEAN, kind)
             }
             TokenKind::OpenParen => return Some(self.parenthesized::<BUILD>()),
             TokenKind::OpenBrace => return Some(self.object_literal::<BUILD>()),
             TokenKind::OpenBracket => return Some(self.array_literal::<BUILD>()),
-            TokenKind::Function => return Some(self.function_expression::<BUILD>(token.start)),
+            TokenKind::Function => return Some(self.function_expression::<BUILD>(token.start())),
             _ => return None,
         };
         self.next();
         Some(Ok(self.typed_node::<BUILD>(
             class,
-            token.start,
+            token.start(),
             result,
             kind,
         )))
@@ -98,8 +98,8 @@ impl Session<'_> {
         token: Token,
     ) -> Expression {
         let name = token.name();
-        self.scopes.read(name, token.start);
-        self.named_node::<BUILD>(class, name, token.start, ExprKind::Identifier(name))
+        self.scopes.read(name, token.start());
+        self.named_node::<BUILD>(class, name, token.start(), ExprKind::Identifier(name))
     }
 
     #[inline(always)]
@@ -189,7 +189,7 @@ impl Session<'_> {
         self.next();
         match self.kind() {
             TokenKind::Function if !self.follows_newline() => {
-                self.function_expression::<BUILD>(token.start)
+                self.function_expression::<BUILD>(token.start())
             }
             TokenKind::Arrow => Err(self.fail("Cannot parse base expression")),
             _ => Ok(self.reference::<BUILD>(Class::Identifier, token)),
@@ -199,7 +199,7 @@ impl Session<'_> {
     #[inline(always)]
     fn unusual_primary<const BUILD: bool>(&mut self, start: u32) -> Parsed<Expression> {
         let token = self.token();
-        match token.kind {
+        match token.kind() {
             TokenKind::Identifier => match token.name() {
                 Name::ARGUMENTS => self.arguments_object::<BUILD>(start),
                 Name::EVAL => self.identifier::<BUILD>(Class::Eval),
@@ -253,7 +253,7 @@ impl Session<'_> {
             base: arguments.id(),
             name: Name::LENGTH,
             divot,
-            end: self.token().end,
+            end: self.token().end(),
         };
         self.next();
         Ok(self.node::<BUILD>(Class::ArgumentsLength, start, kind))
@@ -402,7 +402,7 @@ impl Session<'_> {
 
     pub(super) fn refer_to_private_name(&mut self, token: Token) {
         self.facts |= Facts::PRIVATE_NAMES;
-        self.scopes.read(token.name(), token.start);
+        self.scopes.read(token.name(), token.start());
     }
 
     /// `news` operators are waiting for their arguments, with their places on top of the stack of prefixes.
@@ -517,7 +517,7 @@ impl Session<'_> {
         let divot = self.start();
         self.lexer.next_key::<BUILD>();
         let token = self.token();
-        if !token.kind.is_identifier_name() {
+        if !token.kind().is_identifier_name() {
             return self.private_dot::<BUILD>(start, base, divot, kind, is_in_chain);
         }
         self.next();
@@ -525,7 +525,7 @@ impl Session<'_> {
             base: base.id(),
             name: token.name(),
             divot,
-            end: token.end,
+            end: token.end(),
         };
         Ok(self.node::<BUILD>(Class::Member, start, kind))
     }
@@ -540,7 +540,7 @@ impl Session<'_> {
         is_in_chain: bool,
     ) -> Parsed<Expression> {
         let token = self.token();
-        if token.kind != TokenKind::PrivateName {
+        if token.kind() != TokenKind::PrivateName {
             return Err(self.fail(if is_in_chain {
                 "Expected a property name after '?.'"
             } else {
@@ -561,7 +561,7 @@ impl Session<'_> {
             base: base.id(),
             name,
             divot,
-            end: token.end,
+            end: token.end(),
         };
         Ok(self.named_node::<BUILD>(Class::PrivateMember, name, start, kind))
     }
@@ -697,10 +697,10 @@ impl Session<'_> {
         let value = self.assignment::<BUILD>()?;
         let kind = ExprKind::Spread {
             value: value.id(),
-            divot: operator.end,
+            divot: operator.end(),
             end: self.previous_end(),
         };
-        Ok(self.node::<BUILD>(Class::Other, operator.start, kind))
+        Ok(self.node::<BUILD>(Class::Other, operator.start(), kind))
     }
 
     /// At `?.`.
@@ -712,7 +712,7 @@ impl Session<'_> {
         kind: Base,
     ) -> Parsed<Expression> {
         self.end_expression::<BUILD>(base);
-        let next = self.peek().kind;
+        let next = self.peek().kind();
         if next == TokenKind::OpenParen {
             self.next();
             if BUILD {

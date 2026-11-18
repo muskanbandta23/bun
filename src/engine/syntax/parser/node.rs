@@ -26,27 +26,27 @@ pub(super) struct Operand {
 }
 
 fn binary_operator(kind: TokenKind) -> BinaryOperator {
-    use TokenKind::*;
+    type T = TokenKind;
     match kind {
-        Plus | AddAssign => BinaryOperator::Add,
-        Minus | SubtractAssign => BinaryOperator::Subtract,
-        Star | MultiplyAssign => BinaryOperator::Multiply,
-        Slash | DivideAssign => BinaryOperator::Divide,
-        Percent | RemainderAssign => BinaryOperator::Remainder,
-        Exponentiate | ExponentiateAssign => BinaryOperator::Exponentiate,
-        BitAnd | BitAndAssign => BinaryOperator::BitAnd,
-        BitOr | BitOrAssign => BinaryOperator::BitOr,
-        BitXor | BitXorAssign => BinaryOperator::BitXor,
-        ShiftLeft | ShiftLeftAssign => BinaryOperator::ShiftLeft,
-        ShiftRight | ShiftRightAssign => BinaryOperator::ShiftRight,
-        ShiftRightUnsigned | ShiftRightUnsignedAssign => BinaryOperator::ShiftRightUnsigned,
-        Equal => BinaryOperator::Equal,
-        NotEqual => BinaryOperator::NotEqual,
-        StrictEqual => BinaryOperator::StrictEqual,
-        StrictNotEqual => BinaryOperator::StrictNotEqual,
-        Less => BinaryOperator::Less,
-        LessEqual => BinaryOperator::LessEqual,
-        Greater => BinaryOperator::Greater,
+        T::Plus | T::AddAssign => BinaryOperator::Add,
+        T::Minus | T::SubtractAssign => BinaryOperator::Subtract,
+        T::Star | T::MultiplyAssign => BinaryOperator::Multiply,
+        T::Slash | T::DivideAssign => BinaryOperator::Divide,
+        T::Percent | T::RemainderAssign => BinaryOperator::Remainder,
+        T::Exponentiate | T::ExponentiateAssign => BinaryOperator::Exponentiate,
+        T::BitAnd | T::BitAndAssign => BinaryOperator::BitAnd,
+        T::BitOr | T::BitOrAssign => BinaryOperator::BitOr,
+        T::BitXor | T::BitXorAssign => BinaryOperator::BitXor,
+        T::ShiftLeft | T::ShiftLeftAssign => BinaryOperator::ShiftLeft,
+        T::ShiftRight | T::ShiftRightAssign => BinaryOperator::ShiftRight,
+        T::ShiftRightUnsigned | T::ShiftRightUnsignedAssign => BinaryOperator::ShiftRightUnsigned,
+        T::Equal => BinaryOperator::Equal,
+        T::NotEqual => BinaryOperator::NotEqual,
+        T::StrictEqual => BinaryOperator::StrictEqual,
+        T::StrictNotEqual => BinaryOperator::StrictNotEqual,
+        T::Less => BinaryOperator::Less,
+        T::LessEqual => BinaryOperator::LessEqual,
+        T::Greater => BinaryOperator::Greater,
         _ => BinaryOperator::GreaterEqual,
     }
 }

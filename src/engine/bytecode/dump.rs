@@ -208,6 +208,7 @@ impl<'a> Dump<'a> {
             &FunctionName::Source { start, length } => {
                 self.quote_source(formatter, start, u64::from(start) + u64::from(length))
             }
+            FunctionName::Known(_) => quote(formatter, function.name_text(self.source)),
             FunctionName::Owned(name) => identifier(formatter, name),
         }
     }

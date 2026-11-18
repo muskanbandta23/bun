@@ -207,7 +207,10 @@ fn long_ropes_are_searched_and_cut_in_place() {
         let nested = JsString::concat(cx, a, rope).unwrap();
         let replaced = nested.replace_first_literally(cx, &dash, plus).unwrap();
         assert!(rope.is_concatenation() && nested.is_concatenation());
-        assert_eq!(text(replaced), text(nested).replacen('-', "+", 1));
+        assert_eq!(
+            text(replaced),
+            [text(a), text(a), text(plus), text(b)].concat()
+        );
         assert_eq!(nested.index_of(cx, &dash, 0).unwrap(), Some(400));
     });
 }

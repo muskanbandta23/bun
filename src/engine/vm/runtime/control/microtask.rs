@@ -85,11 +85,9 @@ internal_microtasks! {
     ModuleLoadCombinedStateSettled,
     ModuleLoadLinkEvaluateSettled,
     ModuleLoadReturnRecord,
-    ModuleLoadReturnModuleKey,
     ModuleLoadStoreError,
     DynamicImportLoadSettled,
     DynamicImportEvaluateSettled,
-    DynamicImportDeferLoadSettled,
     DynamicImportDeferDependencySettled,
 }
 

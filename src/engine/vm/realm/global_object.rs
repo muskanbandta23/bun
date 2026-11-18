@@ -277,7 +277,17 @@ impl GlobalObject {
     }
 
     pub fn create(vm: &Vm, hooks: &'static RealmHooks) -> Gc<GlobalObject> {
-        let shape = Shape::create(vm, None, Value::NULL, ShapeSpec::of::<GlobalObject>());
+        Self::create_with(vm, hooks, ShapeSpec::of::<GlobalObject>())
+    }
+
+    /// Scripts can change its prototype.
+    pub fn create_for_shadow_realm(vm: &Vm, hooks: &'static RealmHooks) -> Gc<GlobalObject> {
+        let spec = ShapeSpec::of::<GlobalObject>().with_mutable_prototype();
+        Self::create_with(vm, hooks, spec)
+    }
+
+    fn create_with(vm: &Vm, hooks: &'static RealmHooks, spec: ShapeSpec) -> Gc<GlobalObject> {
+        let shape = Shape::create(vm, None, Value::NULL, spec);
         let init = Self::init(vm, shape, hooks, core::ptr::null());
         let global = vm.allocate::<GlobalObject>(init);
         global.finish_creation(vm);

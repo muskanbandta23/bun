@@ -17,7 +17,9 @@ impl JsString {
     /// The same, for an integer of at most 53 bits.
     pub fn from_integer_in_radix(vm: &Vm, number: i64, radix: Radix) -> Gc<JsString> {
         if radix != Radix::DECIMAL {
-            return Self::from_text(vm, integer_to_radix(number, radix).text());
+            let mut buffer = [0; _];
+            let text = integer_to_radix(number, radix, &mut buffer);
+            return Self::from_text(vm, Text::Latin1(text));
         }
         match i32::try_from(number) {
             Ok(number) => Self::from_int32(vm, number),

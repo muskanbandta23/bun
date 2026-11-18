@@ -156,6 +156,23 @@ fn precise_sums() {
     ];
     for (terms, expected) in cases {
         assert_same(sum(&mut terms.iter().copied()), expected);
+        assert_same(PreciseSum::of(terms), expected);
+    }
+    let mut random = Random::new(1);
+    for (length, spread) in [
+        (3, 30),
+        (255, 40),
+        (256, 1),
+        (257, 36),
+        (5000, 38),
+        (5000, 60),
+    ] {
+        let mut term = || f64::from_bits(random.next_u64() | 0x3ff << 52);
+        let terms: Vec<f64> = (0..length)
+            .map(|index| term() % 2.0 / 2f64.powi(index % spread))
+            .filter(|term| term.is_finite())
+            .collect();
+        assert_same(PreciseSum::of(&terms), sum(&mut terms.iter().copied()));
     }
     let many = |term| core::iter::repeat_n(term, 10_000);
     assert_same(sum(&mut many(-0.1)), -1000.0);

@@ -36,6 +36,10 @@ pub(crate) fn initialize_slot(cx: &Cx, slot: RealmSlot) -> bool {
         reflect_construct => reflect::initialize_construct(cx),
         proxy_constructor => proxy::initialize(cx),
         proxy_shape | callable_proxy_shape => ProxyObject::create_shapes(cx),
+        private_validate_proxy_get
+        | private_validate_proxy_has
+        | private_validate_proxy_set
+        | private_throw_falsy_proxy_set => proxy::initialize_helpers(cx),
         revocable_proxy_shape => proxy::initialize_revocable_shape(cx),
         symbol_prototype | symbol_constructor | symbol_object_shape => symbol::initialize(cx),
         boolean_prototype | boolean_constructor | boolean_object_shape => boolean::initialize(cx),

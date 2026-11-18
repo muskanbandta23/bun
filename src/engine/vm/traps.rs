@@ -162,6 +162,23 @@ impl Vm {
         }
     }
 
+    /// All but the one for the debugger. Outside of scripts there is no time limit to check.
+    ///
+    /// # Safety
+    /// As for `Cx::from_global`, used exclusively.
+    #[cold]
+    pub unsafe fn handle_traps_without_realm(&self) {
+        if let Some(global) = self.entry_global() {
+            // SAFETY: the caller's.
+            let cx = unsafe { Cx::from_global(global) };
+            let _ = cx.handle_traps_among(Trap::all() - Trap::DEBUGGER_BREAK);
+        } else if self.is_termination_requested() {
+            self.traps().clear(Trap::TERMINATION);
+            self.set_has_termination_request(true);
+            self.throw_termination_exception();
+        }
+    }
+
     /// For code that is about to wait. It asks `is_termination_requested` after this, and each time it wakes up.
     pub fn wake_on_termination(&self, waker: Waker) -> WakeOnTermination<'_> {
         let blocked_thread = &self.services.errors.blocked_thread;

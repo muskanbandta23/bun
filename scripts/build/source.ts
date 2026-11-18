@@ -36,12 +36,12 @@ import { toolIdentityFile } from "./tools.ts";
  *
  * See emitFetch() comment for the full why.
  *
- * Only called for github-archive deps (via emitFetch). A `--local-deps`
+ * Only called for fetched deps (via emitFetch). A `--local-deps`
  * checkout never goes through here — its source is user-managed. Identity
  * is commit + patch-content, NOT disk content, so hand-edits to
  * vendor/<dep>/*.c are preserved (identity still matches, no wipe).
  */
-function invalidateStaleSource(srcDir: string, refStamp: string, commit: string, patchPaths: string[]): void {
+function invalidateStaleSource(srcDir: string, refStamp: string, pin: string, patchPaths: string[]): void {
   if (!existsSync(srcDir)) return;
 
   const patchContents = patchPaths.map(p => {
@@ -53,7 +53,7 @@ function invalidateStaleSource(srcDir: string, refStamp: string, commit: string,
       return "<missing>";
     }
   });
-  const expected = computeSourceIdentity(commit, patchContents);
+  const expected = computeSourceIdentity(pin, patchContents);
 
   let current = "";
   try {
@@ -88,6 +88,13 @@ export type Source =
        * will silently change what we fetch.
        */
       commit: string;
+    }
+  | {
+      /** A source release that holds files the repository does not. Unpacked and patched like a github-archive. */
+      kind: "tarball";
+      url: string;
+      /** Of the download, checked before anything is extracted. */
+      sha256: string;
     }
   | {
       /**
@@ -177,12 +184,22 @@ export interface GenStep {
   implicitOutputs?: string[];
   /** Files the command reads: scripts, templates, other steps' outputs. Absolute. */
   inputs: string[];
+  /** A `.ts` file as the first word runs with `cfg.jsRuntime`. */
   cmd: string[];
   cwd: string;
   env?: Record<string, string>;
   /** The generator prints its result: capture stdout into outputs[0] (written only when it changed). */
   stdout?: boolean;
   desc: string;
+}
+
+/** An executable for a step to run on the machine that builds: C sources compiled and linked in one command. */
+export interface HostTool {
+  /** Absolute, with the host's executable suffix. */
+  output: string;
+  /** Absolute, and none in the dep's own tree. */
+  sources: string[];
+  flags: string[];
 }
 
 /** A header derived from a template in the source tree. */
@@ -265,6 +282,7 @@ export interface DirectBuild {
   codegen?: DirectCodegen;
   /** Generators, in any order; ninja orders them by their inputs/outputs. */
   steps?: GenStep[];
+  hostTools?: HostTool[];
   /** Libraries that join bun's link beside the objects: a step's outputs, or files outside the graph. Absolute. */
   libs?: string[];
   /**
@@ -512,6 +530,13 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
     pool: "dep",
   });
 
+  n.rule("dep_fetch_tarball", {
+    command: `${stream} ${cfg.jsRuntime} ${fetchCli} tarball $name $url $sha256 $dest $cache $patches`,
+    description: "fetch $name",
+    restat: true,
+    pool: "dep",
+  });
+
   // Prebuilt fetch: download tarball with pre-compiled .a/.lib files, extract,
   // write .identity stamp. Outputs are the lib files directly; stamp confirms
   // identity for restat.
@@ -646,21 +671,21 @@ export function depBuildDir(cfg: Config, name: DepName): string {
 
 /**
  * The dep's source, with `--local-deps` applied: a dep named there is
- * redirected from its pinned github-archive tarball to the local checkout.
- * Only github-archive sources can be redirected.
+ * redirected from its pinned tarball to the local checkout.
+ * Only fetched sources can be redirected.
  */
 export function depSource(cfg: Config, dep: Dependency): Source {
   const source = dep.source(cfg);
   const localPath = cfg.localDeps[dep.name];
   if (localPath === undefined) return source;
   assert(
-    source.kind === "github-archive",
-    `--local-deps: ${dep.name} has a ${source.kind} source; only github-archive deps can be redirected`,
+    source.kind === "github-archive" || source.kind === "tarball",
+    `--local-deps: ${dep.name} has a ${source.kind} source; only fetched sources can be redirected`,
   );
   return {
     kind: "local",
     path: localPath,
-    hint: `--local-deps points ${dep.name} at ${localPath} — clone ${source.repo} there`,
+    hint: `--local-deps points ${dep.name} at ${localPath} — ${source.kind === "tarball" ? `unpack ${source.url}` : `clone ${source.repo}`} there`,
   };
 }
 
@@ -742,18 +767,18 @@ export function resolveDep(
       }
     }
     const steps = buildSpec.steps ?? [];
-    for (const step of steps) directSources.push(...step.inputs.filter(path => path.startsWith(srcDir + sep)));
+    for (const step of steps) directSources.push(...step.inputs);
     for (const step of steps)
       for (const path of [...step.outputs, ...(step.implicitOutputs ?? [])]) stepOutputs.add(path);
   }
 
   // ─── Step 1: source acquisition ───
   // Emits a ninja node producing the "source is ready" stamp.
-  // For github-archive: this runs fetchCli which downloads/extracts/patches.
+  // For github-archive and tarball: this runs fetchCli which downloads/extracts/patches.
   // For local/in-tree: source is already on disk.
   let sourceStamp: string | undefined;
-  if (source.kind === "github-archive") {
-    const fetched = [...new Set(directSources)].filter(path => !stepOutputs.has(path));
+  if (source.kind === "github-archive" || source.kind === "tarball") {
+    const fetched = [...new Set(directSources)].filter(path => path.startsWith(srcDir + sep) && !stepOutputs.has(path));
     sourceStamp = emitFetch(n, cfg, dep.name, source, patches, fetched);
   } else {
     // Local/in-tree: no .ref to write. Use the build system's manifest file
@@ -850,7 +875,7 @@ function emitFetch(
   n: Ninja,
   cfg: Config,
   name: DepName,
-  source: Extract<Source, { kind: "github-archive" }>,
+  source: Extract<Source, { kind: "github-archive" | "tarball" }>,
   patches: string[],
   compiledSources: string[],
 ): string {
@@ -872,30 +897,32 @@ function emitFetch(
   //
   // Only deletes when identity is demonstrably wrong — normal no-op
   // builds skip it (identity matches, nothing touched).
-  invalidateStaleSource(srcDir, refStamp, source.commit, patchPaths);
+  invalidateStaleSource(srcDir, refStamp, source.kind === "tarball" ? source.sha256 : source.commit, patchPaths);
 
-  n.build({
+  const node = {
     outputs: [refStamp],
     // Source files our graph compiles. Declaring them as outputs tells
     // ninja "fetch creates these" — otherwise ninja errors "missing and no
     // known rule to make it" on fresh checkouts.
     ...(compiledSources.length > 0 && { implicitOutputs: compiledSources }),
-    rule: "dep_fetch",
     inputs: [],
     // fetch-cli.ts (which has fetchDep) + patch files. Not this file —
     // it's configure-time ninja emission, not fetch logic.
     implicitInputs: [fetchCliPath, ...patchPaths],
-    vars: {
-      name,
-      repo: source.repo,
-      commit: source.commit,
-      dest: srcDir,
-      cache: resolve(cfg.cacheDir, "tarballs"),
-      // Pass patches space-separated. Shell-safe because patch paths are
-      // under our control (no spaces in repo paths per convention).
-      patches: patchPaths.join(" "),
-    },
-  });
+  };
+  const vars = {
+    name,
+    dest: srcDir,
+    cache: resolve(cfg.cacheDir, "tarballs"),
+    // Pass patches space-separated. Shell-safe because patch paths are
+    // under our control (no spaces in repo paths per convention).
+    patches: patchPaths.join(" "),
+  };
+  if (source.kind === "tarball") {
+    n.build({ ...node, rule: "dep_fetch_tarball", vars: { ...vars, url: source.url, sha256: source.sha256 } });
+  } else {
+    n.build({ ...node, rule: "dep_fetch", vars: { ...vars, repo: source.repo, commit: source.commit } });
+  }
 
   // Phony convenience target: `ninja clone-<name>`
   n.phony(`clone-${name}`, [refStamp]);
@@ -1283,7 +1310,18 @@ function emitDirect(
   const checks = spec.forbidUndefined === undefined ? [] : emitForbidUndefined(n, cfg, name, spec, objects, buildDir);
 
   // ─── Generators ───
+  for (const tool of spec.hostTools ?? []) {
+    n.build({
+      outputs: [tool.output],
+      rule: "dep_host_cc",
+      inputs: tool.sources,
+      // The rule has no depfile: the stamps stand for the headers.
+      implicitInputs: [toolIdentityFile(cfg, "hostCc"), ...fetchDepStamps],
+      vars: { flags: ["-w", ...tool.flags].join(" ") },
+    });
+  }
   for (const step of spec.steps ?? []) {
+    const runtime = step.cmd[0]?.endsWith(".ts") ? `${cfg.jsRuntime} ` : "";
     const streamOpts = [
       `--cwd=${step.cwd}`,
       ...Object.entries(step.env ?? {}).map(([k, v]) => `--env=${k}=${v}`),
@@ -1295,7 +1333,12 @@ function emitDirect(
       rule: "dep_gen",
       inputs: step.inputs,
       orderOnlyInputs: orderOnly,
-      vars: { name, desc: step.desc, opts: quoteArgs(streamOpts, hostWin), cmd: quoteArgs(step.cmd, hostWin) },
+      vars: {
+        name,
+        desc: step.desc,
+        opts: quoteArgs(streamOpts, hostWin),
+        cmd: runtime + quoteArgs(step.cmd, hostWin),
+      },
     });
   }
 

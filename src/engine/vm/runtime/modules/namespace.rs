@@ -27,6 +27,10 @@ pub struct ModuleNamespace {
     /// In the order of their code units.
     names: Box<[Identifier]>,
     /// One for each name.
+    #[cfg_attr(
+        rootcheck,
+        rootcheck::allow("`create` has them in a `RootVec` meanwhile")
+    )]
     bindings: Box<[ResolvedBinding]>,
     positions: HashTable<u32>,
 }

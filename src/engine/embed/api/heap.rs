@@ -99,6 +99,16 @@ fn heap_collect(heap: &Heap, scope: Option<&Scope>) {
 }
 
 #[export]
+fn heap_collect_when_idle(heap: &Heap) {
+    heap.collect_when_idle();
+}
+
+#[export]
+fn heap_report_abandoned_object_graph(heap: &Heap) {
+    heap.report_abandoned_object_graph();
+}
+
+#[export]
 fn heap_collect_and_sweep(heap: &Heap, scope: Option<&Scope>) {
     heap.collect_and_sweep(scope.copied());
 }

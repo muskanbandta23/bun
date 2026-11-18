@@ -648,23 +648,6 @@ static JSValue computeErrorInfoToJSValue(JSC::VM& vm, Vector<StackFrame>& stackT
 
 WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL)
 {
-
-    // ErrorInstance::finalizeUnconditionally calls this from Heap::runEndPhase, which nulls
-    // the current thread's atom string table and runs on whichever thread conducts the GC.
-    // Releasing the last ref of an atom string there crashes in AtomStringImpl::remove(),
-    // so install the VM's table for the duration; the mutator is suspended for the whole
-    // end phase, so this is race-free (same as JSLock::didAcquireLock).
-    // https://github.com/oven-sh/bun/issues/17087
-    auto& thread = WTF::Thread::currentSingleton();
-    WTF::AtomStringTable* previousAtomStringTable = thread.atomStringTable();
-    bool needsVMAtomStringTable = previousAtomStringTable != vm.atomStringTable();
-    if (needsVMAtomStringTable) [[unlikely]]
-        thread.setCurrentAtomStringTable(vm.atomStringTable());
-    auto restoreAtomStringTable = WTF::makeScopeExit([&] {
-        if (needsVMAtomStringTable)
-            thread.setCurrentAtomStringTable(previousAtomStringTable);
-    });
-
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(line_in);
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(column_in);
 
@@ -716,27 +699,14 @@ void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull s
 static void protectFrameCells(JSC::MarkedArgumentBuffer& cells, const Vector<StackFrame>& stackTrace)
 {
     cells.ensureCapacity(stackTrace.size() * 2);
-    for (auto& frame : stackTrace) {
-        if (auto* callee = frame.callee())
-            cells.append(callee);
-        if (auto* codeBlock = frame.codeBlock())
-            cells.append(codeBlock);
-    }
+    for (auto& frame : stackTrace)
+        frame.forEachCell([&](JSCell* cell) { cells.append(cell); });
 }
 
 JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL, JSObject* errorInstance)
 {
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(line_in);
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(column_in);
-
-    // stackTrace stays installed on errorInstance: a GC that finds one of its frames dead frees it mid-format.
-    JSC::MarkedArgumentBuffer protectedFrameCells;
-    protectFrameCells(protectedFrameCells, stackTrace);
-    if (protectedFrameCells.hasOverflowed()) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        throwOutOfMemoryError(errorInstance->globalObject(), scope);
-        return jsUndefined();
-    }
 
     JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorInstance);
 
@@ -885,7 +855,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     }
 
     WTF::Vector<JSC::StackFrame> stackTrace;
-    JSCStackTrace::getFramesForCaller(vm, callFrame, errorObject, caller, stackTrace, stackTraceLimit);
+    JSCStackTrace::getFramesForCaller(vm, caller, stackTrace, stackTraceLimit);
     RETURN_IF_EXCEPTION(scope, {});
 
     if (auto* instance = dynamicDowncast<JSC::ErrorInstance>(errorObject)) {

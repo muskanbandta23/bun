@@ -506,6 +506,11 @@ static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
 JSC_DECLARE_HOST_FUNCTION(jsFunctionJSONLParse);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionJSONLParseChunk);
 
+static bool isTooLongForString(std::span<const uint8_t> utf8)
+{
+    return utf8.size() > String::MaxLength && simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(utf8.data()), utf8.size()) > String::MaxLength;
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParse, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Jsonl, jsFunctionJSONLParse);
@@ -544,25 +549,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParse, (JSGlobalObject * globalObject, C
             length -= 3;
         }
 
-        result.status = JSC::StreamingJSONParseResult::Status::NeedsText;
-        if (length <= String::MaxLength) {
-            result = JSC::streamingJSONParse(globalObject, std::span { reinterpret_cast<const char8_t*>(data), length }, values);
-            RETURN_IF_EXCEPTION(scope, {});
+        if (isTooLongForString({ data, length })) {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
         }
-        if (result.status == JSC::StreamingJSONParseResult::Status::NeedsText) {
-            values.clear();
-            size_t u16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(data), length);
-            if (u16Length > String::MaxLength) {
-                throwOutOfMemoryError(globalObject, scope);
-                return {};
-            }
-            auto str = Zig::convertUTF8ToString(std::span { reinterpret_cast<const unsigned char*>(data), length });
-            if (str.isNull()) {
-                throwOutOfMemoryError(globalObject, scope);
-                return {};
-            }
-            result = JSC::streamingJSONParse(globalObject, str, values);
-        }
+        result = JSC::streamingJSONParse(globalObject, std::span { reinterpret_cast<const char8_t*>(data), length }, values);
     } else {
         auto* inputString = arg.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
@@ -653,32 +644,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParseChunk, (JSGlobalObject * globalObje
             bomOffset = 3;
         }
 
-        result.status = JSC::StreamingJSONParseResult::Status::NeedsText;
-        if (sliceLen <= String::MaxLength) {
-            result = JSC::streamingJSONParse(globalObject, std::span { reinterpret_cast<const char8_t*>(sliceData), sliceLen }, values);
-            RETURN_IF_EXCEPTION(scope, {});
-            readBytes = start + bomOffset + result.charactersConsumed;
+        if (isTooLongForString({ sliceData, sliceLen })) {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
         }
-        if (result.status == JSC::StreamingJSONParseResult::Status::NeedsText) {
-            values.clear();
-            size_t u16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(sliceData), sliceLen);
-            if (u16Length > String::MaxLength) {
-                throwOutOfMemoryError(globalObject, scope);
-                return {};
-            }
-            auto str = Zig::convertUTF8ToString(std::span { reinterpret_cast<const unsigned char*>(sliceData), sliceLen });
-            if (str.isNull()) {
-                throwOutOfMemoryError(globalObject, scope);
-                return {};
-            }
-            result = JSC::streamingJSONParse(globalObject, str, values);
-            // Convert character offset back to UTF-8 byte offset
-            if (str.is8Bit()) {
-                readBytes = start + bomOffset + simdutf::utf8_length_from_latin1(reinterpret_cast<const char*>(str.span8().data()), result.charactersConsumed);
-            } else {
-                readBytes = start + bomOffset + simdutf::utf8_length_from_utf16le(reinterpret_cast<const char16_t*>(str.span16().data()), result.charactersConsumed);
-            }
-        }
+        result = JSC::streamingJSONParse(globalObject, std::span { reinterpret_cast<const char8_t*>(sliceData), sliceLen }, values);
+        readBytes = start + bomOffset + result.charactersConsumed;
     } else {
         auto* inputString = arg.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
@@ -914,8 +885,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
             auto bytes = builder.jsonBytes();
             heapProfiler.clearSnapshots();
             RETURN_IF_EXCEPTION(throwScope, {});
-            auto released = bytes.releaseBuffer();
-            auto span = released.leakSpan();
+            auto span = bytes.leakSpan();
             auto buffer = ArrayBuffer::createFromBytes(std::span<const uint8_t> { span.data(), span.size() }, createSharedTask<void(void*)>([](void* p) {
                 fastFree(p);
             }));

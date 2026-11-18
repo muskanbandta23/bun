@@ -14,7 +14,7 @@ use crate::heap::{OnceBox, Owned};
 use crate::{
     CellType, CodeBlock, Cx, Field, Gc, GlobalObject, InlineWatchpointSet, Intrinsic, JsArray,
     JsCell, JsFunction, JsResult, JsString, NativeFunction, RealmSlot, ScopeTemplate, Shape,
-    SourceCode, SourceProviderRef, TracedMap, TypeFlags, Vm, WatchpointState, WeakField, call,
+    SourceCode, SourceProviderRef, TracedMap, TypeFlags, Visitor, Vm, WatchpointState, WeakField, call,
 };
 
 /// What a call goes through: it stores the code block in the new frame and calls the entry.
@@ -219,7 +219,8 @@ impl NativeExecutable {
     }
 }
 
-#[cell(cell_type = ProgramExecutable..=FunctionExecutable, export = "engine_class_ScriptExecutable")]
+#[cell(cell_type = ProgramExecutable..=FunctionExecutable, visit_children,
+    export = "engine_class_ScriptExecutable")]
 pub struct ScriptExecutable {
     base: Executable,
     provider: SourceProviderRef,
@@ -261,6 +262,10 @@ impl ScriptExecutable {
             never_fully_optimize: Cell::new(false),
             never_inline: Cell::new(false),
         }
+    }
+
+    fn visit_children(&self, visitor: &mut Visitor) {
+        visitor.add_opaque_root(self.provider.opaque_root());
     }
 
     pub fn provider(&self) -> &SourceProviderRef {
@@ -627,7 +632,7 @@ impl FunctionExecutable {
             return Ok(text);
         }
         let text = if self.is_private_builtin() && !self.info.kind().is_class_constructor() {
-            native_source_text(cx, self.name_text())?
+            native_source_text(cx, crate::anchor!(self).name_text())?
         } else {
             let range = self.info.text_range();
             let range = range.start as usize..range.end as usize;

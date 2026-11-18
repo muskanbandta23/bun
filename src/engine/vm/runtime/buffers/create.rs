@@ -86,10 +86,13 @@ impl<T: Element> TypedArray<T> {
         }
     }
 
+    /// Panics if there are too many elements.
+    ///
     /// # Safety
     /// `vector` is an allocation of the default allocator that has so many elements and that the caller gives up.
     #[inline(never)]
-    unsafe fn adopt(vm: &Vm, shape: Gc<Shape>, vector: *mut u8, length: usize) -> Gc<Self> {
+    pub unsafe fn adopt(vm: &Vm, shape: Gc<Shape>, vector: *mut u8, length: usize) -> Gc<Self> {
+        assert!(length <= MAX_ARRAY_BUFFER_SIZE / size_of::<T>() && !vector.is_null());
         JsArrayBufferView::assert_shape(&shape, Self::CLASS);
         // SAFETY: the caller's, the class is checked, and it is that of the type.
         unsafe {

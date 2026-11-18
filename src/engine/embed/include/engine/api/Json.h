@@ -13,6 +13,8 @@ inline JSValue JSONParseWithException(JSGlobalObject* globalObject, StringView t
 // Null where `JSON.stringify` returns undefined.
 inline String JSONStringify(JSGlobalObject* globalObject, JSValue value, JSValue space) { return Engine::json_stringify(globalObject, value, space); }
 inline String JSONStringify(JSGlobalObject* globalObject, JSValue value, unsigned indent) { return JSONStringify(globalObject, value, jsNumber(indent)); }
+// For the value of a string in parsed data. Short ones are shared. Null if there is no memory.
+inline JSString* tryMakeJSONString(VM& vm, StringView text) { return Engine::json_try_make_string(vm, text); }
 
 struct StreamingJSONParseResult {
     enum class Status : uint8_t {

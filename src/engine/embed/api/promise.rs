@@ -161,6 +161,11 @@ unsafe fn microtask_queue_release(queue: *const MicrotaskQueue) {
 }
 
 #[export]
+fn microtask_queue_clear(queue: &MicrotaskQueue) {
+    queue.clear();
+}
+
+#[export]
 unsafe fn microtask_queue_perform_checkpoint(queue: *const MicrotaskQueue, vm: &Vm) {
     // SAFETY: C++ has the right to run scripts, and lends it for the call. A task may give its realm another queue.
     let _ = unsafe { MicrotaskQueueRef::clone(&borrowed(queue)).perform_checkpoint_in(vm) };
@@ -221,16 +226,6 @@ fn global_microtask_queue(global: &GlobalObject) -> *mut MicrotaskQueue {
 #[export]
 fn global_set_microtask_queue(global: &GlobalObject, queue: MicrotaskQueueRef) {
     global.set_microtask_queue(queue);
-}
-
-#[export]
-fn global_discards_microtasks(global: &GlobalObject) -> bool {
-    global.discards_microtasks().get()
-}
-
-#[export]
-fn global_set_discards_microtasks(global: &GlobalObject, discards: bool) {
-    global.discards_microtasks().set(discards);
 }
 
 // Deferred work

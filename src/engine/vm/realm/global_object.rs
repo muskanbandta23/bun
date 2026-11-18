@@ -126,6 +126,7 @@ pub struct GlobalObject {
     embedder_methods: *const c_void,
     overridden_date_now: Cell<f64>,
     console_client: Cell<*mut c_void>,
+    discards_microtasks: Cell<bool>,
     /// A `with` scope that is looked in after the global object.
     pub scope_extension: Field<Option<Gc<Environment>>>,
     pub(self) original_array_shapes: FieldArray<Option<Gc<Shape>>, ARRAY_SHAPE_COUNT>,
@@ -139,7 +140,6 @@ pub struct GlobalObject {
     lexical_epoch: Cell<u32>,
     is_initialized: Cell<bool>,
     needs_debug_hooks: Cell<bool>,
-    discards_microtasks: Cell<bool>,
     /// What other crates keep for the realm. See `extension_cell`.
     pub(self) extension_cells: TracedVec<Option<Gc<JsCell>>>,
     microtask_queue: RealmMicrotaskQueue,
@@ -544,8 +544,8 @@ impl GlobalObject {
 
     /// Whether the microtasks of the realm are dropped when it is their turn.
     #[inline(always)]
-    pub fn discards_microtasks(&self) -> &Cell<bool> {
-        &self.discards_microtasks
+    pub(crate) fn discards_microtasks(&self) -> bool {
+        self.discards_microtasks.get()
     }
 
     #[inline(always)]

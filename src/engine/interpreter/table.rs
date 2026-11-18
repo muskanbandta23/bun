@@ -3,7 +3,7 @@
 use bun_engine_bytecode::{Narrow, Opcode, Wide16, Wide32, Width, op};
 
 use crate::fast::{
-    allocation::*, calls::*, control::*, elements::*, exotic::*, frames::*, operators::*, properties::*,
+    allocation::*, calls::*, control::*, elements::*, exotic::*, frames::*, iteration::*, operators::*, properties::*,
     scopes::*, suspension::*,
 };
 use crate::machine::Handler;
@@ -145,6 +145,16 @@ fast_handlers! {
     ForInPut for_in_put,
     ForInHas for_in_has,
     ForInHasOwn for_in_has_own,
+    IteratorOpen iterator_open,
+    IteratorNext iterator_next,
+    IteratorBegin iterator_begin,
+    IteratorStep iterator_step,
+    IteratorClose iterator_close,
+    NewArray new_array,
+    NewArrayFromConstant new_array_from_constant,
+    NewArrayWithSize new_array_with_size,
+    CreateRest create_rest,
+    InByVal in_by_val,
     NewObject new_object,
     NewObjectLiteral new_object_literal,
     NewFunction new_function,

@@ -31,7 +31,7 @@ impl Assembler {
             alignment,
             ..
         } = self.buffer;
-        bytes.truncate(len);
+        bytes.truncate(len as usize);
         let instructions_end = labels[end.0 as usize].offset;
         Ok(Code {
             bytes,
@@ -148,8 +148,8 @@ fn compact(buffer: &mut CodeBuffer<SiteKind>, removed: &[u32]) {
             _ => {}
         }
     }
-    let total = removed[sites.len()] as usize;
-    bytes.copy_within(unmoved..*len, unmoved - total);
+    let total = removed[sites.len()];
+    bytes.copy_within(unmoved..*len as usize, unmoved - total as usize);
     *len -= total;
     for label in labels.iter_mut().filter(|label| label.is_bound()) {
         label.offset -= removed[label.link as usize];

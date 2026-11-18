@@ -34,7 +34,7 @@ fn hooks() -> Hooks {
         did_start_having_a_bad_time: |_, _| {},
         did_declare_global_lexical: |_, _, _| {},
         builtin_source: bun_engine_builtins::builtin_source,
-        temporal_to_locale_string: |cx, this, _, _| this.as_value().to_string(cx).map(Into::into),
+        temporal_to_locale_string: bun_engine_intl::temporal_to_locale_string,
         parse_json: |cx, text| {
             let text = cx.new_string(text)?.into();
             cx.invoke(cx.json_object().into(), bun_engine_text::names::parse, &[text])

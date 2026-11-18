@@ -28,8 +28,9 @@ pub(super) fn try_list_of_elements(
         _ => ElementKind::Contiguous,
     };
     // SAFETY: all that has happened since is allocation. The elements are only copied, and no hole is left.
-    let list =
-        unsafe { ImmutableArray::try_build(cx, kind, plain.len(), |writer| plain.write_to(writer)) };
+    let list = unsafe {
+        ImmutableArray::try_build(cx, kind, plain.len(), |writer| plain.write_to(writer))
+    };
     cx.or_out_of_memory(list).map(Some)
 }
 

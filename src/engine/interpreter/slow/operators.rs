@@ -1,9 +1,7 @@
 use core::cmp::Ordering::{Equal, Greater, Less};
 
 use bun_engine_vm::arithmetic;
-use bun_engine_vm::{
-    ArithmeticProfile, CellType, Cx, JsString, PreferredType, ShapeFlags, Value,
-};
+use bun_engine_vm::{ArithmeticProfile, CellType, Cx, JsString, PreferredType, ShapeFlags, Value};
 
 use super::{Next, execute};
 

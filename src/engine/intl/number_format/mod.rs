@@ -45,6 +45,9 @@ use crate::{
     Cache, Error, KeywordValue, LanguageTag, NumberingSystem, Part, Parts, Result, Source,
 };
 
+pub(crate) const ESTIMATED_FORMATTER_SIZE: usize = 8 << 10;
+pub(crate) const ESTIMATED_RANGE_FORMATTER_SIZE: usize = 20 << 10;
+
 /// To learn a layout takes about as long as so many calls.
 const CALLS_WITHOUT_LAYOUT: u8 = 32;
 
@@ -72,6 +75,7 @@ impl NumberFormat {
         cache.number_formats.find_or_insert(
             |it| it.0.options == options && it.0.locale == locale,
             || {
+                cache.note_allocation(ESTIMATED_FORMATTER_SIZE);
                 let skeleton = Skeleton::from(&options);
                 let formatter =
                     ReusingFormatter::open(&skeleton, &locale.icu_locale()?, &options.digits)
@@ -142,20 +146,22 @@ impl NumberFormat {
 
     pub fn format_range(
         &self,
+        cache: &Cache,
         start: &MathematicalValue,
         end: &MathematicalValue,
     ) -> Result<StringRef> {
-        let range = self.range(start, end)?;
+        let range = self.range(cache, start, end)?;
         let text = range.value().and_then(FormattedValue::text);
         new_string(text.or_type_error("failed to format a range")?)
     }
 
     pub fn format_range_to_parts(
         &self,
+        cache: &Cache,
         start: &MathematicalValue,
         end: &MathematicalValue,
     ) -> Result<Parts> {
-        let range = self.range(start, end)?;
+        let range = self.range(cache, start, end)?;
         let range = range.value().or_type_error("failed to format a range")?;
         let failure = "Failed to format number range";
         let text = range.text().or_type_error(failure)?;
@@ -195,11 +201,13 @@ impl NumberFormat {
 
     fn range(
         &self,
+        cache: &Cache,
         start: &MathematicalValue,
         end: &MathematicalValue,
     ) -> Result<FormattedNumberRange> {
         check_range(start, end)?;
         let formatter = self.0.range_formatter.get_or_try_init(|| {
+            cache.note_allocation(ESTIMATED_RANGE_FORMATTER_SIZE);
             NumberRangeFormatter::open(
                 &Skeleton::from(&self.0.options),
                 &self.0.locale.icu_locale()?,

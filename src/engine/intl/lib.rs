@@ -1,7 +1,8 @@
 //! The `Intl` object.
 
 #![forbid(unsafe_code)]
-#![feature(maybe_uninit_fill, once_cell_try)]
+#![feature(maybe_uninit_fill, negative_impls, once_cell_try)]
+#![allow(improper_ctypes_definitions)]
 #![expect(dead_code, reason = "the constructors that use it are to come")]
 
 #[macro_use]
@@ -9,6 +10,7 @@ mod options;
 mod available_locales;
 mod cache;
 mod calendar;
+mod classes;
 mod collation;
 pub mod collator;
 pub mod date_time_format;
@@ -36,6 +38,10 @@ mod utf16;
 
 pub use available_locales::AvailableLocales;
 pub use cache::Cache;
+pub use classes::{
+    bigint_to_locale_string, initialize_slot, locale_compare, normalize_string,
+    number_to_locale_string, set_preferred_languages, to_locale_case,
+};
 pub use error::{Error, ErrorKind, Result};
 pub use language_tag::{KeywordValue, LanguageTag};
 pub use locale_case::{Case, transform_case};

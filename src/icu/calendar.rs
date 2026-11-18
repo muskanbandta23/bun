@@ -22,8 +22,6 @@ icu_functions! {
     fn ucal_add(calendar: *mut UCalendar, field: Field, amount: i32, status: &mut Status);
     fn ucal_clear(calendar: *mut UCalendar);
     fn ucal_getLimit(calendar: *const UCalendar, field: Field, limit: Limit, status: &mut Status) -> i32;
-    fn ucal_getAttribute(calendar: *const UCalendar, attribute: i32) -> i32;
-    fn ucal_getDayOfWeekType(calendar: *const UCalendar, day: i32, status: &mut Status) -> i32;
     fn ucal_getTimeZoneTransitionDate(calendar: *const UCalendar, direction: Direction, time: &mut f64, status: &mut Status) -> i8;
     fn ucal_getTimeZoneOffsetFromLocal(
         calendar: *const UCalendar,
@@ -45,9 +43,6 @@ icu_functions! {
 }
 
 const UCAL_DEFAULT: i32 = 0;
-const UCAL_FIRST_DAY_OF_WEEK: i32 = 1;
-const UCAL_WEEKDAY: i32 = 0;
-const UCAL_WEEKEND_ONSET: i32 = 2;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(i32)]
@@ -184,19 +179,6 @@ impl Calendar {
     pub fn limit(&mut self, field: Field, limit: Limit) -> Result<i32> {
         // SAFETY: the calendar is open.
         call(|status| unsafe { ucal_getLimit(self.0.as_ptr(), field, limit, status) })
-    }
-
-    /// Sunday is 1 and Saturday is 7.
-    pub fn first_day_of_week(&self) -> i32 {
-        // SAFETY: the calendar is open.
-        unsafe { ucal_getAttribute(self.0.as_ptr(), UCAL_FIRST_DAY_OF_WEEK) }
-    }
-
-    /// Whether `day` (Sunday is 1 and Saturday is 7) begins inside the weekend.
-    pub fn starts_in_weekend(&self, day: i32) -> Result<bool> {
-        // SAFETY: the calendar is open, and ICU checks the range of `day`.
-        let kind = call(|status| unsafe { ucal_getDayOfWeekType(self.0.as_ptr(), day, status) })?;
-        Ok(!matches!(kind, UCAL_WEEKDAY | UCAL_WEEKEND_ONSET))
     }
 
     /// At the instant that the calendar is set to.

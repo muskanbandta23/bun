@@ -23,6 +23,7 @@ Usage: engine-shell [options] [files] [-- arguments]
   --can-block-is-false        Makes `Atomics.wait` throw on the main thread
   --destroy-vm                Frees the heap before exiting
   --footprint                 Prints the memory footprint before exiting
+  --useDollarVM=1             Defines `$vm`
   --<option>=<value>          Sets an option of the engine. One that is not known is ignored
 ";
 
@@ -59,6 +60,7 @@ pub(crate) struct CommandLine {
     pub(crate) cannot_block: bool,
     pub(crate) destroys_vm: bool,
     pub(crate) collects_at_end: bool,
+    pub(crate) exposes_internals: bool,
 }
 
 fn exit_with_usage(code: i32) -> ! {
@@ -108,6 +110,7 @@ impl CommandLine {
     pub(crate) fn for_worker(&self) -> CommandLine {
         CommandLine {
             destroys_vm: true,
+            exposes_internals: self.exposes_internals,
             accepts_termination: self.accepts_termination,
             ignores_uncaught_exceptions: self.ignores_uncaught_exceptions,
             watchdog_milliseconds: self.watchdog_milliseconds,
@@ -125,12 +128,14 @@ impl CommandLine {
 
     fn set_option(&mut self, option: &str, options: &mut Options) {
         let (name, value) = option.split_once('=').unwrap_or((option, "true"));
+        let is_on = matches!(value, "true" | "1" | "yes");
         match name {
             "strict-file" => self.add_file(value, true, false),
             "module-file" => self.add_file(value, false, true),
             "exception" => self.expected_exception = Some(value.to_owned()),
             "watchdog" => self.watchdog_milliseconds = value.parse().ok().filter(|&it| it != 0),
-            "gcAtEnd" => self.collects_at_end = matches!(value, "true" | "1" | "yes"),
+            "gcAtEnd" => self.collects_at_end = is_on,
+            "useDollarVM" => self.exposes_internals = is_on,
             _ => {
                 options.set(name.as_bytes(), value.as_bytes());
             }

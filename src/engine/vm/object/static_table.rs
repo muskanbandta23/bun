@@ -7,7 +7,7 @@ use bun_engine_macros::FieldOffsets;
 use bun_engine_text::{Identifier, PropertyName, Text, names};
 
 use crate::{
-    Attributes, BuiltinId, Class, CustomGetter, CustomSetter, FunctionExecutable, Gc, Intrinsic,
+    AsciiLiteral, Attributes, BuiltinId, Class, CustomGetter, CustomSetter, FunctionExecutable, Gc, Intrinsic,
     JsObject, JsResult, NativeFunction, RealmSlot, Value, Vm,
 };
 
@@ -187,6 +187,13 @@ impl StaticProperty {
         Self::new(name, attributes, MADE_VALUE, make as *const c_void, word(0))
     }
 
+    /// For a name that is not among the static ones.
+    pub const fn renamed(mut self, name: AsciiLiteral) -> StaticProperty {
+        self.key = name.as_str().as_ptr().cast();
+        self.key_size = name.as_str().len() + 1;
+        self
+    }
+
     pub const fn with_intrinsic(mut self, intrinsic: Intrinsic) -> StaticProperty {
         self.intrinsic = intrinsic;
         self
@@ -224,7 +231,7 @@ impl StaticProperty {
         unsafe { PropertyName::from_raw(NonNull::new_unchecked(pointer.cast_mut().cast())) }
     }
 
-    fn characters(&self) -> &'static [u8] {
+    const fn characters(&self) -> &'static [u8] {
         // SAFETY: a literal of that size.
         unsafe { core::slice::from_raw_parts(self.key.cast(), self.key_size - 1) }
     }
@@ -355,8 +362,11 @@ impl StaticTable {
         let mask = overflow - 1;
         let mut position = 0;
         while position < values.len() {
-            // SAFETY: the key of an entry made in Rust is a static name.
-            let hash = unsafe { PropertyName::hash_of_static(values[position].key) };
+            let hash = match values[position].key_size {
+                // SAFETY: what the size says.
+                KEY_IS_NAME => unsafe { PropertyName::hash_of_static(values[position].key) },
+                _ => bun_engine_text::hash_latin1(values[position].characters()),
+            };
             let mut slot = hash as usize & mask;
             if index[slot].value != -1 {
                 while index[slot].next != -1 {

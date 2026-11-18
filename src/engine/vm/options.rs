@@ -26,6 +26,11 @@ macro_rules! options {
                 })*
                 false
             }
+
+            /// The name and the value of each.
+            pub fn all(&self) -> impl Iterator<Item = (&'static str, crate::Value)> {
+                [$((stringify!($external), self.$name.into()),)*].into_iter()
+            }
         }
     };
 }

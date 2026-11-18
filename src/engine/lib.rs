@@ -18,6 +18,11 @@ fn hooks() -> Hooks {
         catch_address: |_, _| bun_engine_interpreter::catch_entry(),
         native_call_entry: |_, _| call::native_call_entry(),
         jettison: |_, _| {},
+        access_handler: |_, _, _| 0,
+        tier_up: |_, code_block, _, _| {
+            code_block.execution_counter().set(i32::MIN);
+            0
+        },
         initialize_realm: bun_engine_builtins::initialize_realm,
         initialize_realm_slot,
         realm_watchpoint_conditions: bun_engine_builtins::watchpoint_conditions,

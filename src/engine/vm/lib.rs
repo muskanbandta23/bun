@@ -27,6 +27,7 @@ mod function;
 mod hash;
 pub mod heap;
 mod hooks;
+pub mod ic;
 mod intrinsic;
 mod object;
 mod operations;

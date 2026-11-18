@@ -7,7 +7,7 @@ use smallvec::SmallVec;
 
 use crate::heap::Survivors;
 use crate::{
-    Attributes, CellType, Gc, GcFree, GlobalObject, JsCell, JsObject, PropertyOffset, Shape,
+    Attributes, CellType, DeferredFire, Gc, GcFree, GlobalObject, JsCell, JsObject, PropertyOffset, Shape,
     ShapeFlags, ShapeId, TypeFlags, Value, Vm, Watcher, Watchpoint,
 };
 
@@ -344,6 +344,7 @@ impl ConditionSet {
             {
                 return None;
             }
+            object.ensure_watchable_shape(vm);
             conditions.push(condition(&object)?);
             if Some(object) == holder {
                 return Some(ConditionSet(conditions));
@@ -408,13 +409,14 @@ impl ConditionSet {
     }
 
     /// The links of the chain before `prototype`, or all of them if it is not on it.
-    pub fn for_instanceof(first: Option<Gc<JsObject>>, prototype: Gc<JsObject>) -> Option<Self> {
-        let chain = first.into_iter().flat_map(|first| first.chain_direct());
-        chain
-            .take_while(|&object| object != prototype)
-            .map(|object| PropertyCondition::has_prototype(&object))
-            .collect::<Option<_>>()
-            .map(ConditionSet)
+    pub fn for_instanceof(vm: &Vm, first: Gc<JsObject>, prototype: Gc<JsObject>) -> Option<Self> {
+        if first == prototype {
+            return Some(ConditionSet::default());
+        }
+        let last = first
+            .chain_direct()
+            .find(|it| it.prototype_object_direct() == Some(prototype));
+        Self::generate(vm, Some(first), last, PropertyCondition::has_prototype)
     }
 
     pub fn is_live(&self, survivors: &Survivors) -> bool {
@@ -443,6 +445,16 @@ impl ConditionSet {
 }
 
 impl JsObject {
+    /// Gives the object a shape of its own if other objects have left the one that it has. It is no dictionary.
+    pub fn ensure_watchable_shape(&self, vm: &Vm) {
+        let shape = self.shape();
+        if !shape.transition_watchpoints().is_still_valid() {
+            let mut deferred = DeferredFire::new(vm);
+            // SAFETY: the same slots and elements.
+            unsafe { self.set_shape(&shape.clone_for_watching(vm, &mut deferred)) };
+        }
+    }
+
     /// False if it stays a dictionary, having gone back to being one before.
     pub fn try_flatten_for_caching(&self, vm: &Vm) -> bool {
         let shape = self.shape();

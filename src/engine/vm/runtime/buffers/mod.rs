@@ -36,5 +36,4 @@ pub use slice::BufferSlice;
 pub(crate) use state::State;
 pub use typed_array::{JsTypedArray, JsUint8Array, TypedArray};
 pub use view::{JsArrayBufferView, ViewMode, is_shape_of_resizable_view};
-pub(crate) use waiters::interrupt_wait;
 pub use waiters::{WaitResult, notify_at_address, wait_at_address, waiter_count};

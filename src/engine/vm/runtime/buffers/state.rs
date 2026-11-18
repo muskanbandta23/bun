@@ -122,7 +122,7 @@ impl crate::services::Service for State {
 
     /// The buffers themselves stay for the destructors that unpin them.
     fn will_destroy(&self, vm: &Vm) {
-        waiters::forget_agent(vm.traps());
+        waiters::forget_agent(vm);
         let views = self.oversize_views.take().into_iter();
         // SAFETY: they are alive, and no script runs any more.
         unsafe { free_vectors(views.filter_map(|view| view_at(view).take_oversize_vector())) };

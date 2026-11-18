@@ -5,6 +5,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use core::time::Duration;
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, OnceLock};
+use std::task::Wake;
 use std::time::Instant;
 
 use bun_engine_text::{PropertyName, names};
@@ -13,8 +14,8 @@ use smallvec::SmallVec;
 
 use super::element::Element;
 use crate::{
-    Cx, Gc, GcFree, JsPromise, JsResult, JsString, Timer, Trap, Traps, TypedArray, Value, Vm,
-    WeakTicket, WorkKind,
+    Cx, Gc, GcFree, JsPromise, JsResult, JsString, Timer, TypedArray, Value, Vm, WeakTicket,
+    WorkKind,
 };
 
 /// The numbers are what `memory.atomic.wait` returns.
@@ -48,9 +49,15 @@ impl BlockedThread {
     const IS_NOTIFIED: u32 = 1;
     const IS_INTERRUPTED: u32 = 2;
 
-    fn wake(&self, reason: u32) {
+    fn wake_for(&self, reason: u32) {
         self.state.fetch_or(reason, Ordering::Release);
         Futex::wake(&self.state, 1);
+    }
+}
+
+impl Wake for BlockedThread {
+    fn wake(self: Arc<BlockedThread>) {
+        self.wake_for(Self::IS_INTERRUPTED);
     }
 }
 
@@ -87,7 +94,7 @@ enum Kind {
 }
 
 struct Waiter {
-    /// The address of the `Traps` of the `Vm` that waits.
+    /// The address of the `Vm` that waits.
     agent: usize,
     kind: Kind,
 }
@@ -112,8 +119,8 @@ impl Waiter {
 /// No list is empty.
 static LISTS: Guarded<BTreeMap<usize, VecDeque<Waiter>>> = Guarded::new(BTreeMap::new());
 
-fn agent_of(traps: &Traps) -> usize {
-    core::ptr::from_ref(traps).addr()
+fn agent_of(vm: &Vm) -> usize {
+    core::ptr::from_ref(vm).addr()
 }
 
 /// Whether it was there.
@@ -128,11 +135,6 @@ fn remove(address: usize, identity: usize) -> bool {
         lists.remove(&address);
     }
     removed.is_some()
-}
-
-fn has_to_terminate(vm: &Vm) -> bool {
-    vm.is_termination_requested()
-        || (vm.traps().is_pending(Trap::TERMINATION) && !vm.is_termination_deferred())
 }
 
 /// Blocks the thread if `has_expected_value`, which looks at the location, says so. Fails if execution is terminated.
@@ -154,10 +156,11 @@ pub fn wait_at_address(
             return Ok(WaitResult::NotEqual);
         }
         lists.entry(address).or_default().push_back(Waiter {
-            agent: agent_of(cx.traps()),
+            agent: agent_of(cx),
             kind: Kind::Thread(Arc::clone(&thread)),
         });
     }
+    let _wake = cx.wake_on_termination(Arc::clone(&thread).into());
     let mut is_idle = !bun_alloc::USE_MIMALLOC;
     loop {
         let state = thread.state.load(Ordering::Acquire);
@@ -165,7 +168,7 @@ pub fn wait_at_address(
             return Ok(WaitResult::Ok);
         }
         let elapsed = start.elapsed();
-        if has_to_terminate(cx) || timeout.is_some_and(|timeout| elapsed >= timeout) {
+        if cx.is_termination_requested() || timeout.is_some_and(|timeout| elapsed >= timeout) {
             break;
         }
         if !is_idle && elapsed >= IDLE_AFTER {
@@ -185,11 +188,9 @@ pub fn wait_at_address(
     if !remove(address, Arc::as_ptr(&thread).addr()) {
         return Ok(WaitResult::Ok);
     }
-    if !has_to_terminate(cx) {
+    if !cx.is_termination_requested() {
         return Ok(WaitResult::TimedOut);
     }
-    cx.traps().clear(Trap::TERMINATION);
-    cx.traps().termination_flag().store(true, Ordering::SeqCst);
     Err(cx.throw_termination())
 }
 
@@ -222,7 +223,7 @@ fn wait_asynchronously(
         let _ = pending.timer.set(timer);
     }
     lists.entry(address).or_default().push_back(Waiter {
-        agent: agent_of(cx.traps()),
+        agent: agent_of(cx),
         kind: Kind::Promise(pending),
     });
     Ok(promise)
@@ -249,7 +250,7 @@ pub fn notify_at_address(address: usize, count: u32) -> u32 {
     }
     for kind in &woken {
         match kind {
-            Kind::Thread(thread) => thread.wake(BlockedThread::IS_NOTIFIED),
+            Kind::Thread(thread) => thread.wake_for(BlockedThread::IS_NOTIFIED),
             Kind::Promise(promise) => promise.settle(WaitResult::Ok),
         }
     }
@@ -276,22 +277,11 @@ pub(super) fn forget_range(range: Range<usize>) {
     }
 }
 
-pub(super) fn forget_agent(traps: &Traps) {
+pub(super) fn forget_agent(vm: &Vm) {
     LISTS.lock().retain(|_, list| {
-        list.retain(|waiter| waiter.agent != agent_of(traps));
+        list.retain(|waiter| waiter.agent != agent_of(vm));
         !list.is_empty()
     });
-}
-
-/// Has the thread look at its traps if it is blocked.
-pub(crate) fn interrupt_wait(traps: &Traps) {
-    for waiter in LISTS.lock().values().flatten() {
-        if let Kind::Thread(thread) = &waiter.kind
-            && waiter.agent == agent_of(traps)
-        {
-            thread.wake(BlockedThread::IS_INTERRUPTED);
-        }
-    }
 }
 
 /// All panic unless the memory is shared and the index is valid.

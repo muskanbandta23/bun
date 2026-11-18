@@ -2,10 +2,6 @@
 
 #include "NodeVM.h"
 
-namespace JSC {
-class UnlinkedProgramCodeBlock;
-}
-
 namespace Bun {
 
 class ScriptOptions : public BaseVMOptions {
@@ -66,7 +62,7 @@ public:
     void cacheBytecode();
     JSC::JSUint8Array* getBytecodeBuffer();
 
-    // The source compiled the way globalObject compiles programs (see ProgramExecutable::initializeGlobalProperties):
+    // The source compiled the way globalObject compiles programs:
     // m_unlinkedCodeBlock if it qualifies, otherwise a fresh compile that replaces it. Null with `error` set if
     // that compile fails.
     JSC::UnlinkedProgramCodeBlock* unlinkedCodeBlockFor(JSC::JSGlobalObject*, JSC::ParserError& error);
@@ -88,7 +84,7 @@ private:
     JSC::WriteBarrier<JSC::JSUint8Array> m_cachedBytecodeBuffer;
     // The compile every run links. Only recompiled (and replaced) when a global object with a different
     // CodeGenerationMode, i.e. a debugger attached, runs the Script.
-    JSC::WriteBarrier<JSC::UnlinkedProgramCodeBlock> m_unlinkedCodeBlock;
+    RefPtr<JSC::UnlinkedProgramCodeBlock> m_unlinkedCodeBlock;
     ScriptOptions m_options;
     bool m_cachedDataProduced = false;
     TriState m_cachedDataRejected = TriState::Indeterminate;

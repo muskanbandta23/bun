@@ -63,61 +63,69 @@ fn vm_hook_map_position(vm: &Vm) {
 }
 
 #[inline(always)]
-fn pending(cx: &Cx, _: Thrown) -> Option<Gc<Exception>> {
+fn pending(cx: &mut Cx, _: Thrown) -> Option<Gc<Exception>> {
+    cx.notify_debugger_of_exception();
     cx.exception()
 }
 
 #[export]
 fn throw_error(
-    cx: &Cx,
+    cx: &mut Cx,
     error_type: ErrorType,
     message: Option<&StringImpl>,
 ) -> Option<Gc<Exception>> {
-    pending(cx, cx.throw(error_new(cx, error_type, message).into()))
+    let thrown = cx.throw(error_new(cx, error_type, message).into());
+    pending(cx, thrown)
 }
 
 #[export]
-fn throw_type_error_literal(cx: &Cx, message: AsciiLiteral) -> Option<Gc<Exception>> {
-    pending(cx, cx.throw_type_error(message.as_str()))
+fn throw_type_error_literal(cx: &mut Cx, message: AsciiLiteral) -> Option<Gc<Exception>> {
+    let thrown = cx.throw_type_error(message.as_str());
+    pending(cx, thrown)
 }
 
 #[export]
-fn throw_type_error(cx: &Cx) -> Option<Gc<Exception>> {
-    pending(cx, cx.throw_type_error(errors::TYPE_ERROR))
+fn throw_type_error(cx: &mut Cx) -> Option<Gc<Exception>> {
+    let thrown = cx.throw_type_error(errors::TYPE_ERROR);
+    pending(cx, thrown)
 }
 
 #[export]
-fn throw_out_of_memory(cx: &Cx) -> Option<Gc<Exception>> {
-    pending(cx, cx.throw_out_of_memory())
+fn throw_out_of_memory(cx: &mut Cx) -> Option<Gc<Exception>> {
+    let thrown = cx.throw_out_of_memory();
+    pending(cx, thrown)
 }
 
 #[export]
-fn throw_stack_overflow(cx: &Cx) -> Option<Gc<Exception>> {
-    pending(cx, cx.throw_stack_overflow())
+fn throw_stack_overflow(cx: &mut Cx) -> Option<Gc<Exception>> {
+    let thrown = cx.throw_stack_overflow();
+    pending(cx, thrown)
 }
 
 #[export]
-fn throw_called_without_new(cx: &Cx, constructor: AsciiLiteral) -> Option<Gc<Exception>> {
+fn throw_called_without_new(cx: &mut Cx, constructor: AsciiLiteral) -> Option<Gc<Exception>> {
     let thrown = errors::throw_called_without_new(cx, constructor.as_str());
     pending(cx, thrown)
 }
 
 #[export]
 fn throw_getter_type_error(
-    cx: &Cx,
+    cx: &mut Cx,
     class: &Class,
     name: PropertyName<'_>,
 ) -> Option<Gc<Exception>> {
-    pending(cx, errors::throw_getter_type_error(cx, class, name))
+    let thrown = errors::throw_getter_type_error(cx, class, name);
+    pending(cx, thrown)
 }
 
 #[export]
 fn throw_setter_type_error(
-    cx: &Cx,
+    cx: &mut Cx,
     class: &Class,
     name: PropertyName<'_>,
 ) -> Option<Gc<Exception>> {
-    pending(cx, errors::throw_setter_type_error(cx, class, name))
+    let thrown = errors::throw_setter_type_error(cx, class, name);
+    pending(cx, thrown)
 }
 
 #[export]

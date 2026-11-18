@@ -15,7 +15,7 @@ static const GlobalObjectMethodTable& defaultMethodTable()
 JSGlobalObject::JSGlobalObject(VM& vm, Structure* structure, const GlobalObjectMethodTable* methodTable)
     : Base(vm, structure)
 {
-    Engine::global_construct(this, vm, structure, methodTable ? methodTable : &defaultMethodTable());
+    Engine::global_construct(this, vm, structure, methodTable ? methodTable : &defaultMethodTable(), methodTable && methodTable->compileStreaming);
 }
 
 JSGlobalObject::~JSGlobalObject()

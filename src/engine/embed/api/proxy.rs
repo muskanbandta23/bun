@@ -1,6 +1,6 @@
 use bun_engine_macros::export;
 use bun_engine_text::PropertyName;
-use bun_engine_vm::{Cx, Gc, JsObject, JsResult, ProxyObject, Value};
+use bun_engine_vm::{Cx, Gc, JsObject, JsResult, ProxyObject, ShapeFlags, Value};
 
 #[export]
 fn proxy_create(cx: &Cx, target: Value, handler: Value) -> JsResult<Gc<ProxyObject>> {
@@ -23,5 +23,8 @@ fn proxy_validate_get_result(
     target: &JsObject,
     name: PropertyName<'_>,
 ) -> JsResult<()> {
+    if !target.shape().has(ShapeFlags::BINDS_GET_AND_SET_TRAPS) {
+        return Ok(());
+    }
     ProxyObject::validate_get_result(cx, result, target, name)
 }

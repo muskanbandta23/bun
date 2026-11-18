@@ -2,8 +2,10 @@
 
 #![feature(rustc_private)]
 
+extern crate rustc_abi;
 extern crate rustc_ast;
 extern crate rustc_attr_ir;
+extern crate rustc_borrowck;
 extern crate rustc_data_structures;
 extern crate rustc_driver;
 extern crate rustc_errors;
@@ -18,6 +20,7 @@ extern crate rustc_trait_selection;
 
 mod allow;
 mod bodies;
+mod borrows;
 mod calls;
 mod engine;
 mod items;
@@ -32,6 +35,8 @@ use rustc_span::Symbol;
 
 use crate::engine::Engine;
 
+const LIST_LENDERS: &str = "ROOTCHECK_LENDERS";
+
 struct Rootcheck;
 
 impl Callbacks for Rootcheck {
@@ -41,6 +46,8 @@ impl Callbacks for Rootcheck {
             let program = std::env::current_exe().expect("a path to this program");
             let program = Symbol::intern(&program.to_string_lossy());
             tcx.sess.file_depinfo.borrow_mut().insert(program);
+            let value = std::env::var(LIST_LENDERS).ok().map(|it| Symbol::intern(&it));
+            tcx.sess.env_depinfo.borrow_mut().insert((Symbol::intern(LIST_LENDERS), value));
         }
         Compilation::Continue
     }
@@ -49,7 +56,13 @@ impl Callbacks for Rootcheck {
         if let Some(engine) = Engine::find(tcx) {
             let cx = types::Types::new(tcx, engine);
             items::check(&cx);
-            calls::check(&cx);
+            if std::env::var_os(LIST_LENDERS).is_some() {
+                borrows::list_lenders(&cx);
+            }
+            let suspects = borrows::find_suspects(&cx);
+            let calls = calls::Calls::new(&cx);
+            let instantiations = calls::check(&calls, &cx);
+            borrows::report(&calls, &cx, &instantiations, suspects);
             allow::check(&cx);
         }
         Compilation::Continue

@@ -1,11 +1,13 @@
+use crate::digits::DigitDivisor;
+
 /// The largest power of a radix that fits in a digit.
 #[derive(Clone, Copy)]
-pub(crate) struct Chunk {
-    pub(crate) characters: usize,
-    pub(crate) power: u64,
+pub(super) struct Chunk {
+    pub(super) characters: usize,
+    pub(super) power: u64,
 }
 
-pub(crate) const CHUNKS: [Chunk; 37] = {
+pub(super) const CHUNKS: [Chunk; 37] = {
     let mut chunks = [Chunk {
         characters: 0,
         power: 1,
@@ -21,8 +23,18 @@ pub(crate) const CHUNKS: [Chunk; 37] = {
     chunks
 };
 
+pub(super) static CHUNK_DIVISORS: [DigitDivisor; 37] = {
+    let mut divisors = [DigitDivisor::new(1); 37];
+    let mut radix = 2;
+    while radix <= 36 {
+        divisors[radix] = DigitDivisor::new(CHUNKS[radix].power);
+        radix += 1;
+    }
+    divisors
+};
+
 /// `1 / log2(radix)` in units of 2^-32, rounded up.
-pub(crate) const CHARACTERS_PER_BIT: [u64; 37] = {
+pub(super) const CHARACTERS_PER_BIT: [u64; 37] = {
     let mut ratios = [0; 37];
     let mut radix = 2;
     while radix <= 36 {
@@ -33,7 +45,7 @@ pub(crate) const CHARACTERS_PER_BIT: [u64; 37] = {
 };
 
 /// In units of 2^-40. Each squaring of the significand yields one bit.
-pub(crate) const fn log2_rounded_down(value: u64) -> u64 {
+pub(super) const fn log2_rounded_down(value: u64) -> u64 {
     let mut logarithm = value.ilog2() as u64;
     let mut significand = value << value.leading_zeros();
     let mut bit = 0;

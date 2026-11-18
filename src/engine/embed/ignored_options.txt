@@ -17,7 +17,6 @@ flag b3AlwaysFailsBeforeLink
 flag breakOnThrow
 flag clobberAllRegsInFTLICSlowPath
 flag coalesceSpillSlots
-flag collectContinuously
 flag collectExtraSamplingProfilerData
 flag countParseTimes
 flag crashIfCantAllocateJITMemory
@@ -27,7 +26,6 @@ flag crashOnDisallowedVMEntry
 flag crashOnFailedWasmValidate
 flag createPreHeaders
 flag debuggerTriggersBreakpointException
-flag decommitUnusedMarkedBlockPages
 flag decommitUnusedMarkedBlockPagesAfterEdenCollections
 flag disableBBQConsts
 flag disallowLoopUnrollingForNonInnermost
@@ -157,7 +155,6 @@ flag returnEarlyFromInfiniteLoopsForFuzzing
 flag safepointBeforeEachPhase
 flag sampleCCode
 flag samplingProfilerIgnoreExternalSourceID
-flag scribbleFreeCells
 flag showDFGDisassembly
 flag showFTLDisassembly
 flag stealEmptyBlocksFromOtherAllocators
@@ -196,7 +193,6 @@ flag useDOMJIT
 flag useDoublePredictionFuzzerAgent
 flag useEagerCodeBlockJettisonTiming
 flag useEagerWasmModuleHashing
-flag useEdenCollectionsAtSlowPathAllocs
 flag useExceptionFuzz
 flag useExecutableAllocationFuzz
 flag useExecutionCountForCodeBlockAging
@@ -281,7 +277,6 @@ flag useTypeProfiler
 flag useUnlinkedCodeBlockJettisoning
 flag useV8DateParser
 flag useValueRepElimination
-flag useWarmUpMarkedBlocks
 flag useWasmByteLoopReplacement
 flag useWasmFaultSignalHandler
 flag useWasmIPIntEpilogueOSR
@@ -345,7 +340,6 @@ flag verboseWasmDebugger
 flag verboseWasmTypeCleanup
 flag verifyAOTMachineCode
 flag verifyAOTProgram
-flag verifyGC
 flag verifyHeap
 flag verifyRegExpJITReads
 flag zeroExecutableMemoryOnFree
@@ -358,11 +352,9 @@ number allowHoistingLICMProbability
 number checkArrayVoteRatioForHoisting
 number codeBlockAgingLeaseMultiplier
 number collectContinuouslyPeriodMS
-number collectionTimerMaxPercentCPU
 number concurrentGCMaxHeadroom
 number concurrentGCPeriodMS
 number couldTakeSlowCaseMinimumCount
-number criticalGCMemoryThreshold
 number defaultB3OptLevel
 number desiredProfileFullnessRate
 number desiredProfileLivenessRate
@@ -399,7 +391,6 @@ number globalInliningPlanBudgetForFTL
 number heapGrowthFunctionThresholdInMB
 number highCostBaselineProfilingFunctionBytecodeCost
 number initialCoolDownCount
-number initialHeapVersion
 number initialRepatchBufferingCountdown
 number inliningPlanDepthPenalty
 number inliningPlanTierBonusBase
@@ -484,8 +475,6 @@ number optimizedCodeAgingQuietAllocationMB
 number optimizedCodeAgingQuietSeconds
 number osrExitCountForReoptimization
 number osrExitCountForReoptimizationFromLoop
-number percentCPUPerMBForEdenTimer
-number percentCPUPerMBForFullTimer
 number preciseAllocationCutoff
 number priorityDeltaOfDFGCompilerThreads
 number priorityDeltaOfFTLCompilerThreads
@@ -511,7 +500,6 @@ number shadowChickenMaxTailDeletedFramesSize
 number sizeClassProgression
 number startupJITDeferralScale
 number structureCheckVoteRatioForHoisting
-number structureHeapSizeInKB
 number switchJumpTableAmountThreshold
 number thresholdForBBQOptimizeAfterWarmUp
 number thresholdForBBQOptimizeSoon

@@ -169,6 +169,9 @@ class Butterfly {
     WTF_MAKE_NONCOPYABLE(Butterfly);
 
 public:
+    // What a new object with that structure needs.
+    static Butterfly* create(VM& vm, Structure* structure) { return Engine::storage_create(vm, structure); }
+
     uint32_t publicLength() const { return Engine::fieldAt<uint32_t>(this, -Engine::Layout::publicLengthBelowStorage); }
     uint32_t vectorLength() const { return Engine::fieldAt<uint32_t>(this, -Engine::Layout::vectorLengthBelowStorage); }
     void setPublicLength(uint32_t length) { __atomic_store_n(&Engine::fieldAt<uint32_t>(this, -Engine::Layout::publicLengthBelowStorage), length, __ATOMIC_RELAXED); }

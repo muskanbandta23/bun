@@ -131,6 +131,10 @@ pub unsafe fn free_strong_slot(slot: usize) {
     // SAFETY: cleared when the set goes.
     if let Some(set) = unsafe { chunk.set.get().as_ref() } {
         slot_at(slot).set(set.first_free.replace(slot) as u64 | FREE_TAG);
+    } else if chunk.used.get() == 0 {
+        let chunk = core::ptr::with_exposed_provenance_mut::<Chunk>(slot & !(CHUNK_SIZE - 1));
+        // SAFETY: leaked by `grow`, and that was the last handle.
+        drop(unsafe { Box::from_raw(chunk) });
     }
 }
 

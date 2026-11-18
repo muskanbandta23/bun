@@ -1,5 +1,7 @@
 //! The values of the `co` key.
 
+use core::ffi::CStr;
+
 use bun_icu::Enumeration;
 use smallvec::SmallVec;
 
@@ -35,4 +37,10 @@ pub(crate) fn collect(mut icu_names: Enumeration) -> bun_icu::Result<SmallVec<[S
     }
     collations.sort_unstable();
     Ok(collations)
+}
+
+pub(crate) fn supported(locale: &CStr, name: &[u8]) -> Option<Subtag> {
+    let name = Subtag::new(name)?;
+    let collations = bun_icu::collator::types_for_locale(locale).and_then(collect);
+    collations.ok()?.contains(&name).then_some(name)
 }

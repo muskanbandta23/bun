@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 #![allow(dead_code, unused_imports)]
 
+mod assembler;
 mod code;
 mod constant;
 mod function;
@@ -13,6 +14,8 @@ mod operand;
 mod positions;
 mod scope;
 mod table;
+#[cfg(test)]
+mod unit_tests;
 
 pub use bun_engine_syntax::{EvalContext, FunctionKind};
 pub use code::*;

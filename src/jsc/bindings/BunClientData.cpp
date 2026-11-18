@@ -17,7 +17,6 @@
 
 #include "JSDOMConstructorBase.h"
 
-#include "WebCoreTypedArrayController.h"
 #include <JavaScriptCore/JSCInlines.h>
 
 #include "JSDOMWrapper.h"
@@ -130,7 +129,6 @@ void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
         })),
         JSC::ConstraintVolatility::GreyedByExecution));
 
-    vm->m_typedArrayController = adoptRef(new WebCoreTypedArrayController(true));
     clientData->builtinFunctions().exportNames();
 }
 

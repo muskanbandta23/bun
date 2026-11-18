@@ -363,19 +363,6 @@ fn elements_are_joined() {
 }
 
 #[test]
-fn an_object_is_converted_once_at_a_time() {
-    with_realm(|cx| {
-        let (a, b) = (cx.new_object(), cx.new_object());
-        for _ in 0..2 {
-            let _outer = StringRecursionGuard::enter(cx, a).unwrap().unwrap();
-            let _inner = StringRecursionGuard::enter(cx, b).unwrap().unwrap();
-            assert!(StringRecursionGuard::enter(cx, a).unwrap().is_none());
-            assert!(StringRecursionGuard::enter(cx, b).unwrap().is_none());
-        }
-    });
-}
-
-#[test]
 fn a_weakly_held_symbol_lives_as_long_as_its_name_is_used() {
     with_realm(|cx| {
         #[inline(never)]

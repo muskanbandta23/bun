@@ -191,7 +191,7 @@ impl JsString {
     }
 
     #[inline(always)]
-    pub(super) fn fiber(&self) -> usize {
+    pub(crate) fn fiber(&self) -> usize {
         // SAFETY: only this thread writes it.
         unsafe { *self.fiber.get() }
     }

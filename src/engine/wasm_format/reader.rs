@@ -161,3 +161,54 @@ fn long_signed<const BITS: u32>(bytes: &[u8], position: usize) -> Long<i64> {
     let value = (value | extension) as i64;
     (value, if too_large { end | FAILED } else { end })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Reader;
+
+    fn read<'a, T>(
+        bytes: &'a [u8],
+        number: fn(&mut Reader<'a>) -> Option<T>,
+    ) -> (Option<T>, usize) {
+        let mut reader = Reader::new(bytes, 0);
+        (number(&mut reader), reader.position())
+    }
+
+    /// In exactly `length` bytes.
+    fn encode(value: i128, length: usize) -> Vec<u8> {
+        let more = |i| if i + 1 < length { 0x80 } else { 0 };
+        (0..length)
+            .map(|i| (value >> (7 * i)) as u8 & 0x7f | more(i))
+            .collect()
+    }
+
+    #[test]
+    fn numbers_of_every_length() {
+        let powers = (0..70).map(|bit| 1i128 << bit);
+        for value in powers.flat_map(|power| [power - 1, power, -power, -power - 1]) {
+            for length in 1..=11 {
+                let bytes = encode(value, length);
+                let bits = 7 * length as u32;
+                let unsigned = value & ((1 << bits) - 1);
+                let signed = value << (128 - bits) >> (128 - bits);
+                let (short, long) = (length <= 5, length <= 10);
+                let expected = u32::try_from(unsigned).ok().filter(|_| short);
+                assert_eq!(read(&bytes, Reader::u32), (expected, length.min(5)));
+                let expected = i32::try_from(signed).ok().filter(|_| short);
+                assert_eq!(read(&bytes, Reader::i32), (expected, length.min(5)));
+                let expected = u64::try_from(unsigned).ok().filter(|_| long);
+                assert_eq!(read(&bytes, Reader::u64), (expected, length.min(10)));
+                let expected = i64::try_from(signed).ok().filter(|_| long);
+                assert_eq!(read(&bytes, Reader::i64), (expected, length.min(10)));
+            }
+        }
+    }
+
+    #[test]
+    fn the_end_comes_early() {
+        assert_eq!(read(&[], Reader::u32), (None, 0));
+        assert_eq!(read(&[0x80, 0x80], Reader::i64), (None, 2));
+        assert_eq!(read(&[1, 2, 3], Reader::array::<4>), (None, 0));
+        assert_eq!(read(&[0x80], Reader::u7), (None, 1));
+    }
+}

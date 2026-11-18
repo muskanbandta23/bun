@@ -1,9 +1,10 @@
 use bun_engine_text::{PropertyName, StringRef, private_names};
+use bun_engine_vm::errors::TYPE_ERROR;
 use bun_engine_vm::{
     JsFunction, NativeFunction, PadSide, RealmSlot, RopeBuilder, StringObject, TrimSides, TypeFlags,
 };
 
-use super::{TYPE_ERROR, html, iterator, locale, pattern, this_string};
+use super::{html, locale, pattern, this_string};
 use crate::prelude::*;
 use crate::text::regexp::string_methods::{string_match, string_match_all, string_search};
 
@@ -111,10 +112,6 @@ pub(super) fn initialize_slot(cx: &Cx, slot: RealmSlot) -> bool {
         RealmSlot::string_prototype_trim_end => {
             let intrinsic = Intrinsic::StringPrototypeTrimEnd;
             global.init_string_prototype_trim_end(make("trimEnd", trim_end, intrinsic));
-        }
-        RealmSlot::string_prototype_iterator => {
-            let (name, intrinsic) = ("[Symbol.iterator]", Intrinsic::StringIterator);
-            global.init_string_prototype_iterator(make(name, iterator::iterator, intrinsic));
         }
         _ => return false,
     }

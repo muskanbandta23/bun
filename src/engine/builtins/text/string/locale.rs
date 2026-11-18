@@ -1,8 +1,9 @@
 //! The methods that ECMA-402 and UAX #15 define.
 
 use bun_engine_intl::{Case, normalize_string, to_locale_case};
+use bun_engine_vm::errors::TYPE_ERROR;
 
-use super::{TYPE_ERROR, this_string};
+use super::this_string;
 use crate::prelude::*;
 
 #[native_abi]

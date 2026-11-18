@@ -1,6 +1,5 @@
 mod constructor;
 mod html;
-mod iterator;
 mod locale;
 mod pattern;
 mod prototype;
@@ -16,7 +15,6 @@ pub(super) fn initialize_slot(cx: &Cx, slot: RealmSlot) -> bool {
     match slot {
         string_constructor => constructor::initialize(cx),
         string_object_shape => constructor::initialize_object_shape(cx),
-        string_iterator_prototype | string_iterator_shape => iterator::initialize(cx),
         _ => return prototype::initialize_slot(cx, slot),
     }
     true
@@ -49,11 +47,6 @@ pub(super) fn add_conditions(
             conditions.no_elements(&cx.object_prototype(), Value::NULL);
             return true;
         }
-        StringIteratorProtocol => {
-            conditions.pristine(&prototype, symbols::iterator);
-            conditions.pristine_iterator(&cx.string_iterator_prototype());
-            return true;
-        }
         _ => return false,
     };
     conditions.absent(&prototype, absent, cx.object_prototype().into());
@@ -74,5 +67,3 @@ fn this_string(cx: &mut Cx, frame: &CallFrame, message: &'static str) -> JsResul
 fn this_to_string(cx: &mut Cx, frame: &CallFrame, message: &'static str) -> JsResult<Gc<JsString>> {
     (frame.this_value().require_object_coercible(cx, message)?).to_string(cx)
 }
-
-const TYPE_ERROR: &str = "Type error";

@@ -1,7 +1,7 @@
 //! What goes into a compiler and what comes out.
 
 use bun_engine_asm::{Code, Features};
-use bun_engine_wasm_format::{CodeIndex, FuncIndex, Module, ValType};
+use bun_engine_wasm_format::{CodeIndex, FuncIndex, Module};
 
 use crate::abi::{HostLayout, InstanceLayout, MemoryMode, Stubs};
 
@@ -17,6 +17,17 @@ pub struct Environment<'a> {
     pub seed: u64,
 }
 
+/// Where baseline code counts.
+#[derive(Clone, Copy, Debug)]
+pub struct Counters {
+    /// The address of a `CallProfile` for each call of the function.
+    pub call_profiles: usize,
+    /// The address of an `AtomicI32` for each loop of the function. A turn adds one.
+    pub loop_countdowns: usize,
+    /// What an entry adds to the countdown of the slot.
+    pub entry_increment: i32,
+}
+
 /// A place in the code at which the stack can be walked.
 #[derive(Clone, Copy, Debug)]
 pub struct CallSite {
@@ -30,8 +41,13 @@ pub struct CallSite {
 #[derive(Clone, Copy, Debug)]
 pub struct InlineFrame {
     pub func: FuncIndex,
-    /// A position in `inline_frames`, or `u32::MAX` for the function itself.
+    /// A position in `inline_frames`, `u32::MAX` for the function itself, or [`Self::NO_CALLER`].
     pub caller: u32,
+}
+
+impl InlineFrame {
+    /// A tail call has put it in the place of the function itself.
+    pub const NO_CALLER: u32 = u32::MAX - 1;
 }
 
 /// A patchable call or jump that goes through the slot of the callee until it is pointed at the code.
@@ -39,14 +55,6 @@ pub struct InlineFrame {
 pub struct DirectCall {
     pub end_offset: u32,
     pub callee: CodeIndex,
-}
-
-/// Where baseline code has its values at the start of a loop.
-pub struct LoopEntry {
-    pub loop_index: u32,
-    /// The locals, then the operand stack from the bottom, then the exceptions that enclosing `catch` blocks hold.
-    /// Offsets are from the frame pointer.
-    pub values: Vec<(ValType, i32)>,
 }
 
 pub struct CompiledFunction {

@@ -6,7 +6,7 @@ use bun_engine_text::{CodeUnit, MAX_LENGTH, StringRef, Text};
 
 use super::joiner::{Separator, write_number};
 use crate::{
-    Cx, ElementKind, Elements, Gc, JsArray, JsObject, JsResult, JsString, RopeBuilder,
+    Cx, ElementKind, Elements, Gc, JsObject, JsResult, JsString, RopeBuilder,
     StringJoiner, Value,
 };
 
@@ -141,21 +141,20 @@ impl JsObject {
         mut to_string: impl FnMut(&mut Cx, Value) -> JsResult<Gc<JsString>>,
     ) -> JsResult<Gc<JsString>> {
         let mut joined = RopeBuilder::default();
-        let (mut index, mut separators, mut empty_run) = (0, 0, 0);
+        let (mut index, mut separators) = (0, 0);
         while index < length {
             cx.check_traps()?;
             let element = self.get_index(cx, index)?;
             index += 1;
             if element.is_undefined_or_null() {
-                empty_run += 1;
-                let next = self.skip_holes(index, empty_run).min(length);
+                let next = self.skip_holes(index..length);
                 separators += next - index;
                 index = next;
             } else {
                 let string = to_string(cx, element)?;
                 joined.push(cx, separator.repeat(cx, separators)?)?;
                 joined.push(cx, string)?;
-                (separators, empty_run) = (0, 0);
+                separators = 0;
             }
             separators += u64::from(index < length);
             if separators.saturating_mul(separator.len().into()) > MAX_LENGTH as u64 {
@@ -164,22 +163,5 @@ impl JsObject {
         }
         joined.push(cx, separator.repeat(cx, separators)?)?;
         joined.finish(cx)
-    }
-
-    /// The first index from `index` on at which there may be something. Looking at all elements is worth it once
-    /// as many holes have been read.
-    #[inline]
-    fn skip_holes(&self, index: u64, holes_read: usize) -> u64 {
-        match self.sparse_elements() {
-            Some(elements)
-                if holes_read > elements.len()
-                    && self.is::<JsArray>()
-                    && !self.holes_must_forward_to_prototype() =>
-            {
-                let indices = elements.indices().into_iter().map(u64::from);
-                indices.filter(|&it| it >= index).min().unwrap_or(u64::MAX)
-            }
-            _ => index,
-        }
     }
 }

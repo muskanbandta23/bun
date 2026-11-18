@@ -109,10 +109,15 @@ private:
 
 class Interpreter {
 public:
-    using StackFrameFilter = ScopedLambda<bool(StackFrame&)>;
+    // It is not asked about functions that wait, and allocates no cell.
+    using StackFrameFilter = ScopedLambda<bool(const StackFrame&)>;
 
-    void getStackTrace(JSCell* owner, Vector<StackFrame>& results, size_t framesToSkip = 0, size_t maxStackSize = std::numeric_limits<size_t>::max(), JSCell* caller = nullptr, JSCell* ownerOfCallLinkInfo = nullptr, CallLinkInfo* = nullptr, const StackFrameFilter* = nullptr);
-    JSValue executeProgram(const SourceCode&, JSGlobalObject*, JSObject* thisObject, UnlinkedProgramCodeBlock* = nullptr);
+    // The functions that wait for the one that is running come on top, up to as many again.
+    void getStackTrace(Vector<StackFrame>& results, size_t framesToSkip = 0, size_t maxStackSize = std::numeric_limits<size_t>::max(), const StackFrameFilter* = nullptr);
+    // The async functions that wait for the promise, one for the other.
+    void getStackTraceOfAwaiters(JSPromise*, Vector<StackFrame>& results, size_t maxStackSize);
+    bool isInsideSeveralResumedAsyncFunctions();
+    JSValue executeProgram(const SourceCode&, JSGlobalObject*, JSObject* thisObject);
 
 private:
     VM& vm();
@@ -250,7 +255,7 @@ public:
     SynchronousModuleQueue* synchronousModuleQueue() const { return m_synchronousModuleQueue; }
 
     Function<void(VM&, SourceProvider*, LineColumn&, String&)>& computeLineColumnWithSourcemap() { return m_computeLineColumnWithSourcemap; }
-    void setComputeLineColumnWithSourcemap(Function<void(VM&, SourceProvider*, LineColumn&, String&)>&& function) { m_computeLineColumnWithSourcemap = WTF::move(function); }
+    void setComputeLineColumnWithSourcemap(Function<void(VM&, SourceProvider*, LineColumn&, String&)>&&);
     const ErrorInfoFunction& onComputeErrorInfo() const { return m_onComputeErrorInfo; }
     void setOnComputeErrorInfo(ErrorInfoFunction&&);
     const ErrorInfoFunctionJSValue& onComputeErrorInfoJSValue() const { return m_onComputeErrorInfoJSValue; }

@@ -96,6 +96,11 @@ impl FunctionInfo {
         self.flags.contains(FunctionFlags::GENERATOR)
     }
 
+    /// Whether it has an `await` of its own. Of a built-in that has been described, it is not known.
+    pub fn awaits(&self) -> bool {
+        self.flags.contains(FunctionFlags::AWAITS)
+    }
+
     pub fn is_constructor(&self) -> bool {
         match self.kind {
             FunctionKind::Normal => !self.is_async() && !self.is_generator(),

@@ -18,7 +18,8 @@ const fn link(name: PropertyName<'static>, slot: RealmSlot) -> StaticProperty {
 static_table!(static NO_PROPERTIES = []);
 
 macro_rules! function_kinds {
-    ($($module:ident: $name:ident, $class_name:literal, $kind:ident, $prototype:ident, [$($instances:ident)?];)*) => {$(
+    ($($module:ident: $name:ident, $class_name:literal, $kind:ident, $prototype:ident, [$($instances:ident)?]
+        $(, export = $export:literal)?;)*) => {$(
         mod $module {
             use super::*;
 
@@ -28,7 +29,7 @@ macro_rules! function_kinds {
                 StaticProperty::string(symbols::toStringTag, names::$name),
             ]);
 
-            define_object!(Prototype, $class_name, PROPERTIES);
+            define_object!(Prototype, $class_name, PROPERTIES $(, export = $export)?);
             define_constructor!(Constructor, NO_PROPERTIES, call, construct);
 
             fn create_constructor(cx: &Cx, prototype: &JsObject) -> Value {
@@ -51,7 +52,8 @@ macro_rules! function_kinds {
 function_kinds! {
     generator_function: GeneratorFunction, "GeneratorFunction", Generator, generator_function_prototype,
         [generator_prototype];
-    async_function: AsyncFunction, "AsyncFunction", Async, async_function_prototype, [];
+    async_function: AsyncFunction, "AsyncFunction", Async, async_function_prototype, [],
+        export = "engine_class_AsyncFunctionPrototype";
     async_generator_function: AsyncGeneratorFunction, "AsyncGeneratorFunction", AsyncGenerator,
         async_generator_function_prototype, [async_generator_prototype];
 }

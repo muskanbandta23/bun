@@ -109,7 +109,7 @@ impl Drop for Words {
 }
 
 /// Code linked to a realm. Optimized code has one of its own, whose `alternative` has the profiles.
-#[cell(cell_type = CodeBlock, flags = TypeFlags::SHAPE_IS_IMMORTAL,
+#[cell(cell_type = CodeBlock, flags = TypeFlags::SHAPE_IS_IMMORTAL, export = "engine_class_CodeBlock",
     visit_children, visit_output_constraints, reconcile_weak_references, estimated_size)]
 pub struct CodeBlock {
     base: JsCell,
@@ -526,10 +526,7 @@ impl CodeBlock {
     }
 
     pub fn source_provider(&self) -> SourceProviderRef {
-        match self.executable.downcast::<FunctionExecutable>() {
-            Some(function) => function.code_provider(),
-            None => self.executable.provider().clone(),
-        }
+        self.executable.code_provider()
     }
 
     pub fn line_column(&self, bytecode_offset: u32) -> LineColumn {

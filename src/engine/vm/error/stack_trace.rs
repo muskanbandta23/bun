@@ -5,8 +5,8 @@ use core::ops::Deref;
 use bun_engine_macros::FieldOffsets;
 
 use crate::{
-    Gc, GcFree, JsAsyncFunctionGenerator, JsObject, RootVec, StackFrame, StackVisitor, Vm, options,
-    root_vec,
+    Gc, GcFree, JsAsyncFunctionGenerator, JsObject, JsPromise, RootVec, StackFrame, StackVisitor,
+    Vm, options, root_vec,
 };
 
 /// Frames in memory of the global allocator, laid out as the vector of the embedder is. It is no root: whoever has
@@ -57,19 +57,22 @@ impl StackTrace {
         Self::from_vec(frames.to_vec())
     }
 
-    pub(super) fn capture(vm: &Vm, request: StackTraceRequest<'_>) -> StackTrace {
+    pub fn capture(vm: &Vm, request: StackTraceRequest<'_>) -> StackTrace {
         let _defer = vm.heap.defer_collection();
         let mut frames = Vec::new();
         request.capture_into(vm, &mut frames);
         Self::from_vec(frames)
     }
 
-    /// Adds the frames of the stack to those that it has, which count towards the limit.
-    pub fn append_capture(&mut self, vm: &Vm, request: StackTraceRequest<'_>) {
-        let _defer = vm.heap.defer_collection();
-        let mut frames = core::mem::replace(self, Self::EMPTY).into_vec();
-        request.capture_into(vm, &mut frames);
-        *self = Self::from_vec(frames);
+    /// The async functions that wait for the promise, one for the other.
+    pub fn of_awaiters(promise: &JsPromise, limit: usize) -> StackTrace {
+        let first = promise.indirect_awaiter();
+        // Each awaits one promise, so a cycle leads back to the first.
+        let awaiters = core::iter::successors(first, |it| {
+            (it.promise().indirect_awaiter()).filter(|&it| Some(it) != first)
+        });
+        let frames = awaiters.filter_map(|it| it.stack_frame());
+        Self::from_vec(frames.take(limit).collect())
     }
 
     pub fn take(&mut self) -> StackTrace {

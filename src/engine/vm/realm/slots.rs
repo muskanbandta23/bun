@@ -375,6 +375,14 @@ realm_slots! {
         word_segment_data_shape: Shape,
 
         // Only for built-ins
+        private_proxy_get: JsFunction = @proxyGet,
+        private_proxy_handler: JsFunction = @proxyHandler,
+        private_proxy_has: JsFunction = @proxyHas,
+        private_proxy_set: JsFunction = @proxySet,
+        private_validate_proxy_get: JsFunction = @handleProxyGetTrapResult,
+        private_validate_proxy_has: JsFunction = @handleNegativeProxyHasTrapResult,
+        private_validate_proxy_set: JsFunction = @handlePositiveProxySetTrapResult,
+        private_throw_falsy_proxy_set: JsFunction = @throwFalsyProxySetTrapResult,
         private_is_array: JsFunction = @isArray,
         private_array_from_fast: JsFunction = @arrayFromFastWithoutMapFn,
         private_array_from_async_iterator: JsFunction = @arrayFromAsyncIterator,

@@ -123,6 +123,21 @@ impl JsArray {
         cx.or_out_of_memory(array)
     }
 
+    /// Only holes, and dense however long it is.
+    pub fn try_create_dense(
+        vm: &Vm,
+        shape: Gc<Shape>,
+        length: u32,
+    ) -> Result<Gc<JsArray>, AllocError> {
+        if length > Storage::MAX_VECTOR_LENGTH {
+            return Err(AllocError);
+        }
+        let array = Self::try_create(vm, shape, 0, length)?;
+        // SAFETY: at most the vector length.
+        unsafe { array.storage().set_public_length(length) };
+        Ok(array)
+    }
+
     /// With a value for each property of the shape, in order. No collection runs while `element` makes the elements.
     /// Panics unless the shape is for elements of any type and has that many plain properties.
     #[inline(always)]

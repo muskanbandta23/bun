@@ -132,14 +132,14 @@ fn operands_at_their_limits() {
         (ThrowStatic, &[StaticError::COUNT - 1, 0], None),
         (ThrowStatic, &[StaticError::COUNT, 0], bad(0)),
         (DynamicImport, &[ok, ok, ok, ok, ImportPhase::COUNT], bad(4)),
-        (Debug, &[DebugHook::COUNT, ok], bad(0)),
+        (Debug, &[DebugHook::COUNT], bad(0)),
         (NewArray, &[ok, ok, 0, ArrayShape::COUNT], bad(3)),
         (PutById, &[ok, 0, ok, 4], bad(3)),
         (PutById, &[ok, 0, ok, 256], bad(3)),
         (DefineMethod, &[ok, ok, ok, 16], bad(3)),
         (IsCellOfType, &[ok, ok, 255], None),
         (IsCellOfType, &[ok, ok, 256], bad(2)),
-        (DirectEval, &[ok, ok, ok, 64], bad(3)),
+        (DirectEval, &[ok, ok, ok, 128], bad(3)),
     ];
     for &(opcode, words, expected) in cases {
         let body = plain(|a| {
@@ -188,7 +188,7 @@ fn instructions_that_need_a_flag() {
          create_promise to_object has_shape_with_flags resume_generator \
          async_iterator_next resume_dispatch create_generator create_async_generator suspend await resume \
          resume_after_yield resume_after_await resume_after_delegate generator_return generator_throw \
-         tail_call tail_call_varargs debug debug_await cover"
+         tail_call tail_call_varargs debug debug_await jump_if_frame_is_kept cover"
     );
 }
 

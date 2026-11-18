@@ -1,9 +1,16 @@
 use bun_engine_text::CodeUnit;
 
-use super::quantifier::{Atom, Repeated};
-use super::{Cursor, GroupKind, MAX_DEPTH, Parser, Sink, try_push};
+use super::{Cursor, GroupKind, MAX_DEPTH, Parser, Quantifier, Sink, try_push};
 use crate::tree::{Group, Groups, MAX_GROUPS};
 use crate::{Error, Flags};
+
+/// What a group is to a quantifier.
+#[derive(Clone, Copy)]
+enum Repeated {
+    Atom,
+    Lookbehind,
+    Nothing,
+}
 
 /// A disjunction that has not ended yet.
 #[derive(Clone, Copy)]
@@ -77,7 +84,7 @@ impl<'a, S: Sink> Parser<'a, S> {
     }
 
     #[inline(always)]
-    pub(super) fn close_group(&mut self) -> Result<Atom<S::Outer>, Error> {
+    pub(super) fn close_group(&mut self, quantifier: Option<Quantifier>) -> Result<(), Error> {
         let (level, outer) = self.outer_levels.pop().ok_or(Error::UnmatchedParenthesis)?;
         let closed = core::mem::replace(&mut self.level, level);
         self.open_lookbehinds -= usize::from(matches!(closed.repeated, Repeated::Lookbehind));
@@ -85,11 +92,11 @@ impl<'a, S: Sink> Parser<'a, S> {
             first: closed.first_group,
             end: self.group_count + 1,
         };
-        Ok(Atom::Group {
-            outer,
-            captures,
-            repeated: closed.repeated,
-        })
+        match (closed.repeated, quantifier) {
+            (Repeated::Lookbehind, Some(_)) => Err(Error::QuantifiedLookbehind),
+            (Repeated::Nothing, Some(_)) => Err(Error::NothingToRepeat),
+            _ => self.sink.close(outer, captures, quantifier),
+        }
     }
 
     #[inline]

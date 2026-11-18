@@ -107,8 +107,9 @@ impl Vm {
         is_known
     }
 
+    /// To the one that the process is in now.
     #[inline]
-    pub(super) fn follow_time_zone(&self) {
+    pub fn follow_time_zone(&self) {
         if self.date_cache().is_stale() && self.date_cache().refresh() {
             self.heap
                 .for_each_live::<DateInstance>(|date| date.local_fields.set(None));

@@ -386,11 +386,7 @@ static CONSOLE: ConsoleHooks = ConsoleHooks {
     take_heap_snapshot: |_, title| log(format!("take_heap_snapshot {title:?}")),
     time: |_, label| log(format!("time {label}")),
     time_log: |_, label, values| log(format!("time_log {label} {values:?}")),
-    time_end: |_, label| log(format!("time_end {label}")),
-    time_stamp: |_, values| log(format!("time_stamp {values:?}")),
-    record: |_, values| log(format!("record {values:?}")),
-    record_end: |_, values| log(format!("record_end {values:?}")),
-    screenshot: |cx, _| Err(cx.throw_range_error("from the client")),
+    time_end: |cx, _| Err(cx.throw_range_error("from the client")),
 };
 
 #[test]
@@ -402,7 +398,7 @@ fn the_console_calls_its_client() {
         let source = "console.log(); console.warn(1, 2); console.dir(); console.table(3); console.clear(4);
             console.assert(true, 5); console.assert(false, 6); console.groupCollapsed(); console.count();
             console.countReset(null); console.timeLog('a', 7); console.profile(null); console.profileEnd(8);
-            console.recordEnd(9); try { console.screenshot() } catch (e) { e.message }";
+            console.recordEnd(9); try { console.timeEnd() } catch (e) { e.message }";
         assert_eq!(run_to_text(cx, source), "from the client");
         assert_eq!(
             LOG.take(),
@@ -418,7 +414,6 @@ fn the_console_calls_its_client() {
                 "time_log a [7]",
                 "profile None",
                 "profile_end Some(\"8\")",
-                "record_end [9]",
             ]
         );
     });

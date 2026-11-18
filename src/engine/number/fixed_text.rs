@@ -14,6 +14,7 @@ pub const FIXED_TEXT_CAPACITY: usize = 128;
 
 type Buffer = [u8; FIXED_TEXT_CAPACITY];
 
+/// `number.toFixed(fractionDigits)`, which has to be from 0 to 100.
 pub fn to_fixed(value: f64, fraction_digits: i32, out: &mut Buffer) -> Result<&[u8], FormatError> {
     let Ok(count @ 0..=100) = usize::try_from(fraction_digits) else {
         return Err(FormatError::FixedDigits);
@@ -28,7 +29,7 @@ pub fn to_fixed(value: f64, fraction_digits: i32, out: &mut Buffer) -> Result<&[
     Ok(&out[..length])
 }
 
-/// Without `fraction_digits`, as many as it takes to identify the value.
+/// `number.toExponential(fractionDigits)`. Without `fraction_digits`, as many as it takes to identify the value.
 pub fn to_exponential(
     value: f64,
     fraction_digits: Option<i32>,
@@ -44,6 +45,7 @@ pub fn to_exponential(
     Ok(&out[..length])
 }
 
+/// `number.toPrecision(precision)`, which has to be from 1 to 100.
 pub fn to_precision(value: f64, precision: i32, out: &mut Buffer) -> Result<&[u8], FormatError> {
     let length = match precision {
         _ if !value.is_finite() => write_f64(value, short(out)),

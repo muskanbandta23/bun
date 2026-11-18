@@ -2,15 +2,21 @@
 
 use bun_engine_macros::cell;
 use bun_engine_number::Random;
+use bun_engine_text::{Base64Alphabet, LastChunkHandling, Text};
+use bun_engine_vm::ValueVec;
+use bun_engine_vm::json::{self, LinesEnd};
 use bun_engine_vm::{
-    InternalFunction, JsArrayBuffer, JsArrayBufferView, JsFunctionWithFields, RealmWatchpoint,
-    Shape, ShapeSpec, TypeFlags, call,
+    ElementKind, InternalFunction, JsArrayBuffer, JsArrayBufferView, JsFunctionWithFields,
+    RealmWatchpoint, Shape, ShapeSpec, TypeFlags, call,
 };
 
-use super::{return_false, return_undefined, string};
+use super::{put, return_false, return_undefined, string};
 use crate::prelude::*;
 
 pub(super) const FUNCTIONS: Functions = &[
+    ("atob", atob, 1),
+    ("btoa", btoa, 1),
+    ("streamingJSONParse", parse_json_lines, 1),
     ("describe", describe, 1),
     ("describeArray", describe_array, 1),
     ("addressOf", address_of, 1),
@@ -48,22 +54,53 @@ pub(super) fn describe(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     } else if let Some(number) = value.as_double() {
         format!("Double: {}, {number:.6}", number.to_bits() as i64)
     } else if let Some(object) = value.as_object() {
-        let (address, class) = (object.address(), object.class().name());
-        let (shape, kind) = (object.shape().address(), object.element_kind());
-        format!("Object: {address:#x} (Shape {shape:#x}:[{class}, {kind:?}])")
+        let (address, storage) = (object.address(), object.storage().address());
+        let (shape, class) = (object.shape().address(), object.class().name());
+        let mode = indexing_mode_name(&object);
+        format!(
+            "Object: {address:#x} with butterfly {storage:#x} (Structure {shape:#x}:[{class}, {mode}])"
+        )
     } else if let Some(text) = value.as_string() {
         let kind = match (text.is_rope(), text.is_atom()) {
             (true, _) => " (rope)",
             (_, true) => " (atomic)",
             _ => "",
         };
-        let width = if text.is_latin1() { "8Bit" } else { "16Bit" };
-        let (length, text) = (text.len(), text.to_string_without_resolving());
-        format!("String{kind},{width}:(1),length:({length}): {text}")
+        let (is_latin1, length) = (u8::from(text.is_latin1()), text.len());
+        let text = text.to_string_without_resolving();
+        format!("String{kind},8Bit:({is_latin1}),length:({length}): {text}")
     } else {
-        format!("{value:?}")
+        match value {
+            Value::UNDEFINED => "Undefined".to_owned(),
+            Value::NULL => "Null".to_owned(),
+            Value::TRUE => "True".to_owned(),
+            Value::FALSE => "False".to_owned(),
+            _ => format!("{value:?}"),
+        }
     };
     Ok(string(cx, &text))
+}
+
+pub(super) fn indexing_mode_name(object: &JsObject) -> String {
+    let mode = object.indexing_mode();
+    let elements = match mode.kind() {
+        ElementKind::None if mode.is_array() => "Class",
+        ElementKind::None => "",
+        _ if mode.is_slow_put() => "WithSlowPutArrayStorage",
+        ElementKind::Undecided => "WithUndecided",
+        ElementKind::Int32 => "WithInt32",
+        ElementKind::Double => "WithDouble",
+        ElementKind::Contiguous => "WithContiguous",
+        ElementKind::Sparse => "WithArrayStorage",
+    };
+    let prefix = if !mode.is_array() {
+        "Non"
+    } else if mode.is_copy_on_write() && !mode.is_slow_put() {
+        "CopyOnWrite"
+    } else {
+        ""
+    };
+    format!("{prefix}Array{elements}")
 }
 
 #[native_abi]
@@ -77,7 +114,7 @@ fn describe_array(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let (storage, length) = (object.storage().address(), object.public_length());
     let capacity = object.vector_length();
     let text =
-        format!("<Storage: {storage:#x}; public length: {length}; vector length: {capacity}>");
+        format!("<Butterfly: {storage:#x}; public length: {length}; vector length: {capacity}>");
     Ok(string(cx, &text))
 }
 
@@ -217,4 +254,55 @@ fn return_capture(_: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 fn create_function_with_capture(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let fields = [frame.argument(0), Value::UNDEFINED];
     Ok(JsFunctionWithFields::new(cx, 0, return_capture, fields).into())
+}
+
+#[native_abi]
+fn atob(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    const INVALID: &str = "Invalid character in argument for atob.";
+    if frame.argument_count() == 0 {
+        return Err(cx.throw_error(ErrorType::Error, "Missing input for atob."));
+    }
+    if frame.argument(0).is_undefined() {
+        return Err(cx.throw_error(ErrorType::Error, INVALID));
+    }
+    let view = frame.argument(0).to_string_view(cx)?;
+    let mut bytes = vec![0; view.text().base64_decoded_capacity()];
+    let (alphabet, last) = (Base64Alphabet::Standard, LastChunkHandling::Loose);
+    match view.text().decode_base64_into(alphabet, last, &mut bytes) {
+        Ok(progress) if progress.read == view.text().len() => {
+            (cx.new_string(Text::Latin1(&bytes[..progress.written]))).map(Into::into)
+        }
+        _ => Err(cx.throw_error(ErrorType::Error, INVALID)),
+    }
+}
+
+#[native_abi]
+fn btoa(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    if frame.argument_count() == 0 {
+        return Err(cx.throw_error(ErrorType::Error, "Missing input for btoa."));
+    }
+    let view = frame.argument(0).to_string_view(cx)?;
+    let text = cx.or_out_of_memory(StringRef::try_narrowed(view.text()))?;
+    let Text::Latin1(bytes) = text.text() else {
+        let message = "Invalid character in argument for btoa.";
+        return Err(cx.throw_error(ErrorType::Error, message));
+    };
+    let encoded = StringRef::try_base64_of(bytes, Base64Alphabet::Standard, false);
+    Ok(JsString::new(cx, cx.or_out_of_memory(encoded)?).into())
+}
+
+#[native_abi]
+fn parse_json_lines(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let (view, mut values) = (frame.argument(0).to_string_view(cx)?, ValueVec::new());
+    let parsed = json::parse_lines(cx, view.text().into(), &mut values)?;
+    let status = match parsed.end {
+        LinesEnd::Complete => "complete",
+        LinesEnd::NeedsMoreText => "needMoreData",
+        LinesEnd::SyntaxError => "error",
+    };
+    let result = cx.new_object();
+    put(cx, &result, "values", cx.new_array_from(&values)?.into());
+    put(cx, &result, "charactersConsumed", parsed.read.into());
+    put(cx, &result, "status", string(cx, status));
+    Ok(result.into())
 }

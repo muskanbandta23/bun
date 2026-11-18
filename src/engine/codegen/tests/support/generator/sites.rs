@@ -91,7 +91,7 @@ impl Generator<'_> {
         }
     }
 
-    fn check(&mut self, condition: Value) {
+    pub(super) fn check(&mut self, condition: Value) {
         let exit = self.exit(&[]);
         if self.shape.folds {
             self.builder().check(condition, exit);

@@ -71,7 +71,7 @@ impl Generator<'_> {
         }
     }
 
-    fn convert_int(&mut self, value: Value, to: Type) -> Value {
+    pub(super) fn convert_int(&mut self, value: Value, to: Type) -> Value {
         match (self.type_of(value), to) {
             (Type::I32, Type::I64) => {
                 let sign = self.random.pick(&SIGNS);

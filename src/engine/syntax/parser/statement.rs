@@ -969,7 +969,11 @@ impl Session<'_> {
                 self.scopes.initialize_lexicals(declared, token.end());
                 self.scopes.note_starts_undefined();
             }
-            self.node::<BUILD>(Class::Other, token.start(), ExprKind::Declare { kind, name })
+            self.node::<BUILD>(
+                Class::Other,
+                token.start(),
+                ExprKind::Declare { kind, name },
+            )
         };
         let declarator = Declarator {
             target: Declared::Name(token),

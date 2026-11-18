@@ -67,7 +67,12 @@ impl<'a> Lexer<'a> {
         is_builtin: bool,
     ) -> Lexer<'a> {
         let mut lexer = Lexer {
-            token: Token::new(TokenKind::Semicolon, start as usize, start as usize, Detail::NONE),
+            token: Token::new(
+                TokenKind::Semicolon,
+                start as usize,
+                start as usize,
+                Detail::NONE,
+            ),
             previous_end: start,
             last_keyword: Name::AWAIT.index() as u32,
             window_start: usize::MAX / 2,
@@ -363,7 +368,9 @@ impl<'a> Lexer<'a> {
         }
         let length = self.window.stops().after_name.run(position) as usize;
         let chunk = match self.bytes[start..].first_chunk() {
-            Some(chunk) if length <= LONGEST_SHORT && !chars::continues_name(chunk[length]) => chunk,
+            Some(chunk) if length <= LONGEST_SHORT && !chars::continues_name(chunk[length]) => {
+                chunk
+            }
             _ => return self.any_name(start, lead, naming),
         };
         if naming == Naming::Skip {

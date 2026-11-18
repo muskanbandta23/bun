@@ -31,6 +31,12 @@ impl Name {
         }
     }
 
+    /// The text of one of the constants.
+    #[inline]
+    pub fn known_text(index: usize) -> Option<&'static str> {
+        KNOWN.get(index).copied()
+    }
+
     /// Whether only the engine can refer to it.
     #[inline(always)]
     pub const fn is_internal(self) -> bool {
@@ -558,7 +564,10 @@ impl Names {
                         Storage::Source => source.bytes,
                         Storage::Latin1 | Storage::Utf16 => &self.latin1,
                     };
-                    are_equal(&storage[entry.start as usize..][..characters.len()], characters)
+                    are_equal(
+                        &storage[entry.start as usize..][..characters.len()],
+                        characters,
+                    )
                 })
         })
     }

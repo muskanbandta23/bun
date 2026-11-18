@@ -153,7 +153,11 @@ impl Session<'_> {
         }
         match self.are_arrow_parameters() {
             Ok(true) => {
-                return self.arrow_function::<BUILD>(mark.token.start(), arrow_flags(is_async), r#in);
+                return self.arrow_function::<BUILD>(
+                    mark.token.start(),
+                    arrow_flags(is_async),
+                    r#in,
+                );
             }
             Err(Failed) if is_at_arrow => return Err(Failed),
             _ => {}

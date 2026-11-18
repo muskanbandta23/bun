@@ -99,7 +99,7 @@ pub(super) unsafe extern "sysv64" fn return_to_native_code_with_exception() {
 }
 
 #[unsafe(naked)]
-pub(super) unsafe extern "sysv64" fn throw_from_frame() {
+pub unsafe extern "sysv64" fn throw_from_frame() {
     naked_asm!(
         "and rsp, -16",
         "mov rdi, r13",
@@ -229,7 +229,7 @@ rare_data_entry!(rare_data_call_entry, Call);
 rare_data_entry!(rare_data_construct_entry, Construct);
 
 #[unsafe(naked)]
-pub(super) unsafe extern "sysv64" fn pad_arguments() {
+pub unsafe extern "sysv64" fn pad_arguments() {
     naked_asm!(
         "pop r8",
         "mov ecx, [rbp + {argument_count}]",

@@ -18,7 +18,7 @@ use crate::{
     JsResult, JsSourceCode, JsString, ModuleEnvironment, ModuleKey, ModuleKeyRef, ModuleName,
     ModuleRegistryEntry, ModuleRequest, ModuleType, PromiseStatus, RegistryStatus, SourceCode,
     SourceProvider, SourceProviderRef, SourceTextModuleRecord, SourceType, SyntheticExports,
-    SyntheticModuleRecord, TracedMap, TypeFlags, Value, Vm, create_compile_error_in,
+    SyntheticModuleRecord, TracedMap, TypeFlags, Value, Vm, create_compile_error_in, json,
     origin_of_caller,
 };
 
@@ -261,10 +261,11 @@ impl ModuleLoader {
         match source.provider.source_type() {
             SourceType::WebAssembly => (cx.hooks().make_wasm_module)(cx, this, key, code, promise)?,
             SourceType::AnalyzedModule => {
+                cx.ensure_can_run(&source.provider)?;
                 (hooks.make_analyzed_module)(cx, this, key, &source, promise)?;
             }
             SourceType::Json => {
-                let value = (cx.hooks().parse_json)(cx, source.text()).inspect_err(|_| {
+                let value = json::parse(cx, source.text().into()).inspect_err(|_| {
                     let error = cx.exception().map_or_default(|it| it.value());
                     let key = ModuleKeyRef::new(key.name(), ModuleType::Json);
                     failure::note(cx, error, key, FailureKind::Evaluation);
@@ -285,7 +286,10 @@ impl ModuleLoader {
                 };
                 promise.fulfill(cx, module.into());
             }
-            _ => self.make_source_text_module(cx, key, &source, promise),
+            _ => {
+                cx.ensure_can_run(&source.provider)?;
+                self.make_source_text_module(cx, key, &source, promise);
+            }
         }
         Ok(())
     }

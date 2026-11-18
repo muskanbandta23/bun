@@ -17,6 +17,11 @@ impl<K, V: Clone, const N: usize> Recent<K, V, N> {
         entries.first().map(|(_, value)| value.clone())
     }
 
+    /// Leaves the order as it is.
+    pub(crate) fn find_map<T>(&self, mut map: impl FnMut(&V) -> Option<T>) -> Option<T> {
+        self.0.borrow().iter().find_map(|(_, value)| map(value))
+    }
+
     pub(crate) fn insert(&self, key: K, value: V) {
         let mut entries = self.0.borrow_mut();
         entries.truncate(N - 1);

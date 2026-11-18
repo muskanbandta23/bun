@@ -101,7 +101,7 @@ impl JsObject {
             match mode.kind() {
                 ElementKind::Contiguous => {
                     let length = storage.public_length_concurrently();
-                    append_hidden(storage.values(length), visitor);
+                    visitor.append_hidden_words(storage.elements_ptr(), length as usize);
                 }
                 ElementKind::Sparse => {
                     visitor.append_word(storage.value_at(0).word_concurrently());

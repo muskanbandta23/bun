@@ -9,7 +9,7 @@ use crate::prelude::*;
 #[native_abi]
 pub(super) fn push(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let (this, items) = (frame.this_value(), frame.arguments());
-    if let Some(array) = this.downcast::<JsArray>() {
+    if let Some(array) = this.as_exact_array() {
         if let &[item] = items {
             array.push(cx, item)?;
             return Ok(array.length().into());
@@ -34,7 +34,7 @@ pub(super) fn push(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 
 #[native_abi]
 pub(super) fn pop(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
-    if let Some(array) = frame.this_value().downcast::<JsArray>() {
+    if let Some(array) = frame.this_value().as_exact_array() {
         return array.pop(cx);
     }
     let object = frame.this_value().to_object(cx)?;
@@ -67,7 +67,7 @@ fn replace_range(
 ) -> JsResult<()> {
     let added = items.len() as u64;
     let new_length = length - removed + added;
-    if let Some(array) = object.downcast::<JsArray>() {
+    if let Some(array) = object.as_exact_array() {
         if cx.or_out_of_memory(array.try_splice(cx, length, start, removed, items))? {
             return Ok(());
         }
@@ -98,7 +98,7 @@ fn replace_range(
 #[native_abi]
 pub(super) fn shift(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let this = frame.this_value();
-    if let Some(first) = this.downcast::<JsArray>().and_then(|it| it.try_shift()) {
+    if let Some(first) = this.as_exact_array().and_then(|it| it.try_shift()) {
         return Ok(first);
     }
     let object = this.to_object(cx)?;

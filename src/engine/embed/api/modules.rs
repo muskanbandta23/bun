@@ -6,15 +6,18 @@ use std::rc::Rc;
 use bun_engine_bytecode::ImportPhase;
 use bun_engine_macros::export;
 use bun_engine_text::{Identifier, PropertyName, StringBuilder, StringImpl, StringRef, names};
+use bun_engine_vm::scope::realm_of_scope;
 use bun_engine_vm::{
-    AbstractModuleRecord, Cx, CyclicModuleRecord, ExportSource, FetchParameters, Gc, ImportEntry,
-    ImportKind, JsCell, JsObject, JsPromise, JsResult, JsSourceCode, LoadGoal, Message,
-    ModuleEnvironment, ModuleExecutable, ModuleKeyRef, ModuleLoader, ModuleName, ModuleNamespace,
-    ModuleRegistryEntry, ModuleRequest, ModuleStatus, ModuleType, Resolution, Shape, SourceCode,
-    SourceTextModuleRecord, SyntheticExports, SyntheticModuleRecord, Value, Vm,
+    AbstractModuleRecord, AnalysisError, Cx, CyclicModuleRecord, ExportSource, FetchParameters, Gc,
+    ImportEntry, ImportKind, JsCell, JsObject, JsPromise, JsResult, JsSourceCode, LoadGoal,
+    Message, ModuleEnvironment, ModuleExecutable, ModuleKeyRef, ModuleLoader, ModuleName,
+    ModuleNamespace, ModuleRegistryEntry, ModuleRequest, ModuleStatus, ModuleType, Resolution,
+    Shape, SourceCode, SourceTextModuleRecord, SyntheticExports, SyntheticModuleRecord, Value, Vm,
     throw_compile_error,
 };
 
+use super::code::ParserError;
+use super::object::realm_of;
 use crate::abi::{returned_as_pointer, returned_by_value};
 
 /// An `Rc` that points at its value.
@@ -134,6 +137,24 @@ unsafe fn module_for_each_request(
         // SAFETY: the two go together.
         unsafe { visit(context, name, parameters, is_deferred) };
     }
+}
+
+#[export]
+fn module_request_count(module: &AbstractModuleRecord) -> usize {
+    module.entries().requests().len()
+}
+
+/// The specifier, which the module keeps alive.
+#[export]
+fn module_request_key(
+    module: &AbstractModuleRecord,
+    index: usize,
+    module_type: &mut ModuleType,
+) -> *mut StringImpl {
+    let entries = module.entries();
+    let key = entries.requests()[index].key();
+    *module_type = key.module_type;
+    key.name.as_ptr().as_ptr()
 }
 
 #[export]
@@ -415,6 +436,23 @@ fn source_text_module_create(
     source: &SourceCode,
 ) -> Gc<SourceTextModuleRecord> {
     SourceTextModuleRecord::create(cx, loader, key.clone(), source.clone())
+}
+
+#[export]
+fn source_text_module_analyze(
+    loader: Gc<ModuleLoader>,
+    key: &Identifier,
+    source: &SourceCode,
+    parser_error: &mut ParserError,
+    attribute_error: &mut Option<StringRef>,
+) -> Option<Gc<SourceTextModuleRecord>> {
+    let cx = realm_of(&realm_of_scope(loader.module_scope()));
+    match SourceTextModuleRecord::analyze(cx, loader, key.clone(), source.clone()) {
+        Ok(module) => return Some(module),
+        Err(AnalysisError::Compile(error)) => parser_error.set(&error, &source.provider),
+        Err(AnalysisError::Attributes(message)) => *attribute_error = Some(message),
+    }
+    None
 }
 
 #[export]

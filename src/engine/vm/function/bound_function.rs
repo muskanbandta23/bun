@@ -301,7 +301,7 @@ fn construct(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let bound = frame.callee().cast::<JsBoundFunction>();
     let target = bound.target_function.into();
     if !bound.can_construct {
-        return Err(errors::throw_not_a_constructor(cx, bound.into()));
+        return Err(errors::throw_entered_as_constructor(cx, bound.upcast()));
     }
     let new_target = if frame.new_target() == bound.into() {
         target

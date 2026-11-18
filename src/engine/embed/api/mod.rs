@@ -33,3 +33,5 @@ mod temporal;
 mod value;
 mod vm;
 mod wasm;
+
+pub(crate) use code::ParserError;

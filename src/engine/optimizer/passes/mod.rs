@@ -7,15 +7,17 @@ mod unbox_states;
 mod usage;
 
 use bun_engine_codegen::Target;
-use bun_engine_codegen::ir::validate;
+use bun_engine_codegen::ir::validate as validate_machine;
 use bun_engine_codegen::passes::{Analyses, Pass};
 
-use crate::graph::Graph;
+use crate::graph::{Graph, validate};
 
 fn checked(graph: &Graph, name: &str) {
-    if cfg!(debug_assertions)
-        && let Err(problem) = validate(&graph.function)
-    {
+    if !cfg!(debug_assertions) {
+        return;
+    }
+    let found = validate_machine(&graph.function).and_then(|()| validate(graph));
+    if let Err(problem) = found {
         panic!("after {name}: {problem}\n{:?}", graph.function);
     }
 }

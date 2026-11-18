@@ -1,6 +1,7 @@
 mod common;
 
 use bun_engine_bigint::*;
+use bun_engine_text::Text;
 use common::*;
 
 const PRIME: u128 = (1 << 61) - 1;
@@ -73,6 +74,57 @@ fn quotients_and_remainders() {
                 );
                 let is_right = results.0 == quotient && results.1 == left;
                 assert!(is_right, "{divisor_length} {quotient_length}");
+            }
+        }
+    }
+}
+
+#[test]
+fn repeated_divisors() {
+    let mut operands = Operands(3);
+    let cache = DivisorCache::default();
+    let near_power_of_two = apply("-", &apply("<<", &big("1"), &big("255")), &big("19"));
+    let others = [1, 2, 3, 4, 6, 8, 9, 10, 11, 32, 33].map(|length| operands.with_length(length));
+    for divisor in others.iter().chain([&near_power_of_two]) {
+        let length = divisor.as_ref().digits().len();
+        for round in 0..24 {
+            let quotient = operands.with_length(1 + round % (length + 2));
+            let left = match round % 3 {
+                0 => big("0"),
+                1 => apply("-", divisor, &big("1")),
+                _ => apply(">>", divisor, &big("3")),
+            };
+            let dividend = apply("+", &apply("*", &quotient, divisor), &left);
+            let apply =
+                |operator| try_apply_with(operator, &dividend, divisor, &cache, &mut || false);
+            assert_eq!((apply("/"), apply("%")), (Ok(quotient), Ok(left)));
+        }
+    }
+}
+
+#[test]
+fn text_in_both_directions() {
+    let mut operands = Operands(4);
+    for length in [1, 2, 3, 5, 43, 44, 45, 103, 104, 105, 300, 2500] {
+        let x = operands.with_length(length);
+        for radix in [2, 3, 4, 8, 10, 16, 24, 32, 36] {
+            let text = x.as_ref().to_string_ref(radix, &mut || false).unwrap();
+            let value = text.text().code_units().fold(0, |value, unit| {
+                let digit = char::from(unit as u8).to_digit(radix).unwrap();
+                (value * u128::from(radix) + u128::from(digit)) % PRIME
+            });
+            assert!(value == residue(&x) && text.text().at(0) != u16::from(b'0'));
+            let radix = match radix {
+                2 => LiteralRadix::Binary,
+                8 => LiteralRadix::Octal,
+                10 => LiteralRadix::Decimal,
+                16 => LiteralRadix::Hexadecimal,
+                _ => continue,
+            };
+            let wide: Vec<u16> = text.text().code_units().collect();
+            for text in [text.text(), Text::Utf16(&wide)] {
+                let parsed = from_literal(text, radix, false).unwrap();
+                assert_eq!(parsed.into_owned(&mut || false).as_ref(), Ok(&x));
             }
         }
     }

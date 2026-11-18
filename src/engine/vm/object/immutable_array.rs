@@ -227,6 +227,7 @@ impl ImmutableArray {
 
     /// Unless the elements are raw doubles.
     #[inline]
+    #[cfg_attr(rootcheck, rootcheck::stays("points into the cell"))]
     pub fn values(&self) -> Option<&[Value]> {
         let elements = self.storage().elements_ptr().cast();
         // SAFETY: none is empty, none changes, and the slice is inside the cell.
@@ -235,6 +236,7 @@ impl ImmutableArray {
     }
 
     #[inline(always)]
+    #[cfg_attr(rootcheck, rootcheck::stays("points into the cell"))]
     pub fn elements(&self) -> Elements<'_> {
         use core::slice::from_raw_parts;
         let (first, length) = (self.storage().elements_ptr(), self.len() as usize);

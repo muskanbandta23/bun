@@ -486,6 +486,7 @@ impl JsFunction {
 
     pub fn original_name(&self, cx: &Cx) -> JsResult<Gc<JsString>> {
         if let Some(executable) = self.script_executable() {
+            let executable = executable.anchor();
             return match executable.info().kind() {
                 FunctionKind::Getter | FunctionKind::Setter => {
                     self.prefixed_name(cx, &[executable.name().text()])
@@ -501,7 +502,7 @@ impl JsFunction {
             return Ok(remote.target_name());
         }
         let executable = self.executable().cast::<NativeExecutable>();
-        let name = JsString::from_impl_cached(cx, executable.name());
+        let name = JsString::from_impl_cached(cx, executable.anchor().name());
         if executable.is_named_as_bound().get() {
             return JsString::concat(cx, prefix(), name);
         }
@@ -531,7 +532,7 @@ impl JsFunction {
         }
         let string = if let Some(symbol) = name.downcast::<JsSymbol>() {
             let (open, close) = (Text::from_ascii("["), Text::from_ascii("]"));
-            match symbol.symbol().description() {
+            match symbol.anchor().symbol().description() {
                 Some(text) if symbol.name().is_private() => self.prefixed_name(cx, &[text])?,
                 Some(text) => self.prefixed_name(cx, &[open, text, close])?,
                 None => self.prefixed_name(cx, &[])?,

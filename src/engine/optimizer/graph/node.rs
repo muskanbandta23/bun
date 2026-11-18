@@ -147,6 +147,15 @@ impl Kind {
     }
 
     #[inline]
+    pub(crate) fn name(self) -> &'static str {
+        INFO[self as usize].name
+    }
+
+    pub(crate) fn all() -> &'static [Kind] {
+        ALL
+    }
+
+    #[inline]
     pub(crate) fn effects(self) -> Effects {
         DOES[self as usize].effects
     }

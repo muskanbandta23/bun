@@ -1,6 +1,7 @@
 //! The constants that fit in an instruction, as they are encoded.
 
 use super::assembler::sf;
+use super::opcode::AddSub;
 use crate::operand::{FloatWidth, Width};
 
 /// For `add`, `sub` and the comparisons: 12 bits, which may be shifted left by 12.
@@ -20,6 +21,24 @@ impl ArithmeticImm {
         } else {
             None
         }
+    }
+}
+
+#[inline(always)]
+pub(super) fn signed(width: Width, value: i64) -> i64 {
+    match width {
+        Width::W32 => (value as i32).into(),
+        Width::W64 => value,
+    }
+}
+
+impl AddSub {
+    /// This with `value`, or the opposite with its negative. Of 32 bits, the low half of `value` counts.
+    #[inline(always)]
+    pub fn with_constant(self, width: Width, value: i64) -> Option<(Self, ArithmeticImm)> {
+        let value = signed(width, value);
+        let op = if value < 0 { self.opposite() } else { self };
+        Some((op, ArithmeticImm::new(value.unsigned_abs())?))
     }
 }
 

@@ -17,7 +17,7 @@ macro_rules! realm_watchpoints {
 
         impl RealmWatchpoint {
             pub const COUNT: usize = [$(stringify!($name),)*].len();
-            const ALL: [RealmWatchpoint; Self::COUNT] = [$(RealmWatchpoint::$name,)*];
+            pub const ALL: [RealmWatchpoint; Self::COUNT] = [$(RealmWatchpoint::$name,)*];
         }
     };
 }

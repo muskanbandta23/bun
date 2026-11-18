@@ -179,6 +179,10 @@ impl Pass {
         }
     }
 
+    pub fn named(name: &str) -> &'static Pass {
+        FULL.iter().find(|pass| pass.name == name).expect("there is such a pass")
+    }
+
     pub fn run(&self, function: &mut Function, analyses: &mut Analyses, target: Target) {
         (self.run)(function, analyses, target);
         if cfg!(debug_assertions)

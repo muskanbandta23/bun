@@ -22,6 +22,30 @@ pub struct IsoText {
     length: u8,
 }
 
+/// Spreads each number below 100 that starts at a byte of `mask` over that byte and the next, tens first.
+#[inline(always)]
+fn split_tens(numbers: u64, mask: u64) -> u64 {
+    let tens = ((numbers * 103) >> 10) & mask;
+    tens | (numbers - tens * 10) << 8
+}
+
+/// The two digits of each of three numbers below 100, with `separator` between them.
+#[inline(always)]
+fn three_fields(fields: [u32; 3], separator: u8) -> [u8; 8] {
+    let [first, second, third] = fields.map(u64::from);
+    let digits = split_tens(first | second << 24 | third << 48, 0x000f_0000_0f00_000f);
+    let template = [b'0', b'0', separator, b'0', b'0', separator, b'0', b'0'];
+    (digits | u64::from_le_bytes(template)).to_le_bytes()
+}
+
+/// The values of the digits of a number below 10^8, the first in the lowest byte.
+#[inline(always)]
+fn eight_digit_values(number: u32) -> u64 {
+    let (upper, lower) = (u64::from(number / 10_000), u64::from(number % 10_000));
+    let pairs = (upper / 100) | (upper % 100) << 16 | (lower / 100) << 32 | (lower % 100) << 48;
+    split_tens(pairs, 0x000f_000f_000f_000f)
+}
+
 #[inline(always)]
 const fn two_digits(value: u32) -> [u8; 2] {
     [b'0' + (value / 10) as u8, b'0' + (value % 10) as u8]
@@ -29,6 +53,7 @@ const fn two_digits(value: u32) -> [u8; 2] {
 
 impl ShowCalendar {
     /// Whether a month of a year, or a day of a month, is written with all of the date that it holds.
+    #[inline]
     pub(crate) fn needs_full_date(self, calendar: CalendarId) -> bool {
         matches!(self, ShowCalendar::Always | ShowCalendar::Critical)
             || calendar != CalendarId::Iso8601
@@ -49,9 +74,9 @@ impl IsoText {
         Text::Latin1(self)
     }
 
-    #[inline]
+    #[inline(always)]
     pub(crate) fn push(&mut self, character: u8) {
-        self.push_slice(&[character]);
+        self.push_prefix([character], 1);
     }
 
     #[inline(always)]
@@ -61,10 +86,12 @@ impl IsoText {
         self.length += ascii.len() as u8;
     }
 
+    /// Writes all of `ascii` and keeps the first `count`.
     #[inline(always)]
-    fn push_field(&mut self, separator: u8, value: u32) {
-        let [tens, ones] = two_digits(value);
-        self.push_slice(&[separator, tens, ones]);
+    fn push_prefix<const N: usize>(&mut self, ascii: [u8; N], count: u8) {
+        let start = usize::from(self.length);
+        self.bytes[start..start + N].copy_from_slice(&ascii);
+        self.length += count;
     }
 
     #[inline]
@@ -73,70 +100,61 @@ impl IsoText {
         self.length += write_u64(number, room.expect("a duration leaves room")) as u8;
     }
 
-    /// PadISOYear
-    #[inline]
-    fn push_year(&mut self, year: i32) {
-        let magnitude = year.unsigned_abs();
+    /// PadISOYear, the month and the day, without the last `omitted` characters.
+    #[inline(always)]
+    fn push_start_of_date(&mut self, date: IsoDate, omitted: u8) {
+        let (year, magnitude) = (date.year(), date.year().unsigned_abs());
         if !(0..=9999).contains(&year) {
-            self.push_field(if year < 0 { b'-' } else { b'+' }, magnitude / 10_000 % 100);
+            self.push(if year < 0 { b'-' } else { b'+' });
+            self.push_prefix(two_digits(magnitude / 10_000 % 100), 2);
         }
-        let ([a, b], [c, d]) = (
-            two_digits(magnitude / 100 % 100),
-            two_digits(magnitude % 100),
-        );
-        self.push_slice(&[a, b, c, d]);
+        self.push_prefix(two_digits(magnitude / 100 % 100), 2);
+        let fields = [magnitude % 100, date.month().into(), date.day().into()];
+        self.push_prefix(three_fields(fields, b'-'), 8 - omitted);
     }
 
-    #[inline]
-    pub(crate) fn push_year_month(&mut self, date: IsoDate) {
-        self.push_year(date.year());
-        self.push_field(b'-', date.month().into());
-    }
-
-    #[inline]
-    pub(crate) fn push_month_day(&mut self, date: IsoDate) {
-        self.push_slice(&two_digits(date.month().into()));
-        self.push_field(b'-', date.day().into());
-    }
-
-    #[inline]
     pub(crate) fn push_date(&mut self, date: IsoDate) {
-        self.push_year_month(date);
-        self.push_field(b'-', date.day().into());
+        self.push_start_of_date(date, 0);
+    }
+
+    pub(crate) fn push_year_month(&mut self, date: IsoDate) {
+        self.push_start_of_date(date, 3);
+    }
+
+    pub(crate) fn push_month_day(&mut self, date: IsoDate) {
+        let fields = [date.month().into(), date.day().into(), 0];
+        self.push_prefix(three_fields(fields, b'-'), 5);
     }
 
     /// FormatTimeString
-    #[inline]
     pub(crate) fn push_time(&mut self, time: PlainTime, format: SecondsFormat) {
         let seconds = time.second_of_day();
-        self.push_slice(&two_digits(seconds / 3600));
-        self.push_field(b':', seconds / 60 % 60);
-        if format != SecondsFormat::Omitted {
-            self.push_field(b':', seconds % 60);
-            self.push_fraction(time.nanosecond_of_second(), format);
+        let clock = three_fields([seconds / 3600, seconds / 60 % 60, seconds % 60], b':');
+        if format == SecondsFormat::Omitted {
+            return self.push_prefix(clock, 5);
         }
+        self.push_prefix(clock, 8);
+        self.push_fraction(time.nanosecond_of_second(), format);
     }
 
     /// FormatFractionalSeconds
-    #[inline]
+    #[inline(always)]
     fn push_fraction(&mut self, nanoseconds: u32, format: SecondsFormat) {
         if format == SecondsFormat::Digits(0)
             || (format == SecondsFormat::Shortest && nanoseconds == 0)
         {
             return;
         }
-        let (upper, lower) = (nanoseconds / 10_000 % 10_000, nanoseconds % 10_000);
-        self.push_slice(&[b'.', b'0' + (nanoseconds / 100_000_000) as u8]);
-        for pair in [upper / 100, upper % 100, lower / 100, lower % 100] {
-            self.push_slice(&two_digits(pair));
-        }
-        self.length -= match format {
-            SecondsFormat::Digits(count) => 9 - count,
-            _ => self.iter().rev().take_while(|&&it| it == b'0').count() as u8,
+        let rest = eight_digit_values(nanoseconds % 100_000_000);
+        let count = match format {
+            SecondsFormat::Digits(count) => count - 1,
+            _ => 8 - (rest.leading_zeros() / 8) as u8,
         };
+        self.push_prefix([b'.', b'0' + (nanoseconds / 100_000_000) as u8], 2);
+        self.push_prefix(rest.to_le_bytes().map(|digit| digit | b'0'), count);
     }
 
-    #[inline]
+    #[inline(always)]
     pub(crate) fn push_date_time(&mut self, date_time: IsoDateTime, format: SecondsFormat) {
         self.push_date(date_time.date);
         self.push(b'T');
@@ -146,22 +164,23 @@ impl IsoText {
     /// FormatUTCOffsetNanoseconds
     pub(crate) fn push_offset(&mut self, seconds: i32) {
         let magnitude = seconds.unsigned_abs();
-        self.push_field(if seconds < 0 { b'-' } else { b'+' }, magnitude / 3600);
-        self.push_field(b':', magnitude / 60 % 60);
-        if magnitude % 60 != 0 {
-            self.push_field(b':', magnitude % 60);
-        }
+        let fields = [magnitude / 3600, magnitude / 60 % 60, magnitude % 60];
+        self.push(if seconds < 0 { b'-' } else { b'+' });
+        self.push_prefix(
+            three_fields(fields, b':'),
+            if fields[2] == 0 { 5 } else { 8 },
+        );
     }
 
     /// FormatDateTimeUTCOffsetRounded
+    #[inline]
     pub(crate) fn push_rounded_offset(&mut self, seconds: i32) {
         self.push_offset(seconds.signum() * ((seconds.abs() + 30) / 60 * 60));
     }
 
     #[inline]
     fn open_annotation(&mut self, is_critical: bool) {
-        self.push_slice(b"[!");
-        self.length -= u8::from(!is_critical);
+        self.push_prefix(*b"[!", 1 + u8::from(is_critical));
     }
 
     pub(crate) fn push_time_zone(&mut self, time_zone: TimeZone, is_critical: bool) {
@@ -173,15 +192,16 @@ impl IsoText {
     }
 
     /// FormatCalendarAnnotation
-    #[inline]
+    #[inline(always)]
     pub(crate) fn push_calendar(&mut self, calendar: CalendarId, show: ShowCalendar) {
-        if show == ShowCalendar::Never
-            || (show == ShowCalendar::Auto && calendar == CalendarId::Iso8601)
-        {
-            return;
+        if show != ShowCalendar::Never && show.needs_full_date(calendar) {
+            self.push_calendar_annotation(calendar, show == ShowCalendar::Critical);
         }
-        self.open_annotation(show == ShowCalendar::Critical);
-        self.push_slice(b"u-ca=");
+    }
+
+    fn push_calendar_annotation(&mut self, calendar: CalendarId, is_critical: bool) {
+        self.open_annotation(is_critical);
+        self.push_prefix(*b"u-ca=", 5);
         self.push_slice(calendar.identifier().as_bytes());
         self.push(b']');
     }

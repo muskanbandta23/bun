@@ -9,14 +9,14 @@ use super::Builder;
 use crate::graph::{Allocation, ExitKind, Kind, ShapeSet, heaps};
 
 impl Builder<'_> {
+    /// What makes cells of this size, if the heap has one. Sizes above the largest kind have none.
+    pub(super) fn allocator_for(&self, size: usize) -> Option<usize> {
+        let allocator = self.vm.heap.cells.allocator_for(size)?;
+        Some(core::ptr::from_ref(allocator).addr())
+    }
+
     /// The data of a node that makes a cell.
-    pub(super) fn allocation(&mut self, shape: Gc<Shape>, size: usize) -> u32 {
-        let allocator = self
-            .vm
-            .heap
-            .cells
-            .allocator_for(size)
-            .map_or(0, |allocator| core::ptr::from_ref(allocator).addr());
+    pub(super) fn allocation(&mut self, shape: Gc<Shape>, size: usize, allocator: usize) -> u32 {
         let shape = self.shape(shape);
         self.graph.allocations.push(Allocation {
             shape,
@@ -26,11 +26,13 @@ impl Builder<'_> {
         self.graph.allocations.len() as u32 - 1
     }
 
-    fn new_final_object(&mut self, shape: Gc<Shape>) -> Ssa {
-        let data = self.allocation(
-            shape,
-            JsFinalObject::allocation_size(shape.inline_capacity()),
-        );
+    fn final_object_allocator(&self, shape: Gc<Shape>) -> Option<usize> {
+        self.allocator_for(JsFinalObject::allocation_size(shape.inline_capacity()))
+    }
+
+    fn new_final_object(&mut self, shape: Gc<Shape>, allocator: usize) -> Ssa {
+        let size = JsFinalObject::allocation_size(shape.inline_capacity());
+        let data = self.allocation(shape, size, allocator);
         let object = self.node(Kind::NewObject, &[], data);
         let shapes = ShapeSet::single(self.shape(shape));
         self.knowledge
@@ -38,27 +40,29 @@ impl Builder<'_> {
         object
     }
 
-    fn profiled_shape(&mut self, metadata: u32) -> Option<Gc<Shape>> {
+    fn profiled_shape(&mut self, metadata: u32) -> Option<(Gc<Shape>, usize)> {
         let code_block = self.frame().code_block;
         let entry = code_block.checked_metadata::<NewObject>(MetadataKind::NewObject, metadata);
-        (!entry.allocator.get().is_null()).then(|| self.cached_shape(entry.shape.get()))
+        let shape =
+            (!entry.allocator.get().is_null()).then(|| self.cached_shape(entry.shape.get()));
+        shape.and_then(|shape| Some((shape, self.final_object_allocator(shape)?)))
     }
 
     pub(super) fn new_object(&mut self, op: op::NewObject) {
-        let Some(shape) = self.profiled_shape(op.metadata) else {
+        let Some((shape, allocator)) = self.profiled_shape(op.metadata) else {
             return self.interpret();
         };
-        let object = self.new_final_object(shape);
+        let object = self.new_final_object(shape, allocator);
         self.node(Kind::PublishFence, &[], 0);
         self.set(op.dst, object);
     }
 
     pub(super) fn new_object_literal(&mut self, op: op::NewObjectLiteral) {
-        let Some(shape) = self.profiled_shape(op.metadata) else {
+        let Some((shape, allocator)) = self.profiled_shape(op.metadata) else {
             return self.interpret();
         };
         let code_block = self.frame().code_block;
-        let object = self.new_final_object(shape);
+        let object = self.new_final_object(shape, allocator);
         for (index, name) in code_block.code().name_lists[op.names.index()]
             .iter()
             .enumerate()
@@ -93,15 +97,17 @@ impl Builder<'_> {
         else {
             return self.interpret();
         };
-        let Some(shape) = rare_data
+        let shape = rare_data
             .object_shape()
-            .filter(|_| self.watch(rare_data.allocation_watchpoints()))
+            .filter(|_| self.watch(rare_data.allocation_watchpoints()));
+        let Some((shape, allocator)) =
+            shape.and_then(|shape| Some((shape, self.final_object_allocator(shape)?)))
         else {
             return self.interpret();
         };
         let expected = self.cell(function.cell());
         self.check_identical(new_target, expected);
-        let object = self.new_final_object(shape);
+        let object = self.new_final_object(shape, allocator);
         self.node(Kind::PublishFence, &[], 0);
         self.set(op.dst, object);
     }
@@ -111,9 +117,12 @@ impl Builder<'_> {
         if executable.singleton_watchpoints().is_still_valid() {
             return self.interpret();
         }
+        let Some(allocator) = self.allocator_for(size_of::<JsFunction>()) else {
+            return self.interpret();
+        };
         let shape = JsFunction::shape_for(self.vm, &self.global(), &executable);
         let operands = [self.get(op.scope), self.cell(executable.cell())];
-        let data = self.allocation(shape, size_of::<JsFunction>());
+        let data = self.allocation(shape, size_of::<JsFunction>(), allocator);
         let function = self.node(Kind::NewFunction, &operands, data);
         self.node(Kind::PublishFence, &[], 0);
         self.set(op.dst, function);

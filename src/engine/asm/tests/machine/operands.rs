@@ -8,7 +8,7 @@ use super::{Harness, host};
 
 pub(crate) const SP: Gpr = abi::STACK_POINTER;
 
-pub(crate) const CONSTANTS: [i64; 62] = [
+pub(crate) const CONSTANTS: [i64; 64] = [
     0,
     1,
     2,
@@ -32,6 +32,7 @@ pub(crate) const CONSTANTS: [i64; 62] = [
     0xff00,
     0xffff,
     0x1_0000,
+    0x1_f600,
     0x12_3456,
     0xff_f000,
     0xff_ffff,
@@ -67,6 +68,7 @@ pub(crate) const CONSTANTS: [i64; 62] = [
     -0x1000,
     -0x1001,
     -0x12_3456,
+    -0xff_f001,
     -0x100_0000,
     -0x8000_0000,
     -0x8000_0001,

@@ -864,6 +864,7 @@ version = "0.0.0"
 dependencies = [
  "bun_engine",
  "bun_engine_bytecode",
+ "bun_engine_date",
  "bun_engine_inspector",
  "bun_engine_intl",
  "bun_engine_macros",
@@ -901,6 +902,7 @@ dependencies = [
 name = "bun_engine_temporal"
 version = "0.0.0"
 dependencies = [
+ "bun_core",
  "bun_engine_date",
  "bun_engine_macros",
  "bun_engine_number",

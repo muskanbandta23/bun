@@ -261,6 +261,7 @@ impl ModuleLoader {
         match source.provider.source_type() {
             SourceType::WebAssembly => (cx.hooks().make_wasm_module)(cx, this, key, code, promise)?,
             SourceType::AnalyzedModule => {
+                cx.ensure_can_run(&source.provider)?;
                 (hooks.make_analyzed_module)(cx, this, key, &source, promise)?;
             }
             SourceType::Json => {
@@ -285,7 +286,10 @@ impl ModuleLoader {
                 };
                 promise.fulfill(cx, module.into());
             }
-            _ => self.make_source_text_module(cx, key, &source, promise),
+            _ => {
+                cx.ensure_can_run(&source.provider)?;
+                self.make_source_text_module(cx, key, &source, promise);
+            }
         }
         Ok(())
     }

@@ -13,10 +13,12 @@ mod fold_path_constants;
 mod hoist_loop_invariants;
 mod induction;
 mod infer_switches;
+mod loop_effects;
 mod lower_switches;
 mod lower_total_division;
 mod merges;
 mod orderings;
+mod peel_loops;
 mod places;
 mod preheaders;
 mod reaching;
@@ -24,7 +26,13 @@ mod readability;
 mod rotate_loops;
 mod sink_into_cold_blocks;
 mod specialize_selects;
+mod unroll_loops;
 mod writes;
+
+pub use copier::{Copier, CopyOfLoop, cost_of_copying};
+pub use loop_effects::LoopEffects;
+pub use peel_loops::peel_loops;
+pub use preheaders::edge_from_preheader;
 
 use crate::analysis::{Cfg, Dominators, Frequencies};
 use crate::ir::{Function, validate};
@@ -95,26 +103,51 @@ pub struct Pass {
 }
 
 macro_rules! passes {
-    ($($name:ident),* $(,)?) => {
-        &[$(Pass { name: stringify!($name), run: $name::run }),*]
+    ($($constant:ident: $name:ident,)*) => {
+        impl Pass {
+            $(pub const $constant: Self = Self { name: stringify!($name), run: $name::run };)*
+            pub const ALL: &[Self] = &[$(Self::$constant),*];
+        }
     };
 }
 
-const QUICK: &[Pass] = passes![construct_ssa, lower_switches, lower_total_division];
-const FULL: &[Pass] = passes![
-    construct_ssa,
-    specialize_selects,
-    fold_path_constants,
-    hoist_loop_invariants,
-    rotate_loops,
-    eliminate_redundant_memory,
-    eliminate_dead_code,
-    infer_switches,
-    duplicate_tails,
-    lower_switches,
-    lower_total_division,
-    branches_to_selects,
-    sink_into_cold_blocks,
+passes! {
+    BRANCHES_TO_SELECTS: branches_to_selects,
+    CONSTRUCT_SSA: construct_ssa,
+    DUPLICATE_TAILS: duplicate_tails,
+    ELIMINATE_DEAD_CODE: eliminate_dead_code,
+    ELIMINATE_REDUNDANT_MEMORY: eliminate_redundant_memory,
+    FOLD_PATH_CONSTANTS: fold_path_constants,
+    HOIST_LOOP_INVARIANTS: hoist_loop_invariants,
+    INFER_SWITCHES: infer_switches,
+    LOWER_SWITCHES: lower_switches,
+    LOWER_TOTAL_DIVISION: lower_total_division,
+    ROTATE_LOOPS: rotate_loops,
+    SINK_INTO_COLD_BLOCKS: sink_into_cold_blocks,
+    SPECIALIZE_SELECTS: specialize_selects,
+    UNROLL_LOOPS: unroll_loops,
+}
+
+const QUICK: &[Pass] = &[
+    Pass::CONSTRUCT_SSA,
+    Pass::LOWER_SWITCHES,
+    Pass::LOWER_TOTAL_DIVISION,
+];
+
+const FULL: &[Pass] = &[
+    Pass::CONSTRUCT_SSA,
+    Pass::SPECIALIZE_SELECTS,
+    Pass::FOLD_PATH_CONSTANTS,
+    Pass::HOIST_LOOP_INVARIANTS,
+    Pass::ROTATE_LOOPS,
+    Pass::ELIMINATE_REDUNDANT_MEMORY,
+    Pass::ELIMINATE_DEAD_CODE,
+    Pass::INFER_SWITCHES,
+    Pass::DUPLICATE_TAILS,
+    Pass::LOWER_SWITCHES,
+    Pass::LOWER_TOTAL_DIVISION,
+    Pass::BRANCHES_TO_SELECTS,
+    Pass::SINK_INTO_COLD_BLOCKS,
 ];
 
 impl Pass {

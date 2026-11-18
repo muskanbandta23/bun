@@ -334,7 +334,7 @@ impl Generator<'_> {
                     return this.way(join, &[direct]);
                 }
                 let way = this.plain_way();
-                arms.push((this.way(way.target, &[]), this.scope.clone()));
+                arms.push((this.way(way.target, &[]), this.scope.clone(), this.sum));
                 way
             };
             let rest = self.plain_way();
@@ -364,9 +364,9 @@ impl Generator<'_> {
                 self.trifle();
             }
         }
-        arms.push((self.way(self.block, &[]), self.scope.clone()));
-        for (arm, scope) in arms {
-            self.scope = scope;
+        arms.push((self.way(self.block, &[]), self.scope.clone(), self.sum));
+        for (arm, scope, sum) in arms {
+            (self.scope, self.sum) = (scope, sum);
             self.fill_arms(&[arm], join);
         }
         self.restore(mark);

@@ -347,16 +347,7 @@ pub(crate) fn campaign<S: Subject>(
 const PREREQUISITES: [&str; 1] = ["construct_ssa"];
 
 pub(crate) fn all_passes() -> Vec<&'static Pass> {
-    let mut passes: Vec<&Pass> = Vec::new();
-    for pass in [Level::Full, Level::Quick]
-        .into_iter()
-        .flat_map(Pass::pipeline)
-    {
-        if passes.iter().all(|known| known.name != pass.name) {
-            passes.push(pass);
-        }
-    }
-    passes
+    Pass::ALL.iter().collect()
 }
 
 pub(crate) fn pass_named(name: &str) -> &'static Pass {

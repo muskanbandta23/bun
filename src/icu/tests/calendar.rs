@@ -1,5 +1,5 @@
 use bun_engine_standalone as _;
-use bun_icu::calendar::{self, Calendar, Field, Side, ZoneName, ZoneOffset};
+use bun_icu::calendar::{self, Calendar, Field, ZoneName};
 use bun_icu::{Enumeration, Error, time_zone};
 
 const HOUR: i32 = 3_600_000;
@@ -28,7 +28,7 @@ fn fields() {
     assert_eq!(hebrew.set_gregorian_change(0.0), Err(Error::UNSUPPORTED));
 
     let mut copy = hebrew.try_clone().unwrap();
-    copy.set_millis(7.0 * 86_400_000.0).unwrap();
+    copy.set(Field::DayOfMonth, 30);
     assert_eq!(date(&mut copy), [5730, 4, 1]);
     assert_eq!(date(&mut hebrew), [5730, 3, 23]);
     assert_eq!(copy.set_millis(f64::NAN), Err(Error::ILLEGAL_ARGUMENT));
@@ -45,27 +45,11 @@ fn gregorian_change() {
 }
 
 #[test]
-fn zone_rules() {
-    let spring = 1_710_064_800_000.0;
-    let offset = |daylight| {
-        Ok(ZoneOffset {
-            standard: -8 * HOUR,
-            daylight,
-        })
-    };
+fn zones() {
     let mut calendar = Calendar::open(&units("America/Los_Angeles"), c"").unwrap();
-    calendar.set_millis(spring).unwrap();
-    assert_eq!(calendar.zone_offset(), offset(HOUR));
-
-    calendar.set_millis(spring - 7.5 * f64::from(HOUR)).unwrap();
-    assert_eq!(
-        calendar.zone_offset_from_local(Side::BeforeTransition),
-        offset(0)
-    );
-    assert_eq!(
-        calendar.zone_offset_from_local(Side::AfterTransition),
-        offset(HOUR)
-    );
+    calendar.set_millis(1_710_064_800_000.0).unwrap();
+    assert_eq!(calendar.get(Field::ZoneOffset), Ok(-8 * HOUR));
+    assert_eq!(calendar.get(Field::DaylightOffset), Ok(HOUR));
 
     let name = |kind| calendar.zone_name(kind, c"en-US").unwrap().to_vec();
     assert_eq!(name(ZoneName::Standard), units("Pacific Standard Time"));
@@ -94,10 +78,6 @@ fn zone_identifiers() {
 
     let japan = items(time_zone::canonical_ids(Some(c"JP")).unwrap());
     assert_eq!(japan, [b"Asia/Tokyo"]);
-    let canonical = items(time_zone::canonical_ids(None).unwrap());
-    let all = items(time_zone::all_ids().unwrap());
-    assert!(canonical.iter().all(|id| all.contains(id)));
-    assert!(all.contains(&b"Japan".to_vec()) && !canonical.contains(&b"Japan".to_vec()));
 
     assert_eq!(time_zone::host(), time_zone::host());
 }

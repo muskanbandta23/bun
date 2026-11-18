@@ -7,7 +7,7 @@ use bun_engine_regexp::program::{ClassId, Program};
 use bun_engine_regexp::set::{CharRange, Set};
 use bun_engine_unicode::MAX_CODE_POINT;
 
-use crate::frame::CONSTANT;
+use crate::frame::{CONSTANT, POSITION};
 use crate::generator::Generator;
 use crate::tables::{Lookup, Membership};
 
@@ -265,6 +265,12 @@ impl Generator<'_> {
             shape: Shape::Bytes { table, above },
             is_inverted,
         }
+    }
+
+    pub(crate) fn test_unit(&mut self, offset: i32, class: ClassId, branch: Branch) {
+        let (c, test) = (self.frame.temporary(0), self.plan_for_units(class));
+        self.load_unit(c, POSITION, offset);
+        self.test_class(test, c, branch);
     }
 
     /// Overwrites `c` and the third temporary register.

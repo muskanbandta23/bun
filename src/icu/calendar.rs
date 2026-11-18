@@ -1,4 +1,4 @@
-//! Calendar systems, and the rules of the time zone that a calendar is in. Times are milliseconds since the epoch.
+//! Calendar systems. Times are milliseconds since the epoch.
 
 use core::ffi::{CStr, c_char};
 
@@ -18,14 +18,7 @@ icu_functions! {
     fn ucal_setGregorianChange(calendar: *mut UCalendar, time: f64, status: &mut Status);
     fn ucal_setMillis(calendar: *mut UCalendar, time: f64, status: &mut Status);
     fn ucal_get(calendar: *const UCalendar, field: Field, status: &mut Status) -> i32;
-    fn ucal_getTimeZoneOffsetFromLocal(
-        calendar: *const UCalendar,
-        skipped: Side,
-        repeated: Side,
-        standard: &mut i32,
-        daylight: &mut i32,
-        status: &mut Status,
-    );
+    fn ucal_set(calendar: *mut UCalendar, field: Field, value: i32);
     fn ucal_getTimeZoneDisplayName(
         calendar: *const UCalendar,
         kind: ZoneName,
@@ -42,6 +35,7 @@ const UCAL_DEFAULT: i32 = 0;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(i32)]
 pub enum Field {
+    Year = 1,
     /// From zero.
     Month = 2,
     DayOfMonth = 5,
@@ -52,26 +46,11 @@ pub enum Field {
     IsLeapMonth = 22,
 }
 
-/// Which offset applies to a local time that a transition skips or repeats.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[repr(i32)]
-pub enum Side {
-    BeforeTransition = 0x04,
-    AfterTransition = 0x0c,
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(i32)]
 pub enum ZoneName {
     Standard = 0,
     Daylight = 2,
-}
-
-/// In milliseconds. Their sum is what local time is ahead of UTC.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub struct ZoneOffset {
-    pub standard: i32,
-    pub daylight: i32,
 }
 
 icu_handle! {
@@ -122,29 +101,9 @@ impl Calendar {
         call(|status| unsafe { ucal_get(self.0.as_ptr(), field, status) })
     }
 
-    /// At the instant that the calendar is set to.
-    pub fn zone_offset(&mut self) -> Result<ZoneOffset> {
-        Ok(ZoneOffset {
-            standard: self.get(Field::ZoneOffset)?,
-            daylight: self.get(Field::DaylightOffset)?,
-        })
-    }
-
-    /// Takes what `set_millis` was given for the reading of a clock in the zone.
-    pub fn zone_offset_from_local(&mut self, side: Side) -> Result<ZoneOffset> {
-        let mut offset = ZoneOffset::default();
+    pub fn set(&mut self, field: Field, value: i32) {
         // SAFETY: the calendar is open.
-        call(|status| unsafe {
-            ucal_getTimeZoneOffsetFromLocal(
-                self.0.as_ptr(),
-                side,
-                side,
-                &mut offset.standard,
-                &mut offset.daylight,
-                status,
-            )
-        })?;
-        Ok(offset)
+        unsafe { ucal_set(self.0.as_ptr(), field, value) }
     }
 
     /// The long name: `Pacific Standard Time`.

@@ -4,6 +4,7 @@
 mod ffi;
 mod c_text;
 pub mod calendar;
+pub mod date_pattern;
 mod enumeration;
 mod error;
 mod host_language;

@@ -156,6 +156,30 @@ opaque  Ticket class JSC::DeferredWorkTicket
 opaque  DeferredTask class Engine::DeferredTask
 value   InternalMicrotask JSC::InternalMicrotask
 value   WorkKind uint8_t
+mirror  IterationKind vm/runtime/iteration/array_iterator.rs
+value   IterationKind JSC::IterationKind
+cell    JsMap class JSC::JSMap
+cell    JsSet class JSC::JSSet
+cell    JsMapIterator class JSC::JSMapIterator
+cell    JsSetIterator class JSC::JSSetIterator
+cell    JsWeakMap class JSC::JSWeakMap
+cell    JsWeakSet class JSC::JSWeakSet
+cell    JsFinalizationRegistry class JSC::JSFinalizationRegistry
+cell    JsAsyncFromSyncIterator class JSC::JSAsyncFromSyncIterator
+opaque  IteratorRecord class Engine::IteratorRecord
+cell    ProxyObject class JSC::ProxyObject
+mirror  Flags regexp/flags.rs
+cell    RegExp class JSC::RegExp
+cell    RegExpObject class JSC::RegExpObject
+cell    DateInstance class JSC::DateInstance
+cell    BooleanObject class JSC::BooleanObject
+mirror  LinesEnd vm/runtime/text/json/lines.rs
+mirror  MessageType vm/realm/console.rs
+mirror  MessageLevel vm/realm/console.rs
+value   MessageType JSC::MessageType
+value   MessageLevel JSC::MessageLevel
+mirror  TemporalType embed/api/temporal.rs
+value   TemporalType JSC::TemporalType
 
 # Modules, scopes and cached bytecode
 mirror  ModuleType vm/runtime/modules/request.rs

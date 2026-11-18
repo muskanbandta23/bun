@@ -69,10 +69,40 @@ pub fn denied(value: Value) -> usize {
     vec![value].leak().len()
 }
 
-pub struct Visited(Vec<Value>);
+pub struct Visited {
+    seen: Vec<Value>,
+    weak: std::cell::Cell<Option<Gc<JsObject>>>,
+    forgotten: Vec<Value>, //~ unvisited: nothing that the collector calls looks at it
+    #[cfg_attr(rootcheck, rootcheck::allow("a reason"))]
+    number: Value,
+    nested: Nested,
+}
+
+struct Nested {
+    seen: Value,
+    forgotten: Value, //~ unvisited: nothing that the collector calls looks at it
+}
 
 // SAFETY: a test.
 unsafe impl GcFree for Visited {}
+
+impl Visited {
+    fn seen(&self) -> &[Value] {
+        &self.seen
+    }
+
+    pub fn visit(&self, visitor: &mut Visitor) {
+        self.seen().trace(visitor);
+        self.nested.seen.trace(visitor);
+    }
+
+    pub fn reconcile(&self, survivors: &heap::Survivors) {
+        self.weak.update(|it| it.filter(|&it| survivors.contains(it)));
+    }
+}
+
+#[repr(packed)]
+pub struct Packed(u8, Value); //~ hidden: only words that are aligned
 
 pub fn implemented_by_hand(visited: Visited) -> usize {
     vec![visited].leak().len()

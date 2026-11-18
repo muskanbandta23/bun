@@ -9,6 +9,10 @@ use crate::{StackVisitor, Value, Vm};
 pub enum SourceAppender {
     Default,
     NotAFunction,
+    /// As `NotAFunction`, for an instruction of the innermost code.
+    FailedCall,
+    /// As `Default`, for the same.
+    FailedConstruct,
     In,
     InstanceofNotAFunction,
     HasInstanceNotAFunction,
@@ -131,8 +135,12 @@ fn right_operand(
 impl SourceAppender {
     fn append_exact(self, message: Text<'_>, source: Text<'_>, value: Value) -> Option<StringRef> {
         match self {
-            SourceAppender::Default => evaluating(clamped(message), source),
-            SourceAppender::NotAFunction => not_a_function(message, source, value),
+            SourceAppender::Default | SourceAppender::FailedConstruct => {
+                evaluating(clamped(message), source)
+            }
+            SourceAppender::NotAFunction | SourceAppender::FailedCall => {
+                not_a_function(message, source, value)
+            }
             SourceAppender::In => right_operand(message, source, "in", " is not an Object"),
             SourceAppender::InstanceofNotAFunction => {
                 right_operand(message, source, "instanceof", " is not a function")
@@ -157,7 +165,10 @@ impl SourceAppender {
     pub(super) fn append(self, vm: &Vm, message: Text<'_>, value: Value) -> Option<StringRef> {
         const CONTEXT: usize = 20;
         // A call is that of the code which makes it, whether or not that can be seen.
-        let is_call = self == SourceAppender::NotAFunction;
+        let is_call = matches!(
+            self,
+            SourceAppender::FailedCall | SourceAppender::FailedConstruct
+        );
         let (code_block, bytecode_offset) = StackVisitor::frames(vm)
             .filter(|frame| is_call || !frame.is_private())
             .find_map(|frame| Some((frame.code_block?, frame.bytecode_offset)))?;
@@ -165,9 +176,9 @@ impl SourceAppender {
         if body.positions().is_empty() || code_block.executable().is_private_builtin() {
             return None;
         }
-        // Of a built-in the message tells no more than which it is.
-        let is_builtin = body.flags().contains(CodeFlags::BUILTIN);
-        let position = code_block.position(if is_builtin { 0 } else { bytecode_offset });
+        // Otherwise the message tells no more of a built-in than which it is.
+        let is_exact = is_call || !body.flags().contains(CodeFlags::BUILTIN);
+        let position = code_block.position(if is_exact { bytecode_offset } else { 0 });
         let provider = code_block.source_provider();
         let text = provider.text();
         let (start, end) = (position.start as usize, position.end as usize);

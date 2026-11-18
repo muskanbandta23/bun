@@ -158,9 +158,7 @@ fn static_text(name: PropertyName<'static>) -> StringRef {
 /// With the colon. `None` for a path.
 fn scheme_length(url: Text<'_>) -> Option<usize> {
     let is_in_scheme = |&unit: &u16| {
-        unit.is_ascii_alphabetic()
-            || unit.is_ascii_digit()
-            || [b'+', b'-', b'.'].iter().any(|&it| unit.is(it))
+        unit.is_ascii_alphabetic() || unit.is_ascii_digit() || b"+-.".iter().any(|&it| unit.is(it))
     };
     let length = url.code_units().take_while(is_in_scheme).count();
     (url.get(0)?.is_ascii_alphabetic() && url.get(length)?.is(b':')).then_some(length + 1)

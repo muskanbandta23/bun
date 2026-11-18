@@ -110,6 +110,7 @@ pub struct StackVisitor<'a> {
     return_address: usize,
     next: Next,
     compiled: Option<Rc<dyn CompiledCode>>,
+    visits_tail_deleted_frames: bool,
 }
 
 impl<'a> StackVisitor<'a> {
@@ -123,6 +124,15 @@ impl<'a> StackVisitor<'a> {
             return_address: 0,
             next: Next::First,
             compiled: None,
+            visits_tail_deleted_frames: false,
+        }
+    }
+
+    /// With those that a tail call would have removed.
+    pub(crate) fn frames_for_debugger(vm: &'a Vm) -> StackVisitor<'a> {
+        StackVisitor {
+            visits_tail_deleted_frames: true,
+            ..Self::frames(vm)
         }
     }
 
@@ -269,7 +279,14 @@ impl<'a> Iterator for StackVisitor<'a> {
             if let Some(index) = origin.inline_frame {
                 return Some(self.visit_inlined(frame, origin.bytecode_offset, index));
             }
+            let has_called = self.return_address != 0;
             self.leave_machine_frame();
+            if has_called
+                && code_block.keeps_frame_at(origin.bytecode_offset)
+                && !self.visits_tail_deleted_frames
+            {
+                continue;
+            }
             visited.code_block = Some(code_block.baseline());
             visited.bytecode_offset = origin.bytecode_offset;
             return Some(visited);

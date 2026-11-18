@@ -101,7 +101,6 @@
 #include "JavaScriptCore/ScriptExecutable.h"
 #include "JavaScriptCore/StackFrame.h"
 #include "JavaScriptCore/StackVisitor.h"
-#include "JavaScriptCore/TypedArrayController.h"
 #include "JavaScriptCore/VM.h"
 #include "JavaScriptCore/WasmFaultSignalHandler.h"
 #include "ZigGlobalObject.h"
@@ -987,38 +986,43 @@ static bool isWellKnownConstructor(JSValue value)
     JSCell* cell = value.asCell();
     if (cell->type() != InternalFunctionType && cell->type() != JSFunctionType)
         return false;
-    const ClassInfo* info = cell->classInfo();
-    return info == JSC::ObjectConstructor::info()
-        || info == JSC::ArrayConstructor::info()
-        || info == JSC::FunctionConstructor::info()
-        || info == JSC::RegExpConstructor::info()
-        || info == JSC::JSPromiseConstructor::info()
-        || info == JSC::StringConstructor::info()
-        || info == JSC::SymbolConstructor::info()
-        || info == JSC::BigIntConstructor::info()
-        || info == JSC::BooleanConstructor::info()
-        || info == JSC::NumberConstructor::info()
-        || info == JSC::DateConstructor::info()
-        || info == JSC::ErrorConstructor::info()
-        || info == JSC::MapConstructor::info()
-        || info == JSC::SetConstructor::info()
-        || info == JSC::WeakMapConstructor::info()
-        || info == JSC::WeakSetConstructor::info()
-        || info == JSC::JSArrayBufferConstructor::info()
-        || info == JSC::JSInt8ArrayConstructor::info()
-        || info == JSC::JSInt16ArrayConstructor::info()
-        || info == JSC::JSInt32ArrayConstructor::info()
-        || info == JSC::JSUint8ArrayConstructor::info()
-        || info == JSC::JSUint8ClampedArrayConstructor::info()
-        || info == JSC::JSUint16ArrayConstructor::info()
-        || info == JSC::JSUint32ArrayConstructor::info()
-        || info == JSC::JSFloat16ArrayConstructor::info()
-        || info == JSC::JSFloat32ArrayConstructor::info()
-        || info == JSC::JSFloat64ArrayConstructor::info()
-        || info == JSC::JSBigInt64ArrayConstructor::info()
-        || info == JSC::JSBigUint64ArrayConstructor::info()
-        || info == JSC::JSDataViewConstructor::info()
-        || info == WebCore::JSBufferConstructor::info();
+    if (cell->classInfo() == WebCore::JSBufferConstructor::info())
+        return true;
+    using namespace Engine::RealmSlot;
+    static constexpr uint16_t slots[] = {
+        object_constructor,
+        array_constructor,
+        function_constructor,
+        regexp_constructor,
+        promise_constructor,
+        string_constructor,
+        symbol_constructor,
+        bigint_constructor,
+        boolean_constructor,
+        number_constructor,
+        date_constructor,
+        error_constructor,
+        map_constructor,
+        set_constructor,
+        weak_map_constructor,
+        weak_set_constructor,
+        array_buffer_constructor,
+        int8_array_constructor,
+        int16_array_constructor,
+        int32_array_constructor,
+        uint8_array_constructor,
+        uint8_clamped_array_constructor,
+        uint16_array_constructor,
+        uint32_array_constructor,
+        float16_array_constructor,
+        float32_array_constructor,
+        float64_array_constructor,
+        bigint64_array_constructor,
+        biguint64_array_constructor,
+        data_view_constructor,
+    };
+    auto* realm = asObject(cell)->realmMayBeNull();
+    return realm && std::ranges::any_of(slots, [&](uint16_t slot) { return realm->eagerSlot<JSCell>(slot) == cell; });
 }
 
 extern "C" bool Bun__VM__isRunningVitestEntry(void* bunVM);
@@ -4101,83 +4105,38 @@ bool JSC__JSValue__asArrayBuffer(
 
 // Pin/unpin the storage behind a JSArrayBuffer or JSArrayBufferView so it
 // cannot move or be freed while a native borrower holds a slice into it.
-// SharedArrayBuffer is never detachable and never moves, so it is left
-// unpinned rather than rejected. Returns false if `value` has no storage.
+// Returns false if `value` has no storage.
 //
-// A pin does not make detaching fail, it makes it copy. `pin()` clears
-// `ArrayBuffer::isDetachable()`, and `ArrayBuffer::transferTo()` answers an
-// undetachable buffer by copying the bytes into the destination and reporting
-// success (`if (!isDetachable()) m_contents.copyTo(result)`). So while a borrow
-// is live, `ab.transfer()`, `structuredClone(v, { transfer: [ab] })` and
+// A pin does not make detaching fail, it makes it copy. While a borrow is
+// live, `ab.transfer()`, `structuredClone(v, { transfer: [ab] })` and
 // `port.postMessage(v, [ab])` each return normally, give the destination an
 // independent copy, and leave `ab` attached; the bytes being read never move.
-//
-// A view with no ArrayBuffer yet (`Buffer.allocUnsafeSlow`, `new Uint8Array(n)`
-// past fastSizeLimit: OversizeTypedArray) is held, not adopted: materializing
-// an ArrayBuffer just to pin it registers the bytes with the heap a second
-// time and, because ArrayBuffers are only reclaimed by full collections,
-// turns every threadpool fs/zlib/crypto op over a fresh Buffer into full-GC
-// pressure. Such a view cannot be detached without JS first touching
-// `.buffer`. Known gap: if JS does that mid-op, the new ArrayBuffer is
-// unpinned, so `transfer(0)` frees the storage at once and a same-length
-// `transfer()` frees it when the new owner is collected.
-// The caller keeps the returned kind and only calls unpin for `Pinned`; a
-// held view is kept alive by the caller's own root, and nothing here needs
-// undoing for it.
-enum class PinKind : uint8_t { None = 0,
-    Pinned = 1,
-    Held = 2 };
-static PinKind pinStorage(JSC::JSValue value)
+CPP_DECL bool JSC__JSValue__pinArrayBuffer(JSC::EncodedJSValue v)
 {
-    JSC::ArrayBuffer* buf = nullptr;
-    if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))
-        buf = jb->impl();
-    else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
-        if (view->isDetached())
-            return PinKind::None;
-        if (!view->hasArrayBuffer() && view->mode() == JSC::OversizeTypedArray)
-            return PinKind::Held;
-        buf = view->possiblySharedBuffer();
-    }
-    if (!buf || buf->isDetached())
-        return PinKind::None;
-    if (!buf->isShared())
-        buf->pin();
-    return PinKind::Pinned;
+    auto value = JSC::JSValue::decode(v);
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value))
+        return !view->isDetached() && view->tryPin();
+    auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value);
+    if (!jb || jb->impl()->isDetached())
+        return false;
+    jb->impl()->pin();
+    return true;
 }
-CPP_DECL uint8_t JSC__JSValue__pinArrayBuffer(JSC::EncodedJSValue v)
-{
-    return static_cast<uint8_t>(pinStorage(JSC::JSValue::decode(v)));
-}
-// Only call this for a value that `pinStorage` returned `Pinned` for. That buffer still exists because pinned buffers can't be detached.
+// Only call this for a value that has been pinned. Reached from finalizers: these casts look at nothing but the JSType.
 CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
 {
-    // Reached from finalizers during GC sweep, where classInfo() (and so any
-    // dynamicDowncast) is forbidden; dispatch on JSType like JSC::Weak<T>::get().
     auto value = JSC::JSValue::decode(v);
-    if (!value.isCell())
-        return;
-    JSC::JSCell* cell = value.asCell();
-    JSC::JSType type = cell->type();
-    JSC::ArrayBuffer* buf = nullptr;
-    if (type == JSC::ArrayBufferType)
-        buf = static_cast<JSC::JSArrayBuffer*>(cell)->impl();
-    else if (type == JSC::DataViewType)
-        buf = static_cast<JSC::JSDataView*>(cell)->possiblySharedBuffer();
-    else if (JSC::isTypedArrayType(type)) {
-        auto* view = static_cast<JSC::JSArrayBufferView*>(cell);
-        if (JSC::isWastefulTypedArray(view->mode()))
-            buf = view->butterfly()->indexingHeader()->arrayBuffer();
-    }
-    if (buf && !buf->isShared())
-        buf->unpin();
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value))
+        view->unpin();
+    else if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))
+        jb->impl()->unpin();
 }
 
 // Returns the ArrayBuffer that `value` already has, or null. Never materializes one.
 static ALWAYS_INLINE JSC::ArrayBuffer* existingArrayBuffer(JSC::JSValue value)
 {
     if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value))
-        return view->hasArrayBuffer() ? view->possiblySharedBuffer() : nullptr;
+        return view->existingBuffer();
     if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))
         return jb->impl();
     return nullptr;
@@ -4198,7 +4157,6 @@ CPP_DECL bool JSC__JSValue__canBeFreedWhilePinned(JSC::EncodedJSValue v)
 
 // Returns the WebAssembly.Memory that `v` is a view of and sets `out_offset` to where `v` starts in it.
 // Returns empty if `v` isn't a view of a non-shared memory or that memory was collected.
-// A fixed-length buffer doesn't point to its memory, so this checks every live one.
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__findWasmMemory(JSC::EncodedJSValue v, size_t* out_offset)
 {
 #if ENABLE(WEBASSEMBLY)
@@ -4209,17 +4167,7 @@ CPP_DECL JSC::EncodedJSValue JSC__JSValue__findWasmMemory(JSC::EncodedJSValue v,
     auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value);
     *out_offset = view ? view->byteOffset() : 0;
 
-    auto* space = value.asCell()->vm().heap.webAssemblyMemorySpace<JSC::SubspaceAccess::OnMainThread>();
-    JSC::JSWebAssemblyMemory* found = nullptr;
-    // HeapIterationScope stops every allocator in the heap, which costs more than a read. Only this subspace's have to stop.
-    space->forEachDirectory([](JSC::BlockDirectory& directory) { directory.stopAllocating(); });
-    space->forEachLiveCell([&](JSC::HeapCell* cell, JSC::HeapCell::Kind) {
-        auto* memory = static_cast<JSC::JSWebAssemblyMemory*>(static_cast<JSC::JSCell*>(cell));
-        if (memory->basePointer() == buf->data())
-            found = memory;
-    });
-    space->forEachDirectory([](JSC::BlockDirectory& directory) { directory.resumeAllocating(); });
-    return JSC::JSValue::encode(found);
+    return JSC::JSValue::encode(JSC::JSWebAssemblyMemory::ownerOf(value.asCell()->vm(), *buf));
 #else
     UNUSED_PARAM(v);
     UNUSED_PARAM(out_offset);
@@ -4248,7 +4196,7 @@ CPP_DECL void JSC__JSValue__arrayBufferExtent(JSC::EncodedJSValue v, uint8_t** o
 #if ENABLE(WEBASSEMBLY)
     else if (auto* memory = dynamicDowncast<JSC::JSWebAssemblyMemory>(value)) {
         *out_ptr = static_cast<uint8_t*>(memory->basePointer());
-        *out_len = memory->memory().size();
+        *out_len = memory->size();
         return;
     }
 #endif
@@ -4256,48 +4204,26 @@ CPP_DECL void JSC__JSValue__arrayBufferExtent(JSC::EncodedJSValue v, uint8_t** o
     *out_len = 0;
 }
 
-// Borrow `v`'s byte storage for off-thread reading. Splits out only the
-// `FastTypedArray` case from `pinArrayBuffer`, because that's the one mode
-// where `possiblySharedBuffer()` actually COPIES data
-// (`ArrayBuffer::tryCreate(span())`) — and it's ≤ fastSizeLimit elements, so
-// the caller dupes instead. Every other mode goes through `pinStorage` (pin an
-// existing ArrayBuffer, hold an OversizeTypedArray without adopting it).
+// Borrow `v`'s byte storage for off-thread reading. Pinning a view whose
+// elements are in the heap would copy them into a new ArrayBuffer, and there
+// are at most fastSizeLimit of them, so the caller dupes those instead.
 //
 //   0  Detached/null — nothing to read.
-//   1  `FastTypedArray` — ≤ fastSizeLimit elements, GC-movable. Caller
-//      should dupe `out_ptr[0..out_len]`; no unpin.
-//   2  Pinned an existing ArrayBuffer; caller MUST `unpinArrayBuffer(v)`
-//      when done.
-//   3  Held: a bufferless OversizeTypedArray; nothing to unpin, caller roots
-//      the value for the duration as it already does for 2.
+//   1  In the heap. Caller should dupe `out_ptr[0..out_len]`; no unpin.
+//   2  Pinned; caller MUST `unpinArrayBuffer(v)` when done.
 //
 // `out_ptr`/`out_len` describe the VIEW's byte range (offset+length).
 CPP_DECL int32_t JSC__JSValue__borrowBytesForOffThread(JSC::EncodedJSValue v, const uint8_t** out_ptr, size_t* out_len)
 {
     auto value = JSC::JSValue::decode(v);
-    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
-        if (view->isDetached()) return 0;
-        if (view->mode() == JSC::FastTypedArray) {
-            *out_ptr = static_cast<const uint8_t*>(view->vector());
-            *out_len = view->byteLength();
-            return 1;
-        }
-        auto kind = pinStorage(view);
-        if (kind == PinKind::None) return 0;
-        *out_ptr = static_cast<const uint8_t*>(view->vector());
-        *out_len = view->byteLength();
-        return kind == PinKind::Held ? 3 : 2;
-    }
-    if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
-        auto* buf = jb->impl();
-        if (!buf || buf->isDetached()) return 0;
-        if (!buf->isShared())
-            buf->pin();
-        *out_ptr = static_cast<const uint8_t*>(buf->data());
-        *out_len = buf->byteLength();
-        return 2;
-    }
-    return 0;
+    auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value);
+    bool isInHeap = view && view->hasVectorInHeap();
+    if (!isInHeap && !JSC__JSValue__pinArrayBuffer(v))
+        return 0;
+    auto bytes = view ? view->span() : uncheckedDowncast<JSC::JSArrayBuffer>(value)->impl()->span();
+    *out_ptr = bytes.data();
+    *out_len = bytes.size();
+    return isInHeap ? 1 : 2;
 }
 
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__createEmptyArray(JSC::JSGlobalObject* arg0, size_t length)
@@ -7260,13 +7186,12 @@ CPP_DECL JSC::EncodedJSValue Bun__JSValue__getProxyTarget(JSC::EncodedJSValue en
 
 CPP_DECL JSC::EncodedJSValue Bun__JSValue__getArrayBufferViewBuffer(JSC::EncodedJSValue encoded, JSC::JSGlobalObject* globalObject)
 {
-    auto& vm = JSC::getVM(globalObject);
     JSC::JSValue value = JSValue::decode(encoded);
     if (!value || !value.isCell())
         return JSValue::encode(JSValue());
     if (auto* view = dynamicDowncast<JSArrayBufferView>(value.asCell())) {
         if (ArrayBuffer* buffer = view->possiblySharedBuffer())
-            return JSValue::encode(vm.m_typedArrayController->toJS(globalObject, view->realm(), *buffer));
+            return JSValue::encode(JSArrayBuffer::wrap(view->realm(), *buffer));
     }
     return JSValue::encode(JSValue());
 }
@@ -7741,11 +7666,10 @@ extern "C" JSC::EncodedJSValue Bun__REPL__formatValue(
 // A backing store detached during the first pass reads back as a zero-length
 // span.
 //
-// When `pinBuffers` is true, each view's backing ArrayBuffer is materialized
-// and pinned before its data pointer is read, so the span stays valid after
-// control returns to JS (an in-flight async I/O). The caller must balance
-// every pinned element with `JSC__JSValue__unpinArrayBuffer`. SharedArrayBuffer
-// is never detachable and never moves, so it is left unpinned.
+// When `pinBuffers` is true, each view is pinned before its data pointer is
+// read, so the span stays valid after control returns to JS (an in-flight
+// async I/O). The caller must balance every pinned element with
+// `JSC__JSValue__unpinArrayBuffer`.
 // `isWasmMemory` marks a pinned element over a non-shared WebAssembly.Memory,
 // whose block `grow()` can free despite the pin.
 //
@@ -7785,16 +7709,10 @@ extern "C" int32_t Bun__JSArray__collectBufferSpans(
             return 1;
         bool isWasmMemory = false;
         if (pinBuffers) {
-            // possiblySharedBuffer() converts a FastTypedArray (GC-movable
-            // storage, no ArrayBuffer yet) into a malloc-backed one and can
-            // repoint m_vector, so it must run before vector() is read.
-            auto* buf = view->possiblySharedBuffer();
-            if (!buf) [[unlikely]]
+            // Can move the elements, so it must run before vector() is read.
+            if (!view->tryPin()) [[unlikely]]
                 return 2;
-            if (!buf->isShared()) {
-                buf->pin();
-                isWasmMemory = buf->isWasmMemory();
-            }
+            isWasmMemory = JSC__JSValue__isNonSharedWasmMemory(JSC::JSValue::encode(view));
         }
         append(ctx, JSC::JSValue::encode(view), view->vector(), view->byteLength(), isWasmMemory);
     }

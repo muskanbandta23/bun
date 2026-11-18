@@ -16,17 +16,6 @@ fn cells_are_strictly_equal(cx: &Cx, a: Gc<JsCell>, b: Gc<JsCell>) -> JsResult<b
     Ok(false)
 }
 
-/// StringToBigInt
-fn parse_bigint(cx: &Cx, string: Gc<JsString>) -> JsResult<Option<Gc<JsBigInt>>> {
-    let view = string.view(cx)?;
-    let parsed = bun_engine_bigint::from_string(view.text());
-    match parsed.and_then(|new| JsBigInt::try_from_new(cx, new)) {
-        Ok(bigint) => Ok(Some(bigint)),
-        Err(bun_engine_bigint::Error::InvalidText) => Ok(None),
-        Err(error) => Err(JsBigInt::throw(cx, error)),
-    }
-}
-
 impl Value {
     /// IsStrictlyEqual
     #[inline(always)]
@@ -114,10 +103,10 @@ impl Value {
 /// They are not both strings.
 fn compare_mixed_primitives(cx: &mut Cx, a: Value, b: Value) -> JsResult<Option<Ordering>> {
     if let (Some(a), Some(b)) = (a.as_bigint(), b.as_string()) {
-        return Ok(parse_bigint(cx, b)?.map(|b| a.value().cmp(&b.value())));
+        return a.compare_to_string(cx, &b);
     }
     if let (Some(a), Some(b)) = (a.as_string(), b.as_bigint()) {
-        return Ok(parse_bigint(cx, a)?.map(|a| a.value().cmp(&b.value())));
+        return Ok(b.compare_to_string(cx, &a)?.map(Ordering::reverse));
     }
     Ok(match (a.to_numeric(cx)?, b.to_numeric(cx)?) {
         (Numeric::Number(a), Numeric::Number(b)) => a.partial_cmp(&b),

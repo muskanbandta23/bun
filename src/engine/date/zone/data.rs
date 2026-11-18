@@ -8,7 +8,7 @@ use bun_icu::resource_bundle::ResourceBundle;
 use bun_icu::{CText, Error};
 
 use super::annual::{AnnualRule, YearlyMoment};
-use super::rules::{Offset, Transition, ZoneRules};
+use super::rules::{Offset, SECONDS_PER_DAY, Transition, ZoneRules};
 use crate::civil::days_from_civil;
 
 fn section(key: &CStr) -> bun_icu::Result<ResourceBundle> {
@@ -65,7 +65,7 @@ pub(super) fn rules(position: usize) -> Option<ZoneRules> {
     if let Some(late) = optional(&zone, c"transPost32")? {
         times.extend(late.int_vector().ok()?.as_chunks().0.iter().map(wide));
     }
-    if times.iter().any(|time| time.unsigned_abs() > 1 << 62) {
+    if !times.is_sorted() || times.iter().any(|time| time.unsigned_abs() > 1 << 62) {
         return None;
     }
 
@@ -97,7 +97,7 @@ fn optional(table: &ResourceBundle, key: &CStr) -> Option<Option<ResourceBundle>
 
 fn offset(standard: i32, savings: i32) -> Option<Offset> {
     let seconds = standard.checked_add(savings)?;
-    (seconds.unsigned_abs() < 86_400).then_some(Offset {
+    (i64::from(seconds).abs() < SECONDS_PER_DAY).then_some(Offset {
         seconds,
         is_daylight: savings != 0,
     })
@@ -118,7 +118,7 @@ fn annual_rule(zone: &ResourceBundle, name: &[u16]) -> Option<AnnualRule> {
         return None;
     }
     Some(AnnualRule::new(
-        days_from_civil(year, 1, 1) * 86_400,
+        days_from_civil(year, 1, 1) * SECONDS_PER_DAY,
         offset(standard, 0)?,
         offset(standard, savings)?,
         moment(start, standard, 0)?,

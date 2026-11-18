@@ -4,9 +4,9 @@ use bun_engine_text::{Identifier, PropertyName, Text};
 
 use crate::heap::{Scope, Survivors};
 use crate::{
-    JsPromise, JsSourceCode, ModuleLoader,
-    BuiltinId, CallFrame, CodeBlock, CompileError, Cx, Gc, GlobalObject, Intrinsic, JsObject,
-    JsResult, PropertyCondition, RealmSlot, RealmWatchpoint, SourceProvider, Value, Visitor, Vm,
+    BuiltinId, CallFrame, CodeBlock, CompileError, Cx, Gc, GlobalObject, Intrinsic, JsCell,
+    JsObject, JsPromise, JsResult, JsSourceCode, ModuleLoader, PropertyCondition, RealmSlot,
+    RealmWatchpoint, SourceProvider, Value, Visitor, Vm, WasmFrame, WasmNames,
 };
 
 /// What this crate needs from those above it.
@@ -41,6 +41,11 @@ pub struct Hooks {
     pub make_wasm_module:
         fn(&mut Cx, Gc<ModuleLoader>, &Identifier, Gc<JsSourceCode>, Gc<JsPromise>) -> JsResult<()>,
     pub find_wasm_handler: fn(&Vm, &CallFrame) -> Option<(usize, u32)>,
+    /// With the address that the callee returns to, or zero if the frame has called an operation, and the number of
+    /// inlined functions that have been visited.
+    pub wasm_frame: fn(&Vm, &CallFrame, usize, u32) -> WasmFrame,
+    /// Of the function with that index. The cell may have just died.
+    pub wasm_names: fn(Gc<JsCell>, u32) -> WasmNames,
     pub debugger_did_parse: fn(&Cx, &SourceProvider, Option<&CompileError>),
     /// With a number that tells the task from all others.
     pub debugger_microtask_event: fn(&Vm, &GlobalObject, crate::MicrotaskEvent, u64),

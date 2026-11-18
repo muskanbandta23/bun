@@ -41,6 +41,14 @@ impl<K: PlainKey, T: CellKind> WeakValueMap<K, T> {
         self.map.borrow_mut().insert(key, value.address());
     }
 
+    /// `visit` does not allocate.
+    pub(crate) fn for_each_value(&self, _: &Vm, mut visit: impl FnMut(Gc<T>)) {
+        for &address in self.map.borrow().values() {
+            // SAFETY: as in `get`.
+            visit(unsafe { Gc::from_address(address) });
+        }
+    }
+
     pub(crate) fn clear(&self) {
         self.map.take();
         self.added_since_collection.take();

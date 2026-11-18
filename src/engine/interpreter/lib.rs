@@ -15,7 +15,7 @@ pub use slow::calls::{
     FillVarargsFrame, PrepareFixedCall, PreparedCall, SizeVarargsFrame, replace_frame,
 };
 pub use slow::{Outcome, SlowPath, outcome};
-pub use table::{SLOW_PATHS, fixed_call_preparation, return_point, varargs_call_preparation};
+pub use table::{OPERATIONS, SLOW_PATHS, fixed_call_preparation, return_point, varargs_call_preparation};
 
 use machine::Handler;
 

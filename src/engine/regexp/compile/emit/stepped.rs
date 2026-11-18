@@ -11,6 +11,7 @@ use crate::program::{Op, Place, Stride, UNBOUNDED};
 impl Emitter<'_> {
     pub(super) fn stepped(
         &mut self,
+        id: Id,
         repeat: Repeat,
         gives_back: bool,
         fail: Fail,
@@ -24,16 +25,18 @@ impl Emitter<'_> {
         let (Some(floor), Some(stride), true) = (floor, Stride::of_units(length), gives_back)
         else {
             self.capture_last_turn(repeat, floor)?;
-            return Ok(fail);
+            return self.after_run(id, fail);
         };
+        let fail = self.after_run(id, fail)?;
         let again = self.output.label()?;
+        self.commit()?;
         self.bind_after_giving_back(again, floor, repeat.rest)?;
         self.capture_last_turn(repeat, Some(floor))?;
         self.give_back(again, floor, stride, None, fail)
     }
 
     /// The step, if the body is one apart from parentheses.
-    fn only_step(&self, body: Id) -> Option<Step> {
+    pub(super) fn only_step(&self, body: Id) -> Option<Step> {
         let terms = self.graph.terms(&body).iter().map(|&it| &self.graph[it]);
         let mut tests = terms.filter(|it| !it.is_bookkeeping());
         match (tests.next()?.kind, tests.next()) {

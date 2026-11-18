@@ -3,7 +3,7 @@
 use crate::Error;
 use crate::compile::memory::{filled, push, reserve};
 use crate::program::{
-    Join, Loop, LoopId, Op, Room, Scope, ScopeId, ScopeKind, Slot, Switch, Target,
+    Join, Loop, LoopId, Op, Room, Scan, Scope, ScopeId, ScopeKind, Slot, Switch, Target,
 };
 
 /// Operations name labels where they will have targets.
@@ -32,6 +32,7 @@ pub(super) struct Output {
     pub(super) loops: Vec<Loop>,
     pub(super) choice_targets: Vec<Label>,
     pub(super) switches: Vec<Switch>,
+    pub(super) scans: Vec<Scan>,
     pub(super) cell_weights: Vec<u32>,
 }
 
@@ -52,6 +53,7 @@ impl Output {
             loops: Vec::new(),
             choice_targets: Vec::new(),
             switches: Vec::new(),
+            scans: Vec::new(),
             cell_weights: Vec::new(),
         };
         reserve(&mut output.main, expected_ops)?;

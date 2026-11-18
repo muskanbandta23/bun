@@ -19,7 +19,7 @@ static RESOLVED: AtomicU64 = AtomicU64::new(0);
 
 /// Changes whenever the result of `system_time_zone` can have changed.
 #[inline]
-pub fn time_zone_generation() -> u64 {
+pub(crate) fn time_zone_generation() -> u64 {
     CHOICE.load(Ordering::Relaxed) >> LOW_BITS
 }
 
@@ -48,7 +48,7 @@ fn choice_named(name: Text<'_>) -> Option<u16> {
     if let Some(position) = position_of(name) {
         return Some(position);
     }
-    if name.len() > LONGEST || name.code_units().any(|unit| unit == 0) {
+    if name.len() > LONGEST {
         return None;
     }
     let canonical = time_zone::canonical_id(&name.code_units().collect::<Buffer<u16>>()).ok()?;
@@ -64,7 +64,7 @@ fn resolve(choice: u16) -> Option<TimeZoneId> {
 }
 
 /// SystemTimeZoneIdentifier: UTC if the zone has no name that is available.
-pub fn system_time_zone() -> TimeZoneId {
+pub(crate) fn system_time_zone() -> TimeZoneId {
     let state = CHOICE.load(Ordering::Relaxed);
     let resolved = RESOLVED.load(Ordering::Relaxed);
     if resolved >> LOW_BITS == state >> LOW_BITS {

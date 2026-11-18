@@ -105,6 +105,7 @@ pub struct NativeExecutable {
     length: u32,
     intrinsic: Intrinsic,
     visibility: Visibility,
+    is_named_as_bound: Cell<bool>,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -142,6 +143,7 @@ impl NativeExecutable {
             length,
             intrinsic,
             visibility,
+            is_named_as_bound: Cell::new(false),
         })
     }
 
@@ -193,6 +195,11 @@ impl NativeExecutable {
 
     pub fn length(&self) -> u32 {
         self.length
+    }
+
+    /// Whether scripts see `bound ` in front of the name.
+    pub fn is_named_as_bound(&self) -> &Cell<bool> {
+        &self.is_named_as_bound
     }
 }
 
@@ -519,6 +526,26 @@ impl FunctionExecutable {
         self.info.name_text(self.provider().text())
     }
 
+    fn is_default_constructor(&self) -> bool {
+        self.info.origin().contains(Origin::DEFAULT_CONSTRUCTOR)
+    }
+
+    /// The text that the positions in the code refer to.
+    pub fn code_provider(&self) -> SourceProviderRef {
+        if self.is_default_constructor() {
+            return self.heap().vm().default_constructor_provider(&self.info);
+        }
+        self.provider().clone()
+    }
+
+    /// In that text.
+    pub fn parameters_start(&self) -> u32 {
+        if self.is_default_constructor() {
+            return "(function ".len() as u32;
+        }
+        self.info.parameters_start()
+    }
+
     #[inline(always)]
     pub(crate) fn did_create(&self, vm: &Vm, function: Gc<JsFunction>) {
         if self.singleton_watchpoints.is_still_valid() {
@@ -558,7 +585,8 @@ impl FunctionExecutable {
     }
 }
 
-pub(crate) fn native_source_text(cx: &Cx, name: Text<'_>) -> JsResult<Gc<JsString>> {
+/// NativeFunction of ECMA-262.
+pub fn native_source_text(cx: &Cx, name: Text<'_>) -> JsResult<Gc<JsString>> {
     let (before, after) = ("function ", "() { [native code] }");
     cx.new_string_from_parts(&[Text::from_ascii(before), name, Text::from_ascii(after)])
 }

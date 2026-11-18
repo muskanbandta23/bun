@@ -19,6 +19,8 @@ pub(super) struct Builtins {
     /// By the address of the symbol.
     values: OnceCell<FastHashMap<usize, BuiltinValue>>,
     embedder_names: RefCell<FastHashMap<Identifier, Identifier>>,
+    /// Of base and of derived classes.
+    default_constructors: [OnceCell<SourceProviderRef>; 2],
 }
 
 impl Host for Vm {
@@ -138,6 +140,16 @@ impl Vm {
             (provider.finish(), builtin.to_function())
         });
         function.clone()
+    }
+
+    pub(super) fn default_constructor_provider(&self, function: &FunctionRef) -> SourceProviderRef {
+        let index = usize::from(function.kind() == FunctionKind::DerivedConstructor);
+        let provider = &self.services.code.builtins.default_constructors[index];
+        let provider = provider.get_or_init(|| {
+            let text = StringRef::from_literal(function.default_constructor_source());
+            SourceProvider::build(text, None, SourceType::Program).finish()
+        });
+        provider.clone()
     }
 
     /// A new one, whose code is linked to the realm that calls it first.

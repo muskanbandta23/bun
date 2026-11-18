@@ -39,11 +39,18 @@ impl Key {
                 Some(replacement) => with(replacement.as_bytes()),
                 None => with(value),
             },
-            // None of their aliases fits the syntax of a value, so the tables of all keys need not be loaded.
+            // The keys of ECMA-402 do not load the tables of all others.
+            Key::CALENDAR => with(match value {
+                b"ethiopic-amete-alem" => b"ethioaa",
+                b"islamicc" => b"islamic-civil",
+                _ => value,
+            }),
+            Key::NUMERIC if value == b"yes" => with(b"true"),
             Key::COLLATION
             | Key::FIRST_DAY
             | Key::HOUR_CYCLE
             | Key::CASE_FIRST
+            | Key::NUMERIC
             | Key::NUMBERING_SYSTEM => with(value),
             _ if value.is_empty() || value.len() > MAX_ALIAS_LENGTH => with(value),
             _ => match (CText::new(&self.0), CText::new(value)) {

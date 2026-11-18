@@ -40,6 +40,8 @@ fn hooks() -> Hooks {
         },
         make_wasm_module: |cx, _, _, _, _| Err(cx.throw_type_error("Not supported: WebAssembly")),
         find_wasm_handler: |_, _| None,
+        wasm_frame: |_, _, _, _| unreachable!(),
+        wasm_names: |_, _| unreachable!(),
         debugger_did_parse: |_, _, _| {},
         debugger_microtask_event: |_, _, _, _| {},
         debugger_will_unwind: |_, _| {},

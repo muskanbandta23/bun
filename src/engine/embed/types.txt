@@ -120,6 +120,19 @@ cell    JsPromise class JSC::JSPromise
 
 # Errors, stack and code
 mirror  ErrorFlags vm/error/error_instance.rs
+mirror  CodeKind bytecode/code.rs
+mirror  CodeFlags bytecode/code.rs
+mirror  Origin bytecode/function.rs
+mirror  Instrumentation bytecode/compiler.rs
+mirror  FunctionKind syntax/options.rs
+mirror  ErrorKind syntax/error.rs
+mirror  Recovery syntax/error.rs
+opaque  BuiltinOutline struct JSC::BuiltinSourceMetadata
+opaque  KnownCapture struct JSC::KnownCapture
+opaque  KnownFunction struct JSC::KnownFunction
+opaque  ParserError class JSC::ParserError
+opaque  Position struct JSC::ExpressionRange
+opaque  UnlinkedFunction class JSC::UnlinkedFunctionExecutable
 opaque  StackFrame class JSC::StackFrame
 opaque  StackTrace WTF::Vector<JSC::StackFrame>
 opaque  TerminationDeadline class JSC::TerminationDeadline
@@ -210,3 +223,12 @@ value   ImportKind uint8_t
 
 # Inspector, profilers and options
 opaque  Options struct Engine::Options
+mirror  CodeRangeKind inspector/profiling/coverage.rs
+opaque  BlockRange struct JSC::BasicBlockRange
+opaque  CodeRange struct JSC::CodeRange
+mirror  AsyncCallType embed/api/missing.rs
+mirror  ProfilingReason embed/api/missing.rs
+opaque  InspectorBackend class Engine::InspectorBackend
+opaque  InspectorController class Inspector::JSGlobalObjectInspectorController
+value   AsyncCallType Inspector::AsyncCallType
+value   ProfilingReason JSC::ProfilingReason

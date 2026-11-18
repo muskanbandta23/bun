@@ -73,7 +73,7 @@ define_class!(
 
 /// ToTemporalDateTime
 pub fn to_temporal_date_time(cx: &mut Cx, item: Value) -> JsResult<PlainDateTime> {
-    PlainDateTime::from_item(cx, item, Value::UNDEFINED)
+    PlainDateTime::from_argument(cx, item)
 }
 
 impl FromItem for PlainDateTime {
@@ -228,12 +228,12 @@ fn to_string(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let options = Options::new(cx, frame.argument(0))?;
     let show_calendar = options.show_calendar(cx)?;
     let precision = PlainDateTime::precision(options.precision(cx)?).or_throw(cx)?;
-    text_value(cx, &this.to_text(precision, show_calendar).or_throw(cx)?)
+    let rounded = this.round_for_text(precision).or_throw(cx)?;
+    text_value(cx, &rounded.to_text(precision, show_calendar))
 }
 
 #[native_abi]
 fn to_json(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let this = PlainDateTime::this(cx, frame.this_value(), names::toJSON)?;
-    let text = this.to_text(Precision::AUTO, ShowCalendar::Auto);
-    text_value(cx, &text.or_throw(cx)?)
+    text_value(cx, &this.to_text(Precision::AUTO, ShowCalendar::Auto))
 }

@@ -49,7 +49,6 @@
 #include "ImportMetaObject.h"
 #include "JavaScriptCore/ScriptCallStackFactory.h"
 #include "JavaScriptCore/ConsoleMessage.h"
-#include "JavaScriptCore/InspectorConsoleAgent.h"
 #include "JavaScriptCore/JSGlobalObjectDebuggable.h"
 #include <JavaScriptCore/StackFrame.h>
 #include <sys/stat.h>
@@ -124,6 +123,7 @@ typedef int mode_t;
 #endif
 
 #if OS(DARWIN)
+#include <unicode/uchar.h>
 #include <unicode/uversion.h>
 #endif
 
@@ -1671,7 +1671,7 @@ static int listenerCountForSignal(EventEmitter& eventEmitter, const Identifier& 
 static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
 {
     if (Bun__isMainThreadVM()) {
-        if (eventName == "memoryPressure") {
+        if (eventName == "memoryPressure"_s) {
             auto* global = eventEmitter.scriptExecutionContext()->jsGlobalObject();
             if (isAdded) {
                 if (eventEmitter.listenerCount(eventName) == 1) {
@@ -1684,7 +1684,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
         }
 
         // IPC handlers
-        if (eventName == "message" || eventName == "disconnect") {
+        if (eventName == "message"_s || eventName == "disconnect"_s) {
             auto* global = uncheckedDowncast<GlobalObject>(eventEmitter.scriptExecutionContext()->jsGlobalObject());
             auto& vm = JSC::getVM(global);
             auto messageListenerCount = eventEmitter.listenerCount(vm.propertyNames->message);
@@ -2888,7 +2888,7 @@ __attribute__((minsize)) static JSValue constructReportObjectComplete(VM& vm, Zi
         // TODO: allow errors as an argument
         {
             WTF::Vector<JSC::StackFrame> stackFrames;
-            vm.interpreter.getStackTrace(javascriptStack, stackFrames, 1);
+            vm.interpreter.getStackTrace(stackFrames, 1);
             String name = "Error"_s;
             String message = "JavaScript Callstack"_s;
             OrdinalNumber line = OrdinalNumber::beforeFirst();

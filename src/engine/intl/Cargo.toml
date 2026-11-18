@@ -21,6 +21,7 @@ bun_engine_vm.workspace = true
 bun_highway.workspace = true
 bun_icu.workspace = true
 bun_pod.workspace = true
+bun_threading.workspace = true
 hashbrown.workspace = true
 smallvec.workspace = true
 

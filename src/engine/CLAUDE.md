@@ -90,7 +90,7 @@ Cells do not move. The collector is generational mark and sweep, finds roots by 
 | a reference from outside the heap     | `Strong`, `Weak`                                                            |
 | state of the `Vm`                     | the `State` of the module, which is a `Service` and visits what it holds    |
 
-The compiler does not check this. `bun run rust:rootcheck` does, in seconds (`tools/rootcheck/README.md`): run it before you commit.
+The compiler checks neither this nor the anchors below. `bun run rust:rootcheck` does, in seconds (`tools/rootcheck/README.md`): run it before you commit.
 
 What a function may do is in its signature:
 
@@ -101,7 +101,7 @@ What a function may do is in its signature:
 | `&mut Cx`     | also run scripts                                           |
 | `&NoGc`       | none of these: `cx.no_gc()` borrows the `Cx` while it lives |
 
-Memory that a cell owns outside itself is borrowed through a guard that keeps the cell alive (`StringView`, `ResolvedString`, `PropertyKey`, `GcRef`) or, if a script or an allocation can replace it, under `NoGc` (`elements`, `elements_mut`). A loop that calls out reads lengths and elements again on each turn.
+Memory that a cell owns outside itself is borrowed through a guard that keeps the cell alive (`StringView`, `ResolvedString`, `PropertyKey`, `GcRef`) or, if a script or an allocation can replace it, under `NoGc` (`elements`, `elements_mut`). What a plain accessor lends is held across an allocation only through an anchor: `symbol.anchor().name()`, `anchor!(self).info()`. A loop that calls out reads lengths and elements again on each turn.
 
 ## Cells and built-ins
 

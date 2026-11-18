@@ -1,6 +1,6 @@
 use core::cmp::Ordering;
 
-use super::arguments::{require_object, require_string, text_value};
+use super::arguments::{require_object, require_string, small_integers, text_value};
 use super::fields::{read_fields, read_partial_fields};
 use super::getters::{HasTime, hour, microsecond, millisecond, minute, nanosecond, second};
 use super::methods::{
@@ -47,7 +47,7 @@ define_class!(
 
 /// ToTemporalTime
 pub fn to_temporal_time(cx: &mut Cx, item: Value) -> JsResult<PlainTime> {
-    PlainTime::from_item(cx, item, Value::UNDEFINED)
+    PlainTime::from_argument(cx, item)
 }
 
 /// `None` for undefined.
@@ -106,6 +106,9 @@ impl HasTime for PlainTime {
 
 #[native_abi]
 fn construct(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    if let Some(fields) = small_integers(frame) {
+        return PlainTime::new(fields).or_throw(cx)?.constructed(cx, frame);
+    }
     let mut fields = [0; 6];
     for (field, &value) in fields.iter_mut().zip(frame.arguments()) {
         if !value.is_undefined() {

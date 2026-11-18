@@ -8,7 +8,6 @@
 #define ENABLE(name) (defined ENABLE_##name && ENABLE_##name)
 #define USE(name) (defined USE_##name && USE_##name)
 #define HAVE(name) (defined HAVE_##name && HAVE_##name)
-#define BENABLE(name) (defined BENABLE_##name && BENABLE_##name)
 
 #include "engine/support/Compiler.h"
 
@@ -47,7 +46,6 @@
 
 #define ENABLE_EXCEPTION_SCOPE_VERIFICATION (ASSERT_ENABLED || ASAN_ENABLED)
 #define ENABLE_JIT 1
-#define ENABLE_REMOTE_INSPECTOR 1
 #define ENABLE_RESOURCE_USAGE 1
 #define ENABLE_SECURITY_ASSERTIONS (ASSERT_ENABLED || ASAN_ENABLED)
 #ifndef BUN_DISABLE_WEBASSEMBLY

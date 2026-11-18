@@ -5,8 +5,8 @@ use bun_engine_macros::FieldOffsets;
 use smallvec::SmallVec;
 
 use crate::{
-    Gc, GcFree, JsAsyncFunctionGenerator, JsObject, RootVec, StackFrame, StackVisitor, Vm, options,
-    root_vec,
+    Gc, GcFree, JsAsyncFunctionGenerator, JsObject, JsPromise, RootVec, StackFrame, StackVisitor,
+    Vm, options, root_vec,
 };
 
 /// Frames in memory of the global allocator, laid out as the vector of the embedder is. It is no root: whoever has
@@ -57,16 +57,19 @@ impl StackTrace {
         Self::from_vec(frames.to_vec())
     }
 
-    pub(super) fn capture(vm: &Vm, request: StackTraceRequest<'_>) -> StackTrace {
+    pub fn capture(vm: &Vm, request: StackTraceRequest<'_>) -> StackTrace {
         Self::copy_of(&request.capture(vm))
     }
 
-    /// Adds the frames of the stack to those that it has.
-    pub fn append_capture(&mut self, vm: &Vm, request: StackTraceRequest<'_>) {
-        let captured = request.capture(vm);
-        let mut frames = self.take().into_vec();
-        frames.extend_from_slice(&captured);
-        *self = Self::from_vec(frames);
+    /// The async functions that wait for the promise, one for the other.
+    pub fn of_awaiters(promise: &JsPromise, limit: usize) -> StackTrace {
+        let first = promise.indirect_awaiter();
+        // Each awaits one promise, so a cycle leads back to the first.
+        let awaiters = core::iter::successors(first, |it| {
+            (it.promise().indirect_awaiter()).filter(|&it| Some(it) != first)
+        });
+        let frames = awaiters.filter_map(|it| it.stack_frame());
+        Self::from_vec(frames.take(limit).collect())
     }
 
     pub fn take(&mut self) -> StackTrace {
@@ -143,7 +146,7 @@ impl StackTraceRequest<'_> {
                 return None;
             }
             // SAFETY: that of a frame which is on the stack.
-            let context = unsafe { vm.entry_context(entry_frame) }?;
+            let context = unsafe { crate::EntryRecord::of(entry_frame) }.context()?;
             Some((context.downcast::<JsAsyncFunctionGenerator>()?, position))
         };
         for frame in frames {

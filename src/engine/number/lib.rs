@@ -43,7 +43,7 @@ pub use fixed_text::{FIXED_TEXT_CAPACITY, to_exponential, to_fixed, to_precision
 pub use float16::{float16_from_f64, float16_to_f64};
 pub use format_error::FormatError;
 pub use integer_text::{decimal_length, write_i32, write_i64, write_u32, write_u64};
-pub use json::{JsonNumber, JsonNumberError, parse_json_number};
+pub use json::{JsonNumber, JsonNumberError, parse_few_json_digits, parse_json_number};
 pub use literal::{decimal_literal_value, radix_literal_value};
 pub use number_text::{NUMBER_TEXT_CAPACITY, NumberText};
 pub use numeric_index::canonical_numeric_index;

@@ -57,7 +57,6 @@ public:
     }
 
     ErrorType errorType() const { return Engine::fieldAt<ErrorType>(this, Engine::Layout::ErrorInstance_error_type); }
-    RuntimeType runtimeTypeForCause() const { return TypeNothing; }
     bool isStackOverflowError() const { return flags() & Engine::ErrorFlags::IS_STACK_OVERFLOW; }
     bool isOutOfMemoryError() const { return flags() & Engine::ErrorFlags::IS_OUT_OF_MEMORY; }
     void setNativeGetterTypeError() { Engine::error_set_native_getter_type_error(this); }

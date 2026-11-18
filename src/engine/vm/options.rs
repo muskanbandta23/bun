@@ -117,8 +117,9 @@ options! {
     use_async_stack_trace / useAsyncStackTrace: bool = true,
     use_tail_calls / useTailCalls: bool = true,
     use_code_cache / useCodeCache: bool = true,
+    use_source_cache / useSourceProviderCache: bool = true,
     log_bytecode_cache / verboseDiskCache: bool = false,
-    use_prelinked_modules / usePrelinkedModuleInfo: bool = true,
+    log_module_loading / dumpModuleLoadingState: bool = false,
     runs_only_static_code / disallowNonStaticCode: bool = false,
     eval_mode / evalMode: bool = false,
     show_private_scripts_in_stack_traces / showPrivateScriptsInStackTraces: bool = false,
@@ -148,7 +149,19 @@ options! {
     heap_growth_steepness_factor / heapGrowthSteepnessFactor: f64 = 2.0,
     heap_growth_max_increase / heapGrowthMaxIncrease: f64 = 3.0,
     min_eden_to_old_generation_ratio / minEdenToOldGenerationRatio: f64 = 1.0 / 3.0,
+    critical_gc_memory_threshold / criticalGCMemoryThreshold: f64 = 0.8,
+    eden_timer_share_per_megabyte / percentCPUPerMBForEdenTimer: f64 = 0.0025,
+    full_timer_share_per_megabyte / percentCPUPerMBForFullTimer: f64 = 0.000_312_5,
+    collection_timer_max_share / collectionTimerMaxPercentCPU: f64 = 0.1,
+    discard_unused_pages / decommitUnusedMarkedBlockPages: bool = true,
+    use_warm_blocks / useWarmUpMarkedBlocks: bool = true,
+    shape_range_kilobytes / structureHeapSizeInKB: usize = 0,
     collect_every_n_allocations / slowPathAllocsBetweenGCs: u32 = 0,
+    use_only_eden_collections_under_stress / useEdenCollectionsAtSlowPathAllocs: bool = false,
+    collect_continuously / collectContinuously: bool = false,
+    scribble_free_cells / scribbleFreeCells: bool = cfg!(debug_assertions),
+    initial_heap_version / initialHeapVersion: u32 = 0,
+    verify_gc / verifyGC: bool = false,
     use_sampling_profiler / useSamplingProfiler: bool = false,
     sample_interval / sampleInterval: u32 = 1000,
     collect_extra_sampling_data / collectExtraSamplingProfilerData: bool = false,
@@ -187,7 +200,7 @@ impl Options {
                 .saturating_add(MIN_RESERVED_ZONE_SIZE),
         );
 
-        self.use_jit &= bun_engine_exec_memory::is_available();
+        self.use_jit = self.use_jit && bun_engine_exec_memory::is_available();
         for tier in [
             &mut self.use_baseline_jit,
             &mut self.use_quick_optimizer,

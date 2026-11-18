@@ -109,7 +109,8 @@ impl Operands {
     ) -> Self {
         let mut fprs = distinct::<6>(Bank::Fpr, random);
         // Some instructions take registers that follow each other. More scratch registers than needed may be there.
-        let (one, next) = [(0, 0), (1, 2), (2, 1), (4, 5), (5, 4)][random.below(5)];
+        let pairs = [(1, 2), (2, 1), (4, 5), (5, 4)];
+        let (one, next) = *pairs.get(random.below(10)).unwrap_or(&(0, 0));
         let following = (fprs[one] + 1) % AVAILABLE.in_bank(Bank::Fpr).len() as u8;
         if let Some(taken) = fprs.iter().position(|&number| number == following) {
             fprs[taken] = fprs[next];

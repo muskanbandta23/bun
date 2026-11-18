@@ -178,6 +178,7 @@ impl Drop for DeferredFire<'_> {
 
 /// One word until something watches it.
 #[repr(transparent)]
+#[cfg_attr(rootcheck, rootcheck::stays("lends nothing"))]
 pub struct InlineWatchpointSet(Cell<usize>);
 
 impl InlineWatchpointSet {
@@ -229,6 +230,12 @@ impl InlineWatchpointSet {
     #[inline]
     pub fn is_still_valid(&self) -> bool {
         self.state() != WatchpointState::Invalidated
+    }
+
+    #[inline(always)]
+    pub fn is_watched(&self) -> bool {
+        self.0.get() == Self::thin(WatchpointState::Watched)
+            || (self.fat()).is_some_and(|set| set.state() == WatchpointState::Watched)
     }
 
     pub fn is_being_watched(&self) -> bool {

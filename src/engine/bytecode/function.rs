@@ -86,6 +86,10 @@ impl FunctionInfo {
         self.kind
     }
 
+    pub fn flags(&self) -> FunctionFlags {
+        self.flags
+    }
+
     pub fn is_strict(&self) -> bool {
         self.flags.contains(FunctionFlags::STRICT)
     }
@@ -96,6 +100,11 @@ impl FunctionInfo {
 
     pub fn is_generator(&self) -> bool {
         self.flags.contains(FunctionFlags::GENERATOR)
+    }
+
+    /// Whether it has an `await` of its own. Of a built-in that has been described, it is not known.
+    pub fn awaits(&self) -> bool {
+        self.flags.contains(FunctionFlags::AWAITS)
     }
 
     pub fn is_constructor(&self) -> bool {

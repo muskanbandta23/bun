@@ -10,7 +10,6 @@ use core::ffi::c_void;
 use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 
-use crate::array_buffer::MarkedArrayBuffer_deallocator;
 use crate::{
     AnyPromise, ArrayBuffer, BuiltinName, JSArrayIterator, JSGlobalObject, JSInternalPromise,
     JSObject, JSPromise, JSString, JSStringView, JSType, JsClass, JsError, JsResult,
@@ -545,21 +544,15 @@ impl JSValue {
     }
     /// A Node `Buffer` that owns `bytes`. Fails like any JS allocation: OOM, or a termination.
     pub fn create_buffer(global: &JSGlobalObject, bytes: Vec<u8>) -> JsResult<JSValue> {
-        let is_allocated = bytes.capacity() > 0;
-        let bytes = bytes.leak();
-        // SAFETY: a block of the default allocator, which the deallocator frees, or nothing at all.
+        // C++ does not take a buffer with nothing in it.
+        let bytes = if bytes.is_empty() {
+            &mut []
+        } else {
+            bytes.leak()
+        };
+        // SAFETY: a block of the default allocator, whose ownership transfers to JS.
         host_fn::from_js_host_call(global, || unsafe {
-            JSBuffer__bufferFromPointerAndLengthAndDeinit(
-                global,
-                bytes.as_mut_ptr(),
-                bytes.len(),
-                core::ptr::null_mut(),
-                if is_allocated {
-                    Some(MarkedArrayBuffer_deallocator)
-                } else {
-                    None
-                },
-            )
+            JSBuffer__fromDefaultAllocator(global, bytes.as_mut_ptr(), bytes.len())
         })
     }
     pub fn create_buffer_from_box(global: &JSGlobalObject, bytes: Box<[u8]>) -> JsResult<JSValue> {
@@ -1871,6 +1864,11 @@ unsafe extern "C" {
         value2: JSValue,
     ) -> JSValue;
     safe fn JSC__JSValue__createEmptyArray(global: &JSGlobalObject, len: usize) -> JSValue;
+    fn JSBuffer__fromDefaultAllocator(
+        global: &JSGlobalObject,
+        ptr: *mut u8,
+        len: usize,
+    ) -> JSValue;
     fn JSBuffer__bufferFromPointerAndLengthAndDeinit(
         global: *const JSGlobalObject,
         ptr: *mut u8,

@@ -9,7 +9,6 @@ class AbstractLocker;
 class Condition;
 class CrashOnOverflow;
 class DefaultWeakPtrImpl;
-class Hasher;
 class Lock;
 class MonotonicTime;
 class Seconds;

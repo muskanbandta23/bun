@@ -238,3 +238,8 @@ fn number_to_uint64(number: f64) -> u64 {
 fn number_pow(base: f64, exponent: f64) -> f64 {
     bun_engine_number::math::pow(base, exponent)
 }
+
+#[export]
+fn value_describe(value: Value) -> StringRef {
+    value.describe()
+}

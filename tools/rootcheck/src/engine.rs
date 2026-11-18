@@ -11,12 +11,22 @@ pub struct Engine {
     pub trace: DefId,
     pub cell_kind: DefId,
     pub service: DefId,
+    pub gc: DefId,
+    pub owned: DefId,
+    pub no_gc: DefId,
+    pub gc_ref_mut: DefId,
+    pub call_frame: DefId,
+    pub ref_cell_guards: [Option<DefId>; 2],
+    /// `Cell` and `RefCell`
+    pub lend_nothing: [Option<DefId>; 3],
     pub root_alloc: DefId,
     pub defer_collection: DefId,
     /// Whoever has one of these can allocate.
     pub capabilities: [DefId; 3],
     /// What `format_args!` makes, and `fmt::Formatter`.
     pub formatting: [Option<DefId>; 3],
+    /// Whoever is given one of these runs inside a collection, where no other starts.
+    pub collector_parts: [DefId; 3],
     /// Every collection goes through it.
     pub collect: DefId,
     /// `bun_engine_vm` and the crates that may depend on it.
@@ -56,27 +66,43 @@ impl Engine {
                 child(tcx, module, name).unwrap_or_else(|| missing(name))
             })
         };
-        let heap = find_item(&["heap", "Heap"]);
-        let collect = (tcx.inherent_impls(heap).iter())
-            .flat_map(|&it| tcx.associated_item_def_ids(it))
-            .find(|&&it| tcx.item_name(it).as_str() == "collect");
+        let find_method = |ty: DefId, name: &str| {
+            let impls = tcx.inherent_impls(ty).iter();
+            let mut methods = impls.flat_map(|&it| tcx.associated_item_def_ids(it)).copied();
+            methods.find(|&it| tcx.item_name(it).as_str() == name).unwrap_or_else(|| missing(name))
+        };
+        let diagnostic_item = |name: &str| tcx.get_diagnostic_item(Symbol::intern(name));
+        let (gc, heap) = (find_item(&["Gc"]), find_item(&["heap", "Heap"]));
         Some(Engine {
             gc_free: find_trait("GcFree"),
             trace: find_trait("Trace"),
             cell_kind: find_trait("CellKind"),
             service: find_trait("Service"),
+            gc,
+            owned: find_item(&["heap", "Owned"]),
+            no_gc: find_item(&["NoGc"]),
+            gc_ref_mut: find_item(&["heap", "GcRefMut"]),
+            call_frame: find_item(&["CallFrame"]),
+            ref_cell_guards: ["RefCellRef", "RefCellRefMut"].map(diagnostic_item),
+            lend_nothing: ["Cell", "RefCell", "Atomic"].map(diagnostic_item),
             root_alloc: find_item(&["heap", "RootAlloc"]),
             defer_collection: find_item(&["heap", "DeferCollection"]),
             capabilities: [find_item(&["Vm"]), find_item(&["Cx"]), heap],
             formatting: [
                 tcx.lang_items().format_argument(),
                 tcx.lang_items().format_arguments(),
-                tcx.get_diagnostic_item(Symbol::intern("Formatter")),
+                diagnostic_item("Formatter"),
             ],
-            collect: collect.copied().unwrap_or_else(|| missing("Heap::collect")),
+            collector_parts: ["Visitor", "Survivors", "HeapAnalyzer"]
+                .map(|name| find_item(&["heap", name])),
+            collect: find_method(heap, "collect"),
             upper_crates: crates[position..].iter().copied().filter(in_workspace).collect(),
             workspace_crates: crates.iter().copied().filter(in_workspace).collect(),
         })
+    }
+
+    pub fn outlives_cells(&self, def_id: DefId) -> bool {
+        self.capabilities.contains(&def_id) || def_id == self.call_frame
     }
 
     pub fn is_upper(&self, def_id: DefId) -> bool {

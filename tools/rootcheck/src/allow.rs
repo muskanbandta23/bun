@@ -1,4 +1,4 @@
-//! `#[cfg_attr(rootcheck, rootcheck::allow("reason"))]`
+//! `#[cfg_attr(rootcheck, rootcheck::allow("reason"))]` and `rootcheck::stays("reason")`
 
 use std::cell::RefCell;
 
@@ -12,7 +12,7 @@ use rustc_hir::def_id::DefId;
 use rustc_lint_defs::Level;
 use rustc_lint_defs::builtin::UNSAFE_CODE;
 use rustc_middle::ty::TyCtxt;
-use rustc_span::{Symbol, sym};
+use rustc_span::Symbol;
 
 use crate::engine::{Engine, init_of};
 use crate::types::Types;
@@ -21,14 +21,16 @@ pub struct Allows {
     used: RefCell<FxHashSet<DefId>>,
     /// From a field of an `Init` to that of the cell, which is what has the attribute.
     declared_at: FxHashMap<DefId, DefId>,
+    allow: [Symbol; 2],
+    stays: [Symbol; 2],
 }
 
 pub fn allows_unsafe(tcx: TyCtxt<'_>, hir_id: HirId) -> bool {
     tcx.lint_level_spec_at_node(UNSAFE_CODE, hir_id).level() == Level::Allow
 }
 
-fn path() -> [Symbol; 2] {
-    [Symbol::intern("rootcheck"), sym::allow]
+fn path(name: &str) -> [Symbol; 2] {
+    [Symbol::intern("rootcheck"), Symbol::intern(name)]
 }
 
 impl Allows {
@@ -43,12 +45,16 @@ impl Allows {
                 }));
             }
         }
-        Allows { used: RefCell::default(), declared_at }
+        Allows { used: RefCell::default(), declared_at, allow: path("allow"), stays: path("stays") }
     }
 
     pub fn has(&self, tcx: TyCtxt<'_>, def_id: DefId) -> bool {
         let def_id = *self.declared_at.get(&def_id).unwrap_or(&def_id);
-        tcx.tool_attrs(def_id, &path()).next().is_some()
+        tcx.tool_attrs(def_id, &self.allow).next().is_some()
+    }
+
+    pub fn stays(&self, tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+        tcx.tool_attrs(def_id, &self.stays).next().is_some()
     }
 
     /// To be asked only when there is something to report.
@@ -94,20 +100,18 @@ pub fn check(cx: &Types<'_>) {
                 let Attribute::Tool(attribute) = attribute else {
                     continue;
                 };
-                if attribute.path.segments[0] != path()[0] {
+                if attribute.path.segments[0].as_str() != "rootcheck" {
                     continue;
                 }
-                let def_id = tcx.hir_node(hir_id).associated_def_id();
-                let problem = match def_id {
-                    _ if *attribute.path.segments != path() => "unknown attribute",
-                    _ if !has_reason(attribute) => "`rootcheck::allow` takes a reason",
+                let is = |name| *attribute.path.segments == path(name);
+                let problem = match tcx.hir_node(hir_id).associated_def_id() {
+                    _ if !is("allow") && !is("stays") => "unknown attribute",
+                    _ if !has_reason(attribute) => "this takes a reason",
                     _ if !allows_unsafe(tcx, hir_id) => {
-                        "`rootcheck::allow` is only for where `unsafe` is allowed"
+                        "this is only for where `unsafe` is allowed"
                     }
-                    None => "`rootcheck::allow` goes on a function, a static, a type or a field",
-                    Some(def_id) if is_unused(cx, def_id) => {
-                        "this `rootcheck::allow` allows nothing"
-                    }
+                    None => "this goes on a function, a static, a type or a field",
+                    Some(it) if is("allow") && is_unused(cx, it) => "this allows nothing",
                     Some(_) => continue,
                 };
                 cx.report("allow", attribute.span, problem.into()).emit();

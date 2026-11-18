@@ -6,15 +6,15 @@ use std::rc::Rc;
 use bun_engine_macros::{Trace, cell};
 use bun_engine_text::{Identifier, PropertyName, names};
 
-use super::property_table::{PropertyEntry, PropertyTable};
+use super::property_table::{Keys, PropertyEntry, PropertyTable};
 use super::static_table::StaticProperty;
 use super::transition_table::{TransitionKey, TransitionKind, TransitionTable};
 use crate::heap::{CellState, OnceBox, Scope, Survivors, shape_base};
 use crate::{
     Attributes, CellKind, CellType, Class, DeferredFire, DontEnumMode, ElementKind, FastHashMap,
     Field, Gc, GlobalObject, ImmutableArray, IndexingMode, InlineWatchpointSet, JsCell, JsObject,
-    JsString, PropertyNameEnumerator, PropertyNameList, PropertyOffset, PutContext, StaticTable,
-    TypeFlags, Value, Visitor, Vm, WatchpointSet, WatchpointState,
+    JsString, PropertyNameEnumerator, PropertyNameList, PropertyNameMode, PropertyOffset,
+    PutContext, StaticTable, TypeFlags, Value, Visitor, Vm, WatchpointSet, WatchpointState,
 };
 
 /// The address of a shape in 32 bits. It does not keep the shape alive, except in the header of a cell.
@@ -198,6 +198,10 @@ pub struct Properties(Option<Rc<PropertyTable>>);
 impl Properties {
     pub(super) const NONE: Properties = Properties(None);
 
+    pub(super) fn keys(&self, kinds: PropertyNameMode, mode: DontEnumMode) -> Option<Keys<'_>> {
+        Some(self.0.as_ref()?.keys(kinds, mode))
+    }
+
     /// With those that have been removed.
     pub fn entries(&self) -> &[PropertyEntry] {
         self.0.as_ref().map_or_default(|table| table.entries())
@@ -288,8 +292,12 @@ impl ShapeSpec {
         self
     }
 
+    pub(super) const fn instance_header(self) -> u32 {
+        instance_header(self.indexing_mode, self.cell_type, self.flags)
+    }
+
     pub(super) fn identity(self) -> (&'static Class, u32) {
-        let header = instance_header(self.indexing_mode, self.cell_type, self.flags);
+        let header = self.instance_header();
         let capacity = u32::from(self.inline_capacity);
         (self.class, header & 0x00ff_ffff | capacity << 24)
     }
@@ -877,24 +885,19 @@ impl Shape {
     pub(crate) fn collect_property_names(&self, list: &mut PropertyNameList, mode: DontEnumMode) {
         let properties = self.properties();
         let is_known_unique = list.has_only_indices();
-        for wants_symbols in [false, true] {
-            if !(if wants_symbols {
-                list.includes_symbols()
-            } else {
-                list.includes_strings()
-            }) {
-                continue;
-            }
-            for (name, _, attributes) in properties.iter() {
-                if name.is_symbol() == wants_symbols && mode.includes(attributes) {
-                    if is_known_unique {
-                        list.add_known_unique(name);
-                    } else {
-                        list.add(name);
-                    }
+        let has_private_names = self.has(ShapeFlags::HAS_PRIVATE_NAMES);
+        let private_names = (properties.iter())
+            .take_while(|_| has_private_names)
+            .filter(|&(name, _, attributes)| name.is_private() && mode.includes(attributes));
+        (properties.keys(list.mode(), mode).into_iter().flatten())
+            .chain(private_names.map(|it| it.0))
+            .for_each(|name| {
+                if is_known_unique {
+                    list.add_known_unique(name);
+                } else {
+                    list.add(name);
                 }
-            }
-        }
+            });
     }
 
     pub fn find_static_property(
@@ -951,6 +954,16 @@ impl Shape {
         self.did_add_property(name, attributes);
         self.change_table(|table| table.set_attributes(name, attributes))
             .unwrap_or(PropertyOffset::INVALID)
+    }
+
+    /// The shape has neither properties nor instances yet, and nothing has been removed from the table.
+    pub(super) fn adopt_table(&self, table: PropertyTable) {
+        for (name, offset, attributes) in table.iter() {
+            self.did_add_property(name, attributes);
+            self.set_max_offset(offset);
+        }
+        self.table.set(Some(Rc::new(table)));
+        self.set_flags(ShapeFlags::IS_PINNED);
     }
 
     /// The caller makes room in the only instance and then raises `max_offset`.

@@ -112,6 +112,13 @@ pub(crate) unsafe extern "C" fn clear_below_stack_pointer(lowest: usize) {
     )
 }
 
+/// The frames that come next would not write all the words in which it has left addresses of cells.
+#[inline(never)]
+pub(super) fn clear_what_the_collector_left() {
+    const SIZE: usize = if cfg!(debug_assertions) { 16384 } else { 4096 };
+    core::hint::black_box(&mut [0u8; SIZE]);
+}
+
 /// Loads a word that may be uninitialized or poisoned by a sanitizer.
 ///
 /// # Safety
@@ -127,4 +134,16 @@ pub unsafe fn load_word(address: usize) -> usize {
         core::arch::asm!("ldr {}, [{}]", lateout(reg) word, in(reg) address, options(readonly, nostack, preserves_flags));
     }
     word
+}
+
+/// A hint that the memory, which need not be mapped, is about to be read.
+#[inline(always)]
+pub(super) fn prefetch(address: usize) {
+    // SAFETY: never faults, and changes nothing.
+    unsafe {
+        #[cfg(target_arch = "x86_64")]
+        core::arch::asm!("prefetcht0 [{}]", in(reg) address, options(nomem, nostack, preserves_flags));
+        #[cfg(target_arch = "aarch64")]
+        core::arch::asm!("prfm pldl1keep, [{}]", in(reg) address, options(nomem, nostack, preserves_flags));
+    }
 }

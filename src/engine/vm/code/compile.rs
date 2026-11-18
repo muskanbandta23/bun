@@ -8,7 +8,7 @@ use bun_engine_bytecode::{
     Code, CodeFlags, Compiler, Dump, Eval, EvalContext, FunctionInfo, FunctionRef, Instrumentation,
     Module, Origin, Request, Script, Specialization, StaticScope, verify,
 };
-use bun_engine_syntax::{PausePosition, SourceCache};
+use bun_engine_syntax::{KnownCapture, KnownFunction, PausePosition, SourceCache};
 pub use bun_engine_syntax::{
     Error as CompileError, ErrorKind as CompileErrorKind, Recovery as CompileErrorRecovery,
 };
@@ -62,10 +62,32 @@ impl Vm {
             .code_cache
             .borrow_mut()
             .clear();
+        self.forget_static_builtins();
     }
 
     pub fn clear_source_caches(&self) {
         self.services.code.compilation.source_caches.take();
+    }
+
+    /// Before anything in the text is compiled. See `SourceCache::add_known`.
+    pub fn add_known_functions(
+        &self,
+        provider: &SourceProvider,
+        functions: &[KnownFunction],
+        captures: &[KnownCapture],
+    ) {
+        if !options().use_source_cache {
+            return;
+        }
+        let source = provider.source();
+        let mut kept = KeptSourceCache {
+            _source: source.clone(),
+            cache: SourceCache::default(),
+            was_used: true,
+        };
+        kept.cache.add_known(source.len(), functions, captures);
+        let mut caches = self.services.code.compilation.source_caches.borrow_mut();
+        caches.insert(source.address(), kept);
     }
 
     /// Of what has not been used for a while.
@@ -104,13 +126,13 @@ impl Vm {
         let mut new_cache = SourceCache::default();
         let request = Request {
             source,
-            cache: Some(match caches.get_mut(&source.address()) {
+            cache: match caches.get_mut(&source.address()) {
                 Some(kept) => {
                     kept.was_used = true;
-                    &mut kept.cache
+                    Some(&mut kept.cache)
                 }
-                None => &mut new_cache,
-            }),
+                None => options().use_source_cache.then_some(&mut new_cache),
+            },
             host: self,
             instrumentation,
             stack_limit: self.hard_stack_limit(),
@@ -293,7 +315,8 @@ impl Cx {
 
 impl FunctionExecutable {
     pub(super) fn compile(&self, cx: &Cx, specialization: Specialization) -> JsResult<Rc<Code>> {
-        let (function, provider) = (self.info(), self.provider());
+        let this = crate::anchor!(self);
+        let (function, provider) = (this.info(), this.provider());
         let mut instrumentation = cx.global().instrumentation(cx);
         if function.origin().contains(Origin::NO_POSITIONS) {
             instrumentation = Instrumentation::empty();

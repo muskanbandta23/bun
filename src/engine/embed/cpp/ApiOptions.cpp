@@ -1,5 +1,7 @@
 #include "engine/Engine.h"
 
+#include <mutex>
+
 namespace JSC {
 
 Engine::Options Options::s_values;
@@ -34,6 +36,12 @@ void initialize(const ScopedLambda<void()>& customizeOptions)
     auto& options = Options::s_values;
     Engine::options_initialize(&options, sizeof(options));
     customizeOptions();
+#if ASAN_ENABLED && OS(LINUX)
+    // An access out of bounds has to get to the handler of the engine.
+    const char* sanitizerOptions = getenv("ASAN_OPTIONS");
+    if (!sanitizerOptions || !(strstr(sanitizerOptions, "allow_user_segv_handler=1") || strstr(sanitizerOptions, "handle_segv=0")))
+        options.useWasmFastMemory = false;
+#endif
     if (unsigned level = options.dumpOptions) [[unlikely]] {
         dataLogLn(level == 1 ? "Modified JSC options:"_s : "All JSC options:"_s);
         Engine::options_dump(options, level == 1);

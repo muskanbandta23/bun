@@ -24,12 +24,14 @@ fn date_from_components(vm: &Vm, components: &[i32], is_local: bool) -> f64 {
     }
 }
 
+/// Also of a time that is less than a day outside the range of time values.
 #[export]
 fn date_fields(vm: &Vm, time: f64, is_local: bool) -> u64 {
+    let cache = vm.date_cache();
     let fields = if is_local {
-        vm.date_cache().local_fields(time.floor())
+        (cache.local_fields(time)).or_else(|| DateFields::in_zone(time, cache.time_zone()))
     } else {
-        vm.date_cache().utc_fields(time.floor())
+        cache.utc_fields(time).or_else(|| DateFields::utc(time))
     };
     fields.map_or(0, DateFields::to_bits)
 }
@@ -41,7 +43,7 @@ fn date_parse(vm: &Vm, text: Text<'_>) -> f64 {
 
 #[export]
 fn date_to_utc_string(time: f64) -> StringRef {
-    DateFields::utc(time.floor()).map_or_else(
+    DateFields::utc(time).map_or_else(
         || names::invalidDate.to_identifier().into_string(),
         utc_string,
     )

@@ -245,9 +245,14 @@ impl JsCell {
     /// After storing what may be a cell.
     #[inline(always)]
     pub fn write_barrier_for_cell(&self) {
-        if self.state() <= barrier::threshold() {
+        if self.needs_write_barrier() {
             barrier::slow_path(self);
         }
+    }
+
+    #[inline(always)]
+    pub(crate) fn needs_write_barrier(&self) -> bool {
+        self.state() <= barrier::threshold()
     }
 
     /// Keeps a marker from reading what the cell owns while it is rearranged.
@@ -276,8 +281,15 @@ impl JsCell {
     }
 
     #[inline(always)]
-    pub fn heap(&self) -> &Heap {
+    pub(crate) fn heap(&self) -> &Heap {
         container::of(self.address()).heap()
+    }
+
+    /// # Safety
+    /// The caller has the right to use it: see `Cx::from_global`.
+    #[inline(always)]
+    pub unsafe fn heap_unchecked(&self) -> &Heap {
+        self.heap()
     }
 
     pub fn cell_size(&self) -> usize {

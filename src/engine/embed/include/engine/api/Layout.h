@@ -182,7 +182,7 @@ ENGINE_CONSTANT(CallFrame_argument_count, 32, CallFrame::OFFSET_OF_ARGUMENT_COUN
 ENGINE_CONSTANT(CallFrame_this, 40, CallFrame::OFFSET_OF_THIS)
 ENGINE_CONSTANT(CallFrame_arguments, 48, CallFrame::OFFSET_OF_ARGUMENTS)
 ENGINE_CONSTANT(nativeCalleeTag, 3, Value::NATIVE_CALLEE_TAG)
-ENGINE_SIZE(EntryRecord, 16)
+ENGINE_SIZE(EntryRecord, 24)
 ENGINE_OFFSET(Exception, value, 8)
 
 ENGINE_OFFSET(SourceProvider, ref_count, 8)
@@ -290,6 +290,20 @@ ENGINE_OFFSET(StackFrame, is_wasm, 21)
 ENGINE_SIZE(StackTrace, 16)
 ENGINE_OFFSET(StackTrace, capacity, 8)
 ENGINE_OFFSET(StackTrace, length, 12)
+ENGINE_OFFSET(Executable, call_code_block, 24)
+ENGINE_OFFSET(Executable, construct_code_block, 32)
+ENGINE_OFFSET(CodeBlock, executable, 72)
+ENGINE_SIZE(Position, 12)
+ENGINE_SIZE(BuiltinOutline, 16)
+ENGINE_OFFSET(BuiltinOutline, is_async, 12)
+ENGINE_SIZE(KnownFunction, 12)
+ENGINE_SIZE(KnownCapture, 12)
+ENGINE_SIZE(ParserError, 24)
+ENGINE_OFFSET(ParserError, token_start, 8)
+ENGINE_OFFSET(ParserError, line, 16)
+ENGINE_OFFSET(ParserError, is_valid, 20)
+ENGINE_OFFSET(ParserError, kind, 21)
+ENGINE_OFFSET(ParserError, recovery, 22)
 
 // Buffers, WebAssembly and FFI
 ENGINE_CONSTANT(maxArrayBufferSize, 0x100000000, MAX_ARRAY_BUFFER_SIZE)
@@ -369,6 +383,13 @@ ENGINE_CONSTANT(Environment_parent, 8, Environment::OFFSET_OF_PARENT)
 ENGINE_CONSTANT(Environment_template, 16, Environment::OFFSET_OF_TEMPLATE)
 
 // Inspector, profilers and options
+ENGINE_SIZE(BlockRange, 24)
+ENGINE_CONSTANT(BlockRange_has_executed, 8, offset_of!(BlockRange, has_executed))
+ENGINE_CONSTANT(BlockRange_is_in_loop_header, 9, offset_of!(BlockRange, is_in_loop_header))
+ENGINE_CONSTANT(BlockRange_execution_count, 16, offset_of!(BlockRange, execution_count))
+ENGINE_SIZE(CodeRange, 12)
+ENGINE_CONSTANT(CodeRange_kind, 8, offset_of!(CodeRange, kind))
+ENGINE_CONSTANT(CodeRange_has_executed, 9, offset_of!(CodeRange, has_executed))
 
 } // namespace Engine::Layout
 

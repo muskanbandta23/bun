@@ -70,6 +70,10 @@ impl JsObjectInit {
         JsObjectInit { shape, storage }
     }
 
+    pub fn storage(&self) -> Storage {
+        self.storage
+    }
+
     /// # Safety
     /// The storage is initialized, is what the shape describes, and refers to no cell that nothing else keeps alive
     /// until the object exists.
@@ -663,6 +667,7 @@ impl JsObject {
         self.did_change_as_prototype(vm, &new);
     }
 
+    #[inline(always)]
     pub fn is_callable(&self) -> bool {
         CellType::FUNCTIONS.contains(self.cell_type())
             || (self.inline_flags().contains(TypeFlags::OVERRIDES_CALL_DATA)

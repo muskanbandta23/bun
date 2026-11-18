@@ -304,7 +304,7 @@ fn hash_depends_on_sign_and_on_every_digit() {
 #[test]
 fn long_operations_poll() {
     let x = apply("-", &apply("<<", &big("1"), &big("4000000")), &big("12345"));
-    let y = apply("-", &apply("<<", &big("1"), &big("2000000")), &big("777"));
+    let y = apply("+", &apply("<<", &big("1"), &big("2000000")), &big("777"));
     let cache = DivisorCache::default();
     for (x, operator, y) in [
         (&x, "*", &y),

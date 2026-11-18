@@ -8,16 +8,17 @@ use bun_engine_bytecode::{
 use bun_engine_text::{StringWriter, Text, names};
 use bun_engine_vm::heap::Scope;
 use bun_engine_vm::{
-    BuiltinOutline, DontEnumMode, ElementKind, Environment, FunctionExecutable, GlobalObject,
-    GlobalProxy, InternalFieldTuple, JsFunction, JsPromise, ModuleLoader, ModuleNamespace,
-    PropertyDescriptor, PropertyNameMode, ScopeTemplate, SourceType, StackVisitor, Tier,
-    describe_builtin, options, origin_of_caller,
+    BuiltinOutline, DontEnumMode, Environment, FunctionExecutable, GlobalObject, GlobalProxy,
+    InternalFieldTuple, JsFunction, JsPromise, ModuleLoader, ModuleNamespace, PropertyDescriptor,
+    PropertyNameMode, ScopeTemplate, SourceType, StackVisitor, Tier, describe_builtin, options,
+    origin_of_caller,
 };
 
 use super::tiers::{code_block_of, executable_of};
 use super::{coverage, define_functions, heap_profiler, return_undefined, tiers, values};
-use super::{dollar, heap, io, object_with, return_false, scripts, string, tasks, test_objects};
+use super::{dollar, heap, io, object_with, return_false, string, tasks, test_objects};
 use crate::files;
+use crate::global::define_hidden;
 use crate::prelude::*;
 
 const FUNCTIONS: Functions = &[
@@ -73,7 +74,7 @@ const FUNCTIONS: Functions = &[
     // Functions and realms
     ("createBuiltin", create_builtin, 2),
     ("createEmptyFunctionWithName", create_named_function, 1),
-    ("createGlobalObject", scripts::create_global_object, 0),
+    ("createGlobalObject", create_global_object, 0),
     ("createGlobalProxy", create_global_proxy, 1),
     ("globalObjectForObject", dollar::global_object_for, 1),
     ("callFromCPP", call_repeatedly, 2),
@@ -215,25 +216,8 @@ fn code_block_of_frame(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 
 #[native_abi]
 fn indexing_mode(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
-    let Some(mode) = frame.argument(0).as_object().map(|it| it.indexing_mode()) else {
-        return Ok(Value::UNDEFINED);
-    };
-    let elements = match mode.kind() {
-        ElementKind::None if mode.is_array() => "Class",
-        ElementKind::None => "",
-        _ if mode.is_slow_put() => "WithSlowPutArrayStorage",
-        ElementKind::Undecided => "WithUndecided",
-        ElementKind::Int32 => "WithInt32",
-        ElementKind::Double => "WithDouble",
-        ElementKind::Contiguous => "WithContiguous",
-        ElementKind::Sparse => "WithArrayStorage",
-    };
-    let prefix = match (mode.is_array(), mode.is_copy_on_write()) {
-        (false, _) => "Non",
-        (true, false) => "",
-        (true, true) => "CopyOnWrite",
-    };
-    Ok(string(cx, &format!("{prefix}Array{elements}")))
+    let object = frame.argument(0).as_object();
+    Ok(object.map_or_default(|it| string(cx, &values::indexing_mode_name(&it))))
 }
 
 fn realm_of_argument(cx: &Cx, frame: &CallFrame, caller: &str) -> JsResult<Gc<GlobalObject>> {
@@ -323,10 +307,22 @@ fn create_named_function(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     Ok(JsFunction::native(cx, 1, &name, create_named_function).into())
 }
 
+/// The global object itself, which has nothing of the shell but `$vm`. The argument is its prototype.
+#[native_abi]
+fn create_global_object(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let global = GlobalObject::create(cx, cx.global().hooks());
+    if frame.argument(0).is_object() {
+        global.set_prototype_direct(cx, frame.argument(0));
+    }
+    let cx = cx.in_realm(global);
+    define_hidden(cx, "$vm", create(cx).into());
+    Ok(global.into())
+}
+
 #[native_abi]
 fn create_global_proxy(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
-    let proxy = frame.argument(0).downcast::<GlobalProxy>();
-    Ok(proxy.map_or_default(|it| GlobalProxy::create(cx, it.target()).into()))
+    let global = frame.argument(0).downcast::<GlobalObject>();
+    Ok(global.map_or_default(|it| GlobalProxy::create(cx, it).into()))
 }
 
 #[native_abi]
@@ -438,7 +434,7 @@ fn count_lazy_functions(_: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 #[native_abi]
 fn set_time_zone(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let name = frame.argument(0).to_string_view(cx)?;
-    Ok(cx.set_time_zone(name.text()).into())
+    Ok(bun_engine_date::set_time_zone_override(name.text()).into())
 }
 
 #[native_abi]

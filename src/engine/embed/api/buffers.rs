@@ -5,8 +5,8 @@ use bun_alloc::AllocError;
 use bun_engine_macros::export;
 use bun_engine_vm::{
     ArrayBuffer, ArrayBufferContents, ArrayBufferRef, BufferAccessor, CopyOrder, Cx, FreeBytes, Gc,
-    JsArrayBuffer, JsArrayBufferView, JsObject, JsResult, JsTypedArray, NativeFunction, Shape, Vm,
-    is_shape_of_resizable_view,
+    JsArrayBuffer, JsArrayBufferView, JsObject, JsResult, JsTypedArray, JsUint8Array,
+    NativeFunction, Shape, Vm, is_shape_of_resizable_view,
 };
 
 use crate::abi::returned_as_pointer;
@@ -134,13 +134,8 @@ unsafe fn array_buffer_transfer(
 }
 
 #[export]
-fn js_array_buffer_create(
-    vm: &Vm,
-    shape: Gc<Shape>,
-    buffer: &ArrayBuffer,
-    already_reported: usize,
-) -> Gc<JsArrayBuffer> {
-    JsArrayBuffer::create_with_reported_bytes(vm, shape, buffer, already_reported)
+fn js_array_buffer_create(vm: &Vm, shape: Gc<Shape>, buffer: &ArrayBuffer) -> Gc<JsArrayBuffer> {
+    JsArrayBuffer::create(vm, shape, buffer)
 }
 
 /// The shape, or its counterpart if it is for the other kind of buffer.
@@ -204,7 +199,7 @@ fn view_is_out_of_bounds(view: &JsArrayBufferView) -> bool {
 #[export]
 unsafe fn view_create_buffer(view: &JsArrayBufferView) -> *mut ArrayBuffer {
     // SAFETY: Rust does not call out while it borrows the elements.
-    let buffer = unsafe { view.buffer_unchecked(view.heap().vm()) };
+    let buffer = unsafe { view.buffer_unchecked(view.heap_unchecked().vm()) };
     buffer.map_or(core::ptr::null_mut(), |it| (&raw const *it).cast_mut())
 }
 
@@ -216,7 +211,7 @@ fn view_js_buffer(view: &JsArrayBufferView, cx: &mut Cx) -> JsResult<Gc<JsArrayB
 #[export]
 unsafe fn view_try_pin(view: &JsArrayBufferView) -> bool {
     // SAFETY: as above.
-    unsafe { view.pin(view.heap().vm()) }.is_ok()
+    unsafe { view.pin(view.heap_unchecked().vm()) }.is_ok()
 }
 
 #[export]
@@ -237,6 +232,17 @@ unsafe fn typed_array_create_uninitialized(
 ) -> JsResult<Gc<JsTypedArray>> {
     // SAFETY: C++ writes them.
     unsafe { JsTypedArray::create_uninitialized(cx, shape, length) }
+}
+
+#[export]
+unsafe fn uint8_array_adopt(
+    vm: &Vm,
+    shape: Gc<Shape>,
+    data: *const u8,
+    length: usize,
+) -> Gc<JsTypedArray> {
+    // SAFETY: C++ gives the allocation up.
+    unsafe { JsUint8Array::adopt(vm, shape, data.cast_mut(), length) }.upcast()
 }
 
 #[export]

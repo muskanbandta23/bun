@@ -531,6 +531,8 @@ pub struct Stubs {
     /// Called, so that the return address tells where. The frame is entered and filled in, and the stack pointer is
     /// anywhere in the stack.
     pub traps: [usize; Trap::COUNT],
+    /// Does [`Operation::WriteBarrier`] for the cell in [`SLOT`]. Keeps all registers that a jump keeps.
+    pub write_barrier: usize,
     /// Called from the prologue of baseline code, once the stack is checked. Keeps all registers.
     pub tier_up_at_entry: usize,
     /// Called from the start of a loop with its index in [`SLOT`]. Returns in [`SLOT`] zero or the address at which

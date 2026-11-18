@@ -17,7 +17,7 @@ icu_functions! {
     fn uloc_toUnicodeLocaleType(key: *const c_char, value: *const c_char) -> *const c_char;
     fn uloc_addLikelySubtags(locale: *const c_char, out: *mut u8, capacity: i32, status: &mut Status) -> i32;
     fn uloc_minimizeSubtags(locale: *const c_char, out: *mut u8, capacity: i32, status: &mut Status) -> i32;
-    fn uloc_getCharacterOrientation(locale: *const c_char, status: &mut Status) -> i32;
+    fn uloc_isRightToLeft(locale: *const c_char) -> i8;
 }
 
 /// # Safety
@@ -74,24 +74,10 @@ pub fn minimize_subtags(locale: &CStr) -> Result<Buffer<u8>> {
     })
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Orientation {
-    LeftToRight,
-    RightToLeft,
-    TopToBottom,
-    BottomToTop,
-}
-
-/// Of the characters in a line.
-pub fn character_orientation(locale: &CStr) -> Result<Orientation> {
+/// Of the script that `locale` names, or of its likely one.
+pub fn is_right_to_left(locale: &CStr) -> bool {
     // SAFETY: `locale` is terminated.
-    let layout = call(|status| unsafe { uloc_getCharacterOrientation(locale.as_ptr(), status) })?;
-    Ok(match layout {
-        1 => Orientation::RightToLeft,
-        2 => Orientation::TopToBottom,
-        3 => Orientation::BottomToTop,
-        _ => Orientation::LeftToRight,
-    })
+    unsafe { uloc_isRightToLeft(locale.as_ptr()) != 0 }
 }
 
 /// Fails unless all of `tag` is a BCP 47 language tag.

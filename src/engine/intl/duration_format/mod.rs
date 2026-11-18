@@ -24,7 +24,6 @@ pub use options::{
 use crate::error::IcuResult;
 use crate::number_format::Skeleton;
 use crate::numbering_system::NumericLocale;
-use crate::once::get_or_make;
 use crate::parts::new_string;
 use crate::{Cache, LanguageTag, NumberingSystem, PartKind, Parts, Result};
 use elements::{Element, Magnitude, elements};
@@ -88,11 +87,12 @@ impl DurationFormat {
     }
 
     fn time_separator(&self) -> Result<&[u16]> {
-        get_or_make(&self.time_separator, || {
-            let found = find_time_separator(&self.icu_locale, self.locale.numbering_system()?);
-            Ok(found.unwrap_or_else(|_| Buffer::from_slice(&[b':'.into()])))
-        })
-        .map(|separator| &**separator)
+        (self.time_separator)
+            .get_or_try_init(|| {
+                let found = find_time_separator(&self.icu_locale, self.locale.numbering_system()?);
+                Ok(found.unwrap_or_else(|_| Buffer::from_slice(&[b':'.into()])))
+            })
+            .map(|separator| &**separator)
     }
 
     fn skeleton(&self, unit: Unit) -> Skeleton {
@@ -120,10 +120,11 @@ impl DurationFormat {
     }
 
     fn format_number(&self, element: &Element, result: &mut FormattedNumber) -> Result<()> {
-        let formatter = get_or_make(&self.number_formatters[element.unit as usize], || {
-            NumberFormatter::open(&self.skeleton(element.unit), &self.icu_locale)
-        })
-        .or_type_error("Failed to initialize NumberFormat")?;
+        let formatter = (self.number_formatters[element.unit as usize])
+            .get_or_try_init(|| {
+                NumberFormatter::open(&self.skeleton(element.unit), &self.icu_locale)
+            })
+            .or_type_error("Failed to initialize NumberFormat")?;
         match element.magnitude {
             Magnitude::Whole(number) if element.shows_minus_sign => {
                 formatter.format_double(-number, result)

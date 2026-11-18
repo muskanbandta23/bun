@@ -30,22 +30,29 @@ fn pack_subtags<'a>(subtags: impl Iterator<Item = &'a [u8]>) -> Option<u128> {
 
 /// The [[AvailableLocales]] of a constructor.
 pub struct AvailableLocales {
-    sorted: Box<[u128]>,
+    load: fn() -> Box<[u128]>,
+    sorted: OnceLock<Box<[u128]>>,
 }
 
 impl AvailableLocales {
     pub fn collator() -> &'static AvailableLocales {
-        static LOCALES: OnceLock<AvailableLocales> = OnceLock::new();
-        LOCALES.get_or_init(|| AvailableLocales::new(bun_icu::collator::available_locales()))
+        static LOCALES: AvailableLocales = AvailableLocales {
+            load: || AvailableLocales::sort(bun_icu::collator::available_locales()),
+            sorted: OnceLock::new(),
+        };
+        &LOCALES
     }
 
     /// Of the other constructors.
     pub fn general() -> &'static AvailableLocales {
-        static LOCALES: OnceLock<AvailableLocales> = OnceLock::new();
-        LOCALES.get_or_init(|| AvailableLocales::new(bun_icu::locale::available()))
+        static LOCALES: AvailableLocales = AvailableLocales {
+            load: || AvailableLocales::sort(bun_icu::locale::available()),
+            sorted: OnceLock::new(),
+        };
+        &LOCALES
     }
 
-    fn new(ids: impl Iterator<Item = &'static CStr>) -> AvailableLocales {
+    fn sort(ids: impl Iterator<Item = &'static CStr>) -> Box<[u128]> {
         let mut tags = Vec::with_capacity(ids.size_hint().1.unwrap_or(0));
         for id in ids {
             let subtags = Subtags::new(id.to_bytes());
@@ -63,18 +70,21 @@ impl AvailableLocales {
         }
         tags.sort_unstable();
         tags.dedup();
-        AvailableLocales {
-            sorted: tags.into(),
-        }
+        tags.into()
     }
 
     fn contains(&self, tag: &[u8]) -> bool {
-        pack(tag).is_some_and(|tag| self.sorted.binary_search(&tag).is_ok())
+        let sorted = self.sorted.get_or_init(self.load);
+        pack(tag).is_some_and(|tag| sorted.binary_search(&tag).is_ok())
     }
 
     /// The longest prefix of `tag` that is available.
     pub(crate) fn lookup<'a>(&self, tag: &'a LanguageTag) -> Option<&'a [u8]> {
         let base_name = tag.base_name();
+        // What every build of ICU has.
+        if matches!(base_name, b"en" | b"en-US") {
+            return Some(base_name);
+        }
         let mut subtags = Subtags::new(base_name);
         let mut length = 0;
         let mut found = None;

@@ -86,7 +86,7 @@ impl IntSwitch {
     }
 }
 
-/// The keys are in `Code::string_switches`, in the same order.
+/// The keys are in `Code::string_switches`, in the same order. The first of equal keys counts.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct StringSwitch {
     pub default: u32,
@@ -125,15 +125,21 @@ pub(crate) struct Tables {
 
 /// The part of code that any thread may read.
 pub struct Body {
-    pub(crate) instructions: Box<[u8]>,
-    pub(crate) kind: CodeKind,
-    pub(crate) flags: CodeFlags,
+    /// The instructions, the layout of the metadata and the positions. Needs no alignment and holds no address.
+    pub(crate) bytes: Box<[u8]>,
+    pub(crate) tables: Option<Box<Tables>>,
+    pub(crate) metadata_kinds: u64,
+    pub(crate) instructions_size: u32,
     pub(crate) locals: u32,
     pub(crate) parameters: u32,
-    pub(crate) metadata: MetadataLayout,
-    pub(crate) positions: Positions,
-    pub(crate) tables: Option<Box<Tables>>,
+    pub(crate) kind: CodeKind,
+    pub(crate) flags: CodeFlags,
+    pub(crate) has_wide_layout: bool,
 }
+
+/// Over a limit of the format, or over the memory that there is.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct TooLarge;
 
 macro_rules! table_getters {
     ($($(#[$doc:meta])* $name:ident: $element:ty,)*) => {$(
@@ -145,9 +151,20 @@ macro_rules! table_getters {
 }
 
 impl Body {
+    pub const MAX_SIZE: u32 = i32::MAX as u32;
+    /// The most locals and the most parameters: the distance in bytes to any slot fits in 31 bits.
+    pub const MAX_FRAME_WORDS: u32 = 1 << 27;
+
     #[inline]
     pub fn instructions(&self) -> &[u8] {
-        &self.instructions
+        &self.bytes[..self.instructions_size as usize]
+    }
+
+    /// `None` if the bytes end early.
+    pub(crate) fn sections(&self) -> Option<(MetadataLayout<'_>, Positions<'_>)> {
+        let rest = self.bytes.get(self.instructions_size as usize..)?;
+        let (layout, rest) = MetadataLayout::read(self.metadata_kinds, self.has_wide_layout, rest)?;
+        Some((layout, Positions::read(rest)?))
     }
 
     pub fn kind(&self) -> CodeKind {
@@ -168,12 +185,12 @@ impl Body {
         self.parameters
     }
 
-    pub fn metadata(&self) -> &MetadataLayout {
-        &self.metadata
+    pub fn metadata(&self) -> MetadataLayout<'_> {
+        self.sections().expect("verified").0
     }
 
-    pub fn positions(&self) -> &Positions {
-        &self.positions
+    pub fn positions(&self) -> Positions<'_> {
+        self.sections().expect("verified").1
     }
 
     table_getters! {

@@ -6,7 +6,10 @@ use smallvec::SmallVec;
 use super::digit_options::{
     DigitOptions, DigitRange, RoundingIncrement, RoundingMode, RoundingType, TrailingZeroDisplay,
 };
-use super::{CompactDisplay, Notation};
+use super::options::{
+    CompactDisplay, CurrencyDisplay, CurrencySign, Grouping, Notation, Options, SignDisplay,
+    StyleOptions, UnitDisplay,
+};
 
 /// A number skeleton of ICU. What is the default there is left out.
 #[derive(Default)]
@@ -32,6 +35,63 @@ impl Skeleton {
     fn append_range(&mut self, required: u8, range: DigitRange) {
         self.append_repeated(required, range.minimum.into());
         self.append_repeated(b'#', range.maximum.saturating_sub(range.minimum).into());
+    }
+
+    fn push_style(&mut self, style: StyleOptions) {
+        let width = match style {
+            StyleOptions::Decimal => return,
+            StyleOptions::Percent => return self.push_stem("percent scale/100"),
+            StyleOptions::Currency {
+                currency, display, ..
+            } => {
+                self.push_stem("currency/");
+                self.append(&currency.code());
+                match display {
+                    CurrencyDisplay::Code => "unit-width-iso-code",
+                    CurrencyDisplay::Symbol => return,
+                    CurrencyDisplay::NarrowSymbol => "unit-width-narrow",
+                    CurrencyDisplay::Name => "unit-width-full-name",
+                }
+            }
+            StyleOptions::Unit { unit, display } => {
+                self.push_stem("unit/");
+                self.append(&unit.identifier());
+                match display {
+                    UnitDisplay::Short => return,
+                    UnitDisplay::Narrow => "unit-width-narrow",
+                    UnitDisplay::Long => "unit-width-full-name",
+                }
+            }
+        };
+        self.push_stem(width);
+    }
+
+    fn push_sign_display(&mut self, display: SignDisplay, style: StyleOptions) {
+        let sign = match style {
+            StyleOptions::Currency { sign, .. } => sign,
+            _ => CurrencySign::Standard,
+        };
+        self.push_stem(match (sign, display) {
+            (_, SignDisplay::Never) => "sign-never",
+            (CurrencySign::Standard, SignDisplay::Auto) => return,
+            (CurrencySign::Standard, SignDisplay::Always) => "sign-always",
+            (CurrencySign::Standard, SignDisplay::ExceptZero) => "sign-except-zero",
+            (CurrencySign::Standard, SignDisplay::Negative) => "sign-negative",
+            (CurrencySign::Accounting, SignDisplay::Auto) => "sign-accounting",
+            (CurrencySign::Accounting, SignDisplay::Always) => "sign-accounting-always",
+            (CurrencySign::Accounting, SignDisplay::ExceptZero) => "sign-accounting-except-zero",
+            (CurrencySign::Accounting, SignDisplay::Negative) => "sign-accounting-negative",
+        });
+    }
+
+    fn push_grouping(&mut self, grouping: Option<Grouping>, notation: Notation) {
+        self.push_stem(match grouping {
+            Some(default) if default == Grouping::default_for(notation) => return,
+            None => "group-off",
+            Some(Grouping::Min2) => "group-min2",
+            Some(Grouping::Auto) => "group-auto",
+            Some(Grouping::Always) => "group-on-aligned",
+        });
     }
 
     pub(crate) fn push_digit_options(&mut self, options: &DigitOptions) {
@@ -106,6 +166,18 @@ impl Skeleton {
             (Notation::Compact, CompactDisplay::Short) => "compact-short",
             (Notation::Compact, CompactDisplay::Long) => "compact-long",
         });
+    }
+}
+
+impl From<&Options> for Skeleton {
+    fn from(options: &Options) -> Skeleton {
+        let mut skeleton = Skeleton::default();
+        skeleton.push_style(options.style);
+        skeleton.push_digit_options(&options.digits);
+        skeleton.push_notation(options.notation, options.compact_display);
+        skeleton.push_sign_display(options.sign_display, options.style);
+        skeleton.push_grouping(options.grouping, options.notation);
+        skeleton
     }
 }
 

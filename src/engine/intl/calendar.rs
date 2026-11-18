@@ -10,26 +10,6 @@ use crate::language_tag::Key;
 use crate::locale_resolver::LocaleResolver;
 use crate::{KeywordValue, Result};
 
-/// AvailableCalendars
-pub(crate) const AVAILABLE: [&str; 16] = [
-    "buddhist",
-    "chinese",
-    "coptic",
-    "dangi",
-    "ethioaa",
-    "ethiopic",
-    "gregory",
-    "hebrew",
-    "indian",
-    "islamic-civil",
-    "islamic-tbla",
-    "islamic-umalqura",
-    "iso8601",
-    "japanese",
-    "persian",
-    "roc",
-];
-
 pub(crate) fn bcp47_name(icu_name: &[u8]) -> &[u8] {
     match icu_name {
         b"ethiopic-amete-alem" => b"ethioaa",

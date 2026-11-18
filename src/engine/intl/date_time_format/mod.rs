@@ -36,10 +36,9 @@ pub use value::DateTimeValue;
 use crate::error::IcuResult;
 use crate::language_tag::Key;
 use crate::locale_resolver::{LocaleResolver, ResolvedLocale};
-use crate::once::get_or_make;
 use crate::{
-    AvailableLocales, Cache, Error, HourCycle, KeywordValue, LanguageTag, Named, NumberingSystem,
-    Parts, Result, Source, calendar,
+    AvailableLocales, Cache, Error, HourCycle, LanguageTag, Named, NumberingSystem, Parts, Result,
+    Source, calendar,
 };
 use era::EarlyEra;
 use layout::{FORMAT_FAILURE, Layout};
@@ -128,14 +127,15 @@ impl DateLocale {
     }
 
     fn calendar(&self) -> Result<CalendarId> {
-        get_or_make(&self.calendar, || calendar::default_for(&self.icu_locale)).copied()
+        (self.calendar)
+            .get_or_try_init(|| calendar::default_for(&self.icu_locale))
+            .copied()
     }
 
     fn numbering_system(&self) -> Result<NumberingSystem> {
-        get_or_make(&self.numbering_system, || {
-            NumberingSystem::default_for(&self.icu_locale)
-        })
-        .copied()
+        (self.numbering_system)
+            .get_or_try_init(|| NumberingSystem::default_for(&self.icu_locale))
+            .copied()
     }
 
     fn icu_locale_with(&self, hour_cycle: Option<HourCycle>) -> Result<CText> {
@@ -274,9 +274,8 @@ impl State {
         let Some(temporal_type) = moment.temporal_type else {
             return Ok((&self.layout, moment));
         };
-        let layout = get_or_make(&self.temporal_layouts[temporal_type as usize], || {
-            self.make_temporal_layout(cache, temporal_type)
-        })?;
+        let layout = (self.temporal_layouts[temporal_type as usize])
+            .get_or_try_init(|| self.make_temporal_layout(cache, temporal_type))?;
         match layout {
             TemporalLayout::OfTimeValues => Ok((&self.layout, moment)),
             TemporalLayout::Own(layout) => Ok((layout, moment)),
@@ -287,7 +286,8 @@ impl State {
     }
 
     fn writer(&self, cache: &Cache) -> Result<&Writer> {
-        get_or_make(&self.writer, || cache.dates.writer(&self.locale.icu_locale))
+        (self.writer)
+            .get_or_try_init(|| cache.dates.writer(&self.locale.icu_locale))
             .map(|writer| &**writer)
             .or_type_error(INITIALIZE_FAILURE)
     }
@@ -297,10 +297,9 @@ impl State {
         if moment.is_plain() {
             return Ok(writer.utc_calendar());
         }
-        get_or_make(&self.zoned_calendar, || {
-            writer.new_calendar(self.time_zone).map(RefCell::new)
-        })
-        .or_type_error(INITIALIZE_FAILURE)
+        (self.zoned_calendar)
+            .get_or_try_init(|| writer.new_calendar(self.time_zone).map(RefCell::new))
+            .or_type_error(INITIALIZE_FAILURE)
     }
 
     fn write<T>(
@@ -321,7 +320,7 @@ impl State {
     }
 
     fn range_format<'a>(&self, layout: &'a Layout) -> Result<&'a DateIntervalFormat> {
-        get_or_make(&layout.range_format, || {
+        (layout.range_format).get_or_try_init(|| {
             // ICU takes from the skeleton only whether the clock has twelve hours.
             let locale = (self.locale).icu_locale_with(pattern::hour_cycle(&layout.pattern))?;
             pattern::skeleton(&layout.pattern)
@@ -429,7 +428,11 @@ impl DateTimeFormat {
     }
 
     /// For a format that was made with `Purpose::ZonedDateTime` and the time zone of `value`.
-    pub fn format_zoned_date_time(&self, cache: &Cache, value: ZonedDateTime) -> Result<StringRef> {
+    pub fn format_zoned_date_time(
+        &self,
+        cache: &Cache,
+        value: &ZonedDateTime,
+    ) -> Result<StringRef> {
         let calendar = value.calendar();
         if calendar != CalendarId::Iso8601 && calendar != self.0.locale.calendar()? {
             return Err(Error::Range(

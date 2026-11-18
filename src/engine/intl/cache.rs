@@ -2,8 +2,16 @@ use core::cell::RefCell;
 
 use bun_engine_text::{StaticString, StringImpl, StringRef, Text};
 
+use crate::collator::Collator;
 use crate::date_time_format::DateCache;
-use crate::{Error, LanguageTag, Result};
+use crate::default_instances::DefaultInstances;
+use crate::display_names::DisplayNames;
+use crate::list_format::ListFormat;
+use crate::number_format::NumberFormat;
+use crate::plural_rules::PluralRules;
+use crate::recent::RecentSet;
+use crate::segmenter::Segmenter;
+use crate::{Error, LanguageTag, Result, relative_time_format};
 
 const CANONICAL_TAG_SLOTS: usize = 32;
 const MAX_CACHED_TAG_LENGTH: usize = 100;
@@ -15,7 +23,16 @@ pub struct Cache {
     /// By the hash of the tag as it was written.
     canonical_tags: RefCell<[Option<(StringRef, LanguageTag)>; CANONICAL_TAG_SLOTS]>,
     default_locale: RefCell<Option<LanguageTag>>,
+    pub(crate) collators: RecentSet<Collator, 4>,
+    pub(crate) default_collators: DefaultInstances<Collator>,
     pub(crate) dates: DateCache,
+    pub(crate) display_names: RecentSet<DisplayNames, 4>,
+    pub(crate) list_formats: RecentSet<ListFormat, 4>,
+    pub(crate) number_formats: RecentSet<NumberFormat, 8>,
+    pub(crate) default_number_formats: DefaultInstances<NumberFormat>,
+    pub(crate) plural_rules: RecentSet<PluralRules, 4>,
+    pub(crate) relative_time_formatters: RecentSet<relative_time_format::Formatter, 4>,
+    pub(crate) segmenters: RecentSet<Segmenter, 4>,
 }
 
 impl Cache {

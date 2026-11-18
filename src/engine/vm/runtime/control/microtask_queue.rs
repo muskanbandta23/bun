@@ -180,7 +180,7 @@ impl MicrotaskQueue {
     unsafe fn run_all(&self, vm: &Vm, is_outermost: bool) -> JsResult<()> {
         while let Some(task) = self.dequeue() {
             let global = task.global();
-            if global.discards_microtasks().get() {
+            if global.discards_microtasks() {
                 continue;
             }
             if is_outermost {

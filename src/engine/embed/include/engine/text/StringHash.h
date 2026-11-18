@@ -22,6 +22,12 @@ struct AtomStringHash {
     static bool equal(const AtomString& a, const AtomString& b) { return a == b; }
 };
 
+struct ASCIILiteralHash {
+    static unsigned hash(ASCIILiteral key) { return StringHasher::computeHashAndMaskTop8Bits(key.span8()); }
+    static bool equal(ASCIILiteral a, ASCIILiteral b) { return a == b; }
+};
+
+template<> struct DefaultHash<ASCIILiteral> : ASCIILiteralHash {};
 template<> struct DefaultHash<String> : StringHash {};
 template<> struct DefaultHash<AtomString> : AtomStringHash {};
 

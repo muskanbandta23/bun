@@ -40,7 +40,6 @@ public:
     bool has(JSGlobalObject* globalObject, JSValue key) { return Engine::set_has(this, globalObject, key); }
     void add(JSGlobalObject* globalObject, JSValue key) { Engine::set_add(this, globalObject, key); }
     bool remove(JSGlobalObject* globalObject, JSValue key) { return Engine::set_remove(this, globalObject, key); }
-    void clear(JSGlobalObject* globalObject) { Engine::set_clear(this, globalObject->vm()); }
 };
 ENGINE_CLASS_HAS_TYPE(JSSet, JSSetType);
 

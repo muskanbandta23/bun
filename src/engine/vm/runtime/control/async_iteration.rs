@@ -243,14 +243,6 @@ impl JsAsyncFromSyncIterator {
         }
     }
 
-    pub fn sync_iterator(&self) -> Gc<JsObject> {
-        self.sync_iterator
-    }
-
-    pub fn next_method(&self) -> Value {
-        self.next_method
-    }
-
     fn call_method(&self, cx: &mut Cx, method: Value, argument: Option<Value>) -> JsResult<Step> {
         if !method.is_callable() {
             return Err(cx.throw_type_error("Iterator method is not callable."));

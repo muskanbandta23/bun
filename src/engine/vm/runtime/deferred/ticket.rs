@@ -172,14 +172,3 @@ impl Cx {
         weak
     }
 }
-
-impl Vm {
-    pub fn cancel_pending_work_of_realm(&self, realm: &GlobalObject) {
-        let tickets = self.services.deferred.tickets.borrow().clone();
-        for ticket in tickets.iter().filter_map(WeakTicket::upgrade) {
-            if ticket.realm == realm.address() {
-                ticket.cancel();
-            }
-        }
-    }
-}

@@ -12,24 +12,24 @@ public:
 
     DECLARE_INFO;
 
-    static GlobalObject* create(VM& vm, IsoSubspace& space)
+    static GlobalObject* create(VM& vm, IsoSubspace& space, const GlobalObjectMethodTable* methods)
     {
         auto* structure = Structure::create(vm, nullptr, jsNull(), TypeInfo(GlobalObjectType, StructureFlags), info());
-        auto* global = new (NotNull, space.allocate(vm.heap, sizeof(GlobalObject))) GlobalObject(vm, structure);
+        auto* global = new (NotNull, space.allocate(vm.heap, sizeof(GlobalObject))) GlobalObject(vm, structure, methods);
         global->finishCreation(vm);
         return global;
     }
 
 private:
-    GlobalObject(VM& vm, Structure* structure)
-        : Base(vm, structure, &methods)
+    GlobalObject(VM& vm, Structure* structure, const GlobalObjectMethodTable* methods)
+        : Base(vm, structure, methods ? methods : &defaultMethods)
     {
     }
 
     static void trackRejection(JSGlobalObject*, JSPromise*, JSPromiseRejectionOperation operation) { Realm::log(operation == JSPromiseRejectionOperation::Reject ? "reject"_s : "handle"_s); }
     static void reportException(JSGlobalObject* global, Exception* exception) { Realm::log(makeString("uncaught "_s, exception->value().toWTFString(global))); }
 
-    static constexpr GlobalObjectMethodTable methods {
+    static constexpr GlobalObjectMethodTable defaultMethods {
         .promiseRejectionTracker = trackRejection,
         .reportUncaughtExceptionAtEventLoop = reportException,
         .currentScriptExecutionOwner = currentScriptExecutionOwner,
@@ -59,9 +59,9 @@ static VM& createVM()
     return vm;
 }
 
-Realm::Realm()
+Realm::Realm(const GlobalObjectMethodTable* methods)
     : vm(createVM())
-    , global(createGlobalObject())
+    , global(createGlobalObject(methods))
 {
     gcProtect(global);
     takeLog();
@@ -74,9 +74,9 @@ Realm::~Realm()
     vm.deref();
 }
 
-JSGlobalObject* Realm::createGlobalObject()
+JSGlobalObject* Realm::createGlobalObject(const GlobalObjectMethodTable* methods)
 {
-    return GlobalObject::create(vm, static_cast<ClientData*>(vm.clientData)->globalObjects);
+    return GlobalObject::create(vm, static_cast<ClientData*>(vm.clientData)->globalObjects, methods);
 }
 
 JSValue Realm::run(ASCIILiteral source)

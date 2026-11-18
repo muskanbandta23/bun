@@ -37,8 +37,6 @@ TEST(MapAndSet)
     EXPECT(set->size() == 2 && set->has(global, jsNumber(2)) && set->remove(global, jsNumber(1)));
     EXPECT(keys->next(global, value) && value == jsNumber(2) && !keys->next(global, value));
     EXPECT(JSSetIterator::create(vm, global->setIteratorStructure(), set, IterationKind::Entries)->next(global, value) && realm.json(value) == "[2,2]"_s);
-    set->clear(global);
-    EXPECT(!set->size());
 
     EXPECT(is<JSMap>(realm.run("new (class extends Map {})"_s)) && !is<JSMap>(JSValue(set)));
 }

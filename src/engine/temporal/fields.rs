@@ -2,7 +2,7 @@
 //! it as `Field::conversion` says, and hands it over.
 
 use bun_engine_date::TimeZone;
-use bun_engine_text::Text;
+use bun_engine_text::{PropertyName, Text, names};
 
 use crate::calendar::DateFields;
 use crate::integer::saturate;
@@ -62,22 +62,22 @@ impl Field {
         Field::Year,
     ];
 
-    pub const fn property(self) -> &'static str {
+    pub const fn property(self) -> PropertyName<'static> {
         match self {
-            Field::Day => "day",
-            Field::Era => "era",
-            Field::EraYear => "eraYear",
-            Field::Hour => "hour",
-            Field::Microsecond => "microsecond",
-            Field::Millisecond => "millisecond",
-            Field::Minute => "minute",
-            Field::Month => "month",
-            Field::MonthCode => "monthCode",
-            Field::Nanosecond => "nanosecond",
-            Field::Offset => "offset",
-            Field::Second => "second",
-            Field::TimeZone => "timeZone",
-            Field::Year => "year",
+            Field::Day => names::day,
+            Field::Era => names::era,
+            Field::EraYear => names::eraYear,
+            Field::Hour => names::hour,
+            Field::Microsecond => names::microsecond,
+            Field::Millisecond => names::millisecond,
+            Field::Minute => names::minute,
+            Field::Month => names::month,
+            Field::MonthCode => names::monthCode,
+            Field::Nanosecond => names::nanosecond,
+            Field::Offset => names::offset,
+            Field::Second => names::second,
+            Field::TimeZone => names::timeZone,
+            Field::Year => names::year,
         }
     }
 

@@ -408,7 +408,9 @@ impl Vm {
     /// As for `MicrotaskQueueRef::perform_checkpoint_in`.
     pub unsafe fn drain_microtasks_unchecked(&self) -> JsResult<()> {
         // SAFETY: the caller's.
-        unsafe { self.default_microtask_queue().perform_checkpoint_in(self) }
+        unsafe { self.default_microtask_queue().perform_checkpoint_in(self) }?;
+        self.clear_kept_objects();
+        Ok(())
     }
 }
 

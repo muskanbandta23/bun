@@ -1,9 +1,9 @@
-use bun_engine_text::Text;
+use bun_engine_text::{PropertyName, Text, names};
 
 use crate::{Error, InputError, Result, TextError, parse};
 
 macro_rules! calendars {
-    ($($name:ident = $identifier:literal,)*) => {
+    ($($name:ident = $identifier:literal / $atom:ident,)*) => {
         /// An available calendar, by its canonical identifier.
         #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
         #[repr(u8)]
@@ -20,27 +20,34 @@ macro_rules! calendars {
                     $(CalendarId::$name => $identifier,)*
                 }
             }
+
+            /// The identifier, as an atom.
+            pub(crate) const fn name(self) -> PropertyName<'static> {
+                match self {
+                    $(CalendarId::$name => names::$atom,)*
+                }
+            }
         }
     };
 }
 
 calendars! {
-    Buddhist = "buddhist",
-    Chinese = "chinese",
-    Coptic = "coptic",
-    Dangi = "dangi",
-    Ethioaa = "ethioaa",
-    Ethiopic = "ethiopic",
-    Gregory = "gregory",
-    Hebrew = "hebrew",
-    Indian = "indian",
-    IslamicCivil = "islamic-civil",
-    IslamicTbla = "islamic-tbla",
-    IslamicUmalqura = "islamic-umalqura",
-    Iso8601 = "iso8601",
-    Japanese = "japanese",
-    Persian = "persian",
-    Roc = "roc",
+    Buddhist = "buddhist" / buddhist,
+    Chinese = "chinese" / chinese,
+    Coptic = "coptic" / coptic,
+    Dangi = "dangi" / dangi,
+    Ethioaa = "ethioaa" / ethioaa,
+    Ethiopic = "ethiopic" / ethiopic,
+    Gregory = "gregory" / gregory,
+    Hebrew = "hebrew" / hebrew,
+    Indian = "indian" / indian,
+    IslamicCivil = "islamic-civil" / islamicCivil,
+    IslamicTbla = "islamic-tbla" / islamicTbla,
+    IslamicUmalqura = "islamic-umalqura" / islamicUmalqura,
+    Iso8601 = "iso8601" / iso8601,
+    Japanese = "japanese" / japanese,
+    Persian = "persian" / persian,
+    Roc = "roc" / roc,
 }
 
 const ALIASES: [(&str, CalendarId); 2] = [

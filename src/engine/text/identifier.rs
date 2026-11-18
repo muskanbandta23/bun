@@ -71,7 +71,12 @@ impl Atom {
 
     fn from_string_slow(string: &StringImpl) -> Atom {
         Atom(atom_table::add(string.text(), string.hash(), || {
-            if string.is_static() || string.is_symbol() || !string.can_become_atom() {
+            // An atom outlives whoever asked for it, and an embedder may lend characters for no longer than that.
+            if string.borrows_characters()
+                || string.is_static()
+                || string.is_symbol()
+                || !string.can_become_atom()
+            {
                 StringRef::from_text(string.text())
             } else {
                 StringRef::retain(string)
@@ -88,6 +93,10 @@ impl Atom {
             return Some(Atom(StringRef::retain(string)));
         }
         atom_table::find(string.text(), string.hash()).map(Atom)
+    }
+
+    pub fn length_of_longest() -> usize {
+        atom_table::length_of_longest()
     }
 
     pub const fn empty() -> Atom {

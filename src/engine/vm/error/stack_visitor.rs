@@ -18,6 +18,24 @@ pub struct WasmFrame {
     pub is_inlined: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum WasmTier {
+    Interpreter,
+    Baseline,
+    Optimized,
+    OptimizedForLoopEntry,
+    StubFromScript,
+    StubToScript,
+}
+
+/// What a profiler has seen WebAssembly code run.
+pub struct SampledWasmFrame {
+    pub name: bun_engine_text::StringRef,
+    pub tier: WasmTier,
+    /// Of the instruction in the module.
+    pub offset: Option<u32>,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum FrameKind {
@@ -136,7 +154,7 @@ impl<'a> StackVisitor<'a> {
     }
 
     /// Without those that `first` has called.
-    pub fn frames_from(vm: &'a Vm, first: &CallFrame) -> StackVisitor<'a> {
+    pub fn frames_from(vm: &'a Vm, first: *const CallFrame) -> StackVisitor<'a> {
         let mut visitor = Self::frames(vm);
         while visitor.frame.is_some_and(|it| !core::ptr::eq(it, first)) {
             visitor.leave_machine_frame();

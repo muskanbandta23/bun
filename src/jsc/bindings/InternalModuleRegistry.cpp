@@ -80,10 +80,40 @@ static SourceCode makeInternalModuleSource(const String& text, const String& mod
     return JSC::makeSource(text, SourceOrigin(WTF::URL(urlString)), JSC::SourceTaintedOrigin::Untainted, moduleName, TextPosition(), JSC::SourceProviderSourceType::Program, provenance);
 }
 
-// src/codegen/lazy-function-table.ts
-static unsigned prefillSourceProviderCache(JSC::VM&, const SourceCode&, uint32_t)
+static uint32_t readVarint(const uint8_t*& cursor)
 {
-    return 0;
+    uint32_t value = 0;
+    for (unsigned shift = 0;; shift += 7) {
+        uint8_t byte = *cursor++;
+        value |= static_cast<uint32_t>(byte & 0x7f) << shift;
+        if (!(byte & 0x80))
+            return value;
+    }
+}
+
+// src/codegen/lazy-function-table.ts. A debug build has none.
+static bool readLazyFunctionTable(uint32_t id, JSC::KnownFunctions& table)
+{
+    if (InternalModuleRegistryConstants::lazyFunctionTableOffsets[id] == InternalModuleRegistryConstants::lazyFunctionTableOffsets[id + 1])
+        return false;
+    const uint8_t* cursor = InternalModuleRegistryConstants::lazyFunctionTable + InternalModuleRegistryConstants::lazyFunctionTableOffsets[id];
+    for (uint32_t count = readVarint(cursor), start = 0; count--;) {
+        start += readVarint(cursor);
+        uint32_t bits = readVarint(cursor);
+        table.captures.append({ start, bits >> 1, !!(bits & 1) });
+    }
+    for (uint32_t count = readVarint(cursor), closeBrace = 0; count--;) {
+        uint32_t parametersStart = closeBrace + readVarint(cursor);
+        closeBrace = parametersStart + readVarint(cursor);
+        table.functions.append({ parametersStart, closeBrace + 1, readVarint(cursor) });
+    }
+    return true;
+}
+
+static Ref<UnlinkedFunctionExecutable> createInternalModuleExecutable(JSC::VM& vm, const SourceCode& source, const String& moduleName)
+{
+    JSC::BuiltinSourceMetadata metadata { static_cast<unsigned>(strlen("(function ")), 0, static_cast<unsigned>(source.length() - strlen(")\n")), false, false, true };
+    return createBuiltinExecutable(source, metadata, Identifier::fromString(vm, moduleName), ImplementationVisibility::Public);
 }
 
 static const InternalModuleRegistryConstants::ModuleRecord& internalModuleRecord(uint32_t id)
@@ -142,16 +172,15 @@ static NEVER_INLINE JSC::JSValue generateInternalModuleFromText(JSC::JSGlobalObj
         source = makeInternalModuleSource(internalModuleSource(id), moduleName, internalModuleString(m.urlOffset, m.urlLength), internalModuleProvenance(id));
         maybeAddCodeCoverage(vm, source);
 
-        JSC::BuiltinSourceMetadata metadata { static_cast<unsigned>(strlen("(function ")), 0, static_cast<unsigned>(source.length() - strlen(")\n")), false, false, true };
-        executable = createBuiltinExecutable(source, metadata, Identifier::fromString(vm, moduleName), ImplementationVisibility::Public);
+        executable = createInternalModuleExecutable(vm, source, moduleName);
 
         const uint8_t* cachedBytes = nullptr;
         size_t cachedSize = 0;
         uint32_t cachedEntryOffset = 0;
         bool isFromBytecode = Bun__standaloneInternalModuleBytecode(::bunVM(globalObject), id, &cachedBytes, &cachedSize, &cachedEntryOffset)
             && JSC::loadBytecode(vm, *executable, bun_internal_modules_header.sourceStamp, BytecodeLinkEncoder::entry({ cachedBytes, cachedSize }, cachedEntryOffset));
-        if (!isFromBytecode)
-            prefillSourceProviderCache(vm, source, id);
+        if (JSC::KnownFunctions table; !isFromBytecode && readLazyFunctionTable(id, table))
+            table.tellParser(vm, *source.provider());
         (isFromBytecode ? s_internalModulesFromBytecode : s_internalModulesFromSource).fetch_add(1, std::memory_order_relaxed);
         if (outlivesGlobal)
             IsolatedModuleCache::insertInternalModule(vm, id, source, *executable);
@@ -478,9 +507,17 @@ extern "C" bool Bun__BytecodeLinkEncoder__addInternalModuleFromSource(Bun::Bytec
 
 namespace Bun {
 
-static String checkLazyFunctionTable(JSC::VM&, uint32_t, unsigned&)
+static String checkLazyFunctionTable(JSC::VM& vm, uint32_t id, unsigned& lazyFunctionCount)
 {
-    return {};
+    JSC::KnownFunctions table;
+    if (!readLazyFunctionTable(id, table))
+        return {};
+    lazyFunctionCount = table.functions.size();
+    const auto& m = internalModuleRecord(id);
+    String moduleName = internalModuleString(m.nameOffset, m.nameLength);
+    SourceCode source = makeInternalModuleSource(internalModuleSource(id), moduleName, internalModuleString(m.urlOffset, m.urlLength), JSC::SourceProvenance::Static);
+    String mismatch = table.check(vm, createInternalModuleExecutable(vm, source, moduleName));
+    return mismatch.isNull() ? mismatch : makeString("The lazy function table of "_s, moduleName, ": "_s, mismatch);
 }
 
 // bun:internal-for-testing: the bytecode `bun build --compile --bytecode` would embed for a builtin module -- either for

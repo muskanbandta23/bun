@@ -55,9 +55,9 @@ impl JsObject {
         mode: DontEnumMode,
     ) -> JsResult<Gc<ImmutableArray>> {
         if let Some(proxy) = self.downcast::<ProxyObject>()
+            && !proxy.target().is::<ProxyObject>()
             && proxy.forwards_own_keys(cx, mode)
         {
-            cx.check_stack()?;
             return proxy.target().own_key_values(cx, kinds, mode);
         }
         let shape = self.shape();

@@ -9,3 +9,5 @@ mod lower;
 mod passes;
 #[allow(unsafe_code)]
 mod runtime;
+
+pub use runtime::{jettison, tier_up};

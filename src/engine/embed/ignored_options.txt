@@ -17,7 +17,6 @@ flag b3AlwaysFailsBeforeLink
 flag breakOnThrow
 flag clobberAllRegsInFTLICSlowPath
 flag coalesceSpillSlots
-flag collectExtraSamplingProfilerData
 flag countParseTimes
 flag crashIfCantAllocateJITMemory
 flag crashIfInterpreterIsUsed
@@ -267,7 +266,6 @@ flag useRegExpLookbehindJIT
 flag useRunOnceCodeRelease
 flag useSharedModuleFunctionExpressionExecutables
 flag useSourceCodeDump
-flag useSourceProviderCache
 flag useStochasticMutatorScheduler
 flag useSuperSampler
 flag useTextMarkers
@@ -490,8 +488,6 @@ number relaxedProfileCoverageFactorForQuickDFGTierUp
 number reoptimizationRetryCounterMax
 number repatchBufferingCountdown
 number repatchCountForCoolDown
-number samplingProfilerTopBytecodesCount
-number samplingProfilerTopFunctionsCount
 number seedForLICMFuzzer
 number seedOfRandomizingFuzzerAgent
 number seedOfVMRandomForFuzzer

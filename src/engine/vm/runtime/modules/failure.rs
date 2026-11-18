@@ -1,10 +1,10 @@
 //! An error is told which module it is about, and from which stage it is.
 
-use bun_engine_text::{PropertyName, names, private_names};
+use bun_engine_text::{PropertyName, private_names};
 
 use crate::{
-    AbstractModuleRecord, Attributes, Cx, ErrorInstance, Gc, JsResult, JsString, ModuleKeyRef,
-    Value, Vm,
+    AbstractModuleRecord, Attributes, Cx, ErrorInstance, ErrorType, JsResult, LineColumn,
+    ModuleKeyRef, Value, Vm,
 };
 
 #[derive(Clone, Copy)]
@@ -59,11 +59,11 @@ pub(super) fn duplicate(cx: &mut Cx, error: Value) -> JsResult<Value> {
     let Some(error) = error.downcast::<ErrorInstance>() else {
         return Ok(error);
     };
-    let message = error
-        .get_pure(cx, names::message)
-        .and_then(Value::as_string);
-    let message = message.map(|it: Gc<JsString>| it.to_string_ref(cx));
-    let copy = ErrorInstance::new(cx, error.error_type(), message.transpose()?);
+    let message = error.sanitized_message(cx)?;
+    let copy = match error.error_type() {
+        ErrorType::TypeError => ErrorInstance::new(cx, ErrorType::TypeError, message),
+        other => ErrorInstance::with_info(cx, other, message, LineColumn::default(), None, None),
+    };
     for name in [KEY, TYPE, KIND] {
         if let Some(value) = error.get_direct(name) {
             copy.put_direct(cx, name, value, Attributes::NONE);

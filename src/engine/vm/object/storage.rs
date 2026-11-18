@@ -96,6 +96,24 @@ impl Storage {
         }
     }
 
+    /// The same, with `optimal_vector_length`, which it returns too.
+    #[inline(always)]
+    pub(super) fn try_allocate_optimal(
+        vm: &Vm,
+        capacity: usize,
+        length: u32,
+    ) -> Result<(Storage, u32), AllocError> {
+        let size = Self::size(capacity, Some(Self::min_vector_length(length)));
+        let Some(allocator) = vm.heap.auxiliary.allocator_for(size) else {
+            return Ok((Self::try_allocate(vm, 0, capacity, Some(length))?, length));
+        };
+        let vector_length = (allocator.cell_size() / WORD - capacity - 1) as u32;
+        match allocator.try_allocate(&vm.heap) {
+            0 => Err(AllocError),
+            base => Ok((Storage::from_base(base, capacity), vector_length)),
+        }
+    }
+
     /// The slots are empty and the elements are holes. May collect.
     #[inline]
     pub(crate) fn try_create(

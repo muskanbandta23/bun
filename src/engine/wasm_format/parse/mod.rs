@@ -37,7 +37,7 @@ use std::sync::{Arc, OnceLock};
 use self::bodies::Batch;
 pub use self::bodies::{Bodies, ValidatedBodies};
 use self::section::Section;
-use crate::alloc::TryPush;
+use crate::alloc::{TryPush, shrink};
 use crate::error::{Error, ErrorKind};
 use crate::limits::{MAX_FUNCTION_SIZE, MAX_MODULE_SIZE};
 use crate::module::{Chunk, CustomSection, Data, Features, FunctionFlags, Module, ModuleHeader};
@@ -507,9 +507,7 @@ impl Parser {
         rest.extend_from_slice(&self.buffer[size..]);
         let mut bytes = mem::replace(&mut self.buffer, rest);
         bytes.truncate(size);
-        if bytes.capacity() - size > size / 8 {
-            bytes.shrink_to_fit();
-        }
+        shrink(&mut bytes);
 
         let chunk = Chunk {
             start: mem::replace(&mut self.buffer_start, end) as u32,

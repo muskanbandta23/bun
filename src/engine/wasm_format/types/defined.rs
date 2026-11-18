@@ -9,7 +9,7 @@ use super::canonical::{
 };
 use super::layout::StructLayout;
 use super::value::{BlockType, FieldType, HeapType, StorageType, TypeKind, ValType};
-use crate::alloc::{OutOfMemory, TryPush};
+use crate::alloc::{OutOfMemory, TryPush, shrink};
 use crate::index::TypeIndex;
 use crate::limits::MAX_SUBTYPE_DEPTH;
 
@@ -424,10 +424,10 @@ impl TypesBuilder {
     }
 
     pub(crate) fn finish(mut self) -> Types {
-        self.types.definitions.shrink_to_fit();
-        self.types.values.shrink_to_fit();
-        self.types.fields.shrink_to_fit();
-        self.types.groups.shrink_to_fit();
+        shrink(&mut self.types.definitions);
+        shrink(&mut self.types.values);
+        shrink(&mut self.types.fields);
+        shrink(&mut self.types.groups);
         self.types
     }
 

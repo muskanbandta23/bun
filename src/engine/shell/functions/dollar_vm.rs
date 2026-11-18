@@ -15,7 +15,7 @@ use bun_engine_vm::{
 };
 
 use super::tiers::{code_block_of, executable_of};
-use super::{coverage, define_functions, return_undefined, tiers, values};
+use super::{coverage, define_functions, heap_profiler, return_undefined, tiers, values};
 use super::{dollar, heap, io, object_with, return_false, scripts, string, tasks, test_objects};
 use crate::files;
 use crate::prelude::*;
@@ -106,9 +106,15 @@ const FUNCTIONS: Functions = &[
 
 pub(super) fn create(cx: &Cx) -> Gc<JsObject> {
     let vm = object_with(cx, FUNCTIONS, Attributes::CONSTANT);
-    for functions in [coverage::VM_FUNCTIONS, test_objects::FUNCTIONS] {
+    for functions in [
+        coverage::VM_FUNCTIONS,
+        heap_profiler::VM_FUNCTIONS,
+        test_objects::FUNCTIONS,
+    ] {
         define_functions(cx, &vm, functions, Attributes::CONSTANT);
     }
+    let constructor = heap_profiler::simple_object_constructor(cx);
+    super::put(cx, &vm, "SimpleObject", constructor);
     vm
 }
 

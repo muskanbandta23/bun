@@ -220,6 +220,11 @@ impl JsString {
         self.fiber() & Self::IS_ROPE != 0
     }
 
+    /// A rope that stands for a part of another string.
+    pub fn is_unresolved_substring(&self) -> bool {
+        self.is_rope() && self.fiber() & JsRopeString::IS_SUBSTRING != 0
+    }
+
     #[inline(always)]
     pub fn is_substring(&self) -> bool {
         self.fiber() & JsRopeString::IS_SUBSTRING != 0

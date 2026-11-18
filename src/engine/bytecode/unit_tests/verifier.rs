@@ -132,7 +132,7 @@ fn operands_at_their_limits() {
         (ThrowStatic, &[StaticError::COUNT - 1, 0], None),
         (ThrowStatic, &[StaticError::COUNT, 0], bad(0)),
         (DynamicImport, &[ok, ok, ok, ok, ImportPhase::COUNT], bad(4)),
-        (Debug, &[DebugHook::COUNT, ok, ok], bad(0)),
+        (Debug, &[DebugHook::COUNT, ok], bad(0)),
         (NewArray, &[ok, ok, 0, ArrayShape::COUNT], bad(3)),
         (PutById, &[ok, 0, ok, 4], bad(3)),
         (PutById, &[ok, 0, ok, 256], bad(3)),

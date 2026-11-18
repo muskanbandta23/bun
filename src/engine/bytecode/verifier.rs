@@ -97,7 +97,7 @@ const fn required_flags(opcode: Opcode) -> CodeFlags {
         | Opcode::NewArrayWithSpecies
         | Opcode::ToObject => CodeFlags::BUILTIN,
         Opcode::TailCall | Opcode::TailCallVarargs => CodeFlags::HAS_TAIL_CALLS,
-        Opcode::Debug => CodeFlags::HAS_DEBUG_HOOKS,
+        Opcode::Debug | Opcode::DebugAwait => CodeFlags::HAS_DEBUG_HOOKS,
         Opcode::Cover => CodeFlags::HAS_COVERAGE,
         _ => CodeFlags::empty(),
     }

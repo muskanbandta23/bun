@@ -90,6 +90,7 @@ fn constant(formatter: &mut Formatter<'_>, value: &Constant) -> Result {
         Constant::Int32(value) => write!(formatter, "{value}"),
         Constant::Double(value) => write!(formatter, "{value:?}"),
         Constant::String(value) => quote(formatter, value.text()),
+        Constant::LongString(value) => quote(formatter, value.text()),
         Constant::BigInt(literal) => {
             let sign = if literal.is_negative { "-" } else { "" };
             let (digits, radix) = (literal.digits.text(), literal.radix);
@@ -122,7 +123,7 @@ fn scope(formatter: &mut Formatter<'_>, scope: &StaticScope) -> Result {
         formatter,
         "{:?}{}, {} slots, {} undefined, {} mapped",
         scope.kind(),
-        if scope.is_extensible() {
+        if scope.eval_variables_slot().is_some() {
             ", extensible"
         } else {
             ""

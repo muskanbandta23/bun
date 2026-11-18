@@ -233,7 +233,7 @@ impl<'a> Generator<'a> {
             (true, false) => Suspension::AsyncFunction,
             (true, true) => Suspension::AsyncGenerator,
         };
-        if function.is_generator() || flags.contains(FunctionFlags::AWAITS) {
+        if function.is_generator() || self.ast.root.features.contains(Features::AWAITS) {
             self.flags |= CodeFlags::SUSPENDS;
         } else if function.is_async() {
             self.generator = self.empty();

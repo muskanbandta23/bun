@@ -94,6 +94,7 @@ fn function(name: &'static str, kind: FunctionKind) -> FunctionInfo {
         flags: FunctionFlags::STRICT,
         origin: Origin::empty(),
         visibility: Visibility::Public,
+        instance_fields: 0,
         has_own_name: true,
         context: EvalContext::empty(),
         text: 0..9,

@@ -1,16 +1,18 @@
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 use core::mem::offset_of;
 use std::rc::Rc;
 
 use bun_engine_bytecode::{
-    Code, Eval, FunctionKind, FunctionRef, Module, Origin, Script, Specialization, Visibility,
+    Code, Eval, FunctionInfo, FunctionKind, FunctionRef, Module, Origin, Script, Specialization, Visibility,
 };
-use bun_engine_macros::cell;
+use bun_engine_macros::{Trace, cell};
 use bun_engine_text::{StringRef, Text};
 
+use super::eval::EvalKey;
+use crate::heap::{OnceBox, Owned};
 use crate::{
     CellType, CodeBlock, Cx, Field, Gc, InlineWatchpointSet, Intrinsic, JsArray, JsCell,
-    JsFunction, JsResult, JsString, NativeFunction, Shape, SourceCode, SourceProviderRef,
+    JsFunction, JsResult, JsString, NativeFunction, RealmSlot, Shape, SourceCode, SourceProviderRef,
     TracedMap, TypeFlags, Vm, WatchpointState, WeakField, call,
 };
 
@@ -103,6 +105,7 @@ pub struct NativeExecutable {
     length: u32,
     intrinsic: Intrinsic,
     visibility: Visibility,
+    is_named_as_bound: Cell<bool>,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -140,6 +143,7 @@ impl NativeExecutable {
             length,
             intrinsic,
             visibility,
+            is_named_as_bound: Cell::new(false),
         })
     }
 
@@ -192,6 +196,11 @@ impl NativeExecutable {
     pub fn length(&self) -> u32 {
         self.length
     }
+
+    /// Whether scripts see `bound ` in front of the name.
+    pub fn is_named_as_bound(&self) -> &Cell<bool> {
+        &self.is_named_as_bound
+    }
 }
 
 #[cell(cell_type = ProgramExecutable..=FunctionExecutable)]
@@ -199,10 +208,25 @@ pub struct ScriptExecutable {
     base: Executable,
     provider: SourceProviderRef,
     top_level: Option<Gc<ScriptExecutable>>,
-    /// Of the top level: by where the template ends.
-    pub(crate) template_objects: TracedMap<u32, Gc<JsArray>>,
+    rare_data: OnceBox<RareData>,
     never_optimize: Cell<bool>,
+    never_fully_optimize: Cell<bool>,
     never_inline: Cell<bool>,
+}
+
+#[derive(Trace)]
+struct RareData {
+    template_objects: TracedMap<u32, Gc<JsArray>>,
+    evals: TracedMap<EvalKey, Gc<EvalExecutable>>,
+}
+
+impl Default for RareData {
+    fn default() -> RareData {
+        RareData {
+            template_objects: TracedMap::empty(),
+            evals: TracedMap::empty(),
+        }
+    }
 }
 
 impl ScriptExecutable {
@@ -216,7 +240,9 @@ impl ScriptExecutable {
             base: Executable::init(shape, call, construct),
             provider,
             top_level,
+            rare_data: OnceBox::new(),
             never_optimize: Cell::new(false),
+            never_fully_optimize: Cell::new(false),
             never_inline: Cell::new(false),
         }
     }
@@ -230,8 +256,30 @@ impl ScriptExecutable {
         self.top_level.unwrap_or_else(|| self.into())
     }
 
+    /// Of the top level: by where the template ends.
+    pub(crate) fn template_objects(&self) -> Owned<'_, TracedMap<u32, Gc<JsArray>>> {
+        // SAFETY: traced with the rare data.
+        unsafe { Owned::new(self, &self.rare_data.get_or_default().template_objects) }
+    }
+
+    /// What direct `eval` in this code has compiled.
+    pub(super) fn evals(&self) -> Owned<'_, TracedMap<EvalKey, Gc<EvalExecutable>>> {
+        // SAFETY: as above.
+        unsafe { Owned::new(self, &self.rare_data.get_or_default().evals) }
+    }
+
+    /// A built-in whose source is not for scripts and tools to see.
+    pub fn is_private_builtin(&self) -> bool {
+        let function = self.downcast::<FunctionExecutable>();
+        function.is_some_and(|it| it.info.origin().contains(Origin::NO_POSITIONS))
+    }
+
     pub fn never_optimize(&self) -> &Cell<bool> {
         &self.never_optimize
+    }
+
+    pub fn never_fully_optimize(&self) -> &Cell<bool> {
+        &self.never_fully_optimize
     }
 
     pub fn never_inline(&self) -> &Cell<bool> {
@@ -247,6 +295,25 @@ impl ScriptExecutable {
         // SAFETY: what it started with.
         unsafe { self.install(specialization, entry, None) }
     }
+
+    pub(crate) fn unlinked_code(
+        &self,
+        cx: &Cx,
+        specialization: Specialization,
+    ) -> JsResult<Rc<Code>> {
+        if let Some(function) = self.downcast::<FunctionExecutable>() {
+            return function.compile(cx, specialization);
+        }
+        Ok(
+            if let Some(program) = self.downcast::<ProgramExecutable>() {
+                Rc::clone(&program.unit().code)
+            } else if let Some(module) = self.downcast::<ModuleExecutable>() {
+                Rc::clone(&module.unit().code)
+            } else {
+                Rc::clone(&Gc::from(self).cast::<EvalExecutable>().unit().code)
+            },
+        )
+    }
 }
 
 macro_rules! top_level_executables {
@@ -255,7 +322,7 @@ macro_rules! top_level_executables {
         pub struct $name {
             base: ScriptExecutable,
             range: core::ops::Range<u32>,
-            unit: Rc<$unit>,
+            unit: RefCell<Option<Rc<$unit>>>,
         }
 
         impl $name {
@@ -263,12 +330,19 @@ macro_rules! top_level_executables {
                 vm.allocate::<$name>($init {
                     base: ScriptExecutable::init(vm.shapes.$shape(), source.provider.clone(), None),
                     range: source.range(),
-                    unit,
+                    unit: RefCell::new(Some(unit)),
                 })
             }
 
-            pub fn unit(&self) -> &Rc<$unit> {
-                &self.unit
+            /// Panics once the code is released.
+            pub fn unit(&self) -> Rc<$unit> {
+                self.unit.borrow().clone().expect("code that may still run")
+            }
+
+            /// For code that does not run again. Its functions keep the executable alive.
+            pub(crate) fn release_code(&self) {
+                self.clear_code(Specialization::Call);
+                self.unit.take();
             }
 
             pub fn range(&self) -> core::ops::Range<u32> {
@@ -288,6 +362,7 @@ top_level_executables! {
 pub struct FunctionExecutable {
     base: ScriptExecutable,
     info: FunctionRef,
+    shape_slot: RealmSlot,
     /// Valid while at most one function has been made from this.
     singleton_watchpoints: InlineWatchpointSet,
     pub(self) first_function: WeakField<Option<Gc<JsFunction>>>,
@@ -307,12 +382,32 @@ impl FunctionExecutable {
     ) -> Gc<FunctionExecutable> {
         vm.allocate::<FunctionExecutable>(FunctionExecutableInit {
             base: ScriptExecutable::init(vm.shapes.function_executable(), provider, top_level),
+            shape_slot: Self::shape_slot_for(&info),
             info,
             singleton_watchpoints: InlineWatchpointSet::new(WatchpointState::Clear),
             first_function: None,
             cached_source_text: None,
             intrinsic: Cell::new(Intrinsic::None),
         })
+    }
+
+    fn shape_slot_for(info: &FunctionInfo) -> RealmSlot {
+        match (info.is_async(), info.is_generator()) {
+            (true, true) => RealmSlot::async_generator_function_shape,
+            (true, false) => RealmSlot::async_function_shape,
+            (false, true) => RealmSlot::generator_function_shape,
+            _ if info.origin().contains(Origin::BUILTIN) => RealmSlot::builtin_function_shape,
+            _ if info.kind() == FunctionKind::Normal || info.kind().is_class_constructor() => {
+                RealmSlot::function_shape
+            }
+            _ => RealmSlot::method_shape,
+        }
+    }
+
+    /// Where a realm has the shape of the functions that are made from this.
+    #[inline(always)]
+    pub fn shape_slot(&self) -> RealmSlot {
+        self.shape_slot
     }
 
     #[inline(always)]
@@ -339,6 +434,26 @@ impl FunctionExecutable {
         self.info.name_text(self.provider().text())
     }
 
+    fn is_default_constructor(&self) -> bool {
+        self.info.origin().contains(Origin::DEFAULT_CONSTRUCTOR)
+    }
+
+    /// The text that the positions in the code refer to.
+    pub fn code_provider(&self) -> SourceProviderRef {
+        if self.is_default_constructor() {
+            return self.heap().vm().default_constructor_provider(&self.info);
+        }
+        self.provider().clone()
+    }
+
+    /// In that text.
+    pub fn parameters_start(&self) -> u32 {
+        if self.is_default_constructor() {
+            return "(function ".len() as u32;
+        }
+        self.info.parameters_start()
+    }
+
     #[inline(always)]
     pub(crate) fn did_create(&self, vm: &Vm, function: Gc<JsFunction>) {
         if self.singleton_watchpoints.is_still_valid() {
@@ -357,6 +472,7 @@ impl FunctionExecutable {
         self.first_function()
     }
 
+    #[inline(always)]
     pub fn singleton_watchpoints(&self) -> &InlineWatchpointSet {
         &self.singleton_watchpoints
     }
@@ -365,7 +481,7 @@ impl FunctionExecutable {
         if let Some(text) = self.cached_source_text() {
             return Ok(text);
         }
-        let text = if self.is_builtin() && !self.info.kind().is_class_constructor() {
+        let text = if self.is_private_builtin() && !self.info.kind().is_class_constructor() {
             native_source_text(cx, self.name_text())?
         } else {
             let range = self.info.text_range();
@@ -375,20 +491,10 @@ impl FunctionExecutable {
         self.set_cached_source_text(Some(text));
         Ok(text)
     }
-
-    pub(crate) fn unlinked_code(
-        &self,
-        cx: &Cx,
-        specialization: Specialization,
-    ) -> JsResult<Rc<Code>> {
-        match self.info.code(specialization) {
-            Some(code) => Ok(code),
-            None => super::compile::compile_function(cx, self, specialization),
-        }
-    }
 }
 
-pub(crate) fn native_source_text(cx: &Cx, name: Text<'_>) -> JsResult<Gc<JsString>> {
+/// NativeFunction of ECMA-262.
+pub fn native_source_text(cx: &Cx, name: Text<'_>) -> JsResult<Gc<JsString>> {
     let (before, after) = ("function ", "() { [native code] }");
     cx.new_string_from_parts(&[Text::from_ascii(before), name, Text::from_ascii(after)])
 }

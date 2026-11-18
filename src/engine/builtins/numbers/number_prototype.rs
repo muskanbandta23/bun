@@ -67,21 +67,28 @@ fn finish(cx: &Cx, text: Result<&[u8], FormatError>) -> JsResult<Value> {
     }
 }
 
+/// Of the argument of `toString`.
+#[inline(always)]
+pub(super) fn to_radix(cx: &mut Cx, value: Value) -> JsResult<Radix> {
+    match value {
+        Value::UNDEFINED => Ok(Radix::DECIMAL),
+        radix => Radix::new(to_small_integer(cx, radix)?)
+            .map_err(|error| cx.throw_range_error(error.message())),
+    }
+}
+
 #[native_abi]
 fn to_string(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let number = this_number(cx, frame)?;
-    let radix = match frame.argument(0) {
-        Value::UNDEFINED => Radix::DECIMAL,
-        radix => Radix::new(to_small_integer(cx, radix)?)
-            .map_err(|error| cx.throw_range_error(error.message()))?,
-    };
+    let radix = to_radix(cx, frame.argument(0))?;
     Ok(JsString::from_number_in_radix(cx, number, radix).into())
 }
 
 #[native_abi]
 fn to_locale_string(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let number = this_number(cx, frame)?;
-    Ok(JsString::from_number(cx, number).into())
+    let (locales, options) = (frame.argument(0), frame.argument(1));
+    bun_engine_intl::number_to_locale_string(cx, number, locales, options).map(Into::into)
 }
 
 #[native_abi]

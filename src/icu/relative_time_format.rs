@@ -3,6 +3,7 @@
 use core::ffi::{CStr, c_char, c_void};
 use core::ptr;
 
+use crate::argument::locale_id;
 use crate::error::Status;
 use crate::ffi::{call, open};
 use crate::formatted_value::{FormattedValue, UFormattedValue};
@@ -108,13 +109,14 @@ type FormatToResult = unsafe extern "C" fn(
 
 impl RelativeTimeFormatter {
     pub fn open(locale: &CStr, style: Style) -> Result<RelativeTimeFormatter> {
+        let locale = locale_id(locale)?;
         // SAFETY: `locale` is terminated. The style takes no pattern, and the parse error is optional.
         let number_format = open(|status| unsafe {
             unum_open(
                 UNUM_DECIMAL,
                 ptr::null(),
                 0,
-                locale.as_ptr(),
+                locale,
                 ptr::null_mut(),
                 status,
             )
@@ -136,7 +138,7 @@ impl RelativeTimeFormatter {
         // SAFETY: `locale` is terminated, and the format passes to ICU whether or not this succeeds.
         open(|status| unsafe {
             ureldatefmt_open(
-                locale.as_ptr(),
+                locale,
                 number_format,
                 style,
                 UDISPCTX_CAPITALIZATION_FOR_STANDALONE,

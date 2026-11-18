@@ -1,12 +1,13 @@
 use bun_engine_text::{PropertyName, names};
 
+use super::condition::may_be_special_property;
 use super::get::{as_array_index, identifier_for_integer};
 use super::static_table::StaticValue;
 use crate::{
     Attributes, CellType, CustomGetterSetter, CustomSetter, Cx, DeferredFire, DeleteKind,
     DeletePropertySlot, Gc, GetterSetter, GlobalProxy, InternalMethod, JsObject, JsResult,
-    PropertyDescriptor, PropertyOffset, PropertySlot, PutContext, PutKind, PutPropertySlot, Shape,
-    ShapeFlags, TransitionKind, TypeFlags, Value, Vm, errors,
+    PropertyDescriptor, PropertyOffset, PropertySlot, ProxyObject, PutContext, PutKind,
+    PutPropertySlot, Shape, ShapeFlags, TransitionKind, TypeFlags, Value, Vm, errors,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
@@ -60,9 +61,11 @@ impl JsObject {
 
     #[inline(always)]
     fn nothing_intercepts_put(&self, name: PropertyName<'_>) -> bool {
-        if name == names::__proto__ {
-            return false;
-        }
+        name != names::__proto__ && self.nothing_intercepts_put_except_to_proto()
+    }
+
+    #[inline(always)]
+    pub(crate) fn nothing_intercepts_put_except_to_proto(&self) -> bool {
         let mut shape = self.shape();
         let mut intercepting = TypeFlags::OVERRIDES_GET_PROTOTYPE;
         loop {
@@ -216,7 +219,7 @@ impl JsObject {
         self.put_fast(cx, name, value, slot)
     }
 
-    /// The end of OrdinarySetWithOwnDescriptor, for a receiver that is not where the lookup began.
+    /// The end of OrdinarySetWithOwnDescriptor, for a receiver that is not where the lookup began. The name is no index.
     #[inline(never)]
     pub fn define_property_on_receiver(
         cx: &mut Cx,
@@ -224,42 +227,64 @@ impl JsObject {
         value: Value,
         slot: &mut PutPropertySlot,
     ) -> JsResult<bool> {
-        let Some(mut receiver) = slot.this_value().as_object() else {
+        let Some(original) = slot.this_value().as_object() else {
             return cx.reject(slot.is_strict(), errors::READ_ONLY_PROPERTY_WRITE);
         };
-        if let Some(proxy) = receiver.downcast::<GlobalProxy>() {
-            receiver = proxy.target().upcast();
-        }
-        let is_ordinary = match receiver.cell_type() {
-            CellType::FinalObject => true,
-            CellType::Array | CellType::DerivedArray => name != names::length,
-            CellType::Function => {
-                name != names::length && name != names::name && name != names::prototype
-            }
-            _ => false,
-        };
+        let (receiver, is_proxy) = (
+            original.where_definitions_go(cx),
+            original.is::<ProxyObject>(),
+        );
         let shape = receiver.shape();
-        if is_ordinary
-            && name.as_index().is_none()
-            && !shape.has(ShapeFlags::HAS_ANY_ACCESSOR)
-            && !shape.has_non_reified_static_properties()
-            && shape.class().has_builtin_define_own_property()
+        let takes_plain_stores = receiver.cell_type() == CellType::FinalObject
+            && !shape.has(ShapeFlags::HAS_READ_ONLY_OR_ACCESSOR_EXCLUDING_PROTO);
+        let may_be_exotic =
+            slot.is_tainted_by_opaque_object() || !shape.class().has_ordinary_define_own_property();
+        let is_custom = |found: (_, Attributes)| found.1.contains(Attributes::CUSTOM_VALUE);
+        if takes_plain_stores
+            || !((may_be_exotic && may_be_special_property(receiver.cell_type(), name))
+                || (shape.has(ShapeFlags::HAS_ANY_ACCESSOR)
+                    && shape.get(name).is_some_and(is_custom)))
         {
-            return receiver.put_fast(cx, name, value, slot);
+            if !shape.has_non_reified_static_properties() {
+                return receiver.put_fast(cx, name, value, slot);
+            }
+            if !is_proxy {
+                return receiver.put_replacing_static_property(cx, name, value, slot);
+            }
         }
         let should_throw = slot.is_strict();
         let mut own = PropertySlot::new(receiver.into(), InternalMethod::GetOwnProperty);
-        if !receiver.get_own_property_slot(cx, name, &mut own)? {
-            return receiver.create_data_property(cx, name, value, should_throw);
+        let found = receiver.get_own_property_slot(cx, name, &mut own)?;
+        let definer = if original.where_definitions_go(cx) == receiver {
+            receiver
+        } else {
+            original
+        };
+        if !found {
+            return definer.create_data_property(cx, name, value, should_throw);
         }
         if own.attributes().intersects(Attributes::REJECTS_PLAIN_STORE) {
             return cx.reject(should_throw, errors::READ_ONLY_PROPERTY_WRITE);
         }
-        if let Some(setter) = own.custom_setter() {
+        if let Some(setter) = own.custom_setter().filter(|_| !is_proxy) {
             return call_custom_setter(cx, setter, &receiver, receiver.into(), value, name);
         }
         let descriptor = PropertyDescriptor::value_only(value);
-        receiver.define_own_property(cx, name, &descriptor, should_throw)
+        definer.define_own_property(cx, name, &descriptor, should_throw)
+    }
+
+    /// Behind the proxies that have no say in it, until a script runs.
+    fn where_definitions_go(&self, vm: &Vm) -> Gc<JsObject> {
+        let mut object = self.as_object();
+        while let Some(proxy) = object.downcast::<ProxyObject>()
+            && proxy.forwards_definitions(vm)
+        {
+            object = proxy.target();
+        }
+        match object.downcast::<GlobalProxy>() {
+            Some(proxy) => proxy.target().upcast(),
+            None => object,
+        }
     }
 
     /// OrdinarySet, to the letter.
@@ -343,7 +368,9 @@ impl JsObject {
         debug_assert!(name.as_index().is_none());
         self.ensure_writable_elements(vm);
         let shape = self.shape();
-        if let Some(target) = shape.existing_add_transition(name, attributes) {
+        if (MODE == PutMode::Define || shape.is_extensible())
+            && let Some(target) = shape.existing_add_transition(name, attributes)
+        {
             self.add_with_transition(vm, &shape, &target, target.transition_offset(), value);
             slot.set(PutKind::NewProperty, self, target.transition_offset());
             return Ok(());
@@ -445,6 +472,21 @@ impl JsObject {
         value: Value,
         attributes: Attributes,
     ) -> PropertyOffset {
+        // SAFETY: the caller's.
+        let offset = unsafe { self.add_property_in_place(vm, name, value, attributes) };
+        self.did_change_as_prototype(vm, &self.shape());
+        offset
+    }
+
+    /// # Safety
+    /// As above, and that goes for the caches of lookups along prototype chains too.
+    pub(super) unsafe fn add_property_in_place(
+        &self,
+        vm: &Vm,
+        name: PropertyName<'_>,
+        value: Value,
+        attributes: Attributes,
+    ) -> PropertyOffset {
         let shape = self.shape();
         let offset = shape.add_property_in_place(name, attributes);
         let (old, new) = (shape.max_offset(), shape.max_offset().max(offset));
@@ -461,7 +503,6 @@ impl JsObject {
             }
             self.put_direct_unchecked(offset, value);
         }
-        self.did_change_as_prototype(vm, &shape);
         offset
     }
 
@@ -599,7 +640,8 @@ impl JsObject {
         }
         let respects_configurable = !cx.deletes_unconfigurable_properties();
         if self.shape().has_non_reified_static_properties()
-            && let Some((_, entry)) = self.shape().find_static_property(name)
+            && let Some(entry) = (self.class().ancestry())
+                .find_map(|class| class.static_table()?.find_entry_or_position(name))
         {
             if !entry.attributes().is_configurable() && respects_configurable {
                 return Ok(false);

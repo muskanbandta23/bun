@@ -192,6 +192,7 @@ impl Generator<'_> {
         self.tail_blockers -= 1;
     }
 
+    #[inline(never)]
     pub(super) fn for_in(&mut self, it: &Enumeration, completion: Option<Register>) {
         let range = (it.divot, it.target_start, it.end);
         if let Some(call) = self.is_call(it.target) {
@@ -271,6 +272,7 @@ impl Generator<'_> {
         self.get_by_id(state.nth(1), state.into(), Name::NEXT);
     }
 
+    #[inline(never)]
     pub(super) fn for_of(&mut self, it: &Enumeration, completion: Option<Register>) {
         let (divot, start, end) = (it.divot, it.target_start, it.end);
         if let Some(call) = self.is_call(it.target) {
@@ -308,7 +310,11 @@ impl Generator<'_> {
         let (handler, try_depth) = (self.asm().label(), self.asm().try_depth());
         self.asm()
             .push_try(handler, HandlerKind::SynthesizedFinally);
-        self.b.controls.push(Control::Iterator { state, try_depth });
+        self.b.controls.push(Control::Iterator {
+            state,
+            try_depth,
+            range: (divot, start, end),
+        });
         self.b.controls.push(Control::Loop {
             on_break,
             on_continue: next,
@@ -336,6 +342,7 @@ impl Generator<'_> {
 
         self.close_iterator_on_throw(handler, state);
         self.asm().bind(on_break);
+        self.position(divot, start, end);
         self.asm().iterator_close(state, CloseMode::Normal);
         self.asm().bind(done);
         self.leave_loop_scope(it.scope);
@@ -390,6 +397,7 @@ impl Generator<'_> {
         self.top = mark;
     }
 
+    #[inline(never)]
     pub(super) fn for_await(&mut self, it: &Enumeration, completion: Option<Register>) {
         let range = (it.divot, it.target_start, it.end);
         if let Some(call) = self.is_call(it.target) {
@@ -462,8 +470,10 @@ impl Generator<'_> {
         self.asm().resume(generator, point);
     }
 
+    #[inline(never)]
     pub(super) fn await_value(&mut self, dst: Register, value: Operand, position: u32) {
         self.debug_hook(DebugHook::WillAwait, position);
+        self.position_at(position);
         self.suspend(value, SuspendKind::Await);
         self.asm().resume_after_await(dst);
         self.debug_hook(DebugHook::DidAwait, position);
@@ -476,6 +486,7 @@ impl Generator<'_> {
         self.asm().bind(normal);
     }
 
+    #[inline(never)]
     pub(super) fn yield_value(&mut self, argument: Option<ExprId>, dst: Dest) -> Operand {
         let received = self.temp_dst(dst);
         let value = match argument {
@@ -487,6 +498,7 @@ impl Generator<'_> {
         self.deliver(dst, received)
     }
 
+    #[inline(never)]
     pub(super) fn yield_delegate(&mut self, node: &Expr, dst: Dest) -> Operand {
         let ExprKind::YieldDelegate {
             argument,

@@ -1,4 +1,5 @@
 use bun_engine_date::{days_in_month, days_in_year, is_leap_year};
+use bun_engine_text::PropertyName;
 
 use super::systems::{Layout, System};
 use super::year::YearMonth;
@@ -21,8 +22,8 @@ pub struct CalendarDate {
 
 impl CalendarDate {
     #[inline]
-    pub fn month_code(&self) -> &'static str {
-        self.month_code.as_str()
+    pub fn month_code(&self) -> PropertyName<'static> {
+        self.month_code.name()
     }
 
     #[inline(always)]
@@ -56,25 +57,24 @@ impl CalendarId {
     /// CalendarISOToDate
     #[inline(always)]
     pub fn date(self, date: IsoDate) -> Result<CalendarDate> {
-        match self {
-            CalendarId::Iso8601 => Ok(CalendarDate::iso(date)),
-            _ => self.non_iso_date(date),
+        if self == CalendarId::Iso8601 {
+            return Ok(CalendarDate::iso(date));
         }
-    }
-
-    fn non_iso_date(self, date: IsoDate) -> Result<CalendarDate> {
-        let system = match self.layout(date.year()) {
-            Layout::Own(system) => system,
+        match self.layout(date.year()) {
+            Layout::Own(system) => self.date_in_system(system, date),
             Layout::Iso { year_offset } => {
                 let year = date.year() - year_offset;
-                return Ok(CalendarDate {
+                Ok(CalendarDate {
                     era: self.era_year(year, date),
                     year,
                     in_leap_year: is_leap_year(date.year()) && !self.is_chinese_or_dangi(),
                     ..CalendarDate::iso(date)
-                });
+                })
             }
-        };
+        }
+    }
+
+    fn date_in_system(self, system: System, date: IsoDate) -> Result<CalendarDate> {
         let (month, day) = system.locate(date)?;
         let year = month.year;
         Ok(CalendarDate {

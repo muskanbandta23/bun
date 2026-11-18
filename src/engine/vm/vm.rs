@@ -18,10 +18,10 @@ use crate::object::ShapeCache;
 use crate::primitive::StringCaches;
 use crate::services::Service;
 use crate::{
-    BuiltinId, CallFrame, CellKind, CellType, Cx, ElementKind, EntryRecord, Exception, Executable,
-    FastHashMap, FunctionExecutable, Gc, GcFree, GlobalObject, Hooks, IndexingMode,
-    JsBoundFunction, JsCell, JsFunction, JsSymbol, MicrotaskQueueRef, NativeExecutable, Shape,
-    ShapeSpec, SmallStrings, Traps, TypeFlags, Value, Visitor, call, options,
+    CallFrame, CellKind, CellType, Cx, ElementKind, EntryRecord, Exception, Executable,
+    FastHashMap, Gc, GcFree, GlobalObject, Hooks, IndexingMode, JsBoundFunction, JsCell,
+    JsFunction, JsSymbol, MicrotaskQueueRef, NativeExecutable, Shape, ShapeSpec, SmallStrings,
+    Traps, TypeFlags, Value, Visitor, call, options,
 };
 
 /// A cell that the `Vm` keeps alive.
@@ -109,6 +109,9 @@ vm_shapes! {
     regexp: crate::RegExp,
     property_name_enumerator: crate::PropertyNameEnumerator,
     sentinel: crate::Sentinel,
+    slim_promise_reaction: crate::PromiseReaction,
+    full_promise_reaction: crate::FullPromiseReaction,
+    promise_combinator: crate::PromiseCombinator,
 }
 
 impl VmShapes {
@@ -133,7 +136,10 @@ pub struct Embedder {
     pub reconcile_weak_references: Cell<Option<fn(&Vm, &Survivors)>>,
     /// After the last cell.
     pub destroy_members: Cell<Option<fn(&Vm)>>,
+    /// AgentCanSuspend is false.
+    pub must_not_block: Cell<bool>,
     pub errors: crate::ErrorHooks,
+    pub microtasks: crate::MicrotaskHooks,
 }
 
 /// All that the scripts of one thread share.
@@ -148,8 +154,8 @@ pub struct Vm {
     catch_frame: Cell<usize>,
     catch_address: Cell<usize>,
     catch_bytecode_offset: Cell<u32>,
-    /// Changes when a property of a prototype does.
-    prototype_chain_epoch: Cell<u32>,
+    /// Changes when a property of a prototype does, and with each collection. The low 31 bits are never zero.
+    prototype_chain_epoch: Cell<u64>,
     pub client_data: Cell<*mut c_void>,
     entry_global: Root<GlobalObject>,
     termination_exception: Root<Exception>,
@@ -161,6 +167,7 @@ pub struct Vm {
     pub did_enter: Cell<bool>,
     is_execution_forbidden: Cell<bool>,
     deletes_unconfigurable_properties: Cell<bool>,
+    pub(crate) is_async_context_tracked: Cell<bool>,
     /// Members of the class that C++ sees.
     embedder_members: UnsafeCell<MaybeUninit<[usize; 48]>>,
     pub heap: Heap,
@@ -174,14 +181,11 @@ pub struct Vm {
     stack_bounds: StackBounds,
     lowest_stack_pointer: Cell<usize>,
     is_handling_error: Cell<bool>,
-    termination_deferral_depth: Cell<u32>,
-    did_defer_termination: Cell<bool>,
     debugger_count: Cell<u32>,
     seed: Cell<u64>,
     when_idle: RefCell<Vec<Box<dyn FnOnce(&Vm) + GcFree>>>,
     conservative_ranges: RefCell<Vec<Range<usize>>>,
     bound_function_executable: Root<NativeExecutable>,
-    builtin_executables: WeakValueMap<u16, FunctionExecutable>,
     spaces_by_class: RefCell<FastHashMap<usize, &'static IsoSpace>>,
     shapes_by_class: RefCell<FastHashMap<usize, usize>>,
     extensions: RefCell<FastHashMap<TypeId, Rc<dyn Any>>>,
@@ -233,10 +237,9 @@ impl VmRef {
             stack_bounds: StackBounds::current(),
             lowest_stack_pointer: Cell::new(stack_pointer()),
             is_handling_error: Cell::new(false),
-            termination_deferral_depth: Cell::new(0),
-            did_defer_termination: Cell::new(false),
             is_execution_forbidden: Cell::new(false),
             deletes_unconfigurable_properties: Cell::new(false),
+            is_async_context_tracked: Cell::new(false),
             debugger_count: Cell::new(0),
             did_enter: Cell::new(false),
             seed: Cell::new(seed.rotate_left(32) | 1),
@@ -244,11 +247,10 @@ impl VmRef {
             conservative_ranges: RefCell::default(),
             internal_function_executable: Root::new(),
             bound_function_executable: Root::new(),
-            builtin_executables: WeakValueMap::default(),
             spaces_by_class: RefCell::default(),
             shapes_by_class: RefCell::default(),
             extensions: RefCell::default(),
-            default_microtask_queue: MicrotaskQueueRef::default(),
+            default_microtask_queue: MicrotaskQueueRef::unregistered(),
             string_caches: StringCaches::new(),
             shape_cache: ShapeCache::default(),
             symbols: WeakValueMap::default(),
@@ -301,12 +303,18 @@ impl Drop for VmRef {
     }
 }
 
-pub struct DeferTermination(NonNull<Vm>);
+pub struct SuspendException {
+    vm: NonNull<Vm>,
+    exception: Option<Gc<Exception>>,
+    last_exception: Option<Gc<Exception>>,
+}
 
-impl Drop for DeferTermination {
+impl Drop for SuspendException {
     fn drop(&mut self) {
         // SAFETY: made and dropped inside a call that has the `Vm`.
-        unsafe { self.0.as_ref() }.end_termination_deferral();
+        let vm = unsafe { self.vm.as_ref() };
+        vm.exception.set(self.exception);
+        vm.last_exception.set(self.last_exception);
     }
 }
 
@@ -323,7 +331,12 @@ impl Vm {
     pub const OFFSET_OF_CATCH_ADDRESS: usize = offset_of!(Vm, catch_address);
     pub const OFFSET_OF_CATCH_BYTECODE_OFFSET: usize = offset_of!(Vm, catch_bytecode_offset);
     pub const OFFSET_OF_PROTOTYPE_CHAIN_EPOCH: usize = offset_of!(Vm, prototype_chain_epoch);
+    /// Of a pointer to the `LookupTables`.
+    pub const OFFSET_OF_LOOKUP_TABLES: usize =
+        offset_of!(Vm, services.caches) + crate::caches::State::OFFSET_OF_TABLES;
     pub const OFFSET_OF_SCRATCH: usize = offset_of!(Vm, scratch);
+    pub const OFFSET_OF_IS_ASYNC_CONTEXT_TRACKED: usize = offset_of!(Vm, is_async_context_tracked);
+    pub const OFFSET_OF_DEBUGGER_COUNT: usize = offset_of!(Vm, debugger_count);
     pub const OFFSET_OF_HEAP: usize = offset_of!(Vm, heap);
     pub const OFFSET_OF_SMALL_STRINGS: usize = offset_of!(Vm, small_strings);
 
@@ -348,6 +361,8 @@ impl Vm {
         );
         self.internal_function_executable
             .set(Some(self.allocate::<Executable>(init)));
+        self.termination_exception
+            .set(Some(Exception::create_termination(self)));
         self.services.initialize(self);
         self.heap.notify_is_safe_to_collect();
     }
@@ -470,16 +485,6 @@ impl Vm {
         })
     }
 
-    pub fn builtin_executable(&self, id: BuiltinId) -> Gc<FunctionExecutable> {
-        self.builtin_executables
-            .get(self, &id.0)
-            .unwrap_or_else(|| {
-                let executable = FunctionExecutable::for_builtin(self, id);
-                self.builtin_executables.insert(id.0, executable);
-                executable
-            })
-    }
-
     pub fn default_microtask_queue(&self) -> &MicrotaskQueueRef {
         &self.default_microtask_queue
     }
@@ -516,12 +521,22 @@ impl Vm {
         exception
     }
 
+    /// While it is alive no exception is pending, and then the one that was is again.
+    pub fn suspend_exception(&self) -> SuspendException {
+        let (exception, last_exception) = (self.clear_exception(), self.last_exception());
+        self.clear_last_exception();
+        SuspendException {
+            vm: NonNull::from(self),
+            exception,
+            last_exception,
+        }
+    }
+
+    #[inline]
     pub fn termination_exception(&self) -> Gc<Exception> {
-        self.termination_exception.get().unwrap_or_else(|| {
-            let exception = Exception::create_termination(self);
-            self.termination_exception.set(Some(exception));
-            exception
-        })
+        self.termination_exception
+            .get()
+            .expect("set when the Vm is made")
     }
 
     #[inline]
@@ -532,40 +547,6 @@ impl Vm {
     #[inline]
     pub fn has_pending_termination_exception(&self) -> bool {
         self.has_exception() && self.exception.get() == self.termination_exception.get()
-    }
-
-    #[inline]
-    pub fn is_termination_requested(&self) -> bool {
-        self.traps.termination_flag().load(Ordering::Relaxed) && !self.is_termination_deferred()
-    }
-
-    pub fn defer_termination(&self) -> DeferTermination {
-        self.begin_termination_deferral();
-        DeferTermination(NonNull::from(self))
-    }
-
-    pub fn begin_termination_deferral(&self) {
-        let depth = self.termination_deferral_depth.get();
-        self.termination_deferral_depth.set(depth + 1);
-        if depth == 0 && self.has_pending_termination_exception() {
-            self.clear_exception();
-            self.did_defer_termination.set(true);
-        }
-    }
-
-    pub fn end_termination_deferral(&self) {
-        self.termination_deferral_depth.update(|depth| depth - 1);
-        if !self.is_termination_deferred() && self.did_defer_termination.take() {
-            self.traps.fire(crate::Trap::TERMINATION);
-        }
-    }
-
-    pub fn is_termination_deferred(&self) -> bool {
-        self.termination_deferral_depth.get() != 0
-    }
-
-    pub(crate) fn did_defer_termination(&self) {
-        self.did_defer_termination.set(true);
     }
 
     pub fn is_execution_forbidden(&self) -> &Cell<bool> {
@@ -643,6 +624,11 @@ impl Vm {
         self.entry_global.get()
     }
 
+    #[inline(always)]
+    pub(crate) fn set_entry_global(&self, global: Gc<GlobalObject>) {
+        self.entry_global.set(Some(global));
+    }
+
     pub(crate) fn will_enter(&self, global: Gc<GlobalObject>) {
         self.entry_global.set(Some(global));
         self.did_enter.set(true);
@@ -653,6 +639,7 @@ impl Vm {
 
     pub(crate) fn did_leave(&self) {
         self.entry_global.set(None);
+        self.reset_termination_request();
         if !self.when_idle.borrow().is_empty() {
             for callback in self.when_idle.take() {
                 callback(self);
@@ -717,16 +704,21 @@ impl Vm {
 
     #[inline(always)]
     pub fn prototype_chain_epoch(&self) -> u32 {
+        self.prototype_chain_epoch.get() as u32
+    }
+
+    /// For what is not cleared when the other starts over.
+    #[inline(always)]
+    pub fn full_prototype_chain_epoch(&self) -> u64 {
         self.prototype_chain_epoch.get()
     }
 
     #[inline]
     pub fn invalidate_prototype_chain_caches(&self) {
-        let epoch = self.prototype_chain_epoch.get().wrapping_add(1);
-        self.prototype_chain_epoch.set(epoch);
-        if epoch == 0 {
+        self.prototype_chain_epoch.update(|epoch| epoch + 1);
+        if self.prototype_chain_epoch() << 1 == 0 {
             self.services.caches.did_wrap_epoch();
-            self.prototype_chain_epoch.set(1);
+            self.prototype_chain_epoch.update(|epoch| epoch + 1);
         }
     }
 
@@ -782,14 +774,15 @@ impl Vm {
         (self.hooks.visit_code_on_stack)(self, addresses, visitor);
     }
 
-    pub(crate) fn visit_output_constraints(&self, _: &mut Visitor) {}
+    pub(crate) fn visit_output_constraints(&self, visitor: &mut Visitor) {
+        self.services.visit_output_constraints(visitor);
+    }
 
     pub(crate) fn reconcile_weak_references(&self, survivors: &Survivors) {
         self.shape_cache.prune(survivors);
         self.symbols.prune(survivors);
         self.native_executables.prune(survivors);
         self.custom_accessor_functions.prune(survivors);
-        self.builtin_executables.prune(survivors);
         self.services.reconcile_weak_references(self, survivors);
         (self.hooks.reconcile_weak_references)(self, survivors);
         if let Some(reconcile) = self.embedder.reconcile_weak_references.get() {

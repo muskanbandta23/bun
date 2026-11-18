@@ -78,7 +78,12 @@ impl<'a> FunctionBody<'a> {
     }
 
     pub fn driver(&self) -> Driver<'a> {
-        Driver::new(self.header, self.bytes, self.facts.code_offset)
+        self.driver_at(self.facts.code_offset)
+    }
+
+    /// From the instruction at `offset` to the end of its block. Calls and loops count from there.
+    pub fn driver_at(&self, offset: u32) -> Driver<'a> {
+        Driver::new(self.header, self.bytes, offset)
     }
 }
 
@@ -111,12 +116,14 @@ impl<'a> Driver<'a> {
         if self.cx.depth == 0 {
             return Ok(());
         }
-        let mut decoder = Decoder::<Run<V::Error>>::new(self.reader, &mut self.cx);
+        let mut cx = self.cx;
+        let mut decoder = Decoder::<Run<V::Error>>::new(self.reader, &mut cx);
         if decoder.cx.dead != 0 {
             decoder.skip_dead_code();
         }
         let result = decoder.run(visitor);
         self.reader = decoder.reader;
+        self.cx = cx;
         result
     }
 }

@@ -53,8 +53,10 @@ const fn filled(flags: u128) -> u128 {
     (flags << 8).wrapping_sub(flags)
 }
 
-fn set_of(flags: u128) -> u16 {
-    let gather = |half: u128| ((half as u64).wrapping_mul(0x0102_0408_1020_4080) >> 56) as u8;
+const fn set_of(flags: u128) -> u16 {
+    const fn gather(half: u128) -> u8 {
+        ((half as u64).wrapping_mul(0x0102_0408_1020_4080) >> 56) as u8
+    }
     u16::from_le_bytes([gather(flags), gather(flags >> 64)])
 }
 
@@ -66,6 +68,14 @@ fn flags_of(set: u16) -> u128 {
 /// All ones in the bytes of the set.
 pub(crate) fn mask_of(bytes: u16) -> u128 {
     filled(flags_of(bytes))
+}
+
+pub(crate) fn lowest(set: u16) -> u8 {
+    set.trailing_zeros() as u8
+}
+
+pub(crate) fn highest(set: u16) -> u8 {
+    set.ilog2() as u8
 }
 
 /// The set of lanes that have any of the bytes.
@@ -133,8 +143,26 @@ impl Pattern {
         Self::of_first_bytes(size, side | every(high as u8 * 8) | in_half)
     }
 
+    /// The even or the odd lanes of the first vector, and then those of the second.
+    pub(crate) const fn unzip(size: Size, odd: bool) -> Self {
+        let even = (PLACES & !every(size.bytes() - 1)) << 1;
+        Self::of_first_bytes(size, even | every(odd as u8 * size.bytes()))
+    }
+
+    /// Alternates between the even or the odd lanes.
+    pub(crate) const fn transpose(size: Size, odd: bool) -> Self {
+        let side = bit_flags(PLACES, size.log2_bytes()) << 4;
+        let even = PLACES & !every(2 * size.bytes() - 1);
+        Self::of_first_bytes(size, side | even | every(odd as u8 * size.bytes()))
+    }
+
+    /// Reverses the lanes in each group of `group` bytes.
+    pub(crate) const fn reverse(size: Size, group: u8) -> Self {
+        Self::from_bits(PLACES ^ every(group - size.bytes()))
+    }
+
     /// The low or the high half, with lanes of `size` extended to twice that.
-    pub(crate) fn zero_extend(size: Size, high: bool) -> Self {
+    pub(crate) const fn zero_extend(size: Size, high: bool) -> Self {
         Self::zip(size, high).replace(Side::Second, ZERO)
     }
 
@@ -151,34 +179,34 @@ impl Pattern {
         Self::from_bits(moved(PLACES)).put(outside, ZERO)
     }
 
-    fn put(self, flags: u128, byte: u8) -> Self {
+    const fn put(self, flags: u128, byte: u8) -> Self {
         Self::from_bits(self.bits() & !filled(flags) | every(byte) & filled(flags))
     }
 
-    fn index_flags(self) -> u128 {
+    const fn index_flags(self) -> u128 {
         bit_flags(!self.bits(), 7)
     }
 
-    fn any_flags(self) -> u128 {
+    const fn any_flags(self) -> u128 {
         bit_flags(self.bits(), 6)
     }
 
-    fn side_flags(self, side: Side) -> u128 {
-        self.index_flags() & bit_flags(side.pick(!self.bits(), self.bits()), 4)
+    const fn side_flags(self, side: Side) -> u128 {
+        self.index_flags() & !bit_flags(self.bits() ^ every((side as u8) << 4), 4)
     }
 
     /// For the vectors in the other order.
-    pub(crate) fn swapped(self) -> Self {
+    pub(crate) const fn swapped(self) -> Self {
         Self::from_bits(self.bits() ^ self.index_flags() << 4)
     }
 
     /// For when both vectors are the same.
-    pub(crate) fn folded(self) -> Self {
+    pub(crate) const fn folded(self) -> Self {
         Self::from_bits(self.bits() & !(self.index_flags() << 4))
     }
 
     /// With `by` for what comes from `side`.
-    pub(crate) fn replace(self, side: Side, by: u8) -> Self {
+    pub(crate) const fn replace(self, side: Side, by: u8) -> Self {
         self.put(self.side_flags(side), by)
     }
 
@@ -187,15 +215,29 @@ impl Pattern {
         self.put(flags_of(bytes), by)
     }
 
+    /// With the bytes of the set as in `other`.
+    pub(crate) fn merged(self, bytes: u16, other: Self) -> Self {
+        Self::from_bits(self.bits() & !mask_of(bytes) | other.bits() & mask_of(bytes))
+    }
+
+    /// The bytes of the result that `other` gets wrong.
+    pub(crate) fn missed_by(self, other: Self) -> u16 {
+        let difference = (self.bits() ^ other.bits()) & !filled(self.any_flags());
+        set_of(nonzero_flags(difference & every(0x7f)) | bit_flags(difference, 7))
+    }
+
     /// The bytes of the result that come from `side`.
-    pub(crate) fn taken_from(self, side: Side) -> u16 {
+    pub(crate) const fn taken_from(self, side: Side) -> u16 {
         set_of(self.side_flags(side))
     }
 
     /// The bytes of each side that are read.
-    pub(crate) fn read(self) -> [u16; 2] {
-        let indices = self.0.into_iter().map(u32::from);
-        let both = indices.fold(0, |set, index| set | 1u32.unbounded_shl(index));
+    pub(crate) const fn read(self) -> [u16; 2] {
+        let (mut both, mut byte) = (0, 0);
+        while byte < 16 {
+            both |= 1u32.unbounded_shl(self.0[byte] as u32);
+            byte += 1;
+        }
         [both as u16, (both >> 16) as u16]
     }
 
@@ -219,10 +261,23 @@ impl Pattern {
         (self.bits() ^ PLACES) & every(group - 1) & filled(self.index_flags()) == 0
     }
 
+    /// The largest lanes in which the bytes keep their places.
+    pub(crate) fn lanes(self) -> Size {
+        let wide = [Size::S64, Size::S32, Size::S16];
+        let found = wide
+            .into_iter()
+            .find(|size| self.keeps_places(size.bytes()));
+        found.unwrap_or(Size::S8)
+    }
+
     /// The place of the first byte that is not zero, and its index.
     pub(crate) fn first_read(self) -> Option<(u8, u8)> {
         let place = self.index_flags().trailing_zeros() as usize / 8;
         Some((place as u8, *self.0.get(place)?))
+    }
+
+    pub(crate) fn at(self, place: u8) -> u8 {
+        self.0[usize::from(place)]
     }
 
     /// The same in terms of `N` lanes.
@@ -266,6 +321,15 @@ impl Pattern {
         );
         debug_assert!(rest.any_flags() == self.any_flags());
         rest
+    }
+
+    /// What has to be in the operand on `side` for `step`, which reads no byte twice, to give this.
+    pub(crate) fn before(self, step: Self, side: Side) -> Self {
+        let mut operands = [[ANY; 16]; 2];
+        for (index, wanted) in step.0.into_iter().zip(self.0) {
+            operands.as_flattened_mut()[usize::from(index)] = wanted;
+        }
+        Self(operands[side as usize])
     }
 
     /// For a table lookup that gives zero for indices from 128 up.

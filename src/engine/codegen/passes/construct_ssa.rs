@@ -1,7 +1,7 @@
 //! Replaces variables with parameters of blocks.
 
 use super::Analyses;
-use super::reaching::{Reaching, Read};
+use super::reaching::{Held, Reaching, Read};
 use crate::analysis::Cfg;
 use crate::bitset::BitSet;
 use crate::ir::{Block, Entity, Function, Op, Table, Value, Variable};
@@ -55,7 +55,7 @@ fn resolve_within_blocks(
                     let stored = function.resolve(stored);
                     if known[variable] != (block, stored) {
                         known[variable] = (block, stored);
-                        reaching.define(variable, block, stored);
+                        reaching.define(variable, block, Held::Value(stored));
                     }
                     function.remove(value);
                 }

@@ -117,11 +117,12 @@ impl LanguageId {
             return;
         };
         // ICU writes nothing for `und`.
-        let mut subtags = Subtags::new(&changed);
-        let language = subtags.next().and_then(Subtag::new);
-        self.language = language.unwrap_or(Subtag::UND);
-        self.script = subtags.next_if(is_script).and_then(Subtag::new);
-        self.region = subtags.next_if(is_region).and_then(Subtag::new);
+        let has_language = changed.first().is_some_and(|&first| first != b'_');
+        let implied: &[u8] = if has_language { b"" } else { b"und" };
+        if let Ok(Some(changed)) = LanguageId::parse_all(&[implied, &changed].concat()) {
+            (self.language, self.script, self.region) =
+                (changed.language, changed.script, changed.region);
+        }
     }
 }
 

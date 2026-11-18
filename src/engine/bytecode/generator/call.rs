@@ -6,7 +6,6 @@ use bun_engine_syntax::ast::{CallFlags, Expr, ExprId, ExprKind, List};
 use bun_engine_syntax::{EvalContext, Name, NameKind};
 
 use super::intrinsic::Builtin;
-use super::scope::Place;
 use super::{Dest, Generator, Tail, This};
 use crate::code::CodeFlags;
 use crate::constant::{Constant, LinkTimeConstant, TemplateSite};
@@ -284,6 +283,7 @@ impl Generator<'_> {
         }
     }
 
+    #[inline(never)]
     pub(super) fn call(&mut self, node: &Expr, dst: Dest, tail: Tail) -> Operand {
         let ExprKind::Call {
             callee,
@@ -445,6 +445,7 @@ impl Generator<'_> {
     }
 
     /// `Array(n)` and `Object()` allocate in place while those names mean what they usually do.
+    #[inline(never)]
     fn unless_allocation(
         &mut self,
         callee: ExprId,
@@ -477,7 +478,7 @@ impl Generator<'_> {
         }
         let done = self.asm().label();
         if let Some(function) = function.as_register() {
-            if self.resolve(name, node.start).place != Place::Global {
+            if self.resolve(name, node.start).register().is_some() {
                 return otherwise(self);
             }
             let (expected, allocate) = (self.link_time(expected), self.asm().label());
@@ -494,6 +495,7 @@ impl Generator<'_> {
         self.asm().bind(done);
     }
 
+    #[inline(never)]
     pub(super) fn construct(&mut self, node: &Expr, dst: Dest) -> Operand {
         let ExprKind::New {
             callee,
@@ -530,6 +532,7 @@ impl Generator<'_> {
         result.into()
     }
 
+    #[inline(never)]
     fn super_call(&mut self, site: &Site, dst: Dest) -> Operand {
         let result = self.temp_dst(dst);
         if self.inherits_context() {
@@ -587,6 +590,7 @@ impl Generator<'_> {
         self.top = mark;
     }
 
+    #[inline(never)]
     fn eval_call(&mut self, callee: ExprId, site: &Site, dst: Dest) -> Operand {
         let function = self.temp_dst(dst);
         let result = Self::result_register(dst, function);
@@ -621,6 +625,7 @@ impl Generator<'_> {
         result.into()
     }
 
+    #[inline(never)]
     pub(super) fn tagged_template(&mut self, node: &Expr, dst: Dest, tail: Tail) -> Operand {
         let ExprKind::TaggedTemplate {
             tag,
@@ -664,6 +669,7 @@ impl Generator<'_> {
         matches!(self.ast[id].kind, ExprKind::Identifier(it) if it == name)
     }
 
+    #[inline(never)]
     fn special_method_call(
         &mut self,
         callee: &Expr,

@@ -107,7 +107,7 @@ pub fn make_date_from_integers(components: [i32; 7]) -> f64 {
     days as f64 * MS_PER_DAY + time as f64
 }
 
-/// msFromTime of a time value that is not NaN.
+/// msFromTime. Zero for NaN.
 #[inline]
 pub fn ms_from_time(time: f64) -> u16 {
     let time: i64 = time.to_int_checked().unwrap_or(0);

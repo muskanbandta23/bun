@@ -3,49 +3,52 @@
 use bun_engine_text::CodeUnit;
 
 use super::escape::{ClassAtom, Context};
-use super::quantifier::Repeated;
-use super::{Parser, Sink};
+use super::quantifier::Atom;
+use super::{Cursor, Parser, Sink};
 use crate::Error;
 
-impl<C: CodeUnit, S: Sink> Parser<'_, C, S> {
-    /// After the left bracket.
-    #[inline]
-    pub(super) fn class(&mut self) -> Result<(), Error> {
-        let negated = self.eat(b'^');
-        loop {
-            let unit = self.next_unit().ok_or(Error::UnterminatedClass)?;
-            if unit == u32::from(b']') {
-                break;
-            }
-            let first = self.class_atom(unit)?;
-            if self.peek() != b'-' || self.peek_at(1) == b']' {
-                self.add_to_class(first)?;
-                continue;
-            }
-            self.at += 1;
-            let unit = self.next_unit().ok_or(Error::UnterminatedClass)?;
-            match (first, self.class_atom(unit)?) {
-                (ClassAtom::Character(first), ClassAtom::Character(last)) => {
-                    self.class_range(first, last)?;
-                }
-                _ if self.is_unicode => return Err(Error::InvalidRange),
-                (first, last) => {
-                    self.add_to_class(first)?;
-                    self.sink.class_character(u32::from(b'-'))?;
-                    self.add_to_class(last)?;
-                }
-            }
-        }
-        let quantifier = self.quantifier(Repeated::Atom)?;
-        self.sink.close_class(negated, quantifier)
-    }
-
+impl<C: CodeUnit> Cursor<'_, C> {
     /// `unit` is before the cursor.
     #[inline(always)]
     fn class_atom(&mut self, unit: u32) -> Result<ClassAtom, Error> {
         match unit == u32::from(b'\\') {
             true => self.escape(Context::Class),
             false => Ok(ClassAtom::Character(self.complete_character(unit))),
+        }
+    }
+}
+
+impl<S: Sink> Parser<'_, S> {
+    /// After the left bracket.
+    #[inline(always)]
+    pub(super) fn class<C: CodeUnit>(
+        &mut self,
+        cursor: &mut Cursor<C>,
+    ) -> Result<Atom<S::Outer>, Error> {
+        let negated = cursor.eat(b'^');
+        let mut before_hyphen = None;
+        loop {
+            let unit = cursor.next_unit().ok_or(Error::UnterminatedClass)?;
+            if unit == u32::from(b']') {
+                return Ok(Atom::Class { negated });
+            }
+            let atom = cursor.class_atom(unit)?;
+            match (before_hyphen.take(), atom) {
+                (None, _) if cursor.peek() == b'-' && cursor.peek_at(1) != b']' => {
+                    cursor.at += 1;
+                    before_hyphen = Some(atom);
+                }
+                (None, _) => self.add_to_class(atom)?,
+                (Some(ClassAtom::Character(first)), ClassAtom::Character(last)) => {
+                    self.class_range(first, last)?;
+                }
+                _ if cursor.is_unicode => return Err(Error::InvalidRange),
+                (Some(first), last) => {
+                    self.add_to_class(first)?;
+                    self.sink.class_character(u32::from(b'-'))?;
+                    self.add_to_class(last)?;
+                }
+            }
         }
     }
 

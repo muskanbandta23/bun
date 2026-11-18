@@ -1,5 +1,13 @@
 //! Most prototypes, constructors and namespaces are nothing but a class with a static table.
 
+use crate::prelude::*;
+
+/// `get [Symbol.species]`
+#[native_abi]
+pub(crate) fn species_getter(_: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    Ok(frame.this_value())
+}
+
 /// `define_object!(Name, "ClassName", TABLE)` declares the type. `Name::create(cx, prototype)` makes the object.
 macro_rules! define_object {
     ($name:ident, $class_name:literal, $table:ident) => {
@@ -27,8 +35,8 @@ macro_rules! define_object {
 /// `define_constructor!(Name, TABLE, call, construct)` declares the type.
 /// `Name::create(cx, parent, length, name, prototype)` makes the function and links it with the prototype.
 macro_rules! define_constructor {
-    ($name:ident, $table:ident, $call:expr, $construct:expr) => {
-        #[bun_engine_macros::cell(name = "Function", static_table = $table)]
+    ($name:ident, $table:ident, $call:expr, $construct:expr $(, export = $export:literal)?) => {
+        #[bun_engine_macros::cell(name = "Function", static_table = $table $(, export = $export)?)]
         pub(crate) struct $name {
             base: bun_engine_vm::InternalFunction,
         }

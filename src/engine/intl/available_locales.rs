@@ -21,7 +21,7 @@ fn pack_subtags<'a>(subtags: impl Iterator<Item = &'a [u8]>) -> Option<u128> {
         }
         let start = tag.len();
         tag.extend_from_slice(subtag);
-        if start != 0 && !is_script(subtag) && is_variant(subtag) {
+        if start != 0 && is_variant(subtag) {
             tag[start..].make_ascii_lowercase();
         }
     }
@@ -54,7 +54,8 @@ impl AvailableLocales {
 
     fn sort(ids: impl Iterator<Item = &'static CStr>) -> Box<[u128]> {
         let mut tags = Vec::with_capacity(ids.size_hint().1.unwrap_or(0));
-        for id in ids {
+        // As a tag this variant is an extension, and no available locale has one.
+        for id in ids.filter(|id| !id.to_bytes().ends_with(b"_POSIX")) {
             let subtags = Subtags::new(id.to_bytes());
             tags.extend(pack_subtags(subtags.clone()));
             // An available locale with a script and a region is also available without the script.

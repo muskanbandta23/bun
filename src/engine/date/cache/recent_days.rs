@@ -1,6 +1,6 @@
 use core::cell::Cell;
 
-use crate::fields::{DateFields, MS_PER_DAY, OffsetBits};
+use crate::fields::{DateFields, MS_PER_DAY};
 
 /// A day that has one offset from its start to its end.
 #[derive(Clone, Copy)]
@@ -25,7 +25,7 @@ impl RecentDays {
     fn vacant(slot: usize) -> Day {
         Day {
             midnight: (slot as i64 + 1) << Self::SHIFT,
-            fields: const { DateFields::at_midnight(0, OffsetBits::UTC) },
+            fields: DateFields::EPOCH,
         }
     }
 

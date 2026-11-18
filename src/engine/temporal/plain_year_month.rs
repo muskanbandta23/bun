@@ -25,17 +25,29 @@ pub struct ParsedPlainYearMonth(PlainYearMonth);
 
 impl ParsedPlainYearMonth {
     pub fn finish(self) -> Result<PlainYearMonth> {
-        if !self.0.date.is_month_within_limits() {
-            return Err(Error::PlainYearMonthOutOfRange);
+        let PlainYearMonth { date, calendar } = self.0;
+        if date.is_month_within_limits() {
+            return PlainYearMonth::of_date(date, calendar);
         }
-        PlainYearMonth::of_date(self.0.date, self.0.calendar)
+        Err(if calendar == CalendarId::Iso8601 {
+            Error::PlainYearMonthOutOfRange
+        } else if IsoDate::is_year_within_limits(date.year()) {
+            Error::YearMonthFieldsOutOfRange
+        } else {
+            calendar.year_out_of_range(date.year(), Error::YearMonthFieldsOutOfRange)
+        })
     }
 }
 
 impl PlainYearMonth {
     /// The constructor.
-    pub fn new(year: i32, month: i32, calendar: CalendarId, day: i32) -> Result<PlainYearMonth> {
-        let (month, day) = (saturate(month), saturate(day));
+    pub fn new(
+        year: i32,
+        month: i32,
+        calendar: CalendarId,
+        day: Option<i32>,
+    ) -> Result<PlainYearMonth> {
+        let (month, day) = (saturate(month), day.map_or(1, saturate));
         if !(1..=12).contains(&month) || !(1..=days_in_month(year, month)).contains(&day) {
             return Err(Error::InvalidPlainYearMonth);
         }

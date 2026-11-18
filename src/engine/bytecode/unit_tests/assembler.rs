@@ -638,7 +638,8 @@ fn check_against_program(body: &Body, program: &Program) {
             assert_eq!(actual(next), expected(index + 1));
         }
         if flow.can_throw() {
-            assert_eq!(body.positions().find(offset), it.position);
+            let first = || Some(body.positions().entries().next()?.1);
+            assert_eq!(body.positions().find(offset), it.position.or_else(first));
             let around = body.handlers().iter();
             let around = around.filter(|handler| handler.range.contains(&offset));
             let tries = it.tries.iter().rev();

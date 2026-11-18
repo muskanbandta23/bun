@@ -4,6 +4,7 @@ use core::ffi::{CStr, c_char};
 use core::ptr;
 use std::sync::Arc;
 
+use crate::argument::{MAX_EXPANDABLE_LENGTH, locale_id};
 use crate::error::Status;
 use crate::ffi::{call, length, open};
 use crate::{Error, Result};
@@ -22,7 +23,7 @@ icu_functions! {
 }
 
 const UBRK_WORD_NONE_LIMIT: i32 = 100;
-const MAX_TEXT_LENGTH: usize = 1 << 28;
+pub const MAX_TEXT_LENGTH: usize = 1 << 28;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(i32)]
@@ -39,14 +40,14 @@ icu_handle! {
 
 impl BreakRules {
     pub fn open(kind: Kind, locale: &CStr) -> Result<BreakRules> {
+        let locale = locale_id(locale)?;
         // SAFETY: `locale` is terminated, and the text is optional.
-        open(|status| unsafe { ubrk_open(kind, locale.as_ptr(), ptr::null(), 0, status) })
-            .map(BreakRules)
+        open(|status| unsafe { ubrk_open(kind, locale, ptr::null(), 0, status) }).map(BreakRules)
     }
 
     /// Starts at the start of `text`.
     pub fn iterate(&self, text: Arc<Vec<u16>>) -> Result<BreakIterator> {
-        if text.len() > MAX_TEXT_LENGTH {
+        if text.len() > MAX_TEXT_LENGTH || has_overlong_phrase(&text) {
             return Err(Error::MEMORY_ALLOCATION);
         }
         let length = length(&text)?;
@@ -56,6 +57,12 @@ impl BreakRules {
         call(|status| unsafe { ubrk_setText(iterator.0.as_ptr(), text.as_ptr(), length, status) })?;
         Ok(BreakIterator { iterator, text })
     }
+}
+
+/// A dictionary divides all the text between two characters of other scripts at once. Thai is the first script with one.
+fn has_overlong_phrase(text: &[u16]) -> bool {
+    text.len() > MAX_EXPANDABLE_LENGTH
+        && (text.split(|&unit| unit < 0xe00)).any(|phrase| phrase.len() > MAX_EXPANDABLE_LENGTH)
 }
 
 icu_handle! {

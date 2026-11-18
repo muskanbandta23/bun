@@ -59,7 +59,7 @@ fn is_integer(value: f64) -> bool {
 }
 
 impl Lexer<'_> {
-    #[inline(never)]
+    #[inline(always)]
     pub(super) fn number(&mut self, start: usize, lead: Detail) {
         let mut value = u32::from(self.byte(start) - b'0');
         let mut end = start + 1;

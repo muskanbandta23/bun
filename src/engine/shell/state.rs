@@ -1,0 +1,29 @@
+//! What the shell keeps for each thread that runs scripts.
+
+use core::cell::{Cell, OnceCell, RefCell};
+use std::rc::Rc;
+
+use bun_engine_vm::{FastHashSet, Vm};
+
+use crate::command_line::CommandLine;
+use crate::prelude::*;
+
+#[derive(Default)]
+pub(crate) struct State {
+    pub(crate) command_line: OnceCell<CommandLine>,
+    pub(crate) has_failed: Cell<bool>,
+    pub(crate) async_passes: Cell<u32>,
+    pub(crate) expected_async_passes: Cell<u32>,
+    /// What the shell adds to global objects, which does not show when their properties are listed.
+    pub(crate) hidden_globals: RefCell<FastHashSet<Identifier>>,
+}
+
+impl State {
+    pub(crate) fn of(vm: &Vm) -> Rc<State> {
+        vm.extension()
+    }
+
+    pub(crate) fn command_line(&self) -> &CommandLine {
+        self.command_line.get().expect("set before a script runs")
+    }
+}

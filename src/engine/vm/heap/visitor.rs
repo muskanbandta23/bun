@@ -71,6 +71,11 @@ impl Visitor {
         self.marking().scope
     }
 
+    /// What has been marked stays so while this is the same.
+    pub fn epoch(&self) -> u32 {
+        self.version
+    }
+
     #[inline(always)]
     pub fn append<T: CellKind>(&mut self, cell: Gc<T>) {
         self.append_cell(cell.address());

@@ -72,8 +72,7 @@ impl Validator<'_> {
     #[cold]
     fn error_anywhere(&mut self, bytes: &[u8], expected: ValType) -> Option<Error> {
         self.start_constant(expected);
-        let mut cx = Context::new(self.header);
-        let result = self.run(&mut Decoder::new(Reader::new(bytes, 0), &mut cx));
+        let result = self.run(bytes, 0);
         self.reset();
         result.err().filter(|error| error.reason() != NO_OPCODE)
     }

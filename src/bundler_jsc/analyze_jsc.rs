@@ -95,11 +95,9 @@ fn to_js_module_record(
         .count();
     let module_record = JSModuleRecord::create(
         global_object,
-        vm,
         module_loader,
         module_key,
         source_code,
-        res.flags.contains_import_meta(),
         res.flags.is_typescript(),
         res.flags.has_tla(),
         u32::try_from(body.requested_tags.len()).expect("int cast"),
@@ -344,11 +342,9 @@ bun_opaque::opaque_ffi! {
 unsafe extern "C" {
     fn JSC_JSModuleRecord__create(
         global_object: *const JSGlobalObject,
-        vm: *const VM,
         module_loader: *mut JSModuleLoader,
         module_key: *const IdentifierArray,
         source_code: *const SourceCode,
-        has_import_meta: bool,
         is_typescript: bool,
         has_tla: bool,
         requested_module_count: u32,
@@ -453,11 +449,9 @@ impl JSModuleRecord {
     #[inline]
     fn create(
         global_object: &JSGlobalObject,
-        vm: &VM,
         module_loader: *mut JSModuleLoader,
         module_key: &IdentifierArray,
         source_code: &SourceCode,
-        has_import_meta: bool,
         is_typescript: bool,
         has_tla: bool,
         requested_module_count: u32,
@@ -468,11 +462,9 @@ impl JSModuleRecord {
         unsafe {
             JSC_JSModuleRecord__create(
                 global_object,
-                vm,
                 module_loader,
                 module_key,
                 source_code,
-                has_import_meta,
                 is_typescript,
                 has_tla,
                 requested_module_count,

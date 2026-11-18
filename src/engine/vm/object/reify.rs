@@ -146,12 +146,7 @@ impl JsObject {
                 #[cfg(not(windows))]
                 let result = unsafe { callback(cx, self) };
                 #[cfg(windows)]
-                let result = {
-                    let mut result = None;
-                    // SAFETY: as above.
-                    unsafe { callback(&mut result, cx, self) };
-                    result
-                };
+                let result = unsafe { *callback(&mut None, cx, self) };
                 cx.check_exception()?;
                 let Some(value) = result else { return Ok(()) };
                 value

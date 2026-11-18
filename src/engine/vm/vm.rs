@@ -335,6 +335,7 @@ impl Drop for VmRef {
         unsafe {
             let vm = self.0.as_ref();
             if vm.ref_count.fetch_sub(1, Ordering::AcqRel) == 1 {
+                (vm.hooks.will_destroy)(vm);
                 vm.services.will_destroy(vm);
                 vm.heap.tear_down();
                 if let Some(destroy) = vm.embedder.destroy_members.get() {
@@ -652,6 +653,13 @@ impl Vm {
     #[inline(always)]
     pub fn top_entry_frame(&self) -> usize {
         self.top_entry_frame.get()
+    }
+
+    /// The one around `top_entry_frame`, or zero. `None` if there is no such frame either.
+    pub fn outer_entry_frame(&self) -> Option<usize> {
+        let top = self.top_entry_frame();
+        // SAFETY: on the stack.
+        (top != 0).then(|| unsafe { EntryRecord::of(top) }.previous_top_entry_frame)
     }
 
     /// The frames of the stack, innermost first. Calls that were inlined have none.

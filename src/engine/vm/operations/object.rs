@@ -151,7 +151,7 @@ impl JsObject {
             .get_pure(cx, symbols::toStringTag)
             .and_then(Value::as_string)
         {
-            Some(tag) => tag.to_string_without_resolving(),
+            Some(tag) => tag.to_string_without_collecting(),
             None => StringRef::from_literal(self.class().name()),
         }
     }

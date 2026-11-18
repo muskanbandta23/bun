@@ -90,7 +90,7 @@ impl Search {
         self.results.push(None);
         for star in module.entries().star_exports().iter().rev() {
             let imported = module.imported_module(star.borrow());
-            (self.steps).push((Step::AskThroughStar, imported, name.clone()));
+            (self.steps).extend(imported.map(|it| (Step::AskThroughStar, it, name.clone())));
         }
         Ok(())
     }
@@ -120,7 +120,7 @@ impl Search {
             Some(ExportSource::Local(local)) => self.merge(ResolvedBinding::new(module, local)),
             Some(ExportSource::Namespace(request)) => {
                 let imported = module.imported_module(request.borrow());
-                self.merge(ResolvedBinding::namespace_of(imported))
+                imported.map_or(Ok(()), |it| self.merge(ResolvedBinding::namespace_of(it)))
             }
             Some(ExportSource::Indirect {
                 module: request,
@@ -134,7 +134,7 @@ impl Search {
                 self.steps.push((Step::EndIndirect, module, name));
                 self.results.push(None);
                 let next = module.imported_module(request.borrow());
-                self.steps.push((Step::Ask, next, imported.clone()));
+                (self.steps).extend(next.map(|it| (Step::Ask, it, imported.clone())));
                 Ok(())
             }
         }
@@ -188,7 +188,8 @@ impl AbstractModuleRecord {
             }
             Some(ExportSource::Namespace(request)) => {
                 let imported = self.imported_module(request.borrow());
-                return Resolution::Resolved(ResolvedBinding::namespace_of(imported));
+                let binding = imported.map(ResolvedBinding::namespace_of);
+                return binding.map_or(Resolution::NotFound, Resolution::Resolved);
             }
             _ => {}
         }
@@ -225,7 +226,7 @@ impl AbstractModuleRecord {
                 visit(module);
                 let entries = module.entries();
                 let stars = entries.star_exports().iter();
-                pending.extend(stars.map(|star| module.imported_module(star.borrow())));
+                pending.extend(stars.filter_map(|star| module.imported_module(star.borrow())));
             }
         }
     }
@@ -263,7 +264,10 @@ impl AbstractModuleRecord {
                     _ if module.has_live_exports() => ResolvedBinding::new(module, name),
                     ExportSource::Local(local) => ResolvedBinding::new(module, local),
                     ExportSource::Namespace(request) => {
-                        ResolvedBinding::namespace_of(module.imported_module(request.borrow()))
+                        match module.imported_module(request.borrow()) {
+                            Some(imported) => ResolvedBinding::namespace_of(imported),
+                            None => continue,
+                        }
                     }
                     ExportSource::Indirect { .. } => {
                         unique.remove(name);

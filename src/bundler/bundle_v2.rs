@@ -1449,9 +1449,9 @@ pub mod bv2_impl {
             }
         }
 
-        /// Opaque `JSC::EncoderStringTable` — one instance shared by every chunk's `encodeCodeBlock` in a `--compile --bytecode` build.
+        /// Opaque `EncoderStringTable` — the names in the module info of every chunk of a `--compile --bytecode` build.
         pub(crate) enum EncoderStringTable {}
-        /// Opaque `JSC::BytecodeLinkEncoder` — every chunk of a `--compile --bytecode` link encoded into one payload (`bytecode_order`).
+        /// Opaque `Bun::BytecodeLinkEncoder` — every chunk of a `--compile --bytecode` link encoded into one payload (`bytecode_order`).
         pub(crate) enum BytecodeLinkEncoder {}
 
         unsafe extern "Rust" {
@@ -1537,14 +1537,6 @@ pub mod bv2_impl {
                 table: core::ptr::NonNull<EncoderStringTable>,
                 wtf8: &[u8],
             ) -> u32;
-            /// `WTF::StringImpl::hash()` of the string with these WTF-8 contents.
-            safe fn __bun_jsc_wtf_string_hash(wtf8: &[u8]) -> u32;
-        }
-
-        /// `WTF::StringImpl::hash()` of a WTF-8 string, as JSC hashes the atom it becomes at runtime.
-        #[inline]
-        pub(crate) fn wtf_string_hash(wtf8: &[u8]) -> u32 {
-            __bun_jsc_wtf_string_hash(wtf8)
         }
 
         /// Bytecode generation entry point for the linker: marks the calling
@@ -1573,7 +1565,7 @@ pub mod bv2_impl {
             )
         }
 
-        /// Owns a `JSC::EncoderStringTable` for one link; `take()` serializes and frees it, `Drop` frees it on early return.
+        /// Owns a `EncoderStringTable` for one link; `take()` serializes and frees it, `Drop` frees it on early return.
         pub(crate) struct EncoderStringTableHandle(Option<core::ptr::NonNull<EncoderStringTable>>);
 
         impl EncoderStringTableHandle {
@@ -1604,7 +1596,7 @@ pub mod bv2_impl {
             }
         }
 
-        /// Owns a `JSC::BytecodeLinkEncoder`. Lives and dies on the thread that created it (it uses that thread's bytecode VM).
+        /// Owns a `Bun::BytecodeLinkEncoder`. Lives and dies on the thread that created it (it uses that thread's bytecode VM).
         pub(crate) struct BytecodeLinkEncoderHandle {
             encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
             module_count: usize,

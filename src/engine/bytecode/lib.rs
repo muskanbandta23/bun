@@ -4,6 +4,7 @@
 
 mod assembler;
 mod code;
+mod comparator;
 mod compiler;
 mod constant;
 mod dump;
@@ -23,8 +24,11 @@ mod table;
 mod unit_tests;
 mod verifier;
 
-pub use bun_engine_syntax::{EvalContext, FunctionKind};
+pub use bun_engine_syntax::{
+    EvalContext, FunctionFlags, FunctionKind, KnownCapture, KnownFunction, SourceCache,
+};
 pub use code::*;
+pub use comparator::{Comparator, Known, SortKey};
 pub use compiler::{BuiltinFunction, Compiler, Instrumentation, Request};
 pub use constant::*;
 pub use dump::Dump;

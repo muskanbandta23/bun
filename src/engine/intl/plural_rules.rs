@@ -109,7 +109,7 @@ impl PluralRules {
     }
 
     /// `pluralCategories`
-    pub fn categories(&self) -> Result<impl Iterator<Item = Category>> {
+    pub fn categories(&self) -> Result<impl Iterator<Item = Category> + use<>> {
         let mut names = self.0.rules.categories().or_type_error(FAILED_TO_SELECT)?;
         let mut is_used = [false; Category::ALL.len()];
         while let Some(name) = names.next().or_type_error(FAILED_TO_SELECT)? {

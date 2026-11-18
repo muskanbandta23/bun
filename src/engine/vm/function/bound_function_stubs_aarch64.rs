@@ -3,6 +3,7 @@
 use core::arch::naked_asm;
 
 use bun_engine_bytecode::Specialization::{Call, Construct};
+use bun_engine_macros::in_call_frame;
 
 use crate::call::stubs::{native_call_entry, native_construct_entry};
 use crate::{CallFrame, Executable, JsBoundFunction, JsFunction, Vm};
@@ -15,6 +16,7 @@ const fn from_stack_pointer(offset: usize) -> usize {
 /// `$load` puts what goes in the slot of `this` in `x4`, given the bound function in `x2` and its target in `x3`.
 macro_rules! entry {
     ($name:ident, $specialization:expr, $native:ident, [$($load:literal),*] $(, $operand:ident = $value:expr)*) => {
+        #[in_call_frame(naked)]
         #[unsafe(naked)]
         pub(super) unsafe extern "C" fn $name() {
             naked_asm!(

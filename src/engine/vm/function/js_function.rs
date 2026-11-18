@@ -635,7 +635,7 @@ pub(crate) fn name_for_instances(constructor: &JsObject) -> Option<StringRef> {
 
 fn explicit_name(function: &JsObject) -> Option<StringRef> {
     let name = function.get_direct(names::displayName)?.as_string()?;
-    Some(name.to_string_without_resolving())
+    Some(name.to_string_without_collecting())
 }
 
 fn implicit_name(function: &JsObject) -> StringRef {

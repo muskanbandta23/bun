@@ -2,7 +2,7 @@ use core::ffi::c_char;
 
 use crate::Result;
 use crate::error::Status;
-use crate::ffi::{call, open};
+use crate::ffi::{borrowed, call, open};
 
 bun_opaque::opaque_ffi! { pub(crate) struct UEnumeration; }
 
@@ -27,13 +27,7 @@ impl Enumeration {
         let mut length = 0;
         // SAFETY: the enumeration is open.
         let item = call(|status| unsafe { uenum_next(self.0.as_ptr(), &mut length, status) })?;
-        if item.is_null() {
-            return Ok(None);
-        }
-        let length = usize::try_from(length).unwrap_or(0);
         // SAFETY: `length` characters that last until the next call, which needs the borrow of `self` back.
-        Ok(Some(unsafe {
-            core::slice::from_raw_parts(item.cast(), length)
-        }))
+        Ok((!item.is_null()).then(|| unsafe { borrowed(item.cast(), length) }))
     }
 }

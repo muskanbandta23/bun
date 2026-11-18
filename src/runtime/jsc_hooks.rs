@@ -3148,7 +3148,6 @@ export default db;
                 None
             },
             is_commonjs_module: file.module_format == ModuleFormat::Cjs,
-            is_prelinked_module: file.prelinked_index != u32::MAX,
             ..ResolvedSource::default()
         });
     }

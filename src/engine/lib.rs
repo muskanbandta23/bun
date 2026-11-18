@@ -4,6 +4,7 @@
 
 use std::sync::OnceLock;
 
+use bun_engine_inspector::profiling;
 use bun_engine_vm::heap::HeapKind;
 use bun_engine_vm::{Cx, Hooks, RealmSlot, VmRef, call};
 
@@ -20,13 +21,10 @@ fn hooks() -> Hooks {
         interpreter_entry: bun_engine_interpreter::entry(),
         catch_address: |_, _| bun_engine_interpreter::catch_entry(),
         native_call_entry: |_, _| call::native_call_entry(),
-        jettison: |_, _| {},
-        cover: bun_engine_inspector::profiling::cover,
+        jettison: bun_engine_optimizer::jettison,
+        cover: profiling::cover,
         access_handler: |_, _, _| 0,
-        tier_up: |_, code_block, _, _| {
-            code_block.execution_counter().set(i32::MIN);
-            0
-        },
+        tier_up: bun_engine_optimizer::tier_up,
         initialize_realm: bun_engine_builtins::initialize_realm,
         initialize_realm_slot,
         realm_watchpoint_conditions: bun_engine_builtins::watchpoint_conditions,
@@ -38,11 +36,13 @@ fn hooks() -> Hooks {
         make_wasm_module: |cx, _, _, _, _| Err(cx.throw_type_error("Not supported: WebAssembly")),
         find_wasm_handler: |_, _| None,
         wasm_frame: |_, _, _, _| unreachable!(),
+        sampled_wasm_frame: |_, _, _, _| None,
         wasm_names: |_, _| unreachable!(),
-        visit_roots: |_, _| {},
+        visit_roots: profiling::visit_roots,
         visit_code_on_stack: |_, _, _| {},
-        reconcile_weak_references: bun_engine_inspector::profiling::reconcile_weak_references,
+        reconcile_weak_references: profiling::reconcile_weak_references,
         did_collect: |_, _| {},
+        will_destroy: profiling::will_destroy,
     }
 }
 

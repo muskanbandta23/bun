@@ -8,7 +8,7 @@ use bun_engine_text::{StringImpl, StringRef, Text};
 
 use super::string::impl_at;
 use crate::heap::keep_alive;
-use crate::{Cx, Gc, JsResult, JsRopeString, JsString, Vm};
+use crate::{Cx, Gc, JsResult, JsRopeString, JsString, NoGc, Vm};
 
 /// The characters of a string, which stay where they are while this is alive.
 pub struct StringView {
@@ -106,6 +106,14 @@ impl JsString {
         cx.or_out_of_memory(self.try_resolve(cx))
     }
 
+    /// For code that has no right to allocate in the heap. Empty if there is no memory.
+    pub fn to_string_without_collecting(&self) -> StringRef {
+        if let Some(rope) = self.as_rope() {
+            let _ = rope.flatten_without_collecting();
+        }
+        self.try_impl().map_or_default(StringRef::retain)
+    }
+
     pub fn to_string_ref(&self, cx: &Cx) -> JsResult<StringRef> {
         Ok(StringRef::retain(&*self.resolve(cx)?))
     }
@@ -121,6 +129,12 @@ impl JsString {
         view.offset = offset;
         view.text = (view.text).slice(offset as usize..(offset + rope.rope_length()) as usize);
         Some(view)
+    }
+
+    /// The same, without a guard.
+    #[inline(always)]
+    pub fn try_text<'a>(&self, _: &'a NoGc<'_>) -> Option<Text<'a>> {
+        self.try_view().map(|view| view.text)
     }
 
     #[inline(always)]
@@ -163,9 +177,11 @@ impl JsString {
         if end - start == fiber.len() {
             return Ok(fiber);
         }
-        Ok(match fiber.try_view() {
-            Some(view) => view.substring(cx, offset as usize..(offset + end - start) as usize),
-            None => self.view(cx)?.substring(cx, start as usize..end as usize),
-        })
+        // A character is copied once for each time that the length of what has it grows fourfold.
+        if fiber.is_concatenation() && fiber.len() > self.len() / 4 {
+            return Ok(self.view(cx)?.substring(cx, start as usize..end as usize));
+        }
+        let range = offset as usize..(offset + end - start) as usize;
+        Ok(fiber.view(cx)?.substring(cx, range))
     }
 }

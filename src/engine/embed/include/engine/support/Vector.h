@@ -689,6 +689,8 @@ private:
     }
 };
 
+template<typename T, size_t extent> Vector(std::span<const T, extent>) -> Vector<T>;
+
 template<typename T, size_t inlineCapacity, typename OverflowHandler, size_t minCapacity, typename Malloc>
 inline void swap(Vector<T, inlineCapacity, OverflowHandler, minCapacity, Malloc>& a, Vector<T, inlineCapacity, OverflowHandler, minCapacity, Malloc>& b)
 {

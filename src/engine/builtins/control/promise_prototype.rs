@@ -36,10 +36,10 @@ fn then(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 }
 
 /// The promise, if invoking its `then` comes to calling the function above.
-#[inline]
+#[inline(always)]
 fn with_pristine_then(cx: &Cx, value: Value) -> Option<Gc<JsPromise>> {
-    (value.downcast::<JsPromise>())
-        .filter(|promise| promise.global() == cx.global() && promise.has_pristine_then(cx))
+    let promise = value.downcast::<JsPromise>()?;
+    promise.has_pristine_then_in(cx).then_some(promise)
 }
 
 fn invoke_then(cx: &mut Cx, this: Value, arguments: &[Value]) -> JsResult<Value> {

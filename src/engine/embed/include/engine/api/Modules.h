@@ -120,6 +120,13 @@ public:
     }
 
     const Vector<ModuleRequest> requestedModules() const;
+    size_t requestedModuleCount() const { return Engine::module_request_count(this); }
+    ModuleMapKey requestedModuleKey(size_t index) const
+    {
+        ScriptFetchParameters::Type type;
+        auto* specifier = Engine::module_request_key(this, index, type);
+        return { static_cast<UniquedStringImpl*>(specifier), type };
+    }
     const Vector<LoadedModule, 8> loadedModules() const;
     AbstractModuleRecord* loadedModule(ModuleMapKey request) const { return Engine::module_loaded_module(this, request.first, request.second); }
     void setImportedModule(ModuleMapKey request, AbstractModuleRecord* module) { Engine::module_set_imported_module(this, request.first, request.second, module); }

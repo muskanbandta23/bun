@@ -13,7 +13,12 @@ use bun_engine_vm::{
 use super::scope::can_close_over;
 use crate::abi::returned_as_pointer;
 
-/// Whether `take` has been called. There is no serialized form of code yet.
+// There is no serialized form of code yet.
+
+#[export]
+fn bytecode_set_version(_version: u32) {}
+
+/// Whether `take` has been called.
 #[export]
 unsafe fn bytecode_generate(
     _vm: &Vm,

@@ -42,6 +42,8 @@ private:
     Destructor m_destructor;
 };
 
+// Tells this build from others.
+inline void setBytecodeCacheVersion(uint32_t version) { Engine::bytecode_set_version(version); }
 // With the functions that are nested up to `depth` levels deep. Null if the text has an error or the code cannot be stored.
 RefPtr<CachedBytecode> generateBytecode(VM&, const SourceCode&, SourceCodeType, unsigned depth = std::numeric_limits<unsigned>::max());
 // Whether this build has generated the bytes from that text.

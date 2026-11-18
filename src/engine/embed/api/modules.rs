@@ -137,6 +137,24 @@ unsafe fn module_for_each_request(
 }
 
 #[export]
+fn module_request_count(module: &AbstractModuleRecord) -> usize {
+    module.entries().requests().len()
+}
+
+/// The specifier, which the module keeps alive.
+#[export]
+fn module_request_key(
+    module: &AbstractModuleRecord,
+    index: usize,
+    module_type: &mut ModuleType,
+) -> *mut StringImpl {
+    let entries = module.entries();
+    let key = entries.requests()[index].key();
+    *module_type = key.module_type;
+    key.name.as_ptr().as_ptr()
+}
+
+#[export]
 unsafe fn module_for_each_loaded_module(
     module: &AbstractModuleRecord,
     context: *mut c_void,

@@ -136,7 +136,7 @@ impl<'a> StackVisitor<'a> {
     }
 
     /// Without those that `first` has called.
-    pub fn frames_from(vm: &'a Vm, first: &CallFrame) -> StackVisitor<'a> {
+    pub fn frames_from(vm: &'a Vm, first: *const CallFrame) -> StackVisitor<'a> {
         let mut visitor = Self::frames(vm);
         while visitor.frame.is_some_and(|it| !core::ptr::eq(it, first)) {
             visitor.leave_machine_frame();

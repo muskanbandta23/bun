@@ -62,7 +62,7 @@ enum Backing {
     Shared {
         contents: Arc<SharedArrayBufferContents>,
         byte_length: *const AtomicUsize,
-    },
+    } = ArrayBufferContents::SHARED_BACKING,
 }
 
 /// All zeros are the contents of a detached buffer.
@@ -120,8 +120,10 @@ impl Default for ArrayBufferContents {
 impl ArrayBufferContents {
     pub(super) const OFFSET_OF_DATA: usize = offset_of!(ArrayBufferContents, data);
     pub(super) const OFFSET_OF_BYTE_LENGTH: usize = offset_of!(ArrayBufferContents, byte_length);
-    pub(super) const OFFSET_OF_SHARED_BYTE_LENGTH: usize =
+    pub const OFFSET_OF_SHARED_BYTE_LENGTH: usize =
         offset_of!(ArrayBufferContents, backing.Shared.byte_length);
+    /// The first byte of `backing` if the memory is shared. It is zero if there is nothing to free.
+    pub const SHARED_BACKING: u8 = 4;
 
     #[inline(always)]
     fn fixed(data: *mut u8, byte_length: usize, backing: Backing) -> ArrayBufferContents {

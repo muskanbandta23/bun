@@ -1,7 +1,6 @@
 //! The WHATWG URL Standard: <https://url.spec.whatwg.org>.
 
 #![forbid(unsafe_code)]
-#![feature(core_io, core_io_borrowed_buf)]
 
 mod authority;
 mod buffer;

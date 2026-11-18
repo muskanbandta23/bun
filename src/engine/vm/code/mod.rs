@@ -16,7 +16,7 @@ mod script;
 mod source;
 mod speculation;
 
-pub use builtin::{BuiltinOutline, describe_builtin};
+pub use builtin::{BuiltinOutline, StaticBuiltin, UnlinkedFunction, describe_builtin};
 pub use code_block::{CodeBlock, CodeOrigin, CompiledCode, CoverageCount, InlineFrame, Tier};
 pub use compile::{
     CompileError, CompileErrorKind, CompileErrorRecovery, create_compile_error,

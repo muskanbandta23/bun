@@ -17,6 +17,17 @@ pub struct Environment<'a> {
     pub seed: u64,
 }
 
+/// Where baseline code counts.
+#[derive(Clone, Copy, Debug)]
+pub struct Counters {
+    /// The address of a `CallProfile` for each call of the function.
+    pub call_profiles: usize,
+    /// The address of an `AtomicI32` for each loop of the function. A turn adds one.
+    pub loop_countdowns: usize,
+    /// What an entry adds to the countdown of the slot.
+    pub entry_increment: i32,
+}
+
 /// A place in the code at which the stack can be walked.
 #[derive(Clone, Copy, Debug)]
 pub struct CallSite {

@@ -8,7 +8,6 @@
 #include "headers.h"
 #include "helpers.h"
 #include "ZigGlobalObject.h"
-#include "NodeAsyncHooks.h"
 
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/FrameTracers.h>
@@ -2058,7 +2057,7 @@ __attribute__((minsize)) JSValue JSModuleMock::callFactory(Zig::GlobalObject* gl
         arguments.append(JSC::JSBoundFunction::create(vm, globalObject, importOriginal, this, ArgList(), 0, nullptr, makeSource("importOriginal"_s, JSC::SourceOrigin(), JSC::SourceTaintedOrigin::Untainted)));
         RETURN_IF_EXCEPTION(scope, {});
         // The context survives the factory's awaits, so an import() it makes later can still be traced back to it.
-        Bun::beginTrackingAsyncContexts(globalObject);
+        globalObject->setAsyncContextTrackingEnabled(true);
         RETURN_IF_EXCEPTION(scope, {});
         auto* asyncContext = globalObject->m_asyncContextData.get();
         JSValue previous = asyncContext->getInternalField(0);

@@ -8,7 +8,6 @@
 #include "isBuiltinModule.h"
 #include "JSCommonJSModule.h"
 #include "JSDOMExceptionHandling.h"
-#include "NodeAsyncHooks.h"
 #include "NodeValidator.h"
 #include "PathInlines.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
@@ -1015,7 +1014,7 @@ JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSModuleGraphConstructor::construct(JSGl
     unsigned overlayShape = 0;
     JSModuleLoader* loader = createModuleGraphLoader(globalObject, globals, overlayShape);
     RETURN_IF_EXCEPTION(scope, {});
-    beginTrackingAsyncContexts(globalObject);
+    globalObject->setAsyncContextTrackingEnabled(true);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(JSModuleGraph::create(vm, globalObject, structure, loader, overlayShape, onError, currentModuleGraph(globalObject)));
 }

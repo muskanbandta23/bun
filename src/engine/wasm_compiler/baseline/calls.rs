@@ -7,7 +7,7 @@ use bun_engine_wasm_format::{
 };
 
 use super::cold::Cold;
-use super::operand::Operand;
+use super::operand::{self, Operand};
 use super::{Compiled, Function};
 use crate::abi::{
     ARGUMENT_FPRS, ARGUMENT_GPRS, CallProfile, Callable, FunctionElement, FunctionSlot, INSTANCE,
@@ -81,7 +81,7 @@ impl Function<'_> {
                 let mut registers = Registers::for_arguments();
                 for position in first as usize..self.stack.len() {
                     let value = self.stack[position];
-                    let reg = registers.next(value.ty().kind());
+                    let reg = registers.next(value.kind());
                     self.add_move(reg.expect("there are few arguments"), value);
                 }
             }
@@ -297,12 +297,12 @@ impl Function<'_> {
         self.spill_below(overwritten, self.height());
         self.add_move(
             ARGUMENT_GPRS[0],
-            Operand::Register(ValType::I64, INSTANCE.into()),
+            Operand::in_register(ValType::I64, INSTANCE),
         );
         for (&reg, &parameter) in ARGUMENT_GPRS[1..].iter().zip(parameters) {
             match parameter {
                 Parameter::Immediate(bits) => {
-                    self.add_move(reg, Operand::Constant(ValType::I64, bits));
+                    self.add_move(reg, Operand::of_bits(ValType::I64, bits));
                 }
                 Parameter::Value(value) => self.add_move(reg, value),
                 Parameter::Address(_) => {}
@@ -327,22 +327,22 @@ impl Function<'_> {
     pub(super) fn pop_bits(&mut self) -> [Parameter; 2] {
         let value = self.pop();
         let nothing = Parameter::Immediate(0);
-        let int = match value.ty().kind() {
+        let int = match value.kind() {
             ValKind::I32 | ValKind::I64 | ValKind::Ref => {
                 return [Parameter::Value(value), nothing];
             }
             ValKind::F32 => ValType::I32,
             ValKind::F64 | ValKind::V128 => ValType::I64,
         };
-        if let Operand::Constant(_, bits) = value {
+        if let Some(bits) = value.constant() {
             return [Parameter::Immediate(bits), nothing];
         }
         let offset = self.frame.operand(self.height());
-        if !matches!(value, Operand::Slot(..)) {
+        if !matches!(value.place(), operand::Place::Slot(_)) {
             self.store_operand(self.frame_address(offset), value);
         }
-        let half = |offset| Parameter::Value(Operand::Slot(int, offset));
-        match value.ty().kind() {
+        let half = |offset| Parameter::Value(Operand::in_slot(int, offset));
+        match value.kind() {
             ValKind::V128 => [half(offset), half(offset + 8)],
             _ => [half(offset), nothing],
         }

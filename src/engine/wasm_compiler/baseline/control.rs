@@ -1,18 +1,16 @@
 //! Blocks and branches.
 
+use bun_engine_asm::CodeTooLarge;
 use bun_engine_asm::prelude::*;
-use bun_engine_asm::{CodeTooLarge, Reg};
 use bun_engine_wasm_format::{
     BlockType, BrTable, Catches, Flow, FuncIndex, RefType, TableIndex, TagIndex, TypeIndex,
     ValType, VisitControl,
 };
 
 use super::calls::{Callee, Leaves};
-use super::condition::{Condition, Decision};
 use super::edges::{Carried, Target};
 use super::exceptions::Handler;
-use super::operand::Operand;
-use super::registers::Source;
+use super::operand::{self, Operand};
 use super::{Compiled, Function};
 use crate::abi::{NULL, Place, Trap};
 
@@ -269,7 +267,7 @@ impl<'a> Function<'a> {
         self.save_for_first_branch(self.height() - arity);
         if arity == 1 {
             let reg = self.own_top();
-            carried = Carried::One(Operand::Register(self.top().ty(), reg));
+            carried = Carried::One(Operand::in_register(self.top().ty(), reg));
         }
 
         let mut labels = core::mem::take(&mut self.table_labels);
@@ -351,11 +349,6 @@ impl<'a> Function<'a> {
         }
     }
 
-    fn compared_with_null(cond: Cond, reference: Reg) -> Condition {
-        let null = Source::Constant(NULL as u64);
-        Condition::Compare(Width::W64, cond, Source::Register(reference.gpr()), null)
-    }
-
     pub(super) fn narrow_top(&mut self, ty: impl Into<ValType>) {
         let top = self.stack.last_mut().expect("the code was validated");
         *top = top.with_type(ty.into());
@@ -396,16 +389,17 @@ impl VisitControl for Function<'_> {
 
     #[inline(never)]
     fn if_(&mut self, ty: BlockType) -> Compiled {
-        let kind = match self.pop_decision(Width::W32) {
-            Decision::Known(true) => BlockKind::IfAlways,
-            Decision::Known(false) => {
+        let kind = match self.pop_condition(Width::W32) {
+            Some(true) => BlockKind::IfAlways,
+            Some(false) => {
                 self.is_dead = true;
                 BlockKind::IfNever
             }
-            Decision::Unknown(condition) => {
+            None => {
                 self.save_for_first_branch(self.height());
                 let otherwise = self.new_target(None);
-                self.branch(condition.inverted(), otherwise.label);
+                self.invert_condition();
+                self.branch_on_condition(otherwise.label);
                 self.else_targets.push(otherwise);
                 BlockKind::If
             }
@@ -456,12 +450,10 @@ impl VisitControl for Function<'_> {
 
     #[inline(never)]
     fn br_if(&mut self, label: u32) -> Compiled {
-        match self.pop_decision(Width::W32) {
-            Decision::Known(false) => Ok(()),
-            Decision::Known(true) => self.jump_to_label(label),
-            Decision::Unknown(condition) => {
-                self.branch_to_block(condition, self.block_index(label))
-            }
+        match self.pop_condition(Width::W32) {
+            Some(false) => Ok(()),
+            Some(true) => self.jump_to_label(label),
+            None => self.branch_to_block(self.block_index(label)),
         }
     }
 
@@ -484,10 +476,10 @@ impl VisitControl for Function<'_> {
         }
         // The slot may be where a value goes that the branch takes along, but only once it is taken.
         let reg = self.register(value);
-        let is_null = Self::compared_with_null(Cond::Eq, reg);
-        self.branch_to_block(is_null, self.block_index(label))?;
-        match value {
-            Operand::Local(..) => self.push(non_null),
+        self.compare_with_null(Cond::Eq, Operand::in_register(value.ty(), reg));
+        self.branch_to_block(self.block_index(label))?;
+        match value.place() {
+            operand::Place::Local(_) => self.push(non_null),
             _ => self.push_register(non_null.ty(), reg),
         }
         Ok(())
@@ -505,8 +497,8 @@ impl VisitControl for Function<'_> {
             return self.jump_to_label(label);
         }
         let reg = self.own_top();
-        let is_not_null = Self::compared_with_null(Cond::Ne, reg);
-        self.branch_to_block(is_not_null, self.block_index(label))?;
+        self.compare_with_null(Cond::Ne, Operand::in_register(value.ty(), reg));
+        self.branch_to_block(self.block_index(label))?;
         self.pop();
         Ok(())
     }
@@ -602,7 +594,7 @@ impl VisitControl for Function<'_> {
         let BlockKind::Catch { exception, .. } = self.blocks[self.block_index(label)].kind else {
             unreachable!("the code was validated");
         };
-        self.throw_again(Operand::Slot(ValType::EXNREF, exception));
+        self.throw_again(Operand::in_slot(ValType::EXNREF, exception));
         Ok(())
     }
 }

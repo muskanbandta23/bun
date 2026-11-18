@@ -8,9 +8,8 @@ use bun_engine_wasm_format::{
 };
 
 use super::calls::Parameter;
-use super::condition::Condition;
-use super::operand::{Operand, bank};
-use super::registers::Source;
+use super::condition::Relation;
+use super::operand::{Operand, Place, bank};
 use super::{Compiled, Function};
 use crate::abi::{INSTANCE, INT32_TAG, NULL, Operation, Trap};
 
@@ -26,10 +25,17 @@ impl Function<'_> {
         value.constant().is_none() && value.ty().as_ref().is_some_and(is_cell_type)
     }
 
+    /// Sets the condition. `value` was located.
+    pub(super) fn compare_with_null(&mut self, cond: Cond, value: Operand) {
+        let null = Operand::of_bits(value.ty(), NULL as u64);
+        self.set_condition(Relation::Compare(Width::W64, cond), value, null);
+    }
+
     /// Of the operand at the top of the stack, which stays there.
     pub(super) fn top_gpr(&mut self) -> Gpr {
-        match self.top() {
-            value @ Operand::Local(..) => self.gpr(value),
+        let value = self.top();
+        match value.place() {
+            Place::Local(_) => self.gpr(value),
             _ => self.own_top().gpr(),
         }
     }
@@ -176,7 +182,7 @@ impl Function<'_> {
 #[deny(clippy::missing_trait_methods)]
 impl VisitReference for Function<'_> {
     fn ref_null(&mut self, ty: HeapType) -> Compiled {
-        self.push_lazy(Operand::Constant(ty.nullable().into(), NULL as u64));
+        self.push_lazy(Operand::of_bits(ty.nullable().into(), NULL as u64));
         Ok(())
     }
 
@@ -187,9 +193,9 @@ impl VisitReference for Function<'_> {
             self.push_lazy(Operand::int(Width::W32, is_null.into()));
             return Ok(());
         }
-        let (value, null) = (self.source(value), Source::Constant(NULL as u64));
-        let is_null = Condition::Compare(Width::W64, Cond::Eq, value, null);
-        self.push_condition(is_null, self.next());
+        let value = self.source(value);
+        self.compare_with_null(Cond::Eq, value);
+        self.push_condition(self.next());
         Ok(())
     }
 
@@ -240,7 +246,7 @@ impl VisitReference for Function<'_> {
         let value = self.pop();
         if let Some(bits) = value.constant() {
             let extended = ((bits as i32) << 1 >> 1) as u32;
-            self.push_lazy(Operand::Constant(I31REF, INT32_TAG | u64::from(extended)));
+            self.push_lazy(Operand::of_bits(I31REF, INT32_TAG | u64::from(extended)));
             return Ok(());
         }
         let src = self.gpr(value);

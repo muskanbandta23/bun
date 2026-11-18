@@ -31,7 +31,7 @@ use bun_engine_wasm_format::{
 };
 
 use self::cold::Cold;
-use self::condition::Pending;
+use self::condition::Condition;
 use self::control::{Block, BlockKind};
 use self::edges::{Detour, Target};
 use self::exceptions::{Handler, Handlers};
@@ -101,7 +101,7 @@ with_buffers! {
     /// Of the instruction that is being compiled.
     offset: usize,
     is_dead: bool,
-    pending: Option<Pending>,
+    condition: Condition,
     registers: Registers,
     /// Below this position no operand is a constant or a local.
     lowest_lazy: u32,
@@ -156,7 +156,7 @@ impl Compiler {
             keeps_all_locals: false,
             offset: 0,
             is_dead: false,
-            pending: None,
+            condition: Condition::NONE,
             registers: Registers::new(first_memory),
             lowest_lazy: 0,
             stack_depth: frame.size(),

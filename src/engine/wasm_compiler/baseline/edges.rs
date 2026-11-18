@@ -9,7 +9,6 @@ use bun_engine_asm::{CodeTooLarge, Reg};
 use bun_engine_wasm_format::ValType;
 
 use super::Function;
-use super::condition::Condition;
 use super::control::{Block, BlockKind};
 use super::moves::Step;
 use super::operand::{Operand, bank};
@@ -128,8 +127,7 @@ impl<'a> Function<'a> {
     pub(super) fn late_route(&mut self, index: usize, carried: Carried) -> Label {
         if self.blocks[index].target.is_none() {
             let result = match carried {
-                Carried::One(Operand::Register(_, reg)) => Some(reg),
-                Carried::One(_) => unreachable!("the value was put in a register"),
+                Carried::One(value) => Some(value.register()),
                 Carried::Nothing | Carried::Top(_) => None,
             };
             self.blocks[index].target = Some(self.new_target(result));
@@ -146,7 +144,7 @@ impl<'a> Function<'a> {
         self.move_operand(result, value);
         self.registers.locked.insert(result);
         self.push_register(value.ty(), result);
-        Operand::Register(value.ty(), result)
+        Operand::in_register(value.ty(), result)
     }
 
     /// From the lowest up, as no value moves away from the bottom.
@@ -203,7 +201,7 @@ impl<'a> Function<'a> {
                     stores.remove(source);
                 }
             }
-            self.add_move(reg, Operand::Local(ty, local.into()));
+            self.add_move(reg, Operand::of_local(ty, local.into()));
         }
         match kind {
             BlockKind::Body => stores = RegisterSet::EMPTY,
@@ -276,25 +274,23 @@ impl<'a> Function<'a> {
         Ok(entry)
     }
 
+    /// If the condition holds.
     #[inline]
-    pub(super) fn branch_to_block(
-        &mut self,
-        condition: Condition,
-        index: usize,
-    ) -> Result<(), CodeTooLarge> {
+    pub(super) fn branch_to_block(&mut self, index: usize) -> Result<(), CodeTooLarge> {
         if !self.blocks[index].is_loop() {
             let label = self.label_for_branch(index)?;
-            self.branch(condition, label);
+            self.branch_on_condition(label);
             return Ok(());
         }
         let start = self.steps.len();
         let label = self.route(index);
         if self.steps.len() == start {
-            self.branch(condition, label);
+            self.branch_on_condition(label);
             return Ok(());
         }
         let past = self.masm.new_label();
-        self.branch(condition.inverted(), past);
+        self.invert_condition();
+        self.branch_on_condition(past);
         self.emit_steps_from(start);
         self.masm.jump(label);
         self.masm.bind(past);

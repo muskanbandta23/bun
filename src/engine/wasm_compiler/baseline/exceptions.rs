@@ -254,7 +254,7 @@ impl Function<'_> {
                 self.registers.locked = RegisterSet::of(&[EXCEPTION, TAG], &[]);
                 let reg = self.take(bank(ty.kind()));
                 self.load(ty.kind(), reg, self.payload(offset));
-                carried = Carried::One(Operand::Register(ty, reg));
+                carried = Carried::One(Operand::in_register(ty, reg));
             } else {
                 let slot = self.frame_address(self.frame.operand(position));
                 self.transfer(ty.kind(), slot, self.payload(offset));
@@ -262,7 +262,7 @@ impl Function<'_> {
         }
         if catch.passes_exnref {
             if goes_in_register {
-                carried = Carried::One(Operand::Register(EXNREF, EXCEPTION.into()));
+                carried = Carried::One(Operand::in_register(EXNREF, EXCEPTION));
             } else {
                 let slot = self.frame_address(self.frame.operand(base + types.len() as u32));
                 self.masm.store64(slot, EXCEPTION);

@@ -486,7 +486,7 @@ impl Function<'_> {
                     .or_else(|| Registers::best_for_local(vacant))
                     .expect("fewer are pinned than there are");
                 if own.role != Role::AssignedFirst {
-                    self.move_operand(reg, Operand::Slot(local.ty, local.offset));
+                    self.move_operand(reg, Operand::in_slot(local.ty, local.offset));
                 }
                 self.bind(own.local, reg);
                 if own.role == Role::AssignedFirst {

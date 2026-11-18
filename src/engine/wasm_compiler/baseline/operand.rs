@@ -6,55 +6,110 @@ use bun_engine_wasm_format::{ValKind, ValType};
 
 use super::Function;
 
-/// The representation puts the type at the same place in all variants.
+/// A type and a [`Place`] in two words, which are passed in registers.
 #[derive(Clone, Copy)]
-#[repr(u8)]
-pub(super) enum Operand {
+pub(super) struct Operand {
+    head: u64,
+    payload: u64,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum Place {
     /// One of 32 bits has the upper half clear. It is no vector.
-    Constant(ValType, u64),
-    /// Nothing else is in the register.
-    Register(ValType, Reg),
+    Constant(u64),
+    /// On the stack, nothing else is in the register.
+    Register(Reg),
     /// What the local holds now.
-    Local(ValType, u32),
+    Local(u32),
     /// At this offset in the frame.
-    Slot(ValType, i32),
+    Slot(i32),
 }
 
 impl Operand {
+    const CONSTANT: u64 = 0;
+    const REGISTER: u64 = 1;
+    const LOCAL: u64 = 2;
+    const SLOT: u64 = 3;
+    const PLACE_MASK: u64 = 3;
+    const TYPE_SHIFT: u32 = 32;
+
     #[inline(always)]
-    pub(super) fn ty(self) -> ValType {
-        match self {
-            Self::Constant(ty, _)
-            | Self::Register(ty, _)
-            | Self::Local(ty, _)
-            | Self::Slot(ty, _) => ty,
+    const fn new(ty: ValType, place: u64, payload: u64) -> Self {
+        Self {
+            head: (ty.to_bits() as u64) << Self::TYPE_SHIFT | place,
+            payload,
         }
     }
 
-    /// `ty` is of the same kind.
-    pub(super) fn with_type(self, ty: ValType) -> Self {
-        match self {
-            Self::Constant(_, bits) => Self::Constant(ty, bits),
-            Self::Register(_, reg) => Self::Register(ty, reg),
-            Self::Local(_, local) => Self::Local(ty, local),
-            Self::Slot(_, offset) => Self::Slot(ty, offset),
-        }
+    #[inline(always)]
+    pub(super) const fn of_bits(ty: ValType, bits: u64) -> Self {
+        Self::new(ty, Self::CONSTANT, bits)
     }
 
     #[inline(always)]
     pub(super) fn int(width: Width, value: u64) -> Self {
         match width {
-            Width::W32 => Self::Constant(ValType::I32, u64::from(value as u32)),
-            Width::W64 => Self::Constant(ValType::I64, value),
+            Width::W32 => Self::of_bits(ValType::I32, u64::from(value as u32)),
+            Width::W64 => Self::of_bits(ValType::I64, value),
         }
     }
 
     #[inline(always)]
-    pub(super) fn constant(self) -> Option<u64> {
-        match self {
-            Self::Constant(_, bits) => Some(bits),
-            _ => None,
+    pub(super) fn in_register(ty: ValType, reg: impl Into<Reg>) -> Self {
+        Self::new(ty, Self::REGISTER, reg.into().index() as u64)
+    }
+
+    #[inline(always)]
+    pub(super) fn of_local(ty: ValType, local: u32) -> Self {
+        Self::new(ty, Self::LOCAL, local.into())
+    }
+
+    #[inline(always)]
+    pub(super) fn in_slot(ty: ValType, offset: i32) -> Self {
+        Self::new(ty, Self::SLOT, offset as u64)
+    }
+
+    #[inline(always)]
+    pub(super) fn ty(self) -> ValType {
+        ValType::from_bits((self.head >> Self::TYPE_SHIFT) as u32)
+    }
+
+    #[inline(always)]
+    pub(super) fn kind(self) -> ValKind {
+        self.ty().kind()
+    }
+
+    #[inline(always)]
+    pub(super) fn place(self) -> Place {
+        match self.head & Self::PLACE_MASK {
+            Self::CONSTANT => Place::Constant(self.payload),
+            Self::REGISTER => Place::Register(self.register()),
+            Self::LOCAL => Place::Local(self.payload as u32),
+            _ => Place::Slot(self.payload as i32),
         }
+    }
+
+    /// The value takes up the same place as one of type `ty`.
+    #[inline(always)]
+    pub(super) fn with_type(self, ty: ValType) -> Self {
+        Self::new(ty, self.head & Self::PLACE_MASK, self.payload)
+    }
+
+    #[inline(always)]
+    pub(super) fn constant(self) -> Option<u64> {
+        (self.head & Self::PLACE_MASK == Self::CONSTANT).then_some(self.payload)
+    }
+
+    /// It is in one.
+    #[inline(always)]
+    pub(super) fn register(self) -> Reg {
+        debug_assert!(self.head & Self::PLACE_MASK == Self::REGISTER);
+        Reg::from_index(self.payload as usize % Reg::COUNT)
+    }
+
+    #[inline(always)]
+    pub(super) fn is_local(self, local: u32) -> bool {
+        self.head & Self::PLACE_MASK == Self::LOCAL && self.payload == local.into()
     }
 }
 
@@ -162,38 +217,39 @@ impl Function<'_> {
         }
     }
 
-    /// Where the value is now: not a [`Operand::Local`]. The register may be that of a local.
+    /// Where the value is now: not a [`Place::Local`]. The register may be that of a local.
     #[inline(always)]
     pub(super) fn locate(&self, value: Operand) -> Operand {
-        let Operand::Local(ty, local) = value else {
+        let Place::Local(local) = value.place() else {
             return value;
         };
+        let ty = value.ty();
         let local = &self.locals[local as usize];
         match local.register {
-            Some(reg) => Operand::Register(ty, reg),
-            None => Operand::Slot(ty, local.offset),
+            Some(reg) => Operand::in_register(ty, reg),
+            None => Operand::in_slot(ty, local.offset),
         }
     }
 
     /// Takes no register.
     pub(super) fn store_operand(&mut self, dst: Address, value: Operand) {
-        let kind = value.ty().kind();
-        match self.locate(value) {
-            Operand::Constant(_, bits) => self.store_constant(kind, dst, bits),
-            Operand::Register(_, reg) => self.store(kind, dst, reg),
-            Operand::Slot(_, offset) => self.transfer(kind, dst, self.frame_address(offset)),
-            Operand::Local(..) => unreachable!(),
+        let kind = value.kind();
+        match self.locate(value).place() {
+            Place::Constant(bits) => self.store_constant(kind, dst, bits),
+            Place::Register(reg) => self.store(kind, dst, reg),
+            Place::Slot(offset) => self.transfer(kind, dst, self.frame_address(offset)),
+            Place::Local(_) => unreachable!(),
         }
     }
 
     pub(super) fn move_operand(&mut self, dst: Reg, value: Operand) {
-        let kind = value.ty().kind();
-        match self.locate(value) {
-            Operand::Constant(_, bits) => self.move_constant(kind, dst, bits),
-            Operand::Register(_, reg) if reg == dst => {}
-            Operand::Register(_, reg) => self.copy(kind, dst, reg),
-            Operand::Slot(_, offset) => self.load(kind, dst, self.frame_address(offset)),
-            Operand::Local(..) => unreachable!(),
+        let kind = value.kind();
+        match self.locate(value).place() {
+            Place::Constant(bits) => self.move_constant(kind, dst, bits),
+            Place::Register(reg) if reg == dst => {}
+            Place::Register(reg) => self.copy(kind, dst, reg),
+            Place::Slot(offset) => self.load(kind, dst, self.frame_address(offset)),
+            Place::Local(_) => unreachable!(),
         }
     }
 }

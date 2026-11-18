@@ -7,7 +7,7 @@ use bun_engine_wasm_format::ValType;
 use super::Function;
 use super::cold::Cold;
 use super::numeric::sign_extended;
-use super::operand::{Operand, untrusted};
+use super::operand::{Operand, Place, untrusted};
 use crate::abi::Trap;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -102,12 +102,12 @@ impl Function<'_> {
         let rhs = self.gpr_outside(rhs, overwritten);
         let mut natural = overwritten.gprs();
         let (quotient, remainder) = (natural.next(), natural.next());
-        let lhs = match (self.locate(lhs), quotient) {
-            (Operand::Constant(_, bits), Some(reg)) => {
+        let lhs = match (self.locate(lhs).place(), quotient) {
+            (Place::Constant(bits), Some(reg)) => {
                 self.masm.move_int(width, reg, untrusted(bits));
                 reg
             }
-            (Operand::Slot(..), Some(reg)) => {
+            (Place::Slot(_), Some(reg)) => {
                 self.move_operand(reg.into(), lhs);
                 reg
             }

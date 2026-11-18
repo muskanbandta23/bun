@@ -4,7 +4,7 @@ use bun_engine_asm::{Reg, RegisterSet};
 use bun_engine_wasm_format::ValKind;
 
 use super::Function;
-use super::operand::{Operand, scratch};
+use super::operand::{Operand, Place, scratch};
 
 /// Offsets are in the frame. The destination comes first.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -20,12 +20,12 @@ pub(super) enum Step {
 impl Step {
     /// `value` was located.
     pub(super) fn to_frame(dst: i32, value: Operand) -> Option<Self> {
-        let kind = value.ty().kind();
-        match value {
-            Operand::Constant(_, bits) => Some(Self::StoreConstant(kind, dst, bits)),
-            Operand::Register(_, reg) => Some(Self::Store(kind, dst, reg)),
-            Operand::Slot(_, src) => (src != dst).then_some(Self::Transfer(kind, dst, src)),
-            Operand::Local(..) => unreachable!(),
+        let kind = value.kind();
+        match value.place() {
+            Place::Constant(bits) => Some(Self::StoreConstant(kind, dst, bits)),
+            Place::Register(reg) => Some(Self::Store(kind, dst, reg)),
+            Place::Slot(src) => (src != dst).then_some(Self::Transfer(kind, dst, src)),
+            Place::Local(_) => unreachable!(),
         }
     }
 }
@@ -53,17 +53,17 @@ impl Moves {
     /// `value` was located.
     #[inline]
     pub(super) fn add(&mut self, dst: Reg, value: Operand) {
-        let kind = value.ty().kind();
-        match value {
-            Operand::Register(_, src) if src == dst => {}
-            Operand::Register(_, src) => {
+        let kind = value.kind();
+        match value.place() {
+            Place::Register(src) if src == dst => {}
+            Place::Register(src) => {
                 debug_assert!(!self.copied_to.contains(dst));
                 self.copied_to.insert(dst);
                 self.sources[dst.index()] = (kind, src);
             }
-            Operand::Constant(_, bits) => self.last.push(Step::Constant(kind, dst, bits)),
-            Operand::Slot(_, src) => self.last.push(Step::Load(kind, dst, src)),
-            Operand::Local(..) => unreachable!(),
+            Place::Constant(bits) => self.last.push(Step::Constant(kind, dst, bits)),
+            Place::Slot(src) => self.last.push(Step::Load(kind, dst, src)),
+            Place::Local(_) => unreachable!(),
         }
     }
 
@@ -158,12 +158,12 @@ mod tests {
                     let choice = number % choices;
                     number /= choices;
                     let value = match choice {
-                        0..REGISTERS => Operand::Register(ty, Reg::from_index(first + choice)),
-                        REGISTERS => Operand::Slot(ty, 1000),
+                        0..REGISTERS => Operand::in_register(ty, Reg::from_index(first + choice)),
+                        REGISTERS => Operand::in_slot(ty, 1000),
                         _ => continue,
                     };
-                    expected[dst] = match value {
-                        Operand::Register(_, src) => src.index() as u64,
+                    expected[dst] = match value.place() {
+                        Place::Register(src) => src.index() as u64,
                         _ => 1000,
                     };
                     moves.add(Reg::from_index(dst), value);

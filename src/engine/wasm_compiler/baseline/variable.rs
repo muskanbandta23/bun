@@ -5,7 +5,7 @@ use bun_engine_asm::prelude::*;
 use bun_engine_wasm_format::{ConstExpr, GlobalIndex, ValType, VisitVariable};
 
 use super::calls::Parameter;
-use super::operand::{Operand, bank};
+use super::operand::{Operand, Place, bank};
 use super::{Compiled, Function};
 use crate::abi::{GlobalPlace, INSTANCE, NULL, Operation};
 
@@ -36,7 +36,7 @@ impl VisitVariable for Function<'_> {
 
     #[inline(always)]
     fn local_get(&mut self, local: u32) -> Compiled {
-        self.push_lazy(Operand::Local(self.locals[local as usize].ty, local));
+        self.push_lazy(Operand::of_local(self.locals[local as usize].ty, local));
         Ok(())
     }
 
@@ -50,9 +50,9 @@ impl VisitVariable for Function<'_> {
     fn local_tee(&mut self, local: u32) -> Compiled {
         let value = self.top();
         self.set_local(local);
-        self.push_lazy(match value {
-            Operand::Constant(..) => value,
-            _ => Operand::Local(value.ty(), local),
+        self.push_lazy(match value.place() {
+            Place::Constant(_) => value,
+            _ => Operand::of_local(value.ty(), local),
         });
         Ok(())
     }
@@ -69,7 +69,7 @@ impl VisitVariable for Function<'_> {
             _ => None,
         };
         if let Some(bits) = bits {
-            self.push_lazy(Operand::Constant(global.ty, bits));
+            self.push_lazy(Operand::of_bits(global.ty, bits));
             return Ok(());
         }
         let address = self.global_address(index);

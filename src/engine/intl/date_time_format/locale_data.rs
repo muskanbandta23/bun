@@ -89,6 +89,9 @@ fn open_utc_calendar(locale: &CStr) -> bun_icu::Result<Calendar> {
 }
 
 impl LocaleData {
+    /// Once it has been used.
+    pub(super) const ESTIMATED_SIZE: usize = 32 * 1024;
+
     pub(super) fn new(icu_locale: CText, keywords: Keywords) -> LocaleData {
         LocaleData {
             icu_locale,
@@ -144,6 +147,15 @@ impl LocaleData {
         })
     }
 
+    pub(super) fn text_in_utc(&self, pattern: &[u16], time: f64) -> bun_icu::Result<Buffer<u16>> {
+        let mut calendar = self.utc_calendars()?.first.borrow_mut();
+        calendar.set_millis(time)?;
+        let mut text = Buffer::new();
+        self.format(pattern)?.format(&mut calendar, &mut text)?;
+        use_plain_spaces(&mut text);
+        Ok(text)
+    }
+
     /// What `field` reads at each of `times`, which are the same in each call for a field.
     pub(super) fn names(
         &self,
@@ -154,16 +166,9 @@ impl LocaleData {
         if let Some((_, names)) = known.iter().find(|(it, _)| **it == *field) {
             return Ok(Rc::clone(names));
         }
-        let format = self.format(field)?;
-        let mut calendar = self.utc_calendars()?.first.borrow_mut();
-        let names = times.map(|time| {
-            let mut name = Buffer::new();
-            calendar.set_millis(time)?;
-            format.format(&mut calendar, &mut name)?;
-            use_plain_spaces(&mut name);
-            Ok(name[..].into())
-        });
-        let names: Names = names.collect::<bun_icu::Result<_>>()?;
+        let names: Names = times
+            .map(|time| self.text_in_utc(field, time).map(|name| name[..].into()))
+            .collect::<bun_icu::Result<_>>()?;
         known.push((field.into(), Rc::clone(&names)));
         Ok(names)
     }

@@ -6,7 +6,7 @@ use bun_icu::{Buffer, CText};
 use smallvec::SmallVec;
 
 use super::formats::Formats;
-use super::locale_data::{Keywords, LocaleData};
+use super::locale_data::LocaleData;
 use super::{Options, Purpose};
 use crate::recent::Recent;
 use crate::{KeywordValue, LanguageTag};
@@ -49,9 +49,13 @@ impl DateCache {
         self.generator(locale)?.borrow().field_name(field, width)
     }
 
-    pub(super) fn locale_data(&self, locale: CText, keywords: Keywords) -> Rc<LocaleData> {
+    pub(super) fn locale_data(
+        &self,
+        locale: CText,
+        make: impl FnOnce(CText) -> LocaleData,
+    ) -> Rc<LocaleData> {
         self.locales.find(|it| *it == locale).unwrap_or_else(|| {
-            let data = Rc::new(LocaleData::new(locale.clone(), keywords));
+            let data = Rc::new(make(locale.clone()));
             self.locales.insert(locale, Rc::clone(&data));
             data
         })

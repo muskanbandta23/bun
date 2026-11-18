@@ -98,12 +98,18 @@ impl Table {
         });
         let mask = self.slots.len() - 1;
         let mut slot = (hash >> 15) as usize & mask;
-        while self.slots[slot] != Table::FREE
-            && !Text::from_ascii(self.name(self.slots[slot])).eq_ignore_ascii_case(T::text(name))
-        {
+        while self.slots[slot] != Table::FREE && !self.is_named(self.slots[slot], name) {
             slot = (slot + 1) & mask;
         }
         slot
+    }
+
+    fn is_named<T: CodeUnit>(&self, index: u16, name: &[T]) -> bool {
+        let own = self.name(index).as_bytes();
+        own.len() == name.len()
+            && own.iter().zip(name).all(|(&own, &unit)| {
+                unit.is(own) || (unit.is(own ^ 0x20) && own.is_ascii_alphabetic())
+            })
     }
 
     /// Those of the zone that the name is a link to, if it is one.

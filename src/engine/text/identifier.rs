@@ -367,3 +367,10 @@ impl PartialEq<PropertyName<'_>> for Atom {
         self.name() == *other
     }
 }
+
+impl hashbrown::Equivalent<Identifier> for PropertyName<'_> {
+    #[inline(always)]
+    fn equivalent(&self, key: &Identifier) -> bool {
+        *key == *self
+    }
+}

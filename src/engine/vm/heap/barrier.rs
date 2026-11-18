@@ -84,3 +84,22 @@ pub(crate) unsafe fn fill_words(target: *mut u64, count: usize, word: u64) {
         unsafe { AtomicU64::from_ptr(target.add(index)) }.store(word, Ordering::Relaxed);
     }
 }
+
+/// # Safety
+/// As for `move_words`.
+#[inline]
+pub(crate) unsafe fn reverse_words(first: *mut u64, count: usize) {
+    if !is_fenced() {
+        // SAFETY: the caller's, and no other thread is reading.
+        return unsafe { core::slice::from_raw_parts_mut(first, count) }.reverse();
+    }
+    for index in 0..count / 2 {
+        // SAFETY: the caller's.
+        unsafe {
+            let (front, back) = (first.add(index), first.add(count - 1 - index));
+            let word = *front;
+            AtomicU64::from_ptr(front).store(*back, Ordering::Relaxed);
+            AtomicU64::from_ptr(back).store(word, Ordering::Relaxed);
+        }
+    }
+}

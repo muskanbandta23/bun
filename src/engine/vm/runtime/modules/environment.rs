@@ -80,13 +80,15 @@ impl ModuleEnvironment {
     /// InstantiateFunctionObject, for a declaration that nothing has referred to so far.
     fn create_function(&self, vm: &Vm, index: u32) -> Option<Value> {
         let template = self.template();
-        let slot = (template.scope().slot_at(index)).filter(|it| it.kind == SlotKind::LazyFunction)?;
+        let slot =
+            (template.scope().slot_at(index)).filter(|it| it.kind == SlotKind::LazyFunction)?;
         let module = self.module().cast::<SourceTextModuleRecord>();
         let executable = module.executable()?.lazy_function(vm, slot.function());
         let shape = JsFunction::shape_for(vm, &*self.shape().global()?, &executable);
         // SAFETY: declared in this scope, and what the slot is for.
         unsafe {
-            let function = JsFunction::create_with_shape(vm, executable, self.as_cell().into(), shape);
+            let function =
+                JsFunction::create_with_shape(vm, executable, self.as_cell().into(), shape);
             self.set(index, Some(function.into()));
             Some(function.into())
         }

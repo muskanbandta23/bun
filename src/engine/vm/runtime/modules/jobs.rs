@@ -7,7 +7,7 @@ use super::failure::{self, FailureKind};
 use super::loading::{DynamicImport, Goal, GraphLoad, LoadContext, Payload, PendingRequest};
 use super::{handled_promise, react};
 use crate::{
-    AbstractModuleRecord, CyclicModuleRecord, Cx, ErrorInstance, Gc, InternalFieldTuple,
+    AbstractModuleRecord, Cx, CyclicModuleRecord, ErrorInstance, Gc, InternalFieldTuple,
     InternalMicrotask, JsPromise, JsResult, ModuleRegistryEntry, PromiseStatus, Value, root_vec,
 };
 
@@ -128,7 +128,9 @@ fn go_on(
         ModuleRegistryFetchSettled | ModuleRegistryModuleSettled if !next.is_pending() => {}
         ModuleRegistryFetchSettled => {
             let entry = context.cast::<ModuleRegistryEntry>();
-            let made = entry.loader().make_module(cx, &entry.key().clone(), value)?;
+            let made = entry
+                .loader()
+                .make_module(cx, &entry.key().clone(), value)?;
             react(cx, &made, ModuleRegistryModuleSettled, next, context);
         }
         ModuleRegistryModuleSettled => {
@@ -236,7 +238,13 @@ fn link_and_evaluate_import(cx: &mut Cx, context: Gc<InternalFieldTuple>) -> JsR
     };
     if import.phase() == ImportPhase::Evaluation {
         let evaluation = module.evaluate_for(cx, Some(&importer))?;
-        react(cx, &evaluation, DynamicImportEvaluateSettled, promise, module);
+        react(
+            cx,
+            &evaluation,
+            DynamicImportEvaluateSettled,
+            promise,
+            module,
+        );
         return Ok(());
     }
     let mut dependencies = root_vec();

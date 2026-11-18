@@ -40,7 +40,10 @@ pub struct ForeignModuleOps {
     pub read_export: fn(&mut Cx, Value) -> JsResult<Option<Value>>,
 }
 
-#[cell(name = "CyclicModuleRecord", export = "engine_class_CyclicModuleRecord")]
+#[cell(
+    name = "CyclicModuleRecord",
+    export = "engine_class_CyclicModuleRecord"
+)]
 pub struct CyclicModuleRecord {
     base: AbstractModuleRecord,
     foreign_ops: Option<&'static ForeignModuleOps>,

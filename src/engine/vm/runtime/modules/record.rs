@@ -8,13 +8,17 @@ use bun_engine_macros::cell;
 use bun_engine_text::{Identifier, PropertyName};
 
 use crate::{
-    CyclicModuleRecord, Cx, FastHashMap, Field, Gc, GcCell, JsDestructibleObject, JsObject,
+    Cx, CyclicModuleRecord, FastHashMap, Field, Gc, GcCell, JsDestructibleObject, JsObject,
     JsObjectInit, JsPromise, JsResult, ModuleEntries, ModuleEnvironment, ModuleKey, ModuleKeyRef,
     ModuleLoader, ModuleNamespace, ModuleRequest, ModuleType, ResolvedBinding, Shape, TracedMap,
     Value, Vm, errors,
 };
 
-#[cell(name = "AbstractModuleRecord", export = "engine_class_AbstractModuleRecord", estimated_size)]
+#[cell(
+    name = "AbstractModuleRecord",
+    export = "engine_class_AbstractModuleRecord",
+    estimated_size
+)]
 pub struct AbstractModuleRecord {
     base: JsDestructibleObject,
     key: Identifier,

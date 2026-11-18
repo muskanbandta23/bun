@@ -6,7 +6,7 @@ use super::cyclic::{AsyncEvaluationOrder, check_graph_depth};
 use super::failure::{self, FailureKind};
 use crate::heap::RootSet;
 use crate::{
-    AbstractModuleRecord, CyclicModuleRecord, Cx, Gc, InternalMicrotask, InternalReaction,
+    AbstractModuleRecord, Cx, CyclicModuleRecord, Gc, InternalMicrotask, InternalReaction,
     JsPromise, JsResult, ModuleStatus, PromiseStatus, RootVec, SourceTextModuleRecord, Value,
     root_vec,
 };

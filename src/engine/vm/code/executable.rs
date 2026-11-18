@@ -3,7 +3,8 @@ use core::mem::offset_of;
 use std::rc::Rc;
 
 use bun_engine_bytecode::{
-    Code, CodeFlags, Eval, FunctionInfo, FunctionKind, FunctionRef, Module, Origin, Script, Specialization, Visibility,
+    Code, CodeFlags, Eval, FunctionInfo, FunctionKind, FunctionRef, Module, Origin, Script,
+    Specialization, Visibility,
 };
 use bun_engine_macros::{Trace, cell};
 use bun_engine_text::{StringRef, Text};
@@ -11,9 +12,9 @@ use bun_engine_text::{StringRef, Text};
 use super::eval::EvalKey;
 use crate::heap::{OnceBox, Owned};
 use crate::{
-    CellType, CodeBlock, Cx, Field, Gc, GlobalObject, InlineWatchpointSet, Intrinsic, JsArray, JsCell,
-    JsFunction, JsResult, JsString, NativeFunction, RealmSlot, ScopeTemplate, Shape, SourceCode, SourceProviderRef,
-    TracedMap, TypeFlags, Vm, WatchpointState, WeakField, call,
+    CellType, CodeBlock, Cx, Field, Gc, GlobalObject, InlineWatchpointSet, Intrinsic, JsArray,
+    JsCell, JsFunction, JsResult, JsString, NativeFunction, RealmSlot, ScopeTemplate, Shape,
+    SourceCode, SourceProviderRef, TracedMap, TypeFlags, Vm, WatchpointState, WeakField, call,
 };
 
 /// What a call goes through: it stores the code block in the new frame and calls the entry.

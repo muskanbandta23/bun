@@ -1,7 +1,9 @@
 //! How values are represented, and values that scripts cannot make.
 
 use bun_engine_macros::cell;
-use bun_engine_vm::{InternalFunction, JsArrayBuffer, RealmWatchpoint, Shape, ShapeSpec, TypeFlags, call};
+use bun_engine_vm::{
+    InternalFunction, JsArrayBuffer, RealmWatchpoint, Shape, ShapeSpec, TypeFlags, call,
+};
 
 use super::{return_false, return_undefined, string};
 use crate::prelude::*;

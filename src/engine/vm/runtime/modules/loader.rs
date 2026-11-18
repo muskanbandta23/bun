@@ -8,12 +8,12 @@ use bun_engine_macros::cell;
 use bun_engine_text::{Identifier, PropertyName, StringRef, SymbolRef, private_names};
 
 use super::failure::{self, FailureKind};
-use super::loading::{GraphLoad, Goal, LoadContext};
+use super::loading::{Goal, GraphLoad, LoadContext};
 use super::request::type_of;
 use super::{handled_promise, react};
 use crate::scope::realm_of_scope;
 use crate::{
-    AbstractModuleRecord, AnalysisError, CodeBlock, CyclicModuleRecord, Cx, Environment,
+    AbstractModuleRecord, AnalysisError, CodeBlock, Cx, CyclicModuleRecord, Environment,
     ErrorInstance, ErrorType, FetchParameters, Field, Gc, InternalMicrotask, JsCell, JsPromise,
     JsResult, JsSourceCode, JsString, ModuleEnvironment, ModuleKey, ModuleKeyRef, ModuleName,
     ModuleRegistryEntry, ModuleRequest, ModuleType, PromiseStatus, RegistryStatus, SourceCode,
@@ -135,10 +135,12 @@ impl ModuleLoader {
 
     /// Those of all types. Whether there was one.
     pub fn remove_entries(&self, key: PropertyName<'_>) -> bool {
-        (self.loaded_modules()).retain(|request, module| request.name != key && *module.key() != key);
-        self.resolution_failures().retain(|(referrer, specifier), _| {
-            *specifier != key && referrer.as_ref().is_none_or(|it| *it != key)
-        });
+        (self.loaded_modules())
+            .retain(|request, module| request.name != key && *module.key() != key);
+        self.resolution_failures()
+            .retain(|(referrer, specifier), _| {
+                *specifier != key && referrer.as_ref().is_none_or(|it| *it != key)
+            });
         let mut was_registered = false;
         while let Some(entry) = self.find_entry_of_any_type(key) {
             was_registered |= self.unregister(entry.typed_key());
@@ -215,7 +217,12 @@ impl ModuleLoader {
     // Records
 
     /// From a `JsSourceCode`, a record, or any other value, which becomes the default export.
-    pub fn make_module(&self, cx: &mut Cx, key: &Identifier, data: Value) -> JsResult<Gc<JsPromise>> {
+    pub fn make_module(
+        &self,
+        cx: &mut Cx,
+        key: &Identifier,
+        data: Value,
+    ) -> JsResult<Gc<JsPromise>> {
         let promise = handled_promise(cx);
         self.modules_being_made.update(|count| count + 1);
         let result = self.make_module_for(cx, key, data, promise);

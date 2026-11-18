@@ -59,7 +59,9 @@ pub(super) fn duplicate(cx: &mut Cx, error: Value) -> JsResult<Value> {
     let Some(error) = error.downcast::<ErrorInstance>() else {
         return Ok(error);
     };
-    let message = error.get_pure(cx, names::message).and_then(Value::as_string);
+    let message = error
+        .get_pure(cx, names::message)
+        .and_then(Value::as_string);
     let message = message.map(|it: Gc<JsString>| it.to_string_ref(cx));
     let copy = ErrorInstance::new(cx, error.error_type(), message.transpose()?);
     for name in [KEY, TYPE, KIND] {

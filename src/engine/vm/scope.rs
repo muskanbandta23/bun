@@ -345,7 +345,8 @@ impl Environment {
     pub fn overwrite(&self, vm: &Vm, name: PropertyName<'_>, value: Value) -> bool {
         use SlotKind::{Callee, Const, LazyFunction, Let, Variable};
         let slot = self.template.scope.find(name);
-        let Some(slot) = slot.filter(|it| matches!(it.kind, Variable | Let | Const | Callee | LazyFunction))
+        let Some(slot) =
+            slot.filter(|it| matches!(it.kind, Variable | Let | Const | Callee | LazyFunction))
         else {
             return false;
         };

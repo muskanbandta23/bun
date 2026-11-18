@@ -6,9 +6,6 @@ use core::marker::PhantomData;
 use core::ptr::{NonNull, null_mut};
 use std::alloc::Global;
 
-// For the feature that lets the maps take an `Allocator`.
-use allocator_api2 as _;
-
 use crate::FastHasher;
 
 #[repr(C, align(16))]

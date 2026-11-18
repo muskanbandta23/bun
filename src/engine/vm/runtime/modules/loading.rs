@@ -10,7 +10,7 @@ use super::failure::{self, FailureKind};
 use super::loader::{ResolutionKey, referrer_text};
 use super::{handled_promise, react};
 use crate::{
-    AbstractModuleRecord, CyclicModuleRecord, Cx, FastHashSet, Field, Gc, InternalMicrotask,
+    AbstractModuleRecord, Cx, CyclicModuleRecord, FastHashSet, Field, Gc, InternalMicrotask,
     InternalReaction, JsCell, JsPromise, JsResult, LoadGoal, ModuleKeyRef, ModuleLoader,
     ModuleName, ModuleRegistryEntry, ModuleRequest, ModuleStatus, PromiseStatus, RegistryStatus,
     TracedVec, TypeFlags, Value, Vm,
@@ -200,7 +200,13 @@ impl PendingRequest {
             self.set_module(Some(value.cast()));
             let requested = loader.load_requested_modules(cx, value.cast())?;
             self.awaits.set(Awaited::RequestedModules);
-            react(cx, &requested, InternalMicrotask::ModuleLoadStep, load, self);
+            react(
+                cx,
+                &requested,
+                InternalMicrotask::ModuleLoadStep,
+                load,
+                self,
+            );
             return Ok(());
         }
         let module = self.module().unwrap_or_else(|| value.cast());
@@ -544,7 +550,13 @@ impl ModuleLoader {
                 module: None,
             });
             let load = handled_promise(cx);
-            react(cx, promise, InternalMicrotask::ModuleLoadStep, load, pending);
+            react(
+                cx,
+                promise,
+                InternalMicrotask::ModuleLoadStep,
+                load,
+                pending,
+            );
             load
         };
         if let Some(load) = entry.loaded_promise(cx).filter(|_| !is_reloading_root) {

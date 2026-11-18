@@ -7,7 +7,7 @@ use bun_engine_text::Identifier;
 
 use super::{failure, handled_promise, react};
 use crate::{
-    AbstractModuleRecord, CyclicModuleRecord, Cx, Field, Gc, InternalMicrotask, JsCell, JsPromise,
+    AbstractModuleRecord, Cx, CyclicModuleRecord, Field, Gc, InternalMicrotask, JsCell, JsPromise,
     JsResult, ModuleKey, ModuleKeyRef, ModuleLoader, ModuleType, PromiseStatus, TypeFlags, Value,
     Vm,
 };

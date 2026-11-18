@@ -11,13 +11,17 @@ use super::cyclic::throw_link_error;
 use crate::runtime::control::AsyncContextScope;
 use crate::scope::static_scope_of;
 use crate::{
-    AbstractModuleRecord, CompileError, CyclicModuleRecord, Cx, Field, Gc, ImportEntry, ImportKind,
+    AbstractModuleRecord, CompileError, Cx, CyclicModuleRecord, Field, Gc, ImportEntry, ImportKind,
     JsObject, JsPromise, JsResult, ModuleEntries, ModuleEnvironment, ModuleExecutable,
     ModuleLoader, ModuleType, Resolution, ResolvedBinding, SourceCode, SourceProvider,
     SyntheticModuleRecord, Thrown, Value, Vm, throw_compile_error,
 };
 
-#[cell(name = "ModuleRecord", export = "engine_class_SourceTextModuleRecord", estimated_size)]
+#[cell(
+    name = "ModuleRecord",
+    export = "engine_class_SourceTextModuleRecord",
+    estimated_size
+)]
 pub struct SourceTextModuleRecord {
     base: CyclicModuleRecord,
     source: SourceCode,
@@ -260,7 +264,8 @@ impl SourceTextModuleRecord {
     /// What `ModuleHooks::evaluate` comes down to. Code that awaits returns its promise.
     pub fn run_code(&self, cx: &mut Cx) -> JsResult<Value> {
         let cx = cx.in_realm_of(self);
-        let (executable, environment) = (self.executable().zip(self.environment())).expect("linked");
+        let (executable, environment) =
+            (self.executable().zip(self.environment())).expect("linked");
         assert!(!self.has_finished_with_code.get());
         let result = cx.execute(executable.upcast(), environment.cell(), Value::UNDEFINED);
         if let (Ok(promise), true) = (&result, self.has_top_level_await().get()) {

@@ -8,7 +8,7 @@ use bun_engine_text::{Identifier, PropertyName, names, symbols};
 use hashbrown::HashTable;
 
 use crate::{
-    AbstractModuleRecord, Attributes, CyclicModuleRecord, Cx, DeletePropertySlot, DontEnumMode, Gc,
+    AbstractModuleRecord, Attributes, Cx, CyclicModuleRecord, DeletePropertySlot, DontEnumMode, Gc,
     InternalMethod, JsDestructibleObject, JsObject, JsObjectInit, JsResult, JsString, ModuleStatus,
     PropertyDescriptor, PropertyNameList, PropertyNameMode, PropertySlot, PutPropertySlot,
     Resolution, ResolvedBinding, RootVec, Shape, ShapeSpec, TypeFlags, Value, errors,
@@ -315,8 +315,9 @@ impl ModuleNamespace {
         }
         let Some(binding) = self.find(name).cloned() else {
             slot.taint_by_opaque_object();
-            return Ok(name == names::__esModule
-                && self.ordinary_get_own_property_slot(cx, name, slot)?);
+            return Ok(
+                name == names::__esModule && self.ordinary_get_own_property_slot(cx, name, slot)?
+            );
         };
         let value = if slot.method() == InternalMethod::HasProperty {
             slot.taint_by_opaque_object();

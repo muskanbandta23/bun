@@ -1,5 +1,6 @@
 //! From the creation of a `Vm` to the exit code.
 
+use core::time::Duration;
 use std::io::{BufRead, Write};
 
 use bun_engine_text::{StringBuilder, names};
@@ -231,6 +232,11 @@ pub(crate) fn run(command_line: &CommandLine, body: impl FnOnce(&mut Cx)) -> i32
             let _ = arguments.push(cx, argument.into());
         }
         global::define_hidden(cx, "arguments", arguments.into());
+    }
+
+    (cx.embedder().must_not_block).set(command_line.cannot_block);
+    if let Some(milliseconds) = command_line.watchdog_milliseconds {
+        cx.add_termination_deadline(Duration::from_millis(milliseconds));
     }
 
     body(cx);

@@ -161,12 +161,7 @@ pub(crate) fn source(
     SourceCode::whole(provider.origin(origin).finish())
 }
 
-pub(crate) fn script(bytes: &[u8], path: &str) -> SourceCode {
+pub(crate) fn source_at(path: &str, bytes: &[u8], source_type: SourceType) -> SourceCode {
     let origin = origin(&absolute_url(path));
-    source(
-        decode(bytes),
-        Some(&origin),
-        Some(path),
-        SourceType::Program,
-    )
+    source(decode(bytes), Some(&origin), Some(path), source_type)
 }

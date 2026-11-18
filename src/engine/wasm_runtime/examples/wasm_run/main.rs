@@ -53,7 +53,11 @@ fn write_perf_map(start: usize, len: usize, name: &str) {
 static DUMP_DIRECTORY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
 fn dump(start: usize, len: usize, name: &str) {
-    let name: String = name.chars().filter(char::is_ascii_alphanumeric).take(80).collect();
+    let name: String = name
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .take(80)
+        .collect();
     let path = format!("{}/{start:x}-{name}.bin", DUMP_DIRECTORY.get().unwrap());
     // SAFETY: the code was just linked.
     let code = unsafe { std::slice::from_raw_parts(start as *const u8, len) };

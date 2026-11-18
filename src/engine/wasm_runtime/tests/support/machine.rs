@@ -132,7 +132,11 @@ fn word(address: usize) -> usize {
 
 impl Machine {
     /// WebAssembly may use `stack_size` bytes from `stack_origin` down. There has to be `STACK_RESERVE` more.
-    pub(crate) fn new(engine: &'static Engine, stack_origin: usize, stack_size: usize) -> Box<Self> {
+    pub(crate) fn new(
+        engine: &'static Engine,
+        stack_origin: usize,
+        stack_size: usize,
+    ) -> Box<Self> {
         let mut machine = Box::<Self>::new_uninit();
         let vm = Vm(machine.as_mut_ptr().expose_provenance());
         // SAFETY: `drop` destroys the cells, and the caller vouches for the stack.
@@ -241,7 +245,9 @@ impl Machine {
     pub(crate) fn opaque(&self, number: u32) -> Reference {
         let existing = self.opaque.borrow().get(&number).copied();
         let cell = existing.unwrap_or_else(|| {
-            let cell = self.heap_for_allocation().new_cell(Kind::Opaque, 16, number as usize);
+            let cell = self
+                .heap_for_allocation()
+                .new_cell(Kind::Opaque, 16, number as usize);
             cell.unwrap()
         });
         self.opaque.borrow_mut().insert(number, cell);
@@ -255,7 +261,11 @@ impl Machine {
     }
 
     /// The arguments have the right types.
-    pub(crate) fn call(&self, function: HostCell, arguments: &[Bits]) -> Result<Vec<Bits>, Failure> {
+    pub(crate) fn call(
+        &self,
+        function: HostCell,
+        arguments: &[Bits],
+    ) -> Result<Vec<Bits>, Failure> {
         let mut invocation = Invocation {
             arguments,
             results: Vec::new(),
@@ -330,7 +340,9 @@ unsafe impl Host for Native {
     fn new_type_data(&self, instance: &Instance, ty: TypeIndex) -> Option<HostCell> {
         let ty = instance.module().types().canonical(ty);
         let machine = Machine::of(instance.store().vm());
-        machine.heap_for_allocation().new_owner(Kind::TypeData, 16, ty)
+        machine
+            .heap_for_allocation()
+            .new_owner(Kind::TypeData, 16, ty)
     }
 
     fn new_object(&self, vm: Vm, type_data: HostCell, size: usize) -> Option<HostCell> {
@@ -346,7 +358,9 @@ unsafe impl Host for Native {
 
     fn new_function(&self, instance: &Instance, _: FuncIndex) -> Option<HostCell> {
         let machine = Machine::of(instance.store().vm());
-        machine.heap_for_allocation().new_cell(Kind::Function, 40, 0)
+        machine
+            .heap_for_allocation()
+            .new_cell(Kind::Function, 40, 0)
     }
 
     fn new_exception(&self, instance: &Instance, tag: &Rc<Tag>) -> Option<HostCell> {
@@ -366,7 +380,9 @@ unsafe impl Host for Native {
     fn throw_trap(&self, instance: &Instance, trap: Trap) {
         let machine = Machine::of(instance.store().vm());
         drop(machine.heap_for_allocation());
-        machine.stack_trace.replace(machine.capture_stack_trace(100));
+        machine
+            .stack_trace
+            .replace(machine.capture_stack_trace(100));
         machine.pending.set(Some(Failure::Trap(trap)));
     }
 
@@ -413,7 +429,9 @@ unsafe impl Host for Native {
         let machine = Machine::of(call.instance().store().vm());
         let function = Rc::clone(&machine.functions.borrow()[call.function().1]);
         let count = call.arguments().types().len();
-        let arguments: Vec<Bits> = (0..count).map(|index| call.arguments().get(index)).collect();
+        let arguments: Vec<Bits> = (0..count)
+            .map(|index| call.arguments().get(index))
+            .collect();
         let values = function(machine, call.instance(), &arguments).map_err(|failure| {
             machine.pending.set(Some(failure));
             Thrown

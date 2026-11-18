@@ -157,7 +157,11 @@ impl Heap {
         roots: impl Iterator<Item = usize>,
         is_full: bool,
     ) -> Vec<HostCell> {
-        let cells = || self.sizes.keys().map(|&it| HostCell(NonZeroUsize::new(it).unwrap()));
+        let cells = || {
+            self.sizes
+                .keys()
+                .map(|&it| HostCell(NonZeroUsize::new(it).unwrap()))
+        };
         let mut pending = std::mem::take(&mut self.remembered);
         if is_full {
             pending.clear();
@@ -210,7 +214,10 @@ impl Heap {
         while let Some((&address, _)) = self.sizes.first_key_value() {
             self.destroy(engine, HostCell(NonZeroUsize::new(address).unwrap()));
         }
-        self.spoiled.drain(..).chain(self.chunks.drain(..)).for_each(free);
+        self.spoiled
+            .drain(..)
+            .chain(self.chunks.drain(..))
+            .for_each(free);
     }
 }
 

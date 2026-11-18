@@ -54,7 +54,10 @@ unsafe extern "C" fn handle(signal: c_int, info: *mut libc::siginfo_t, context: 
     // SAFETY: the kernel gave us these.
     unsafe {
         let is_handled = is_raised_by_instruction(&*info)
-            && redirect((*info).si_addr().addr(), &mut registers(&mut *context.cast()));
+            && redirect(
+                (*info).si_addr().addr(),
+                &mut registers(&mut *context.cast()),
+            );
         if !is_handled {
             pass_on(signal, info, context);
         }

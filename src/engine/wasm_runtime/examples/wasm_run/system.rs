@@ -32,7 +32,10 @@ fn write(memory: &Memory, address: u64, bytes: &[u8]) -> Result<u32, Failure> {
 fn buffers(memory: &Memory, list: u64, count: u64) -> Result<Vec<(u64, usize)>, Failure> {
     let buffer = |index| {
         let entry = list + index * 8;
-        Ok((read_u32(memory, entry)?.into(), read_u32(memory, entry + 4)? as usize))
+        Ok((
+            read_u32(memory, entry)?.into(),
+            read_u32(memory, entry + 4)? as usize,
+        ))
     };
     (0..count).map(buffer).collect()
 }
@@ -42,7 +45,9 @@ fn fd_write(memory: &Memory, arguments: &[u64]) -> Result<u32, Failure> {
     for (address, length) in buffers(memory, arguments[1], arguments[2])? {
         let start = all.len();
         all.resize(start + length, 0);
-        memory.read(address, &mut all[start..]).map_err(Failure::Trap)?;
+        memory
+            .read(address, &mut all[start..])
+            .map_err(Failure::Trap)?;
     }
     match arguments[0] {
         1 => std::io::stdout().write_all(&all).unwrap(),
@@ -92,7 +97,11 @@ fn contents_of(strings: Vec<String>) -> Box<Call> {
     Box::new(move |memory, arguments| {
         let mut next = arguments[1];
         for (string, index) in strings.iter().zip(0..) {
-            write(memory, arguments[0] + index * 4, &(next as u32).to_le_bytes())?;
+            write(
+                memory,
+                arguments[0] + index * 4,
+                &(next as u32).to_le_bytes(),
+            )?;
             write(memory, next, string.as_bytes())?;
             next += string.len() as u64 + 1;
             write(memory, next - 1, &[0])?;
@@ -112,10 +121,16 @@ pub(crate) fn imports(
             0 => SystemTime::UNIX_EPOCH.elapsed().unwrap(),
             _ => start.elapsed(),
         };
-        write(memory, arguments[2], &(time.as_nanos() as u64).to_le_bytes())
+        write(
+            memory,
+            arguments[2],
+            &(time.as_nanos() as u64).to_le_bytes(),
+        )
     };
     let random = |memory: &Memory, arguments: &[u64]| {
-        let bytes: Vec<u8> = (0..arguments[1]).map(|index| (index * 167 + 13) as u8).collect();
+        let bytes: Vec<u8> = (0..arguments[1])
+            .map(|index| (index * 167 + 13) as u8)
+            .collect();
         write(memory, arguments[0], &bytes)
     };
     let calls: [(&str, Box<Call>); 15] = [
@@ -132,7 +147,10 @@ pub(crate) fn imports(
         ("clock_time_get", Box::new(clock)),
         ("random_get", Box::new(random)),
         ("sched_yield", Box::new(|_, _| Ok(SUCCESS))),
-        ("proc_exit", Box::new(|_, it| Err(Failure::Exit(it[0] as i32)))),
+        (
+            "proc_exit",
+            Box::new(|_, it| Err(Failure::Exit(it[0] as i32))),
+        ),
         ("", Box::new(|_, _| Ok(NOT_IMPLEMENTED))),
     ];
     let item = |(name, call): (&'static str, Box<Call>)| {

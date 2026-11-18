@@ -23,7 +23,10 @@ impl Feedback for Fake<'_> {
         let targets = 1 + (random >> 62) as u32;
         let target = |_| {
             random = (random ^ random >> 29).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-            (CodeIndex((random >> 32) as u32 % self.functions), 1000 / targets)
+            (
+                CodeIndex((random >> 32) as u32 % self.functions),
+                1000 / targets,
+            )
         };
         let mut targets: Vec<_> = (0..targets).map(target).collect();
         targets.sort_unstable();
@@ -54,7 +57,9 @@ fn optimize<const IS_FULL: bool, const FAKES: bool>(
     let feedback = if FAKES { &fake } else { real };
     let level = if IS_FULL { Level::Full } else { Level::Quick };
     let optimizing = &mut compilers.optimizing;
-    optimizing.compile(env, code, loop_entry, level, feedback).ok()
+    optimizing
+        .compile(env, code, loop_entry, level, feedback)
+        .ok()
 }
 
 pub(crate) fn named(name: &str, fakes_feedback: bool) -> Option<Optimizer> {

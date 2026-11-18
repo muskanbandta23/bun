@@ -109,14 +109,25 @@ fn spectest(machine: &Machine) -> HashMap<&'static str, Item> {
 fn is_expected(trap: Trap, message: &[u8]) -> bool {
     use Trap::*;
     let traps: &[(&[u8], &[Trap])] = &[
-        (b"uninitialized element", &[IndirectCallToNull, SignatureMismatch]),
+        (
+            b"uninitialized element",
+            &[IndirectCallToNull, SignatureMismatch],
+        ),
         (
             b"out of bounds memory access",
-            &[MemoryOutOfBounds, ArrayNewDataFailure, ArrayInitDataOutOfBounds],
+            &[
+                MemoryOutOfBounds,
+                ArrayNewDataFailure,
+                ArrayInitDataOutOfBounds,
+            ],
         ),
         (
             b"out of bounds table access",
-            &[TableOutOfBounds, ArrayNewElemFailure, ArrayInitElemOutOfBounds],
+            &[
+                TableOutOfBounds,
+                ArrayNewElemFailure,
+                ArrayInitElemOutOfBounds,
+            ],
         ),
         (
             b"out of bounds array access",
@@ -131,7 +142,10 @@ fn is_expected(trap: Trap, message: &[u8]) -> bool {
         ),
         (b"unreachable", &[Unreachable]),
         (b"unaligned atomic", &[UnalignedAtomic, MemoryOutOfBounds]),
-        (b"integer overflow", &[IntegerOverflow, TruncationOutOfRange]),
+        (
+            b"integer overflow",
+            &[IntegerOverflow, TruncationOutOfRange],
+        ),
         (b"invalid conversion to integer", &[TruncationOutOfRange]),
         (b"integer divide by zero", &[DivisionByZero]),
         (b"cast failure", &[CastFailure, NullReference]),
@@ -148,12 +162,17 @@ fn is_expected(trap: Trap, message: &[u8]) -> bool {
         (b"null function reference", &[NullFunction]),
         (b"null exception reference", &[NullExnref]),
     ];
-    let matches = |entry: &(&[u8], &[Trap])| message.starts_with(entry.0) && entry.1.contains(&trap);
+    let matches =
+        |entry: &(&[u8], &[Trap])| message.starts_with(entry.0) && entry.1.contains(&trap);
     traps.iter().any(matches)
 }
 
 fn float_matches(pattern: &str, bits: u64, width: u32) -> bool {
-    let quiet_nan = if width == 32 { 0x7fc0_0000 } else { 0x7ff8 << 48 };
+    let quiet_nan = if width == 32 {
+        0x7fc0_0000
+    } else {
+        0x7ff8 << 48
+    };
     let magnitude = bits & !(1 << (width - 1));
     match pattern {
         "canonical" => magnitude == quiet_nan,
@@ -178,7 +197,10 @@ impl<'a> Script<'a> {
                 return export(instance, field);
             }
             let field = std::str::from_utf8(field).ok()?;
-            self.spectest.get(field).filter(|_| module == b"spectest").cloned()
+            self.spectest
+                .get(field)
+                .filter(|_| module == b"spectest")
+                .cloned()
         })
     }
 
@@ -233,7 +255,8 @@ impl<'a> Script<'a> {
     }
 
     fn act(&self, words: &[&str]) -> Result<Outcome, String> {
-        let item = |instance, name| Ok::<_, String>(export(self.instance(instance)?, &unquote(name)));
+        let item =
+            |instance, name| Ok::<_, String>(export(self.instance(instance)?, &unquote(name)));
         match *words {
             ["invoke", instance, name, ref arguments @ ..] => {
                 let arguments: Vec<_> = arguments.iter().map(|it| self.argument(it)).collect();
@@ -278,7 +301,9 @@ impl<'a> Script<'a> {
             }
             (
                 "assert_trap",
-                Outcome::NotInstantiated(InstantiateError::Initialize(InitializeError::Constant(it))),
+                Outcome::NotInstantiated(InstantiateError::Initialize(InitializeError::Constant(
+                    it,
+                ))),
             ) => trap(*it),
             ("assert_exception", Outcome::Failed(Failure::Exception(_))) => true,
             _ => false,
@@ -307,7 +332,8 @@ impl<'a> Script<'a> {
                 self.name_instance(name, instance.map_err(|error| format!("{error:?}"))?);
             }
             ["register", name, instance] => {
-                self.registered.insert(unquote(name), self.instance(instance)?);
+                self.registered
+                    .insert(unquote(name), self.instance(instance)?);
             }
             ["assert_malformed" | "assert_invalid", file, _] => {
                 if self.compile(file).is_ok() {
@@ -318,7 +344,8 @@ impl<'a> Script<'a> {
                 let is_unknown = unquote(message) == b"unknown import";
                 match self.instantiate(&self.valid(file)?) {
                     Err(InstantiateError::UnknownImport) if is_unknown => {}
-                    Err(InstantiateError::WrongKind | InstantiateError::Link(_)) if !is_unknown => {}
+                    Err(InstantiateError::WrongKind | InstantiateError::Link(_)) if !is_unknown => {
+                    }
                     other => return Err(format!("got {:?}", other.err())),
                 }
             }
@@ -370,7 +397,9 @@ pub(crate) fn run_all(settings: &Settings, paths: &[String]) -> ExitCode {
         if path.join("commands.txt").exists() {
             directories.push(path);
         } else {
-            let entries = std::fs::read_dir(path).unwrap().map(|it| it.unwrap().path());
+            let entries = std::fs::read_dir(path)
+                .unwrap()
+                .map(|it| it.unwrap().path());
             directories.extend(entries.filter(|it| it.join("commands.txt").exists()));
         }
     }
@@ -381,7 +410,9 @@ pub(crate) fn run_all(settings: &Settings, paths: &[String]) -> ExitCode {
         while let Some(directory) = directories.get(next.fetch_add(1, Ordering::Relaxed)) {
             let run = |machine: &Machine| run_script(settings, machine, directory);
             let counts = std::thread::scope(|scope| {
-                spawn(scope, engine, settings.stack_size, run).join().unwrap()
+                spawn(scope, engine, settings.stack_size, run)
+                    .join()
+                    .unwrap()
             });
             commands.fetch_add(counts.0, Ordering::Relaxed);
             failures.fetch_add(counts.1, Ordering::Relaxed);
@@ -393,6 +424,9 @@ pub(crate) fn run_all(settings: &Settings, paths: &[String]) -> ExitCode {
         }
     });
     let (commands, failures) = (commands.into_inner(), failures.into_inner());
-    println!("{} scripts, {commands} commands, {failures} failures", directories.len());
+    println!(
+        "{} scripts, {commands} commands, {failures} failures",
+        directories.len()
+    );
     ExitCode::from(u8::from(failures != 0))
 }

@@ -48,7 +48,11 @@ fn with_instance(
         }
         outcome
     };
-    std::thread::scope(|scope| spawn(scope, engine, settings.stack_size, run).join().unwrap())
+    std::thread::scope(|scope| {
+        spawn(scope, engine, settings.stack_size, run)
+            .join()
+            .unwrap()
+    })
 }
 
 fn report(machine: &Machine, failure: Failure) -> ExitCode {
@@ -65,7 +69,13 @@ pub(crate) fn run(settings: &Settings, arguments: &[String]) -> Option<ExitCode>
         outcome.map_or_else(|failure| report(machine, failure), |_| ExitCode::SUCCESS)
     };
     let engine = engine(settings.options);
-    Some(with_instance(settings, engine, arguments.first()?, arguments, body))
+    Some(with_instance(
+        settings,
+        engine,
+        arguments.first()?,
+        arguments,
+        body,
+    ))
 }
 
 fn parse_value(text: &str) -> Option<Bits> {
@@ -82,7 +92,10 @@ pub(crate) fn call(settings: &Settings, arguments: &[String]) -> Option<ExitCode
     let [file, name, values @ ..] = arguments else {
         return None;
     };
-    let values: Vec<_> = values.iter().map(|it| parse_value(it)).collect::<Option<_>>()?;
+    let values: Vec<_> = values
+        .iter()
+        .map(|it| parse_value(it))
+        .collect::<Option<_>>()?;
     let body = |machine: &Machine, instance: Result<&Instance, _>| {
         let instance = instance.unwrap();
         for _ in 0..settings.repeat {
@@ -153,7 +166,10 @@ fn call_exports(settings: &Settings, machine: &Machine, instance: &Instance) {
         match export.item {
             Extern::Global(index) => {
                 let value = instance.global(index).unwrap().get();
-                println!("global {index}: {}", describe(module.global(index).ty, value));
+                println!(
+                    "global {index}: {}",
+                    describe(module.global(index).ty, value)
+                );
             }
             Extern::Memory(index) => {
                 println!("memory {index}: {:x}", hash_of_memory(instance, index));
@@ -168,7 +184,7 @@ pub(crate) fn call_all(settings: &Settings, files: &[String]) -> ExitCode {
     let engine = engine(settings.options);
     for file in files {
         println!("{file}");
-        with_instance(settings, engine, file, &[], |machine, instance| {
+        let _ = with_instance(settings, engine, file, &[], |machine, instance| {
             match instance {
                 Ok(instance) => call_exports(settings, machine, instance),
                 Err(InstantiateError::Start(Failure::Exception(_))) => println!("start: exception"),

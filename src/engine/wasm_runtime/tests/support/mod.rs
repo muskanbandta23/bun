@@ -56,7 +56,8 @@ pub(crate) fn spawn<'scope, T: Send + 'scope>(
         body(machine)
     }
     const FOR_THE_THREAD: usize = 256 << 10;
-    let thread = std::thread::Builder::new().stack_size(stack_size + STACK_RESERVE + FOR_THE_THREAD);
+    let thread =
+        std::thread::Builder::new().stack_size(stack_size + STACK_RESERVE + FOR_THE_THREAD);
     let run = move || {
         let origin = 0usize;
         let origin = std::hint::black_box(&raw const origin).addr();

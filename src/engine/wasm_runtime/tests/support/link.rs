@@ -90,8 +90,12 @@ impl Machine {
             let item = item.ok_or(InstantiateError::UnknownImport)?;
             self.link(instance, import.item, item)?;
         }
-        instance.initialize().map_err(InstantiateError::Initialize)?;
-        instance.apply_segments().map_err(InstantiateError::Segment)?;
+        instance
+            .initialize()
+            .map_err(InstantiateError::Initialize)?;
+        instance
+            .apply_segments()
+            .map_err(InstantiateError::Segment)?;
         if let Some(start) = module.start() {
             let start = instance.function_reference(start).unwrap().cell().unwrap();
             self.call(start, &[]).map_err(InstantiateError::Start)?;
@@ -140,11 +144,15 @@ impl Machine {
 pub(crate) fn export(instance: &Instance, name: &[u8]) -> Option<Item> {
     let module = instance.module();
     let mut exports = module.exports().iter();
-    Some(match exports.find(|it| module.bytes(it.name) == name)?.item {
-        Extern::Func(func) => Item::Function(instance.function_reference(func).unwrap().cell()?),
-        Extern::Table(table) => Item::Table(Rc::clone(instance.table(table))),
-        Extern::Memory(memory) => Item::Memory(Rc::clone(instance.memory(memory))),
-        Extern::Global(global) => Item::Global(Rc::clone(instance.global(global).unwrap())),
-        Extern::Tag(tag) => Item::Tag(Rc::clone(instance.tag(tag))),
-    })
+    Some(
+        match exports.find(|it| module.bytes(it.name) == name)?.item {
+            Extern::Func(func) => {
+                Item::Function(instance.function_reference(func).unwrap().cell()?)
+            }
+            Extern::Table(table) => Item::Table(Rc::clone(instance.table(table))),
+            Extern::Memory(memory) => Item::Memory(Rc::clone(instance.memory(memory))),
+            Extern::Global(global) => Item::Global(Rc::clone(instance.global(global).unwrap())),
+            Extern::Tag(tag) => Item::Tag(Rc::clone(instance.tag(tag))),
+        },
+    )
 }

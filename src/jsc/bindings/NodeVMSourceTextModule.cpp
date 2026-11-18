@@ -140,7 +140,7 @@ JSModuleRecord* NodeVMSourceTextModule::analyzeSourceText(JSGlobalObject* global
 
     ParserError parserError;
     String attributeError;
-    JSModuleRecord* record = JSModuleRecord::analyze(globalObject, loader, Identifier::fromString(vm, m_identifier), m_sourceCode, parserError, attributeError);
+    JSModuleRecord* record = JSModuleRecord::analyze(loader, Identifier::fromString(vm, m_identifier), m_sourceCode, parserError, attributeError);
     if (parserError.isValid())
         throwException(globalObject, scope, parserError.toErrorObject(globalObject, m_sourceCode));
     else if (!record)

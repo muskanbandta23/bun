@@ -237,6 +237,8 @@ public:
     // filled on first use so each name is atomized once however many chunks
     // import or export it (BunAnalyzeTranspiledModule.cpp).
     Vector<JSC::Identifier> sharedModuleInfoIdentifiers;
+    // What they are made from. See ZigSourceProvider.cpp.
+    std::span<const uint8_t> moduleInfoStrings;
 
     // "process", "stdout" and "stderr", atomized by the first jsFunctionIsStandardOutputStream.
     std::array<JSC::Identifier, 3> standardOutputStreamNames;

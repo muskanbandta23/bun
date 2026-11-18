@@ -42,7 +42,6 @@
 
 #include "BunProcess.h"
 #include "JSEnvironmentVariableMap.h"
-#include <JavaScriptCore/SourceProviderCache.h>
 #if ENABLE(REMOTE_INSPECTOR)
 #include <JavaScriptCore/RemoteInspectorServer.h>
 #endif
@@ -978,34 +977,10 @@ JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject * 
     return JSValue::encode(jsNull());
 }
 
-// null unless this executable's bytecode was laid out by an order file (`bun build --compile --bytecode-order`).
-JSC_DEFINE_HOST_FUNCTION(functionBytecodeOrderStats, (JSGlobalObject * globalObject, CallFrame*))
+// An order file (`bun build --compile --bytecode-order`) moves nothing, so there is nothing to count.
+JSC_DEFINE_HOST_FUNCTION(functionBytecodeOrderStats, (JSGlobalObject*, CallFrame*))
 {
-    VM& vm = globalObject->vm();
-    auto* payloads = vm.persistentBytecodePayloadsIfExists();
-    auto* statistics = payloads ? payloads->linkedPayloadStatistics() : nullptr;
-    if (!statistics)
-        return JSValue::encode(jsNull());
-
-    JSObject* regions = constructEmptyObject(globalObject);
-    static constexpr ASCIILiteral regionNames[] = { "moduleHeads"_s, "hot"_s, "unknown"_s, "lateModuleHeads"_s, "cold"_s, "expressionInfo"_s };
-    static_assert(std::size(regionNames) == JSC::BytecodeLinkRegions::Count);
-    uint32_t start = 0;
-    for (unsigned i = 0; i < JSC::BytecodeLinkRegions::Count; ++i) {
-        uint32_t end = std::max(start, statistics->regionEnds[i]);
-        regions->putDirect(vm, Identifier::fromString(vm, regionNames[i]), jsNumber(end - start));
-        start = end;
-    }
-
-    JSObject* result = constructEmptyObject(globalObject);
-    Bun::putDirectNamed(vm, result, "hot"_s, jsNumber(statistics->hot.count));
-    Bun::putDirectNamed(vm, result, "unknown"_s, jsNumber(statistics->unknown.count));
-    Bun::putDirectNamed(vm, result, "cold"_s, jsNumber(statistics->cold.count));
-    Bun::putDirectNamed(vm, result, "hotBytes"_s, jsNumber(statistics->hot.bytes));
-    Bun::putDirectNamed(vm, result, "unknownBytes"_s, jsNumber(statistics->unknown.bytes));
-    Bun::putDirectNamed(vm, result, "coldBytes"_s, jsNumber(statistics->cold.bytes));
-    Bun::putDirectNamed(vm, result, "regions"_s, regions);
-    return JSValue::encode(result);
+    return JSValue::encode(jsNull());
 }
 
 namespace Zig {

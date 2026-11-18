@@ -6,10 +6,11 @@ use bun_engine_bytecode::{FunctionRef, Instrumentation, Script, StaticScope};
 use bun_engine_macros::export;
 use bun_engine_vm::scope::static_scope_of;
 use bun_engine_vm::{
-    CompileError, Cx, FunctionExecutable, Gc, JsCell, JsFunction, JsResult, SourceCode, Value, Vm,
-    evaluate_compiled_script,
+    Cx, FunctionExecutable, Gc, JsCell, JsFunction, JsResult, SourceCode, UnlinkedFunction, Value,
+    Vm, evaluate_compiled_script,
 };
 
+use super::code::ParserError;
 use super::scope::can_close_over;
 use crate::abi::returned_as_pointer;
 
@@ -18,7 +19,7 @@ use crate::abi::returned_as_pointer;
 #[export]
 fn bytecode_set_version(_version: u32) {}
 
-/// Whether `take` has been called.
+/// Calls `take` unless it fails.
 #[export]
 unsafe fn bytecode_generate(
     _vm: &Vm,
@@ -27,12 +28,33 @@ unsafe fn bytecode_generate(
     _depth: u32,
     _context: *mut c_void,
     _take: unsafe extern "C" fn(*mut c_void, *const u8, usize),
-) -> bool {
-    false
+) {
 }
 
 #[export]
 fn bytecode_is_usable(_vm: &Vm, _source: &SourceCode, _is_module: bool, _bytes: &[u8]) -> bool {
+    false
+}
+
+/// As `bytecode_generate`.
+#[export]
+unsafe fn bytecode_generate_for_builtin(
+    _vm: &Vm,
+    _function: &UnlinkedFunction,
+    _source_stamp: u32,
+    _depth: u32,
+    _context: *mut c_void,
+    _take: unsafe extern "C" fn(*mut c_void, *const u8, usize),
+) {
+}
+
+#[export]
+fn bytecode_load_for_builtin(
+    _vm: &Vm,
+    _function: &UnlinkedFunction,
+    _source_stamp: u32,
+    _bytes: &[u8],
+) -> bool {
     false
 }
 
@@ -61,24 +83,21 @@ returned_as_pointer! {
     CompiledScriptRef,
 }
 
-impl CompiledScript {
-    #[expect(dead_code)]
-    fn compile(
-        cx: &Cx,
-        source: &SourceCode,
-        scope: Option<Gc<JsCell>>,
-    ) -> Result<CompiledScriptRef, CompileError> {
-        let outer = scope.and_then(static_scope_of);
-        let compiled = Rc::new(CompiledScript {
-            source: source.clone(),
-            script: cx.compile_script(&source.provider, outer.as_ref())?,
-            outer,
-            instrumentation: cx.global().instrumentation(cx),
-        });
-        // SAFETY: points into an allocation.
-        let pointer = unsafe { NonNull::new_unchecked(Rc::into_raw(compiled).cast_mut()) };
-        Ok(CompiledScriptRef(pointer))
-    }
+#[export]
+fn compiled_script_create(
+    cx: &Cx,
+    source: &SourceCode,
+    error: &mut ParserError,
+    scope: Option<Gc<JsCell>>,
+) -> Option<CompiledScriptRef> {
+    let (provider, outer) = (&source.provider, scope.and_then(static_scope_of));
+    let compiled = Rc::new(CompiledScript {
+        source: source.clone(),
+        script: error.take(cx.compile_script(provider, outer.as_ref()), provider)?,
+        outer,
+        instrumentation: cx.global().instrumentation(cx),
+    });
+    NonNull::new(Rc::into_raw(compiled).cast_mut()).map(CompiledScriptRef)
 }
 
 #[export]

@@ -23,13 +23,7 @@
 #include "JSBuffer.h"
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/CachedBytecode.h>
-#include <JavaScriptCore/CachedTypes.h>
 #include <JavaScriptCore/CodeCache.h>
-#include <JavaScriptCore/ParserError.h>
-#include <JavaScriptCore/SourceProviderCache.h>
-#include <JavaScriptCore/SourceProviderCacheItem.h>
-#include <JavaScriptCore/SymbolTable.h>
-#include <JavaScriptCore/UnlinkedFunctionCodeBlock.h>
 #include <JavaScriptCore/AOTHost.h>
 
 // A `bun build --compile` executable may carry ahead-of-time bytecode for the internal modules the app uses
@@ -86,74 +80,10 @@ static SourceCode makeInternalModuleSource(const String& text, const String& mod
     return JSC::makeSource(text, SourceOrigin(WTF::URL(urlString)), JSC::SourceTaintedOrigin::Untainted, moduleName, TextPosition(), JSC::SourceProviderSourceType::Program, provenance);
 }
 
-static UnlinkedFunctionExecutable* createInternalModuleExecutable(JSC::VM& vm, const SourceCode& source, const String& moduleName)
-{
-    return createBuiltinExecutable(vm, source, Identifier::fromString(vm, moduleName), ImplementationVisibility::Public, ConstructorKind::None, ConstructAbility::CannotConstruct, InlineAttribute::None);
-}
-
-#ifndef BUN_DYNAMIC_JS_LOAD_PATH
-static uint32_t readVarint(const uint8_t*& cursor)
-{
-    uint32_t value = 0;
-    for (unsigned shift = 0;; shift += 7) {
-        uint8_t byte = *cursor++;
-        value |= static_cast<uint32_t>(byte & 0x7f) << shift;
-        if (!(byte & 0x80))
-            return value;
-    }
-}
-#endif
-
 // src/codegen/lazy-function-table.ts
-static unsigned prefillSourceProviderCache(JSC::VM& vm, const SourceCode& source, uint32_t id)
+static unsigned prefillSourceProviderCache(JSC::VM&, const SourceCode&, uint32_t)
 {
-#ifdef BUN_DYNAMIC_JS_LOAD_PATH
-    UNUSED_PARAM(vm);
-    UNUSED_PARAM(source);
-    UNUSED_PARAM(id);
     return 0;
-#else
-    const uint8_t* cursor = InternalModuleRegistryConstants::lazyFunctionTable + InternalModuleRegistryConstants::lazyFunctionTableOffsets[id];
-    if (InternalModuleRegistryConstants::lazyFunctionTableOffsets[id] == InternalModuleRegistryConstants::lazyFunctionTableOffsets[id + 1])
-        return 0;
-
-    StringView view = source.provider()->source();
-    auto text = view.span8();
-    uint32_t capturedNameCount = readVarint(cursor);
-    Vector<Identifier, 128> capturedNames;
-    capturedNames.reserveInitialCapacity(capturedNameCount);
-    for (uint32_t i = 0, start = 0; i < capturedNameCount; ++i) {
-        start += readVarint(cursor);
-        uint32_t length = readVarint(cursor);
-        capturedNames.append(Identifier::fromString(vm, text.subspan(start, length)));
-    }
-
-    JSC::SourceProviderCache* cache = vm.addSourceProviderCache(source.provider());
-    uint32_t functionCount = readVarint(cursor);
-    uint32_t capturedNamesOwner = readVarint(cursor);
-    for (uint32_t i = 0, offset = 0; i < functionCount; ++i) {
-        uint32_t parametersStart = offset + readVarint(cursor);
-        uint32_t closeBrace = parametersStart + readVarint(cursor);
-        uint32_t bits = readVarint(cursor);
-        offset = closeBrace;
-
-        JSC::SourceProviderCacheItemCreationParameters parameters;
-        parameters.lastTokenStartOffset = closeBrace;
-        parameters.lastTokenEndOffset = closeBrace + 1;
-        parameters.endFunctionOffset = closeBrace;
-        parameters.parameterCount = bits >> 1;
-        parameters.containsTaggedTemplate = bits & 1;
-        parameters.lexicallyScopedFeatures = JSC::StrictModeLexicallyScopedFeature;
-        parameters.constructorKind = JSC::ConstructorKind::None;
-        parameters.expectedSuperBinding = JSC::SuperBinding::NotNeeded;
-        if (i == capturedNamesOwner) {
-            for (auto& name : capturedNames)
-                parameters.usedVariables.append(name.impl());
-        }
-        cache->add(parametersStart, JSC::SourceProviderCacheItem::create(parameters));
-    }
-    return functionCount;
-#endif
 }
 
 static const InternalModuleRegistryConstants::ModuleRecord& internalModuleRecord(uint32_t id)
@@ -203,34 +133,31 @@ static NEVER_INLINE JSC::JSValue generateInternalModuleFromText(JSC::JSGlobalObj
     }
     String moduleName = internalModuleString(m.nameOffset, m.nameLength);
     SourceCode source;
-    UnlinkedFunctionExecutable* executable = nullptr;
+    RefPtr<UnlinkedFunctionExecutable> executable;
     const bool outlivesGlobal = IsolatedModuleCache::canUse(vm, ::bunVM(globalObject));
     if (auto* cached = outlivesGlobal ? IsolatedModuleCache::lookupInternalModule(vm, id) : nullptr) {
         source = cached->source;
-        executable = cached->executable.get();
+        executable = cached->executable;
     } else {
         source = makeInternalModuleSource(internalModuleSource(id), moduleName, internalModuleString(m.urlOffset, m.urlLength), internalModuleProvenance(id));
         maybeAddCodeCoverage(vm, source);
 
+        JSC::BuiltinSourceMetadata metadata { static_cast<unsigned>(strlen("(function ")), 0, static_cast<unsigned>(source.length() - strlen(")\n")), false, false, true };
+        executable = createBuiltinExecutable(source, metadata, Identifier::fromString(vm, moduleName), ImplementationVisibility::Public);
+
         const uint8_t* cachedBytes = nullptr;
         size_t cachedSize = 0;
         uint32_t cachedEntryOffset = 0;
-        if (Bun__standaloneInternalModuleBytecode(::bunVM(globalObject), id, &cachedBytes, &cachedSize, &cachedEntryOffset)) {
-            executable = JSC::decodeBuiltinFunction(vm, embeddedBytecode({ const_cast<uint8_t*>(cachedBytes), cachedSize }, cachedEntryOffset), *source.provider(), bun_internal_modules_header.sourceStamp);
-            if (executable)
-                s_internalModulesFromBytecode.fetch_add(1, std::memory_order_relaxed);
-        }
-        if (!executable) {
-            JSC::BuiltinSourceMetadata metadata { static_cast<unsigned>(source.length()), static_cast<unsigned>(strlen("function (")), 0, static_cast<int>(strlen("})\n")), false, true };
-            executable = createBuiltinExecutable(vm, source, metadata, Identifier::fromString(vm, moduleName), ImplementationVisibility::Public, ConstructorKind::None, ConstructAbility::CannotConstruct, InlineAttribute::None);
+        bool isFromBytecode = Bun__standaloneInternalModuleBytecode(::bunVM(globalObject), id, &cachedBytes, &cachedSize, &cachedEntryOffset)
+            && JSC::loadBytecode(vm, *executable, bun_internal_modules_header.sourceStamp, BytecodeLinkEncoder::entry({ cachedBytes, cachedSize }, cachedEntryOffset));
+        if (!isFromBytecode)
             prefillSourceProviderCache(vm, source, id);
-            s_internalModulesFromSource.fetch_add(1, std::memory_order_relaxed);
-        }
+        (isFromBytecode ? s_internalModulesFromBytecode : s_internalModulesFromSource).fetch_add(1, std::memory_order_relaxed);
         if (outlivesGlobal)
-            IsolatedModuleCache::insertInternalModule(vm, id, source, executable);
+            IsolatedModuleCache::insertInternalModule(vm, id, source, *executable);
     }
 
-    JSFunction* func = JSFunction::create(vm, globalObject, executable->link(vm, nullptr, source), static_cast<JSC::JSGlobalObject*>(globalObject));
+    JSFunction* func = JSFunction::create(vm, globalObject, executable->link(vm), static_cast<JSC::JSGlobalObject*>(globalObject));
 
     RETURN_IF_EXCEPTION(throwScope, {});
     if (globalObject->hasDebugger() && globalObject->debugger()->isInteractivelyDebugging()) [[unlikely]] {
@@ -487,35 +414,23 @@ JSC_DEFINE_HOST_FUNCTION(InternalModuleRegistry::jsCreateInternalModuleById, (JS
 
 namespace Zig {
 JSC::VM& vmForBytecodeCache();
-JSC::VM& vmOfBytecodeLinkEncoder(JSC::BytecodeLinkEncoder&);
 void ensureBuiltinNamesForBytecodeCache(JSC::VM&);
 }
 extern "C" void Bun__destroyBytecodeCacheVM();
 
-// The internal module's function with the code of everything nested in it down to `depth` generated, in the bytecode
-// VM (whose lock the caller holds); null on a parse error.
-static UnlinkedFunctionExecutable* generateInternalModuleCode(JSC::VM& vm, const SourceCode& source, const String& moduleName, uint32_t depth)
+static RefPtr<JSC::CachedBytecode> generateInternalModuleBytecode(const String& text, const String& moduleName, const String& url, uint32_t sourceStamp, uint32_t depth)
 {
-    using namespace Bun;
+    if (text.isEmpty())
+        return nullptr;
+    JSC::VM& vm = Zig::vmForBytecodeCache();
     Zig::ensureBuiltinNamesForBytecodeCache(vm);
-    UnlinkedFunctionExecutable* executable = createInternalModuleExecutable(vm, source, moduleName);
-    ParserError error;
-    JSC::recursivelyGenerateUnlinkedCodeBlocksForFunction(vm, executable, source, error, depth);
-    return error.isValid() ? nullptr : executable;
+    SourceCode source = Bun::makeInternalModuleSource(text, moduleName, url, JSC::SourceProvenance::Static);
+    return JSC::generateBytecode(vm, createBuiltinExecutable(source, Identifier::fromString(vm, moduleName), ImplementationVisibility::Public), sourceStamp, depth);
 }
 
-static bool encodeInternalModule(const String& text, const String& moduleName, const String& url, uint32_t sourceStamp, uint32_t depth, const uint8_t** bytes, size_t* size, JSC::CachedBytecode** handle, JSC::EncoderStringTable* externalStrings)
+static bool encodeInternalModule(const String& text, const String& moduleName, const String& url, uint32_t sourceStamp, uint32_t depth, const uint8_t** bytes, size_t* size, JSC::CachedBytecode** handle)
 {
-    using namespace Bun;
-    if (text.isEmpty())
-        return false;
-    JSC::VM& vm = Zig::vmForBytecodeCache();
-    JSC::JSLockHolder locker(vm);
-    SourceCode source = makeInternalModuleSource(text, moduleName, url, JSC::SourceProvenance::Static);
-    UnlinkedFunctionExecutable* executable = generateInternalModuleCode(vm, source, moduleName, depth);
-    if (!executable)
-        return false;
-    RefPtr<JSC::CachedBytecode> result = JSC::encodeBuiltinFunction(vm, executable, source, sourceStamp, externalStrings, JSC::BytecodeCacheUpdatable::No);
+    RefPtr result = generateInternalModuleBytecode(text, moduleName, url, sourceStamp, depth);
     if (!result)
         return false;
     *bytes = result->span().data();
@@ -528,157 +443,48 @@ static bool encodeInternalModule(const String& text, const String& moduleName, c
 // BUN_NATIVE_MODULE_START_INDEX), generated the way generateInternalModule() will consume it. The caller owns *handle and
 // releases it with CachedBytecode__deref. `depth`: how many levels of nested functions get code blocks too
 // (UINT32_MAX = all; 0 = only the module wrapper's own).
-extern "C" bool Bun__generateInternalModuleBytecode(uint32_t id, uint32_t depth, const uint8_t** bytes, size_t* size, JSC::CachedBytecode** handle, JSC::EncoderStringTable* externalStrings)
+extern "C" bool Bun__generateInternalModuleBytecode(uint32_t id, uint32_t depth, const uint8_t** bytes, size_t* size, JSC::CachedBytecode** handle, void*)
 {
     using namespace Bun;
     if (id >= bun_internal_modules_header.moduleCount)
         return false;
     const auto& m = internalModuleRecord(id);
-    return encodeInternalModule(internalModuleSource(id), internalModuleString(m.nameOffset, m.nameLength), internalModuleString(m.urlOffset, m.urlLength), bun_internal_modules_header.sourceStamp, depth, bytes, size, handle, externalStrings);
+    return encodeInternalModule(internalModuleSource(id), internalModuleString(m.nameOffset, m.nameLength), internalModuleString(m.urlOffset, m.urlLength), bun_internal_modules_header.sourceStamp, depth, bytes, size, handle);
 }
 
 // Same, for an internal module of another bun executable (cross-compiling): its source, name, url and source stamp as
 // read from that executable's builtins section.
-extern "C" bool Bun__generateInternalModuleBytecodeFromSource(const Latin1Character* text, size_t textLength, const Latin1Character* name, size_t nameLength, const Latin1Character* url, size_t urlLength, uint32_t sourceStamp, uint32_t depth, const uint8_t** bytes, size_t* size, JSC::CachedBytecode** handle, JSC::EncoderStringTable* externalStrings)
+extern "C" bool Bun__generateInternalModuleBytecodeFromSource(const Latin1Character* text, size_t textLength, const Latin1Character* name, size_t nameLength, const Latin1Character* url, size_t urlLength, uint32_t sourceStamp, uint32_t depth, const uint8_t** bytes, size_t* size, JSC::CachedBytecode** handle, void*)
 {
     using namespace Bun;
-    return encodeInternalModule(String({ text, textLength }), String({ name, nameLength }), String({ url, urlLength }), sourceStamp, depth, bytes, size, handle, externalStrings);
+    return encodeInternalModule(String({ text, textLength }), String({ name, nameLength }), String({ url, urlLength }), sourceStamp, depth, bytes, size, handle);
 }
 
 // With an order file the internal modules are modules of the link's one payload like the chunks (see ZigSourceProvider.cpp).
-static bool addInternalModuleToLink(JSC::BytecodeLinkEncoder* encoder, const String& text, const String& moduleName, const String& url, uint32_t sourceStamp, uint32_t depth, const JSC::BytecodeOrderNames& names)
-{
-    using namespace Bun;
-    if (text.isEmpty())
-        return false;
-    JSC::VM& vm = Zig::vmOfBytecodeLinkEncoder(*encoder);
-    JSC::JSLockHolder locker(vm);
-    SourceCode source = makeInternalModuleSource(text, moduleName, url, JSC::SourceProvenance::Static);
-    UnlinkedFunctionExecutable* executable = generateInternalModuleCode(vm, source, moduleName, depth);
-    if (!executable)
-        return false;
-    encoder->addBuiltinFunction(executable, source, sourceStamp, names);
-    return true;
-}
-
 // The names are of the module's source as the builtins section has it (bun_bundler::bytecode_order::Named::InternalModule).
-extern "C" bool Bun__BytecodeLinkEncoder__addInternalModule(JSC::BytecodeLinkEncoder* encoder, uint32_t id, uint32_t depth, const Bun::BytecodeOrderNamesRef& names)
+extern "C" bool Bun__BytecodeLinkEncoder__addInternalModule(Bun::BytecodeLinkEncoder* encoder, uint32_t id, uint32_t depth, const Bun::BytecodeOrderNamesRef& names)
 {
     using namespace Bun;
     if (id >= bun_internal_modules_header.moduleCount)
         return false;
     const auto& m = internalModuleRecord(id);
-    return addInternalModuleToLink(encoder, internalModuleSource(id), internalModuleString(m.nameOffset, m.nameLength), internalModuleString(m.urlOffset, m.urlLength), bun_internal_modules_header.sourceStamp, depth, names.view());
+    return encoder->add(generateInternalModuleBytecode(internalModuleSource(id), internalModuleString(m.nameOffset, m.nameLength), internalModuleString(m.urlOffset, m.urlLength), bun_internal_modules_header.sourceStamp, depth), names);
 }
 
-extern "C" bool Bun__BytecodeLinkEncoder__addInternalModuleFromSource(JSC::BytecodeLinkEncoder* encoder, const Latin1Character* text, size_t textLength, const Latin1Character* name, size_t nameLength, const Latin1Character* url, size_t urlLength, uint32_t sourceStamp, uint32_t depth, const Bun::BytecodeOrderNamesRef& names)
+extern "C" bool Bun__BytecodeLinkEncoder__addInternalModuleFromSource(Bun::BytecodeLinkEncoder* encoder, const Latin1Character* text, size_t textLength, const Latin1Character* name, size_t nameLength, const Latin1Character* url, size_t urlLength, uint32_t sourceStamp, uint32_t depth, const Bun::BytecodeOrderNamesRef& names)
 {
-    return addInternalModuleToLink(encoder, String({ text, textLength }), String({ name, nameLength }), String({ url, urlLength }), sourceStamp, depth, names.view());
-}
-
-// BUN_BYTECODE_DIGEST_OUT (see ZigSourceProvider.cpp), for the embedded bytecode of internal module `id`: the digest of
-// all its code.
-static std::optional<JSC::SourceCode> internalModuleSourceCode(uint32_t id)
-{
-    using namespace Bun;
-    if (id >= bun_internal_modules_header.moduleCount)
-        return std::nullopt;
-    const auto& m = internalModuleRecord(id);
-    if (!m.codeLength)
-        return std::nullopt;
-    return makeInternalModuleSource(internalModuleSource(id), internalModuleString(m.nameOffset, m.nameLength), internalModuleString(m.urlOffset, m.urlLength), internalModuleProvenance(id));
-}
-
-extern "C" bool Bun__BytecodeOrder__digestInternalModule(JSC::VM* vm, uint32_t id, uint8_t* bytecode, size_t bytecodeSize, uint32_t entryOffset, uint64_t* digest, uint32_t* codeBlocks)
-{
-    using namespace Bun;
-    JSC::JSLockHolder locker(*vm);
-    auto source = internalModuleSourceCode(id);
-    auto result = source ? JSC::digestOfAllCachedBuiltinCode(*vm, *source, bun_internal_modules_header.sourceStamp, embeddedBytecode({ bytecode, bytecodeSize }, entryOffset)) : std::nullopt;
-    if (!result)
-        return false;
-    *digest = result->digest;
-    *codeBlocks = result->codeBlocks;
-    return true;
+    return encoder->add(generateInternalModuleBytecode(String({ text, textLength }), String({ name, nameLength }), String({ url, urlLength }), sourceStamp, depth), names);
 }
 
 namespace Bun {
 
-// bun:internal-for-testing: the bytecode `bun build --compile --bytecode` would embed for a builtin module, and the
-// external string table it would embed beside it -- either for internal module number `index` (null past the last
-// one), or for `source` written in builtin syntax under `name`.
-static bool collectCapturedVariables(JSC::VM& vm, const SourceCode& source, const String& moduleName, UncheckedKeyHashSet<RefPtr<UniquedStringImpl>>& captured)
+static String checkLazyFunctionTable(JSC::VM&, uint32_t, unsigned&)
 {
-    UnlinkedFunctionExecutable* executable = createInternalModuleExecutable(vm, source, moduleName);
-    ParserError error;
-    UnlinkedFunctionCodeBlock* codeBlock = executable->unlinkedCodeBlockFor(vm, executable->linkedSourceCode(source), CodeSpecializationKind::CodeForCall, {}, error, executable->parseMode());
-    if (!codeBlock)
-        return false;
-    for (auto& constant : codeBlock->constantRegisters()) {
-        auto* table = constant.get().isCell() ? dynamicDowncast<SymbolTable>(constant.get().asCell()) : nullptr;
-        if (!table)
-            continue;
-        ConcurrentJSLocker locker(table->m_lock);
-        for (auto it = table->begin(locker), end = table->end(locker); it != end; ++it) {
-            if (it->value.varOffset().isScope())
-                captured.add(it->key);
-        }
-    }
-    return true;
-}
-
-static String checkLazyFunctionTable(JSC::VM& vm, uint32_t id, unsigned& lazyFunctionCount)
-{
-    const auto& m = internalModuleRecord(id);
-    String moduleName = internalModuleString(m.nameOffset, m.nameLength);
-    String url = internalModuleString(m.urlOffset, m.urlLength);
-    SourceCode parsed = makeInternalModuleSource(internalModuleSource(id), moduleName, url, JSC::SourceProvenance::Static);
-    SourceCode prefilled = makeInternalModuleSource(internalModuleSource(id), moduleName, url, JSC::SourceProvenance::Static);
-    lazyFunctionCount = prefillSourceProviderCache(vm, prefilled, id);
-    if (!lazyFunctionCount)
-        return {};
-
-    UncheckedKeyHashSet<RefPtr<UniquedStringImpl>> capturedWhenParsed;
-    UncheckedKeyHashSet<RefPtr<UniquedStringImpl>> capturedWhenPrefilled;
-    if (!collectCapturedVariables(vm, parsed, moduleName, capturedWhenParsed) || !collectCapturedVariables(vm, prefilled, moduleName, capturedWhenPrefilled))
-        return makeString(moduleName, ": does not parse"_s);
-    for (auto& name : capturedWhenParsed) {
-        if (!capturedWhenPrefilled.contains(name))
-            return makeString(moduleName, ": "_s, StringView(name.get()), " is captured, and the lazy function table does not say so"_s);
-    }
-
-    JSC::SourceProviderCache* parsedCache = vm.addSourceProviderCache(parsed.provider());
-    JSC::SourceProviderCache* prefilledCache = vm.addSourceProviderCache(prefilled.provider());
-    unsigned found = 0;
-    for (unsigned offset = 0; offset < m.codeLength; ++offset) {
-        const JSC::SourceProviderCacheItem* expected = parsedCache->get(offset);
-        const JSC::SourceProviderCacheItem* actual = prefilledCache->get(offset);
-        if (!actual)
-            continue;
-        ++found;
-        if (!expected)
-            return makeString(moduleName, ": no function has its parameters at "_s, offset);
-        if (expected->endFunctionOffset != actual->endFunctionOffset
-            || expected->lastTokenStartOffset != actual->lastTokenStartOffset
-            || expected->lastTokenEndOffset != actual->lastTokenEndOffset
-            || expected->parameterCount != actual->parameterCount
-            || expected->strictMode != actual->strictMode
-            || expected->taintedByWithScope != actual->taintedByWithScope
-            || expected->usesEval != actual->usesEval
-            || expected->usesImportMeta != actual->usesImportMeta
-            || expected->needsSuperBinding != actual->needsSuperBinding
-            || expected->expectedSuperBinding != actual->expectedSuperBinding
-            || expected->constructorKind != actual->constructorKind
-            || expected->implementationVisibility != actual->implementationVisibility
-            || expected->isBodyArrowExpression != actual->isBodyArrowExpression
-            || expected->containsTaggedTemplate != actual->containsTaggedTemplate)
-            return makeString(moduleName, ": the lazy function table describes the function at "_s, offset, " differently from the parser"_s);
-    }
-    if (found < lazyFunctionCount)
-        return makeString(moduleName, ": the lazy function table names a function twice"_s);
     return {};
 }
 
+// bun:internal-for-testing: the bytecode `bun build --compile --bytecode` would embed for a builtin module -- either for
+// internal module number `index` (null past the last one), or for `source` written in builtin syntax under `name`.
 JSC_DEFINE_HOST_FUNCTION(jsInternalModuleBytecode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
@@ -709,24 +515,16 @@ JSC_DEFINE_HOST_FUNCTION(jsInternalModuleBytecode, (JSC::JSGlobalObject * global
         if (String mismatch = checkLazyFunctionTable(vm, index, lazyFunctionCount); !mismatch.isNull())
             return throwVMError(globalObject, scope, mismatch);
     }
-    JSC::EncoderStringTable externalStrings;
-    const uint8_t* bytes = nullptr;
-    size_t size = 0;
-    JSC::CachedBytecode* handle = nullptr;
-    bool encoded = encodeInternalModule(text, name, url, stamp, std::numeric_limits<uint32_t>::max(), &bytes, &size, &handle, &externalStrings);
+    RefPtr bytecode = generateInternalModuleBytecode(text, name, url, stamp, std::numeric_limits<uint32_t>::max());
     // The encoder runs in this thread's bytecode-cache VM; `bun build` tears it down after a build, and so does this.
     Bun__destroyBytecodeCacheVM();
-    if (!encoded)
+    if (!bytecode)
         return throwVMError(globalObject, scope, makeString("could not generate bytecode for "_s, name));
-    RefPtr<JSC::CachedBytecode> bytecode = adoptRef(handle);
     JSC::JSUint8Array* buffer = WebCore::createBuffer(globalObject, bytecode->span());
-    RETURN_IF_EXCEPTION(scope, {});
-    JSC::JSUint8Array* strings = WebCore::createBuffer(globalObject, externalStrings.serialize().span());
     RETURN_IF_EXCEPTION(scope, {});
     JSObject* result = constructEmptyObject(globalObject);
     result->putDirect(vm, vm.propertyNames->name, jsString(vm, name));
     Bun::putDirectNamed(vm, result, "bytecode"_s, buffer);
-    Bun::putDirectNamed(vm, result, "strings"_s, strings);
     Bun::putDirectNamed(vm, result, "lazyFunctionCount"_s, jsNumber(lazyFunctionCount));
     return JSValue::encode(result);
 }

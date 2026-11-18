@@ -198,7 +198,7 @@ static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, JSModuleLoader
 
     ParserError error;
     String attributeError;
-    JSModuleRecord* moduleRecord = JSModuleRecord::analyze(globalObject, moduleLoader, moduleKey, sourceCode, error, attributeError);
+    JSModuleRecord* moduleRecord = JSModuleRecord::analyze(moduleLoader, moduleKey, sourceCode, error, attributeError);
     if (error.isValid())
         RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(error.toErrorObject(globalObject, sourceCode))));
     if (!moduleRecord)

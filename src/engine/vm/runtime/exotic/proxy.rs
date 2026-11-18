@@ -3,7 +3,7 @@ use bun_engine_text::{PropertyName, StringBuilder, names};
 
 use crate::caches::{get_megamorphic, is_known_to_be_absent};
 use crate::{
-    Attributes, CallData, CallFrame, Cx, DeletePropertySlot, DontEnumMode, FastHashSet, FieldArray,
+    Attributes, CallData, CallFrame, CellType, Cx, DeletePropertySlot, DontEnumMode, FastHashSet, FieldArray,
     Gc, GetterSetter, GlobalObject, InternalMethod, JsBoundFunction, JsFunction, JsObject,
     JsObjectInit, JsResult, PropertyDescriptor, PropertyNameList, PropertyNameMode, PropertySlot,
     PutPropertySlot, Shape, ShapeFlags, ShapeSpec, Thrown, TypeFlags, Value, Vm,
@@ -79,8 +79,7 @@ impl ProxyObject {
         if !handler.is_object() {
             return Err(cx.throw_type_error("A Proxy's 'handler' should be an Object"));
         }
-        let is_callable = object.is_callable();
-        let shape = if is_callable {
+        let shape = if object.is_callable() {
             cx.callable_proxy_shape()
         } else {
             cx.proxy_shape()
@@ -89,7 +88,7 @@ impl ProxyObject {
             base: JsObjectInit::new(cx, shape),
             fields: [target, handler],
         });
-        if is_callable && object.is_constructor() {
+        if object.cell_type() != CellType::FinalObject && object.is_constructor() {
             proxy.set_per_cell_bit(true);
         }
         Ok(proxy)

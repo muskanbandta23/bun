@@ -16,7 +16,7 @@ use bun_engine_vm::{
 
 use super::tiers::{code_block_of, executable_of};
 use super::{coverage, define_functions, heap_profiler, return_undefined, tiers, values};
-use super::{dollar, heap, io, object_with, return_false, scripts, string, tasks, test_objects};
+use super::{dollar, heap, io, object_with, return_false, string, tasks, test_objects};
 use crate::files;
 use crate::prelude::*;
 
@@ -73,7 +73,7 @@ const FUNCTIONS: Functions = &[
     // Functions and realms
     ("createBuiltin", create_builtin, 2),
     ("createEmptyFunctionWithName", create_named_function, 1),
-    ("createGlobalObject", scripts::create_global_object, 0),
+    ("createGlobalObject", create_plain_global_object, 0),
     ("createGlobalProxy", create_global_proxy, 1),
     ("globalObjectForObject", dollar::global_object_for, 1),
     ("callFromCPP", call_repeatedly, 2),
@@ -321,6 +321,13 @@ fn create_builtin(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 fn create_named_function(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let name = frame.argument(0).to_string_ref(cx)?;
     Ok(JsFunction::native(cx, 1, &name, create_named_function).into())
+}
+
+#[native_abi]
+fn create_plain_global_object(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let prototype = frame.argument(0).as_object().map_or(Value::NULL, Into::into);
+    let global = GlobalObject::create_with_prototype(cx, cx.global().hooks(), prototype);
+    Ok(global.global_this().into())
 }
 
 #[native_abi]

@@ -2,6 +2,8 @@
 
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
+use bun_engine_macros::FieldOffsets;
+
 use crate::{Cx, JsResult};
 
 bitflags::bitflags! {
@@ -14,13 +16,14 @@ bitflags::bitflags! {
     }
 }
 
+#[derive(FieldOffsets)]
 #[repr(C)]
 pub struct Traps {
+    pending: AtomicU32,
+    is_termination_requested: AtomicBool,
     /// What generated code compares the stack pointer with. The highest address while a request is pending.
     stack_limit: AtomicUsize,
     real_stack_limit: AtomicUsize,
-    pending: AtomicU32,
-    is_termination_requested: AtomicBool,
 }
 
 impl Traps {

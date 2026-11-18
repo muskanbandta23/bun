@@ -3,6 +3,7 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
+use bun_engine_macros::FieldOffsets;
 use bun_engine_text::{Identifier, PropertyName, Text};
 
 use crate::{
@@ -25,7 +26,7 @@ const MADE_VALUE: u32 = 1 << 28;
 /// In place of a size: the key is a static atom or symbol, not characters.
 const KEY_IS_NAME: usize = usize::MAX;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, FieldOffsets)]
 #[repr(C)]
 pub struct StaticProperty {
     key: *const c_void,
@@ -282,6 +283,7 @@ pub struct StaticIndex {
     next: i16,
 }
 
+#[derive(FieldOffsets)]
 #[repr(C)]
 pub struct StaticTable {
     count: i32,

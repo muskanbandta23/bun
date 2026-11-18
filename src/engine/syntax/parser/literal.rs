@@ -3,6 +3,7 @@
 use bun_engine_text::Text;
 
 use super::function::Method;
+use super::pattern::ABBREVIATED_KEYWORD;
 use super::{Class, Expression, Facts, Failed, Parsed, Session, nothing};
 use crate::ast::{
     Element, ExprId, ExprKind, Property, PropertyKey, PropertyKind, ResultType, Template,
@@ -31,7 +32,7 @@ impl Session<'_> {
     #[inline(always)]
     pub(super) fn scalar<const BUILD: bool>(&mut self) -> Expression {
         let token = self.token();
-        let class = match token.kind {
+        let class = match token.kind() {
             TokenKind::String => Class::String,
             _ => Class::Other,
         };
@@ -45,12 +46,12 @@ impl Session<'_> {
     }
 
     fn scalar_node(&mut self, token: Token) -> ExprId {
-        if token.kind == TokenKind::Number {
+        if token.kind() == TokenKind::Number {
             let (value, is_integer) = self.lexer.number_value(token);
-            return self.number_node(token.start, value, is_integer);
+            return self.number_node(token.start(), value, is_integer);
         }
         let value = self.lexer.string_value(token);
-        self.push_typed(token.start, ResultType::STRING, ExprKind::String(value))
+        self.push_typed(token.start(), ResultType::STRING, ExprKind::String(value))
     }
 
     pub(super) fn bigint_literal<const BUILD: bool>(&mut self) -> Expression {
@@ -66,7 +67,7 @@ impl Session<'_> {
             radix,
             is_negative: false,
         };
-        self.typed_node::<BUILD>(Class::Other, token.start, ResultType::BIGINT, kind)
+        self.typed_node::<BUILD>(Class::Other, token.start(), ResultType::BIGINT, kind)
     }
 
     pub(super) fn regexp_literal<const BUILD: bool>(&mut self) -> Parsed<Expression> {
@@ -74,12 +75,12 @@ impl Session<'_> {
         let (mut pattern, mut flags) = (Name::EMPTY, Name::EMPTY);
         if BUILD {
             let (source, names) = (self.lexer.source, &mut self.lexer.names);
-            let flags_start = token.value as usize;
-            pattern = names.literal_in_source(source, token.start as usize + 1, flags_start - 1);
-            flags = names.intern_source(source, flags_start, token.end as usize);
+            let flags_start = token.value() as usize;
+            pattern = names.literal_in_source(source, token.start() as usize + 1, flags_start - 1);
+            flags = names.intern_source(source, flags_start, token.end() as usize);
         }
         let kind = ExprKind::RegExp { pattern, flags };
-        Ok(self.node::<BUILD>(Class::Other, token.start, kind))
+        Ok(self.node::<BUILD>(Class::Other, token.start(), kind))
     }
 
     fn check_regexp(&mut self) -> Parsed<Token> {
@@ -89,8 +90,8 @@ impl Session<'_> {
         self.next();
         if !self.context.contains(super::Context::CHECKED_BEFORE) {
             let source = self.lexer.source;
-            let pattern = source.slice(token.start + 1, token.value - 1);
-            if let Some(message) = regexp_error(pattern, source.slice(token.value, token.end)) {
+            let pattern = source.slice(token.start() + 1, token.value() - 1);
+            if let Some(message) = regexp_error(pattern, source.slice(token.value(), token.end())) {
                 return Err(self.complain(Complaint::Verbatim(message)));
             }
         }
@@ -138,7 +139,7 @@ impl Session<'_> {
                 self.ast.push_to_list(raw);
             }
             self.next();
-            if token.value & TEMPLATE_IS_TAIL != 0 {
+            if token.value() & TEMPLATE_IS_TAIL != 0 {
                 break;
             }
             if self.at(TokenKind::CloseBrace) {
@@ -181,7 +182,7 @@ impl Session<'_> {
                 }
                 TokenKind::Ellipsis => self.spread::<BUILD>()?,
                 TokenKind::Number | TokenKind::String
-                    if matches!(self.lexer.byte(self.token().end as usize), b',' | b']') =>
+                    if matches!(self.lexer.byte(self.token().end() as usize), b',' | b']') =>
                 {
                     self.scalar::<BUILD>()
                 }
@@ -250,8 +251,8 @@ impl Session<'_> {
     #[inline(always)]
     fn property<const BUILD: bool>(&mut self, state: &mut ObjectState) -> Parsed<()> {
         let token = self.token();
-        if !token.kind.is_identifier_name() && token.kind != TokenKind::String {
-            return self.elaborate_property::<BUILD>(state, token.start, FunctionFlags::empty());
+        if !token.kind().is_identifier_name() && token.kind() != TokenKind::String {
+            return self.elaborate_property::<BUILD>(state, token.start(), FunctionFlags::empty());
         }
         self.lexer.next_ignoring_keywords::<BUILD>();
         if !self.at(TokenKind::Colon) {
@@ -259,7 +260,8 @@ impl Session<'_> {
         }
         self.next();
         let value = self.property_value::<BUILD>()?;
-        let may_set_prototype = token.is_elaborate || matches!(token.end - token.start, 9 | 11);
+        let may_set_prototype =
+            token.is_elaborate() || matches!(token.end() - token.start(), 9 | 11);
         if !BUILD && !may_set_prototype {
             return Ok(());
         }
@@ -280,13 +282,13 @@ impl Session<'_> {
     fn property_value<const BUILD: bool>(&mut self) -> Parsed<ExprId> {
         let value = self.assignment::<BUILD>()?.id();
         if BUILD {
-            self.ast[value].end = self.token().end;
+            self.ast[value].end = self.token().end();
         }
         Ok(value)
     }
 
     pub(super) fn word_or_string(&mut self, token: Token) -> Name {
-        match token.kind {
+        match token.kind() {
             TokenKind::String => self.lexer.string_name(token),
             _ => self.lexer.looked_up(token).name(),
         }
@@ -305,9 +307,14 @@ impl Session<'_> {
             } else {
                 PropertyKey::None
             };
-            return self.method_property::<BUILD>(state, key, token.start, FunctionFlags::empty());
+            return self.method_property::<BUILD>(
+                state,
+                key,
+                token.start(),
+                FunctionFlags::empty(),
+            );
         }
-        if token.kind == TokenKind::String {
+        if token.kind() == TokenKind::String {
             return Err(self.fail("Expected an identifier as property name"));
         }
         let token = self.lexer.looked_up(token);
@@ -315,14 +322,18 @@ impl Session<'_> {
             return self.shorthand_property::<BUILD>(token);
         }
         let kind = match token.name() {
-            Name::GET if !token.is_elaborate => FunctionKind::Getter,
-            Name::SET if !token.is_elaborate => FunctionKind::Setter,
-            Name::ASYNC if !token.is_elaborate => {
+            Name::GET if !token.is_elaborate() => FunctionKind::Getter,
+            Name::SET if !token.is_elaborate() => FunctionKind::Setter,
+            Name::ASYNC if !token.is_elaborate() => {
                 self.lexer.read_again();
                 if self.follows_newline() {
                     return Err(self.fail("Expected a property name following keyword 'async'"));
                 }
-                return self.elaborate_property::<BUILD>(state, token.start, FunctionFlags::ASYNC);
+                return self.elaborate_property::<BUILD>(
+                    state,
+                    token.start(),
+                    FunctionFlags::ASYNC,
+                );
             }
             name => {
                 return Err(
@@ -335,7 +346,7 @@ impl Session<'_> {
         let method = Method {
             kind,
             flags: FunctionFlags::empty(),
-            start: token.start,
+            start: token.start(),
             key,
         };
         let (function, flags) = self.accessor::<BUILD>(method)?;
@@ -350,7 +361,7 @@ impl Session<'_> {
     }
 
     fn shorthand_property<const BUILD: bool>(&mut self, token: Token) -> Parsed<()> {
-        if token.kind != TokenKind::Identifier || token.name() == Name::ARGUMENTS {
+        if token.kind() != TokenKind::Identifier || token.name() == Name::ARGUMENTS {
             self.check_unusual_shorthand(token)?;
         }
         let value = self.reference::<BUILD>(Class::Identifier, token);
@@ -360,14 +371,14 @@ impl Session<'_> {
     }
 
     #[cold]
-    fn check_unusual_shorthand(&mut self, mut token: Token) -> Parsed<()> {
-        if token.kind == TokenKind::Identifier {
+    fn check_unusual_shorthand(&mut self, token: Token) -> Parsed<()> {
+        if token.kind() == TokenKind::Identifier {
             self.facts |= Facts::USES_ARGUMENTS;
             return self.refuse_arguments();
         }
         self.facts |= Facts::AWAIT_OR_YIELD_AS_NAME;
-        if token.kind == TokenKind::EscapedKeyword {
-            token.kind = TokenKind::of_name(token.name(), Name::STATIC.index() as u32);
+        if token.kind() == TokenKind::EscapedKeyword && !self.is_unreserved(token) {
+            return Err(self.reject_naming(ABBREVIATED_KEYWORD, token.name()));
         }
         self.refuse_keyword(token, "shorthand property name", "")
     }
@@ -384,7 +395,7 @@ impl Session<'_> {
             flags |= FunctionFlags::GENERATOR;
         }
         let token = self.token();
-        let key = match token.kind {
+        let key = match token.kind() {
             TokenKind::Ellipsis if flags.is_empty() => {
                 let spread = self.spread::<BUILD>()?;
                 self.append_property::<BUILD>(PropertyKind::Spread, PropertyKey::None, spread.id());
@@ -438,7 +449,7 @@ impl Session<'_> {
     /// The name that a number or a BigInt stands for.
     pub(super) fn numeric_key<const BUILD: bool>(&mut self) -> Parsed<Name> {
         let token = self.token();
-        match token.kind {
+        match token.kind() {
             _ if !BUILD => Ok(Name::EMPTY),
             TokenKind::Number => Ok(self.lexer.number_key(token)),
             _ => match self.lexer.bigint_key(token) {
@@ -480,7 +491,7 @@ impl Session<'_> {
         is_static: Option<bool>,
     ) -> Parsed<PropertyKey> {
         let token = self.token();
-        if token.kind == TokenKind::PrivateName {
+        if token.kind() == TokenKind::PrivateName {
             if token.name() == Name::PRIVATE_CONSTRUCTOR {
                 return Err(self.reject("Cannot declare a private accessor named '#constructor'"));
             }
@@ -492,7 +503,7 @@ impl Session<'_> {
             self.next();
             return Ok(PropertyKey::Private(token.name()));
         }
-        if !token.kind.is_identifier_name() && token.kind != TokenKind::String {
+        if !token.kind().is_identifier_name() && token.kind() != TokenKind::String {
             return (self.numeric_or_computed_key::<BUILD>())
                 .unwrap_or_else(|| Err(self.unexpected()));
         }

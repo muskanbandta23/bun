@@ -1,12 +1,23 @@
-//! The scanner of `bun_url_whatwg`, over kernels in src/jsc/bindings/highway_byte_set.cpp.
+//! The kernels of `bun_url_whatwg`, from src/jsc/bindings/highway_byte_set.cpp.
+
+use core::mem::MaybeUninit;
 
 unsafe extern "C" {
     fn highway_url_stops_32(text: *const u8, len: usize, at: usize, set: &PlainBytes) -> u64;
     fn highway_url_stops_64(text: *const u8, len: usize, at: usize, set: &PlainBytes) -> u64;
+    fn highway_url_next_block(text: *const u8, len: usize, at: usize, set: &PlainBytes) -> Block;
     safe fn highway_url_stops_of_words(low: u64, high: u64, set: &PlainBytes) -> u64;
+    fn highway_narrow_to_latin1(units: *const u16, len: usize, out: *mut u8) -> bool;
 }
 
 type Kernel = unsafe extern "C" fn(*const u8, usize, usize, &PlainBytes) -> u64;
+
+/// The stops among the 64 bytes before `end`.
+#[repr(C)]
+struct Block {
+    end: usize,
+    stops: u64,
+}
 
 /// The bytes that a scan passes over, to be built at compile time. It stops at all others.
 #[repr(C, align(16))]
@@ -105,34 +116,37 @@ impl PlainBytes {
     /// The indices of the stops from `at` on.
     #[inline(always)]
     pub fn scan<'a>(&'a self, text: &'a [u8], at: usize) -> Scan<'a> {
-        Scan {
-            set: self,
-            text,
-            end: at,
-            stops: 0,
-        }
+        self.resume_scan(text, at, 0)
     }
 
-    /// A scan whose first step has been taken: `stops` is what [`Self::stops_in_64`] returned.
+    /// A scan that is under way: `stops` are those left among the 64 bytes before `end`.
     #[inline(always)]
-    pub fn scan_with<'a>(&'a self, text: &'a [u8], at: usize, stops: u64) -> Scan<'a> {
+    pub fn resume_scan<'a>(&'a self, text: &'a [u8], end: usize, stops: u64) -> Scan<'a> {
         Scan {
             set: self,
             text,
-            end: at + 64,
+            end,
             stops,
         }
     }
 
-    /// The first block from `at` on that has a stop, or the last block: where it ends, and its stops.
+    /// The first block from `at` on that has a stop, or the last block. `at` is inside `text`.
+    #[inline(always)]
+    fn next_block(&self, text: &[u8], at: usize) -> Block {
+        if cfg!(miri) || text.len() <= 16 {
+            return self.block_at(text, at);
+        }
+        // SAFETY: text.ptr/len are a readable range of at least 17 bytes, and `at` is inside it.
+        let block = unsafe { highway_url_next_block(text.as_ptr(), text.len(), at, self) };
+        debug_assert_eq!(block.stops, self.scalar_stops(text, block.end - 64, 64));
+        block
+    }
+
     #[inline(never)]
-    fn next_block(&self, text: &[u8], mut at: usize) -> (usize, u64) {
-        loop {
-            let stops = self.stops_in_64(text, at);
-            at += 64;
-            if stops != 0 || at >= text.len() {
-                return (at, stops);
-            }
+    fn block_at(&self, text: &[u8], at: usize) -> Block {
+        Block {
+            end: at + 64,
+            stops: self.stops_in_64(text, at),
         }
     }
 }
@@ -180,17 +194,38 @@ impl Iterator for Scan<'_> {
 
     #[inline(always)]
     fn next(&mut self) -> Option<usize> {
-        if self.stops == 0 {
+        while self.stops == 0 {
             if self.end >= self.text.len() {
                 return None;
             }
-            (self.end, self.stops) = self.set.next_block(self.text, self.end);
-            if self.stops == 0 {
-                return None;
-            }
+            Block {
+                end: self.end,
+                stops: self.stops,
+            } = self.set.next_block(self.text, self.end);
         }
-        let at = self.end - 64 + self.stops.trailing_zeros() as usize;
+        let at = self.end + self.stops.trailing_zeros() as usize - 64;
         self.stops &= self.stops - 1;
         Some(at)
     }
+}
+
+/// `units` as Latin-1 at the start of `out`, if they are and if they fit.
+#[inline(always)]
+pub fn narrow_to_latin1<'a>(units: &[u16], out: &'a mut [MaybeUninit<u8>]) -> Option<&'a [u8]> {
+    let out = out.get_mut(..units.len())?;
+    if crate::scalar_only(units.len()) {
+        for (byte, &unit) in out.iter_mut().zip(units) {
+            byte.write(u8::try_from(unit).ok()?);
+        }
+    } else {
+        // SAFETY: both have `units.len()` elements, which is at least 16.
+        let is_latin1 = unsafe {
+            highway_narrow_to_latin1(units.as_ptr(), units.len(), out.as_mut_ptr().cast())
+        };
+        if !is_latin1 {
+            return None;
+        }
+    }
+    // SAFETY: every element has been written.
+    Some(unsafe { out.assume_init_ref() })
 }

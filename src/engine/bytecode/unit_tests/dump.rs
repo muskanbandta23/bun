@@ -88,7 +88,7 @@ string switches
 spread masks
   0: [1]
 suspend points
-  0: Await at 39 ->43 saves [loc0, loc2, loc5]
+  0: Await at 39 ->43 saves [loc2, loc5]
 coverage
   0: -1..0 in a loop header
 constants

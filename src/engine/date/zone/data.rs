@@ -43,6 +43,7 @@ pub(super) fn link_target(position: usize) -> usize {
 }
 
 /// Of a zone that is not a link. `None` if the data is not well formed.
+#[cold]
 pub(super) fn rules(position: usize) -> Option<ZoneRules> {
     let zone = section(c"Zones").ok()?.by_index(position).ok()?;
 

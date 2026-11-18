@@ -4,6 +4,7 @@ use core::ffi::c_void;
 use core::mem::offset_of;
 
 use bun_engine_macros::{cell, object_ops};
+use bun_engine_number::Random;
 use bun_engine_text::{PropertyName, StringRef, names};
 
 use super::watchpoints::RealmWatchpoints;
@@ -108,8 +109,13 @@ pub struct GlobalObject {
     vm: *const Vm,
     hooks: &'static RealmHooks,
     embedder_methods: *const c_void,
+    overridden_date_now: Cell<f64>,
+    console_client: Cell<*mut c_void>,
+    /// Looked in after the global object.
+    pub scope_extension: Field<Option<Gc<Environment>>>,
     pub(self) original_array_shapes: FieldArray<Option<Gc<Shape>>, ARRAY_SHAPE_COUNT>,
     pub(self) array_shapes_for_allocation: FieldArray<Option<Gc<Shape>>, ARRAY_SHAPE_COUNT>,
+    /// The last field whose offset C++ knows.
     pub(super) slots: FieldArray<Option<Gc<JsCell>>, { RealmSlot::COUNT }>,
     watchpoints: RealmWatchpoints,
     variables: GlobalBindings,
@@ -117,24 +123,20 @@ pub struct GlobalObject {
     /// Changes when a lexical binding is declared, which may hide a property.
     lexical_epoch: Cell<u32>,
     is_initialized: Cell<bool>,
-    /// Looked in after the global object.
-    pub scope_extension: Field<Option<Gc<Environment>>>,
     /// What other crates keep for the realm. See `extension_cell`.
     pub(self) extension_cells: TracedVec<Option<Gc<JsCell>>>,
     microtask_queue: RefCell<MicrotaskQueueRef>,
     regexp_state: RegExpGlobalState,
-    random: Cell<[u64; 2]>,
+    random: Cell<Random>,
     stack_trace_limit: Cell<Option<u32>>,
-    overridden_date_now: Cell<f64>,
     eval_disabled_message: RefCell<Option<StringRef>>,
     webassembly_disabled_message: RefCell<Option<StringRef>>,
-    console_client: Cell<*mut c_void>,
     inspector: OnceCell<Box<dyn InspectorState>>,
 }
 
 pub trait InspectorState: Any + GcFree {}
 
-#[object_ops]
+#[object_ops(export = "engine_GlobalObject")]
 impl GlobalObject {
     fn get_own_property_slot(
         &self,
@@ -267,7 +269,7 @@ impl GlobalObject {
             scope_extension: None,
             microtask_queue: RefCell::new(vm.default_microtask_queue().clone()),
             regexp_state: RegExpGlobalState::default(),
-            random: Cell::new([vm.random_seed(), vm.random_seed() | 1]),
+            random: Cell::new(Random::new(vm.random_seed() as u32)),
             stack_trace_limit: Cell::new(Some(crate::options().default_error_stack_trace_limit)),
             overridden_date_now: Cell::new(f64::NAN),
             eval_disabled_message: RefCell::new(None),
@@ -451,7 +453,8 @@ impl GlobalObject {
         unsafe { crate::heap::Owned::new(self, &self.regexp_state) }
     }
 
-    pub fn random_state(&self) -> &Cell<[u64; 2]> {
+    /// That of `Math.random`.
+    pub fn random_state(&self) -> &Cell<Random> {
         &self.random
     }
 

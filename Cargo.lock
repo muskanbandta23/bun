@@ -590,6 +590,7 @@ dependencies = [
  "bun_engine_inspector",
  "bun_engine_interpreter",
  "bun_engine_intl",
+ "bun_engine_number",
  "bun_engine_optimizer",
  "bun_engine_regexp_jit",
  "bun_engine_standalone",
@@ -813,6 +814,7 @@ name = "bun_engine_regexp_jit"
 version = "0.0.0"
 dependencies = [
  "bun_engine_asm",
+ "bun_engine_exec_memory",
  "bun_engine_regexp",
  "bun_engine_standalone",
  "bun_engine_text",
@@ -2501,7 +2503,6 @@ dependencies = [
  "bun_highway",
  "bun_icu",
  "bun_simdutf_sys",
- "smallvec",
 ]
 
 [[package]]

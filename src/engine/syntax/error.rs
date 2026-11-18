@@ -61,7 +61,7 @@ impl From<Name> for Part {
 
 impl From<Token> for Part {
     fn from(token: Token) -> Part {
-        Part::Source(token.start, token.end)
+        Part::Source(token.start(), token.end())
     }
 }
 
@@ -152,7 +152,7 @@ impl Complaint {
     pub(crate) fn write(self, message: &mut StringBuilder, source: Source<'_>, names: &Names) {
         if let Complaint::Unexpected(token) | Complaint::Explained(token, ..) = self {
             let parts = [token.into(), Part::NONE, Part::NONE];
-            push_sentence(message, unexpected(token.kind), parts, source, names);
+            push_sentence(message, unexpected(token.kind()), parts, source, names);
         }
         match self {
             Complaint::Unexpected(_) => {}

@@ -120,6 +120,7 @@ pub(crate) static HOST_SCAN: PlainBytes =
     PlainBytes::new(b"#%/:<>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^|", b"0123456789x");
 /// Stops at whatever ends a path, a query or a fragment, is encoded in one of them, or may start a dot segment.
 pub(crate) static TAIL_SCAN: PlainBytes = PlainBytes::new(b"\"#'<>?\\^`{}", b".%");
+pub(crate) static CONTROL_SCAN: PlainBytes = PlainBytes::new(b"", b"");
 pub(crate) static OPAQUE_PATH_SCAN: PlainBytes = PlainBytes::new(b"#?", b"");
 pub(crate) static FILE_PATH_SCAN: PlainBytes = PlainBytes::new(b"\"#%<>?[\\]^`{|}~", b".");
 pub(crate) static FORM_PARSER_SCAN: PlainBytes = PlainBytes::new(b"%&+=", b"");

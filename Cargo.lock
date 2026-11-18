@@ -870,7 +870,6 @@ dependencies = [
  "bun_pod",
  "bun_simdutf_sys",
  "hashbrown 0.15.5",
- "smallvec",
 ]
 
 [[package]]

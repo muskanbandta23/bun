@@ -246,6 +246,7 @@ impl Lowering<'_, Inst> {
                 self.select_extension(value, size, Sign::Signed, ty.width(), operand)
             }
             Unary::Widen(Sign::Signed) => self.select_sign_extension_to_64(value, operand),
+            Unary::Widen(Sign::Unsigned) => self.zero_extend(value, operand),
             Unary::CountOnes => self.select_bit_count(value, BitCount::Popcnt, operand),
             Unary::CountLeadingZeros if self.has(X64Features::LZCNT) => {
                 self.select_bit_count(value, BitCount::Lzcnt, operand);

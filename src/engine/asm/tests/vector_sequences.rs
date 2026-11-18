@@ -1,10 +1,12 @@
 //! The instructions that operations on vectors come down to.
 
-#![allow(dead_code, clippy::disallowed_methods)]
+#![allow(clippy::disallowed_methods)]
 
+#[allow(dead_code)]
 #[path = "support/shuffles.rs"]
 mod shuffles;
 mod support;
+#[allow(dead_code)]
 #[path = "support/vectors.rs"]
 mod vectors;
 

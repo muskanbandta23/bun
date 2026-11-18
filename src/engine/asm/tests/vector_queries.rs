@@ -1,10 +1,10 @@
 //! What the macro assemblers say about scratch registers and destinations is exactly so.
 
-#![allow(dead_code)]
-
+#[allow(dead_code)]
 #[path = "support/shuffles.rs"]
 mod shuffles;
 mod support;
+#[allow(dead_code)]
 #[path = "support/vectors.rs"]
 mod vectors;
 

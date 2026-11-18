@@ -573,11 +573,11 @@ fn module_loader_create(vm: &Vm, module_scope: Gc<JsCell>) -> Gc<ModuleLoader> {
 unsafe fn module_loader_for_each_entry(
     loader: &ModuleLoader,
     context: *mut c_void,
-    visit: unsafe extern "C" fn(*mut c_void, ModuleType, Gc<ModuleRegistryEntry>),
+    visit: unsafe extern "C" fn(*mut c_void, Gc<ModuleRegistryEntry>),
 ) {
-    for (key, entry) in loader.registry().entries() {
+    for entry in loader.registry().values() {
         // SAFETY: the two go together.
-        unsafe { visit(context, key.module_type, entry) };
+        unsafe { visit(context, entry) };
     }
 }
 

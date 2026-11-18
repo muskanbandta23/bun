@@ -239,6 +239,7 @@ public:
     };
 
     const Identifier& key() const { return Engine::fieldAt<Identifier>(this, Engine::Layout::ModuleRegistryEntry_key + Engine::Layout::ModuleKey_name); }
+    ScriptFetchParameters::Type moduleType() const { return Engine::fieldAt<ScriptFetchParameters::Type>(this, Engine::Layout::ModuleRegistryEntry_key + Engine::Layout::ModuleKey_module_type); }
     Status status() const { return Engine::fieldAt<Status>(this, Engine::Layout::ModuleRegistryEntry_status); }
     void setStatus(Status status) { Engine::fieldAt<Status>(this, Engine::Layout::ModuleRegistryEntry_status) = status; }
     AbstractModuleRecord* record() const { return Engine::fieldAt<AbstractModuleRecord*>(this, Engine::Layout::ModuleRegistryEntry_module); }
@@ -252,6 +253,43 @@ public:
     void markLoaded() { Engine::registry_entry_mark_loaded(this); }
 };
 
+// The entries that a loader has at the time, which it keeps alive.
+class ModuleRegistrySnapshot {
+public:
+    class Iterator {
+    public:
+        explicit Iterator(ModuleRegistryEntry** position)
+            : m_position(position)
+        {
+        }
+
+        const KeyValuePair<ModuleMapKey, NakedPtr<ModuleRegistryEntry>>& operator*()
+        {
+            auto* entry = *m_position;
+            return m_current = { { entry->key().impl(), entry->moduleType() }, entry };
+        }
+        void operator++() { ++m_position; }
+        bool operator==(const Iterator& other) const { return m_position == other.m_position; }
+
+    private:
+        ModuleRegistryEntry** m_position;
+        KeyValuePair<ModuleMapKey, NakedPtr<ModuleRegistryEntry>> m_current;
+    };
+
+    explicit ModuleRegistrySnapshot(const JSModuleLoader* loader)
+    {
+        Engine::module_loader_for_each_entry(loader, &m_entries, [](void* entries, ModuleRegistryEntry* entry) { static_cast<Entries*>(entries)->append(entry); });
+    }
+
+    Iterator begin() const { return Iterator(m_entries.begin()); }
+    Iterator end() const { return Iterator(m_entries.end()); }
+
+private:
+    using Entries = MarkedVector<ModuleRegistryEntry*, 32>;
+
+    Entries m_entries;
+};
+
 enum class ModuleLoadFlag : uint8_t {
     Evaluate = 1 << 0,
     Dynamic = 1 << 1,
@@ -262,8 +300,6 @@ class JSModuleLoader final : public JSCell {
 public:
     ENGINE_DECLARE_CLASS(ModuleLoader)
 
-    using Registry = Vector<KeyValuePair<ModuleMapKey, NakedPtr<ModuleRegistryEntry>>>;
-
     static JSModuleLoader* create(JSGlobalObject*, VM& vm, JSScope* moduleScope) { return Engine::module_loader_create(vm, moduleScope); }
     static void drainSynchronousModuleQueue(JSGlobalObject* globalObject) { Engine::drain_synchronous_module_queue(globalObject); }
 
@@ -271,8 +307,7 @@ public:
     JSValue asyncContext() const { return Engine::fieldAt<JSValue>(this, Engine::Layout::ModuleLoader_async_context); }
     void setAsyncContext(VM& vm, JSValue context) { Engine::fieldAt<WriteBarrier<Unknown>>(this, Engine::Layout::ModuleLoader_async_context).set(vm, this, context); }
 
-    // A copy.
-    const Registry moduleMap() const;
+    ModuleRegistrySnapshot moduleMap() const { return ModuleRegistrySnapshot(this); }
     size_t moduleCount() const { return Engine::module_loader_entry_count(this); }
     // Of any type.
     ModuleRegistryEntry* registryEntry(const Identifier& key) const { return Engine::module_loader_find_entry_of_any_type(this, key); }

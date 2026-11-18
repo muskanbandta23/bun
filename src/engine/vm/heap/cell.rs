@@ -245,9 +245,14 @@ impl JsCell {
     /// After storing what may be a cell.
     #[inline(always)]
     pub fn write_barrier_for_cell(&self) {
-        if self.state() <= barrier::threshold() {
+        if self.needs_write_barrier() {
             barrier::slow_path(self);
         }
+    }
+
+    #[inline(always)]
+    pub(crate) fn needs_write_barrier(&self) -> bool {
+        self.state() <= barrier::threshold()
     }
 
     /// Keeps a marker from reading what the cell owns while it is rearranged.

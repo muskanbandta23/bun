@@ -146,7 +146,7 @@ impl StackTraceRequest<'_> {
                 return None;
             }
             // SAFETY: that of a frame which is on the stack.
-            let context = unsafe { vm.entry_context(entry_frame) }?;
+            let context = unsafe { crate::EntryRecord::of(entry_frame) }.context()?;
             Some((context.downcast::<JsAsyncFunctionGenerator>()?, position))
         };
         for frame in frames {

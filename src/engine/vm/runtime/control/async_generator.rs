@@ -40,7 +40,7 @@ impl JsAsyncGenerator {
     pub fn for_frame(cx: &mut Cx, frame: &CallFrame) -> JsResult<Gc<JsAsyncGenerator>> {
         let shape = Coroutine::shape_for_frame(cx, frame, Cx::async_generator_shape)?;
         let init = JsAsyncGeneratorInit {
-            base: Coroutine::init(cx, shape, frame),
+            base: Coroutine::init::<Self>(shape, frame),
             first_target: TaggedField::new(None, 0),
             first_value: Value::UNDEFINED,
             last_request: None,

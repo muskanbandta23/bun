@@ -1227,8 +1227,7 @@ impl BuildCommand {
                         | options::OutputKind::BuiltinBytecode
                         | options::OutputKind::BytecodeStringTable
                         | options::OutputKind::BytecodePayload
-                        | options::OutputKind::ModuleInfoStringTable
-                        | options::OutputKind::PrelinkedModuleGraph => "<d>",
+                        | options::OutputKind::ModuleInfoStringTable => "<d>",
                         options::OutputKind::MetafileJson
                         | options::OutputKind::MetafileMarkdown => "<green>",
                     }))?;
@@ -1285,7 +1284,6 @@ impl BuildCommand {
                         options::OutputKind::BytecodeStringTable => "bytecode strings",
                         options::OutputKind::BytecodePayload => "bytecode payload",
                         options::OutputKind::ModuleInfoStringTable => "module info strings",
-                        options::OutputKind::PrelinkedModuleGraph => "module graph",
                         options::OutputKind::MetafileJson => "metafile json",
                         options::OutputKind::MetafileMarkdown => "metafile markdown",
                     }

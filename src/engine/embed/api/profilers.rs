@@ -1,17 +1,13 @@
 use core::ffi::{c_char, c_void};
 use core::mem::ManuallyDrop;
 
-use bun_engine_bytecode::Specialization;
 use bun_engine_inspector::profiling::{
     AnyRealm, BlockRange, CodeRange, Coverage, Gaps, HeapProfiler, SnapshotKind, count_cells,
     count_protected_cells,
 };
 use bun_engine_macros::export;
 use bun_engine_text::StringRef;
-use bun_engine_vm::{
-    CodeBlock, Executable, FastHashSet, FunctionExecutable, Gc, JsFunction, ScriptExecutable,
-    SourceProvider, Value, Vm, options,
-};
+use bun_engine_vm::{FastHashSet, ScriptExecutable, SourceProvider, Vm};
 
 #[export]
 fn coverage_enable(vm: &Vm) {
@@ -124,53 +120,4 @@ unsafe fn heap_v8_snapshot_bytes(vm: &Vm, length: &mut usize) -> *mut u8 {
     };
     *length = bytes.len();
     ManuallyDrop::new(bytes).as_mut_ptr()
-}
-
-#[export]
-fn executable_source_provider(executable: Gc<Executable>) -> Option<&'static SourceProvider> {
-    let provider: *const SourceProvider = &**executable.downcast::<ScriptExecutable>()?.provider();
-    // SAFETY: C++ does not use it for longer than the executable, which holds a reference.
-    Some(unsafe { &*provider })
-}
-
-fn executable_of(function: Value) -> Option<Gc<FunctionExecutable>> {
-    function.downcast::<JsFunction>()?.script_executable()
-}
-
-fn code_block_of(function: Value) -> Option<Gc<CodeBlock>> {
-    let executable = executable_of(function)?;
-    (executable.code_block(Specialization::Call))
-        .or_else(|| executable.code_block(Specialization::Construct))
-}
-
-#[export]
-fn function_set_never_inline(function: Value) {
-    if let Some(executable) = executable_of(function) {
-        executable.never_inline().set(true);
-    }
-}
-
-#[export]
-fn function_set_never_fully_optimize(function: Value) {
-    if let Some(executable) = executable_of(function) {
-        executable.never_fully_optimize().set(true);
-    }
-}
-
-#[export]
-fn function_optimize_next_invocation(function: Value) {
-    if let Some(code_block) = code_block_of(function) {
-        code_block.baseline().execution_counter().set(0);
-    }
-}
-
-/// Very many if nothing optimizes, so that a loop that waits for it ends.
-#[export]
-fn function_optimization_count(function: Value) -> u32 {
-    let optimizes = options().use_baseline_jit && options().use_quick_optimizer;
-    match code_block_of(function) {
-        Some(code_block) if optimizes => code_block.is_optimized().into(),
-        Some(_) => 1_000_000,
-        None => 0,
-    }
 }

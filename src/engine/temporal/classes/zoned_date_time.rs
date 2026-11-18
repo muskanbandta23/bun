@@ -1,10 +1,10 @@
+use core::cell::Cell;
 use core::cmp::Ordering;
 
 use bun_engine_vm::JsBigInt;
 
 use super::arguments::{
-    require_object, require_string, text_value, time_zone_value, to_calendar, to_epoch_nanoseconds,
-    to_time_zone,
+    require_object, require_string, text_value, to_calendar, to_epoch_nanoseconds, to_time_zone,
 };
 use super::fields::{read_own_fields, read_partial_fields};
 use super::getters::{self, HasDate, HasTime};
@@ -14,9 +14,10 @@ use super::methods::{
 };
 use super::plain_time::to_optional_time;
 use super::prelude::*;
+use super::zone_names;
 use crate::{
-    CalendarId, DifferenceOperation, DifferenceOptions, Direction, Duration, FieldSet, IsoDate,
-    OptionValue, PlainTime, Precision, PrecisionOptions, Result, RoundOptions, TextError,
+    CalendarId, DifferenceOperation, DifferenceOptions, Direction, Duration, FieldSet, InputError,
+    IsoDate, OptionValue, PlainTime, Precision, PrecisionOptions, Result, RoundOptions, TextError,
     UnitOption, ZonedDateTime, ZonedDisplay, ZonedOptions,
 };
 
@@ -78,9 +79,21 @@ static_table!(static PROTOTYPE_PROPERTIES = [
 ]);
 
 define_class!(
-    ZonedDateTime, "Temporal.ZonedDateTime", length 2, ZonedDateTimeValueOf,
+    ZonedDateTime in Cell<ZonedDateTime>, "Temporal.ZonedDateTime", length 2, ZonedDateTimeValueOf,
     temporal_zoned_date_time_shape, init_temporal_zoned_date_time_shape,
-    init_temporal_zoned_date_time_constructor
+    init_temporal_zoned_date_time_constructor,
+    {
+        #[inline(always)]
+        fn this_local(cx: &Cx, value: Value, member: PropertyName<'_>) -> JsResult<ZonedDateTime> {
+            let this = ZonedDateTime::this(cx, value, member)?;
+            if this.knows_offset() {
+                return Ok(this);
+            }
+            let this = this.with_known_offset();
+            value.cast::<Object>().value.set(this);
+            Ok(this)
+        }
+    }
 );
 
 fn options_of_from(cx: &mut Cx, options: Value) -> JsResult<ZonedOptions> {
@@ -149,8 +162,14 @@ impl HasTime for ZonedDateTime {
 fn construct(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let out_of_range = TextError::ZonedDateTimeEpochNanoseconds;
     let instant = to_epoch_nanoseconds(cx, frame.argument(0), out_of_range)?;
-    let identifier = require_string(cx, frame.argument(1), Error::ZonedTimeZoneNotString)?;
-    let time_zone = ZonedDateTime::time_zone_argument(identifier.text()).or_throw(cx)?;
+    let Some(identifier) = frame.argument(1).as_string() else {
+        return Err(throw(cx, Error::ZonedTimeZoneNotString));
+    };
+    let Some(time_zone) = zone_names::find(cx, identifier)? else {
+        let identifier = identifier.view(cx)?;
+        let error = InputError::Text(TextError::TimeZone, identifier.text());
+        return Err(throw(cx, error));
+    };
     let calendar = match frame.argument(2) {
         Value::UNDEFINED => CalendarId::Iso8601,
         given => {
@@ -163,7 +182,7 @@ fn construct(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 
 #[native_abi]
 fn with(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
-    let this = ZonedDateTime::this(cx, frame.this_value(), names::with)?;
+    let this = ZonedDateTime::this_local(cx, frame.this_value(), names::with)?;
     let fields = read_partial_fields(
         cx,
         frame.argument(0),
@@ -177,7 +196,7 @@ fn with(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 
 #[native_abi]
 fn with_plain_time(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
-    let this = ZonedDateTime::this(cx, frame.this_value(), names::withPlainTime)?;
+    let this = ZonedDateTime::this_local(cx, frame.this_value(), names::withPlainTime)?;
     let time = to_optional_time(cx, frame.argument(0))?;
     this.with_plain_time(time).or_throw(cx)?.returned(cx)
 }
@@ -218,7 +237,7 @@ fn subtract(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 
 #[native_abi]
 fn round(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
-    let this = ZonedDateTime::this(cx, frame.this_value(), names::round)?;
+    let this = ZonedDateTime::this_local(cx, frame.this_value(), names::round)?;
     let options = match frame.argument(0).as_string() {
         Some(unit) => RoundOptions {
             smallest_unit: Some(UnitOption::parse(unit.view(cx)?.text()).or_throw(cx)?),
@@ -234,7 +253,7 @@ fn round(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 
 #[native_abi]
 fn start_of_day(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
-    let this = ZonedDateTime::this(cx, frame.this_value(), names::startOfDay)?;
+    let this = ZonedDateTime::this_local(cx, frame.this_value(), names::startOfDay)?;
     this.start_of_day().or_throw(cx)?.returned(cx)
 }
 
@@ -261,7 +280,7 @@ fn get_time_zone_transition(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 #[native_abi]
 fn equals(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let this = ZonedDateTime::this(cx, frame.this_value(), names::equals)?;
-    let other = ZonedDateTime::from_item(cx, frame.argument(0), Value::UNDEFINED)?;
+    let other = ZonedDateTime::from_argument(cx, frame.argument(0))?;
     Ok(this.equals(&other).into())
 }
 
@@ -273,25 +292,25 @@ fn to_instant(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 
 #[native_abi]
 fn to_plain_date_time(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
-    let this = ZonedDateTime::this(cx, frame.this_value(), names::toPlainDateTime)?;
+    let this = ZonedDateTime::this_local(cx, frame.this_value(), names::toPlainDateTime)?;
     this.to_plain_date_time().returned(cx)
 }
 
 #[native_abi]
 fn to_plain_date(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
-    let this = ZonedDateTime::this(cx, frame.this_value(), names::toPlainDate)?;
+    let this = ZonedDateTime::this_local(cx, frame.this_value(), names::toPlainDate)?;
     this.to_plain_date().returned(cx)
 }
 
 #[native_abi]
 fn to_plain_time(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
-    let this = ZonedDateTime::this(cx, frame.this_value(), names::toPlainTime)?;
+    let this = ZonedDateTime::this_local(cx, frame.this_value(), names::toPlainTime)?;
     this.time().returned(cx)
 }
 
 #[native_abi]
 fn to_string(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
-    let this = ZonedDateTime::this(cx, frame.this_value(), names::toString)?;
+    let this = ZonedDateTime::this_local(cx, frame.this_value(), names::toString)?;
     let options = Options::new(cx, frame.argument(0))?;
     let calendar = options.show_calendar(cx)?;
     let fractional_second_digits = options.fractional_second_digits(cx)?;
@@ -312,7 +331,7 @@ fn to_string(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 
 #[native_abi]
 fn to_json(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
-    let this = ZonedDateTime::this(cx, frame.this_value(), names::toJSON)?;
+    let this = ZonedDateTime::this_local(cx, frame.this_value(), names::toJSON)?;
     text_value(cx, &this.to_text(Precision::AUTO, ZonedDisplay::AUTO))
 }
 
@@ -331,23 +350,23 @@ fn epoch_milliseconds(cx: &mut Cx, this: Value, name: PropertyName<'_>) -> JsRes
 #[native_abi]
 fn time_zone_id(cx: &mut Cx, this: Value, name: PropertyName<'_>) -> JsResult<Value> {
     let this = ZonedDateTime::this(cx, this, name)?;
-    time_zone_value(cx, this.time_zone())
+    Ok(zone_names::identifier(cx, this.time_zone()).into())
 }
 
 #[native_abi]
 fn offset(cx: &mut Cx, this: Value, name: PropertyName<'_>) -> JsResult<Value> {
-    let this = ZonedDateTime::this(cx, this, name)?;
+    let this = ZonedDateTime::this_local(cx, this, name)?;
     text_value(cx, &this.offset_text())
 }
 
 #[native_abi]
 fn offset_nanoseconds(cx: &mut Cx, this: Value, name: PropertyName<'_>) -> JsResult<Value> {
-    let this = ZonedDateTime::this(cx, this, name)?;
+    let this = ZonedDateTime::this_local(cx, this, name)?;
     Ok(this.offset_nanoseconds().into())
 }
 
 #[native_abi]
 fn hours_in_day(cx: &mut Cx, this: Value, name: PropertyName<'_>) -> JsResult<Value> {
-    let this = ZonedDateTime::this(cx, this, name)?;
+    let this = ZonedDateTime::this_local(cx, this, name)?;
     Ok(this.hours_in_day().or_throw(cx)?.into())
 }

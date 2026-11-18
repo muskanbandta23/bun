@@ -1,4 +1,4 @@
-use super::arguments::{require_object, require_string, text_value};
+use super::arguments::{require_object, require_string, small_integers, text_value};
 use super::fields::read_own_fields;
 use super::methods::{add_duration, to_locale_string, value_of};
 use super::options::round_argument;
@@ -45,33 +45,57 @@ define_class!(
     temporal_duration_shape, init_temporal_duration_shape, init_temporal_duration_constructor
 );
 
-/// ToTemporalPartialDurationRecord
-fn read_partial_duration(cx: &mut Cx, item: &JsObject) -> JsResult<PartialDuration> {
-    let mut partial = PartialDuration::default();
-    for (unit, property) in PartialDuration::PROPERTIES {
-        let value = item.get(cx, property)?;
-        if !value.is_undefined() {
-            partial.set(unit, value.to_number(cx)?).or_throw(cx)?;
-        }
+#[inline(always)]
+fn set_field(cx: &mut Cx, fields: &mut PartialDuration, unit: Unit, value: Value) -> JsResult<()> {
+    if let Some(integer) = value.as_int32() {
+        return fields.set(unit, integer.into()).or_throw(cx);
     }
-    Ok(partial)
+    if value.is_undefined() {
+        return Ok(());
+    }
+    fields.set(unit, value.to_number(cx)?).or_throw(cx)
+}
+
+/// ToTemporalPartialDurationRecord
+fn read_fields(cx: &mut Cx, item: &JsObject, fields: &mut PartialDuration) -> JsResult<()> {
+    for (unit, property) in PartialDuration::PROPERTIES {
+        let value = get(cx, item, property)?;
+        set_field(cx, fields, unit, value)?;
+    }
+    Ok(())
 }
 
 /// ToTemporalDuration
-#[inline]
 pub fn to_temporal_duration(cx: &mut Cx, item: Value) -> JsResult<Duration> {
-    match Duration::of_value(item) {
-        Some(duration) => Ok(duration),
-        None => convert(cx, item),
-    }
+    with_duration(cx, item, |_, duration| Ok(*duration))
 }
 
-fn convert(cx: &mut Cx, item: Value) -> JsResult<Duration> {
+/// ToTemporalDuration, without a copy of the result.
+#[inline(always)]
+pub(super) fn with_duration<T>(
+    cx: &mut Cx,
+    item: Value,
+    then: impl FnOnce(&mut Cx, &Duration) -> JsResult<T>,
+) -> JsResult<T> {
+    let (instance, mut fields) = (item.downcast::<Object>(), PartialDuration::default());
+    let duration = match &instance {
+        Some(instance) => &instance.value,
+        None => convert(cx, item, &mut fields)?,
+    };
+    then(cx, duration)
+}
+
+fn convert<'a>(
+    cx: &mut Cx,
+    item: Value,
+    fields: &'a mut PartialDuration,
+) -> JsResult<&'a Duration> {
     if let Some(object) = item.as_object() {
-        return Duration::from_partial(&read_partial_duration(cx, &object)?).or_throw(cx);
+        read_fields(cx, &object, fields)?;
+        return fields.finish_some().or_throw(cx);
     }
     let string = require_string(cx, item, Error::NotConvertibleToDuration)?;
-    Duration::parse(string.text()).or_throw(cx)
+    fields.parse(string.text()).or_throw(cx)
 }
 
 /// GetTemporalRelativeToOption
@@ -96,18 +120,19 @@ fn relative_to_option(cx: &mut Cx, options: Options) -> JsResult<Option<Relative
 
 #[native_abi]
 fn construct(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
-    let mut arguments = PartialDuration::default();
-    for (unit, &value) in Unit::ALL.into_iter().zip(frame.arguments()) {
-        if !value.is_undefined() {
-            arguments.set(unit, value.to_number(cx)?).or_throw(cx)?;
-        }
+    if let Some(fields) = small_integers(frame) {
+        return (Duration::from_small_integers(fields).or_throw(cx)?).constructed(cx, frame);
     }
-    (Duration::new(&arguments).or_throw(cx)?).constructed(cx, frame)
+    let mut fields = PartialDuration::default();
+    for unit in Unit::ALL {
+        set_field(cx, &mut fields, unit, frame.argument(unit as usize))?;
+    }
+    fields.finish().or_throw(cx)?.constructed(cx, frame)
 }
 
 #[native_abi]
 fn from(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
-    to_temporal_duration(cx, frame.argument(0))?.returned(cx)
+    with_duration(cx, frame.argument(0), |cx, duration| duration.returned(cx))
 }
 
 #[native_abi]
@@ -124,8 +149,9 @@ fn compare(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 fn with(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let this = Duration::this(cx, frame.this_value(), names::with)?;
     let item = require_object(cx, frame.argument(0), Error::DurationWithNotObject)?;
-    let partial = read_partial_duration(cx, &item)?;
-    this.with(&partial).or_throw(cx)?.returned(cx)
+    let mut fields = PartialDuration::over(&this);
+    read_fields(cx, &item, &mut fields)?;
+    fields.finish_some().or_throw(cx)?.returned(cx)
 }
 
 #[native_abi]
@@ -178,17 +204,14 @@ fn total(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     if argument.is_undefined() {
         return Err(throw(cx, Error::DurationTotalWithoutOptions));
     }
-    let (relative_to, unit) = if argument.is_string() {
-        (None, Some(argument))
-    } else {
-        let options = Options::new(cx, argument)?;
-        (
-            relative_to_option(cx, options)?,
-            options.get(cx, names::unit)?,
-        )
-    };
-    let unit = unit.map(|it| it.to_string_view(cx)).transpose()?;
-    let unit = Duration::total_unit(unit.as_ref().map(|it| it.text())).or_throw(cx)?;
+    if let Some(unit) = argument.as_string() {
+        let unit = Duration::total_unit(unit.view(cx)?.text()).or_throw(cx)?;
+        return Ok(this.total(unit, None).or_throw(cx)?.into());
+    }
+    let options = Options::new(cx, argument)?;
+    let relative_to = relative_to_option(cx, options)?;
+    let unit = get(cx, &argument.cast::<JsObject>(), names::unit)?.to_string_view(cx)?;
+    let unit = Duration::total_unit(unit.text()).or_throw(cx)?;
     Ok(this.total(unit, relative_to.as_ref()).or_throw(cx)?.into())
 }
 
@@ -197,13 +220,14 @@ fn to_string(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let this = Duration::this(cx, frame.this_value(), names::toString)?;
     let options = Options::new(cx, frame.argument(0))?.precision(cx)?;
     let precision = Duration::precision(options).or_throw(cx)?;
-    text_value(cx, &this.to_text(precision).or_throw(cx)?)
+    let rounded = this.round_for_text(precision).or_throw(cx)?;
+    text_value(cx, &rounded.to_text(precision))
 }
 
 #[native_abi]
 fn to_json(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let this = Duration::this(cx, frame.this_value(), names::toJSON)?;
-    text_value(cx, &this.to_text(Precision::AUTO).or_throw(cx)?)
+    text_value(cx, &this.to_text(Precision::AUTO))
 }
 
 #[native_abi]

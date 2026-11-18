@@ -1,7 +1,6 @@
 use bun_engine_text::{PropertyName, private_names};
 use bun_engine_vm::{
-    Attributes, IterationKind, JsArray, JsArrayIterator, JsFunction, JsObjectInit,
-    RealmSlot,
+    Attributes, IterationKind, JsArray, JsArrayIterator, JsFunction, JsObjectInit, RealmSlot,
 };
 
 use super::{copy, join, mutate, search, sort};

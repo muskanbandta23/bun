@@ -8,7 +8,6 @@ impl Error {
     pub const ILLEGAL_ARGUMENT: Error = Error(1);
     pub const MISSING_RESOURCE: Error = Error(2);
     pub const MEMORY_ALLOCATION: Error = Error(7);
-    pub const INDEX_OUT_OF_BOUNDS: Error = Error(8);
     pub const BUFFER_OVERFLOW: Error = Error(15);
     pub const UNSUPPORTED: Error = Error(16);
     pub const RESOURCE_TYPE_MISMATCH: Error = Error(17);

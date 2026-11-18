@@ -36,6 +36,7 @@ impl Default for SamplingProfiler {
 impl SamplingProfiler {
     /// It is paused until it is started.
     fn of(vm: &Vm) -> Rc<SamplingProfiler> {
+        vm.records_code_origins().set(true);
         vm.extension()
     }
 

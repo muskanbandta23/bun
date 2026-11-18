@@ -4,6 +4,7 @@
 #![feature(float_minimum_maximum)]
 
 mod convert;
+mod decimal_layout;
 mod decimal_scanner;
 mod decimal_to_double;
 mod digit_words;
@@ -38,7 +39,7 @@ pub use convert::{
     to_uint8, to_uint8_clamp, to_uint16, to_uint32, to_uint64,
 };
 pub use decimal_scanner::parse_decimal_prefix;
-pub use fixed_text::{FixedText, to_exponential, to_fixed, to_precision};
+pub use fixed_text::{FIXED_TEXT_CAPACITY, to_exponential, to_fixed, to_precision};
 pub use float16::{float16_from_f64, float16_to_f64};
 pub use format_error::FormatError;
 pub use integer_text::{decimal_length, write_i32, write_i64, write_u32, write_u64};
@@ -49,7 +50,7 @@ pub use numeric_index::canonical_numeric_index;
 pub use parse_int::{parse_int, parse_int_of_number};
 pub use parse_integer::{Surroundings, parse_integer};
 pub use radix::Radix;
-pub use radix_text::{RadixIntegerText, integer_to_radix, with_radix_text};
+pub use radix_text::{RADIX_INTEGER_CAPACITY, integer_to_radix, with_radix_text};
 pub use random::Random;
 pub use shortest_text::write_f64;
 pub use string_to_number::{parse_float, string_to_number};

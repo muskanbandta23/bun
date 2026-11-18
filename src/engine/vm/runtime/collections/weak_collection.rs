@@ -13,7 +13,7 @@ use super::{HashedKey, MapKind, SetKind, TableKind};
 use crate::heap::{Scope, Survivors};
 use crate::{
     CellKind, CellType, Class, ClassOps, Extends, Gc, GcFree, JsCell, JsDestructibleObject,
-    JsObjectInit, NoGc, Shape, Trace, TypeFlags, Value, Visitor, Vm,
+    JsObjectInit, NoGc, Shape, TypeFlags, Value, Visitor, Vm,
 };
 
 const WORD: usize = size_of::<u64>();
@@ -159,7 +159,7 @@ unsafe impl<K: WeakKind> CellKind for WeakCollection<K> {
             self.counted_words.store(0, Ordering::Relaxed);
         }
         if K::HAS_VALUES {
-            visitor.constrain_by_current_cell();
+            visitor.constrain_by_ephemerons_of_current_cell();
         }
         visitor.reconcile_current_cell_later();
     }
@@ -322,7 +322,7 @@ impl<K: WeakKind> WeakCollection<K> {
         };
         // SAFETY: from a chain, and the barrier follows.
         unsafe { K::store(&self.entry_at(link).slot, payload) };
-        if K::payload_is_cell(payload) {
+        if K::cell_in(payload).is_some() {
             self.did_dirty(link);
             self.write_barrier_for_cell();
         }
@@ -477,10 +477,9 @@ impl<K: WeakKind> WeakCollection<K> {
         for entry in self.entries_in(visitor.scope()) {
             let key = entry.key.get();
             if key != 0
-                && K::payload_is_cell(K::payload(&entry.slot))
-                && visitor.is_address_marked(key)
+                && let Some(value) = K::cell_in(K::payload(&entry.slot))
             {
-                entry.slot.trace(visitor);
+                visitor.append_ephemeron(key, value);
             }
         }
     }

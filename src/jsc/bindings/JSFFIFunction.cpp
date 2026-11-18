@@ -34,7 +34,6 @@
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/CallData.h>
-#include <JavaScriptCore/DOMJITAbstractHeap.h>
 
 extern "C" Zig::JSFFIFunction* Bun__CreateFFIFunctionWithData(Zig::GlobalObject* globalObject, const EncodedSlice* symbolName, unsigned argCount, Zig::FFIFunction functionPointer, void* data)
 {
@@ -146,7 +145,7 @@ DEFINE_VISIT_CHILDREN(JSFFIFunction);
 
 JSFFIFunction* JSFFIFunction::create(VM& vm, Zig::GlobalObject* globalObject, unsigned length, const String& name, FFIFunction FFIFunction, Intrinsic intrinsic, NativeFunction nativeConstructor)
 {
-    NativeExecutable* executable = vm.getHostFunction(FFIFunction, ImplementationVisibility::Public, intrinsic, nativeConstructor, nullptr, length, name);
+    NativeExecutable* executable = vm.getHostFunction(FFIFunction, ImplementationVisibility::Public, intrinsic, nativeConstructor, length, name);
     Structure* structure = globalObject->FFIFunctionStructure();
     JSFFIFunction* function = new (NotNull, allocateCell<JSFFIFunction>(vm)) JSFFIFunction(vm, executable, globalObject, structure, reinterpret_cast<CFFIFunction>(WTF::move(FFIFunction)));
     function->finishCreation(vm);
@@ -176,7 +175,7 @@ void JSFFIFunction::close()
 
 JSFFIFunction* JSFFIFunction::createForFFI(VM& vm, Zig::GlobalObject* globalObject, unsigned length, const String& name, CFFIFunction FFIFunction)
 {
-    NativeExecutable* executable = vm.getHostFunction(trampoline, ImplementationVisibility::Public, NoIntrinsic, callHostFunctionAsConstructor, nullptr, length, name);
+    NativeExecutable* executable = vm.getHostFunction(trampoline, ImplementationVisibility::Public, NoIntrinsic, callHostFunctionAsConstructor, length, name);
     Structure* structure = globalObject->FFIFunctionStructure();
     JSFFIFunction* function = new (NotNull, allocateCell<JSFFIFunction>(vm)) JSFFIFunction(vm, executable, globalObject, structure, reinterpret_cast<CFFIFunction>(WTF::move(FFIFunction)));
     function->finishCreation(vm);

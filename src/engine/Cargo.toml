@@ -25,3 +25,8 @@ bun_engine_inspector.workspace = true
 bun_engine_macros.workspace = true
 bun_engine_number.workspace = true
 bun_engine_standalone.workspace = true
+
+[[bench]]
+name = "heap"
+path = "benches/heap.rs"
+harness = false

@@ -18,6 +18,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
+import { newerThanOldestIcucore } from "./deps/icu.ts";
 import {
   overridesDarwinAllocator,
   replacedLibcAllocationSymbols,
@@ -302,6 +303,7 @@ function forbiddenImports(cfg: Config): string[] {
     // unwinder entry must not be imported either.
     forbidden.push("_Unwind_Resume");
   }
+  if (cfg.darwin) forbidden.push(...newerThanOldestIcucore);
   if (overridesDarwinAllocator(cfg)) {
     // Everything linked into the executable allocates from mimalloc
     // (MimallocOverrideDarwin.cpp). An import of one of these is code that

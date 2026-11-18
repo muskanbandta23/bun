@@ -17,7 +17,11 @@ pub(super) struct Turns<'a> {
 }
 
 /// How `subject` compares with another value if the edge is taken.
-fn comparison_for(function: &Function, edge: Edge, subject: Value) -> Option<(Cond, Value)> {
+pub(super) fn comparison_for(
+    function: &Function,
+    edge: Edge,
+    subject: Value,
+) -> Option<(Cond, Value)> {
     let source = function.source(edge);
     let Op::Branch(condition) = *function.op(function.last(source)) else {
         return None;
@@ -38,7 +42,7 @@ fn comparison_for(function: &Function, edge: Edge, subject: Value) -> Option<(Co
 }
 
 /// What `next` adds to `counter`, and whether it exits if the sum does not fit.
-fn step(function: &Function, counter: Value, next: Value) -> Option<(i64, bool)> {
+pub(super) fn step(function: &Function, counter: Value, next: Value) -> Option<(i64, bool)> {
     let ([from, step], is_checked) = match *function.op(next) {
         Op::Binary(Binary::Add, args) => (args, false),
         Op::Checked(Checked::Add, args, _) => (args, true),

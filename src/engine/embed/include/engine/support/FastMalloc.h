@@ -14,21 +14,30 @@ namespace WTF {
 
 // The allocator of `bun_alloc::default_alloc`: either language frees what the other has allocated.
 struct FastMalloc {
+#if ASSERT_ENABLED
+    // For tests of what happens when memory runs out.
+    static inline size_t maxSingleAllocationSize { SIZE_MAX };
+#else
+    static constexpr size_t maxSingleAllocationSize { SIZE_MAX };
+#endif
+
 #if USE(MIMALLOC)
     static ALWAYS_INLINE void* tryMalloc(size_t size)
     {
+        if (size > maxSingleAllocationSize)
+            return nullptr;
         return __builtin_constant_p(size) ? mi_malloc_csize(size) : mi_malloc(size);
     }
-    static void* tryZeroedMalloc(size_t size) { return mi_zalloc(size); }
-    static void* tryAlignedMalloc(size_t alignment, size_t size) { return mi_malloc_aligned(size, alignment); }
-    static void* tryRealloc(void* pointer, size_t size) { return mi_realloc(pointer, size); }
+    static void* tryZeroedMalloc(size_t size) { return size > maxSingleAllocationSize ? nullptr : mi_zalloc(size); }
+    static void* tryAlignedMalloc(size_t alignment, size_t size) { return size > maxSingleAllocationSize ? nullptr : mi_malloc_aligned(size, alignment); }
+    static void* tryRealloc(void* pointer, size_t size) { return size > maxSingleAllocationSize ? nullptr : mi_realloc(pointer, size); }
     static ALWAYS_INLINE void free(void* pointer) { mi_free(pointer); }
 #else
-    static void* tryMalloc(size_t size) { return std::malloc(size); }
-    static void* tryZeroedMalloc(size_t size) { return std::calloc(1, size); }
-    static void* tryAlignedMalloc(size_t alignment, size_t size) { return std::aligned_alloc(alignment, (size + alignment - 1) & -alignment); }
+    static void* tryMalloc(size_t size) { return size > maxSingleAllocationSize ? nullptr : std::malloc(size); }
+    static void* tryZeroedMalloc(size_t size) { return size > maxSingleAllocationSize ? nullptr : std::calloc(1, size); }
+    static void* tryAlignedMalloc(size_t alignment, size_t size) { return size > maxSingleAllocationSize ? nullptr : std::aligned_alloc(alignment, (size + alignment - 1) & -alignment); }
     // The C library frees for a size of zero.
-    static void* tryRealloc(void* pointer, size_t size) { return std::realloc(pointer, std::max<size_t>(size, 1)); }
+    static void* tryRealloc(void* pointer, size_t size) { return size > maxSingleAllocationSize ? nullptr : std::realloc(pointer, std::max<size_t>(size, 1)); }
     static void free(void* pointer) { std::free(pointer); }
 #endif
 

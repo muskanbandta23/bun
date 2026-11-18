@@ -212,6 +212,11 @@ impl FunctionRef {
         assert!((index as usize) < table.len());
         FunctionRef { table, index }
     }
+
+    /// It and the other functions of the code that has it.
+    pub fn table(&self) -> &Rc<[FunctionInfo]> {
+        &self.table
+    }
 }
 
 impl core::ops::Deref for FunctionRef {

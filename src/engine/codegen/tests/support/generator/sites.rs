@@ -2,13 +2,14 @@
 
 use bun_engine_asm::{Bank, Cond, Reg, RegisterSet, Sign};
 use bun_engine_codegen::ir::{
-    Action, Binary, Checked, EffectFlags, Effects, Exit, Heap, Input, Op, Output, PatchpointData,
-    PatchpointFlags, State, Successor, Token, Type, Unary, Value,
+    Action, Binary, Checked, EffectFlags, Effects, Exit, Heap, Input, NodeKind, Op, Output,
+    PatchpointData, PatchpointFlags, State, Successor, Token, Type, Unary, Value,
 };
 
 use super::{Class, Generator, KnownState};
+use crate::support::nodes::{behaviour_of, kind_named, kinds};
 use crate::support::vocabulary::{
-    Behaviour, SIGNATURE_COUNT, SIGNATURES_FOR_HANDLERS, bank_of, signature, token,
+    Behaviour, SIGNATURE_COUNT, SIGNATURES_FOR_HANDLERS, bank_of, result_types, signature, token,
 };
 
 pub(super) type Site = (Value, Behaviour);
@@ -98,6 +99,15 @@ impl Generator<'_> {
         } else {
             self.emit(Op::Check(condition, exit), Type::Void);
         }
+    }
+
+    /// With just these values in the state.
+    pub(super) fn check_keeping(&mut self, condition: Value, values: &[Value]) {
+        let exit = Exit {
+            token: self.token(Behaviour::empty()),
+            state: self.function.add_state(values),
+        };
+        self.builder().check(condition, exit);
     }
 
     pub(super) fn checked(&mut self, op: Checked, a: Value, b: Value) -> Value {
@@ -348,10 +358,7 @@ impl Generator<'_> {
 
     /// Below the site.
     pub(super) fn keep_results(&mut self, (site, behaviour): Site) {
-        let Op::Patchpoint(patchpoint) = *self.function.op(site) else {
-            unreachable!()
-        };
-        let results = self.function.outputs(patchpoint).to_vec();
+        let results: Vec<Type> = result_types(&self.function, site).collect();
         let class_of = |ty: Type| match ty {
             Type::I32 | Type::I64 if behaviour.contains(Behaviour::SMALL_RESULTS) => Class::Index {
                 ty,
@@ -360,11 +367,11 @@ impl Generator<'_> {
             },
             _ => Class::Data(ty),
         };
-        if let [(ty, _)] = *results {
+        if let [ty] = *results {
             self.keep(site, class_of(ty));
             return;
         }
-        for (position, &(ty, _)) in results.iter().enumerate() {
+        for (position, &ty) in results.iter().enumerate() {
             for _ in 0..self.random.pick(&[0, 1, 1, 1, 1, 2]) {
                 let element = self.builder().extract(site, position as u32);
                 self.keep(element, class_of(ty));
@@ -499,6 +506,75 @@ impl Generator<'_> {
         let mut builder = self.builder();
         let site = builder.terminal_patchpoint(&data, &inputs, &outputs, successors);
         (site, behaviour)
+    }
+
+    fn node(&mut self, kind: NodeKind, ty: Type, operands: &[Value], data: u32) -> Value {
+        let effects = self.function.node_info(kind).effects;
+        let state = if effects.has(EffectFlags::EXITS) || self.random.one_in(6) {
+            self.state(false, &[])
+        } else {
+            State::NONE
+        };
+        self.builder().node(kind, ty, operands, data, state)
+    }
+
+    pub(super) fn node_statement(&mut self) {
+        if !self.scope.nodes.is_empty() && self.random.percent(40) {
+            let recent = self.random.pick(&[1, 3, 100]);
+            let recent = self.scope.nodes.len().saturating_sub(recent);
+            let model = self.random.pick(&self.scope.nodes[recent..]);
+            let (kind, data) = self.function.op(model).node().unwrap();
+            let data = data ^ u32::from(self.random.one_in(8));
+            let operands = self.function.operands(model).to_vec();
+            let again = self.node(kind, self.type_of(model), &operands, data);
+            return self.keep_results((again, behaviour_of(kind)));
+        }
+        let kind = NodeKind(self.random.below(kinds().len() - 1) as u16);
+        let (info, behaviour) = (self.function.node_info(kind), behaviour_of(kind));
+        let int = self.int_type();
+        let mut operands = Vec::new();
+        if behaviour.contains(Behaviour::NEEDS_NONZERO) {
+            operands.push(self.value_of(Class::Divisor(int)));
+        } else if behaviour.contains(Behaviour::THROUGH_POINTER) {
+            operands.push(self.word_address(info.effects.writes_memory()).0);
+        } else if behaviour.intersects(Behaviour::GIVES_OPERAND | Behaviour::EXITS_BY_OPERAND) {
+            operands.push(self.known_int(int));
+        }
+        for _ in 0..self.random.pick(&[0, 0, 1, 1, 2, 4]) {
+            operands.push(self.operand());
+        }
+        let ty = match self.data_type() {
+            _ if !info.elements.is_empty() => Type::Tuple,
+            _ if behaviour.contains(Behaviour::GIVES_OPERAND) => int,
+            _ if info.effects.must_execute() && self.random.flip() => Type::Void,
+            ty => ty,
+        };
+        let data = self.random.below(2) as u32;
+        let node = self.node(kind, ty, &operands, data);
+        self.scope.nodes.push(node);
+        self.keep_results((node, behaviour));
+    }
+
+    pub(super) fn terminal_node(&mut self, successors: &[Successor<'_>], chooser: Value) -> Site {
+        let (kind, ty) = (kind_named("Choose"), self.data_type());
+        let ty = if self.random.flip() { ty } else { Type::Void };
+        let node = self.node(kind, ty, &[chooser], 0);
+        self.function.set_successors(self.block, successors);
+        (node, behaviour_of(kind))
+    }
+
+    /// At most `index`, and computed by an instruction that cannot move above the branches and checks before it.
+    pub(super) fn pinned(&mut self, index: Value, how: usize, divisor: Value) -> Value {
+        let ty = self.type_of(index);
+        match how {
+            0 if self.shape.weights.nodes != 0 => self.node(kind_named("Pin"), ty, &[index], 0),
+            1 if self.shape.weights.nodes != 0 => self.node(kind_named("Cast"), ty, &[index], 0),
+            2 => {
+                let (zero, exit) = (self.constant(ty, 0), self.exit(&[]));
+                self.emit(Op::Checked(Checked::Add, [index, zero], exit), ty)
+            }
+            _ => self.emit(Op::Binary(Binary::UnsignedDiv, [index, divisor]), ty),
+        }
     }
 
     pub(super) fn signature_index(&mut self) -> usize {

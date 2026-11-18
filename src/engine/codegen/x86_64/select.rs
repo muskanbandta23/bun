@@ -1,6 +1,8 @@
 //! Chooses instructions.
 
-use bun_engine_asm::x64::{Alu, BitCount, RAX, RCX, RDX, ShiftOp, ShiftX, Sse, Unary as UnaryOp};
+use bun_engine_asm::x64::{
+    Alu, BitCount, RAX, RCX, RDX, ShiftOp, ShiftX, Sse, Unary as UnaryOp, single_instruction,
+};
 use bun_engine_asm::{AtomicOp, Bank, Cond, Scale, Sign, Size, Width, X64Features};
 
 use super::address::{AddressParts, Base, Matched};
@@ -133,7 +135,50 @@ impl Lowering<'_, Inst> {
                 self.use_value(index, Role::Use, Place::RegisterOrMemory);
                 self.finish(Inst::JumpTable);
             }
-            _ => self.select_shared(value),
+            Op::Load {
+                kind,
+                address,
+                offset,
+                ..
+            } => {
+                self.def(value);
+                let address = self.use_address(address, offset, Role::Use);
+                self.finish(Inst::LoadVector(kind, address));
+            }
+            Op::LoadLane {
+                lanes,
+                lane,
+                args: [vector, address],
+                offset,
+                ..
+            } => {
+                self.def_tied(value, 1, None);
+                self.use_register(vector);
+                let address = self.use_address(address, offset, Role::Use);
+                self.finish(Inst::LoadLane(lanes, lane, address));
+            }
+            Op::StoreLane {
+                lanes,
+                lane,
+                args: [vector, address],
+                offset,
+                ..
+            } => {
+                self.use_register(vector);
+                let address = self.use_address(address, offset, Role::Use);
+                self.finish(Inst::StoreLane(lanes, lane, address));
+            }
+            Op::VectorBinary(op, [lhs, rhs])
+                if let Some((op, is_reversed)) = single_instruction(op)
+                    && self.has(X64Features::AVX) =>
+            {
+                let (lhs, rhs) = if is_reversed { (rhs, lhs) } else { (lhs, rhs) };
+                self.select_sse(value, op, lhs, rhs, true);
+            }
+            _ => {
+                let instruction = self.match_vector(value);
+                self.finish(Inst::Vector(instruction));
+            }
         }
     }
 
@@ -527,15 +572,19 @@ impl Lowering<'_, Inst> {
             Binary::Xor => (Sse::Xorps, true),
             _ => return self.select_shared(value),
         };
+        self.select_sse(value, op, lhs, rhs, !reads_whole_vector);
+    }
+
+    fn select_sse(&mut self, value: Value, op: Sse, lhs: Value, rhs: Value, may_read_memory: bool) {
         let (lhs, rhs) = if op.commutes() {
             self.order_operands(lhs, rhs, value)
         } else {
             (lhs, rhs)
         };
-        let matched = if reads_whole_vector {
-            Matched::Value(rhs)
-        } else {
+        let matched = if may_read_memory {
             self.match_value_or_load(rhs, value)
+        } else {
+            Matched::Value(rhs)
         };
         let keeps_rhs = !self.has(X64Features::AVX) && !op.commutes();
         self.def_tied(
@@ -545,11 +594,11 @@ impl Lowering<'_, Inst> {
         );
         self.use_register(lhs);
         let role = if keeps_rhs { Role::LateUse } else { Role::Use };
-        let source = if reads_whole_vector {
+        let source = if may_read_memory {
+            self.use_matched(matched, role)
+        } else {
             self.use_value(rhs, role, Place::Register);
             Source::Value
-        } else {
-            self.use_matched(matched, role)
         };
         self.finish(Inst::Sse(op, source));
     }

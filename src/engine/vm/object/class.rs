@@ -1,5 +1,6 @@
 use core::ffi::c_void;
 
+use bun_engine_macros::FieldOffsets;
 use bun_engine_text::{PropertyName, Text};
 
 use crate::heap::{HeapAnalyzer, Survivors};
@@ -72,7 +73,7 @@ macro_rules! ascii_literal {
 ///
 /// An `#[object_ops]` block has the ones that a type overrides, each with `&self` for the first parameter and a
 /// `JsResult` of what it returns here. `call_data` and `construct_data` return the `CallData`.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, FieldOffsets)]
 #[repr(C)]
 pub struct ClassOps {
     pub destroy: unsafe extern "C" fn(*mut JsCell),
@@ -171,6 +172,7 @@ impl ClassOps {
 }
 
 /// What all cells of a native type have in common.
+#[derive(FieldOffsets)]
 #[repr(C)]
 pub struct Class {
     name: AsciiLiteral,

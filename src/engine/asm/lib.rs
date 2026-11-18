@@ -16,7 +16,7 @@ mod vector;
 pub mod x64;
 
 pub use assembly::{
-    Argument, CallAssembly, FloatAssembly, MacroAssembly, Options, Scratch, ScratchNeeds,
+    Argument, CallAssembly, FloatAssembly, MacroAssembly, Options, Reuse, Scratch, ScratchNeeds,
     ValueAssembly, VectorAssembly,
 };
 pub use features::{Arm64Features, X64Features};

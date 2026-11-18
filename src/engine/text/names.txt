@@ -906,6 +906,7 @@ useStrict = use strict
 @evalInRealm
 @exec
 @executor
+@flatIntoArray
 @fulfillPromise
 @fulfillPromiseWithFirstResolvingFunctionCallCheck
 @generator

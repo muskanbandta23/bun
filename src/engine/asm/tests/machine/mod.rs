@@ -318,7 +318,7 @@ impl Harness {
         }
     }
 
-    fn assembler(features: Features, shorten_jumps: bool, seed: u64) -> MacroAssembler {
+    pub(crate) fn assembler(features: Features, shorten_jumps: bool, seed: u64) -> MacroAssembler {
         MacroAssembler::new(Options {
             features,
             shorten_jumps,

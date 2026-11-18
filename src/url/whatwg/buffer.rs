@@ -1,62 +1,105 @@
 use core::ops::{Deref, DerefMut};
 
 use bun_engine_text::{AllocError, MAX_LENGTH};
-use smallvec::SmallVec;
 
-/// Bytes on the stack while they are few, and never more than a string can have.
-#[derive(Default)]
-pub(crate) struct Buffer(SmallVec<[u8; 256]>);
+/// Bytes on the stack while they are few, and never more than a string can have. It costs nothing until it is written to.
+pub(crate) struct Buffer {
+    length: usize,
+    inline: Option<[u8; Buffer::INLINE_CAPACITY]>,
+    /// In use once `inline` is outgrown. Its length is the capacity.
+    heap: Vec<u8>,
+}
 
 impl Buffer {
+    const INLINE_CAPACITY: usize = 256;
+
     #[inline]
     pub(crate) fn new() -> Buffer {
-        Buffer(SmallVec::new())
+        Buffer {
+            length: 0,
+            inline: None,
+            heap: Vec::new(),
+        }
     }
 
     #[inline(always)]
-    fn reserve(&mut self, additional: usize) -> Result<(), AllocError> {
-        if additional > self.0.capacity() - self.0.len() {
-            return self.grow(additional);
+    fn storage(&mut self) -> &mut [u8] {
+        match &mut self.inline {
+            Some(inline) => inline,
+            None => &mut self.heap,
         }
+    }
+
+    #[inline(never)]
+    fn grow(&mut self, additional: usize) -> Result<(), AllocError> {
+        let needed = self.length.saturating_add(additional);
+        if needed <= Buffer::INLINE_CAPACITY {
+            self.inline = Some([0; Buffer::INLINE_CAPACITY]);
+            return Ok(());
+        }
+        let capacity = needed.max(self.storage().len() * 2).min(MAX_LENGTH);
+        if needed > capacity
+            || self
+                .heap
+                .try_reserve_exact(capacity - self.heap.len())
+                .is_err()
+        {
+            return Err(AllocError);
+        }
+        if let Some(inline) = &self.inline {
+            self.heap.extend_from_slice(inline);
+            self.inline = None;
+        }
+        self.heap.resize(capacity, 0);
         Ok(())
     }
 
-    #[cold]
-    fn grow(&mut self, additional: usize) -> Result<(), AllocError> {
-        let length = self.0.len().saturating_add(additional);
-        if length > MAX_LENGTH {
-            return Err(AllocError);
+    /// The next `count` bytes, for the caller to write.
+    #[inline(always)]
+    fn append(&mut self, count: usize) -> Result<&mut [u8], AllocError> {
+        let start = self.length;
+        if count > self.storage().len() - start {
+            self.grow(count)?;
         }
-        let capacity = length.max(self.0.capacity() * 2).min(MAX_LENGTH);
-        self.0.try_grow(capacity).map_err(|_| AllocError)
+        self.length += count;
+        Ok(&mut self.storage()[start..][..count])
     }
 
     #[inline(always)]
     pub(crate) fn push(&mut self, byte: u8) -> Result<(), AllocError> {
-        self.reserve(1)?;
-        self.0.push(byte);
-        Ok(())
+        self.extend(&[byte])
     }
 
     #[inline(always)]
     pub(crate) fn extend(&mut self, bytes: &[u8]) -> Result<(), AllocError> {
-        self.insert(self.0.len(), bytes)
+        self.append(bytes.len())?.copy_from_slice(bytes);
+        Ok(())
     }
 
-    #[inline(always)]
     pub(crate) fn insert(&mut self, index: usize, bytes: &[u8]) -> Result<(), AllocError> {
-        self.reserve(bytes.len())?;
-        self.0.insert_from_slice(index, bytes);
+        self.extend(bytes)?;
+        self[index..].rotate_right(bytes.len());
         Ok(())
     }
 
     pub(crate) fn remove(&mut self, index: usize, count: usize) {
-        self.0.drain(index..index + count);
+        self.copy_within(index + count.., index);
+        self.length -= count;
     }
 
     #[inline]
     pub(crate) fn truncate(&mut self, length: usize) {
-        self.0.truncate(length);
+        self.length = self.length.min(length);
+    }
+
+    #[inline(always)]
+    pub(crate) fn len(&self) -> usize {
+        self.length
+    }
+
+    #[inline(always)]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.length == 0
     }
 }
 
@@ -65,13 +108,18 @@ impl Deref for Buffer {
 
     #[inline(always)]
     fn deref(&self) -> &[u8] {
-        &self.0
+        let storage = match &self.inline {
+            Some(inline) => inline,
+            None => &self.heap[..],
+        };
+        &storage[..self.length]
     }
 }
 
 impl DerefMut for Buffer {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut [u8] {
-        &mut self.0
+        let length = self.length;
+        &mut self.storage()[..length]
     }
 }

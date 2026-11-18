@@ -15,8 +15,8 @@ fn payloads<'a>(module: &'a Module, name: &'a [u8]) -> impl Iterator<Item = Span
 /// Names are valid UTF-8.
 pub struct Names {
     module: Option<Span>,
-    /// By function index. The start is zero if there is no name.
-    funcs: Vec<Span>,
+    /// Sorted. Of several names for a function the last counts.
+    funcs: Vec<(FuncIndex, Span)>,
 }
 
 impl Names {
@@ -29,8 +29,9 @@ impl Names {
     }
 
     pub fn func(&self, func: FuncIndex) -> Option<Span> {
-        let name = self.funcs.get(func.usize()).copied();
-        name.filter(|name| name.start != 0)
+        let (named, name) =
+            *self.funcs[..self.funcs.partition_point(|entry| entry.0 <= func)].last()?;
+        (named == func).then_some(name)
     }
 
     pub(crate) fn parse(module: &Module) -> Option<Self> {
@@ -56,15 +57,14 @@ impl Names {
             match kind {
                 Self::MODULE => names.module = Some(name(&mut reader)?),
                 Self::FUNCS => {
-                    let count = module.funcs().len();
-                    names
-                        .funcs
-                        .try_reserve_exact(count - names.funcs.len())
-                        .ok()?;
-                    names.funcs.resize(count, Span::default());
                     for _ in 0..reader.u32()? {
-                        let func = reader.u32()?;
-                        *names.funcs.get_mut(func as usize)? = name(&mut reader)?;
+                        let func = reader
+                            .u32()
+                            .filter(|&func| (func as usize) < module.funcs().len())?;
+                        names
+                            .funcs
+                            .try_push((FuncIndex(func), name(&mut reader)?))
+                            .ok()?;
                     }
                 }
                 Self::LOCALS => {
@@ -84,6 +84,9 @@ impl Names {
                 return None;
             }
         }
+        names
+            .funcs
+            .sort_unstable_by_key(|&(func, name)| (func, name.start));
         Some(names)
     }
 }

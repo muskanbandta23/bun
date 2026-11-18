@@ -5,10 +5,10 @@ use bun_threading::{Condition, Guarded};
 
 use super::timer::Timers;
 use super::{DeferredTask, Ticket};
-use crate::Vm;
+use crate::{GcFree, Vm};
 
 /// What the embedder does for a `Vm`. Nothing is called once the `Vm` has begun to destroy its cells.
-pub trait EventLoop: Send + Sync {
+pub trait EventLoop: Send + Sync + GcFree {
     /// On the thread of the `Vm`. The ticket is valid for as long as something holds it.
     fn add_pending_work(&self, ticket: Arc<Ticket>);
 

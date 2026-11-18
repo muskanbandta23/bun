@@ -8,6 +8,11 @@ mod layout;
 mod opcode;
 pub mod patch;
 mod registers;
+mod shuffle;
+mod vector;
+mod vector_binary;
+mod vector_shift;
+mod vector_unary;
 
 pub use assembler::{Assembler, FprMem, GprMem, Rm};
 pub use float::{FloatFlags, rounding_control};

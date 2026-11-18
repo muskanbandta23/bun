@@ -905,14 +905,13 @@ name = "bun_engine_syntax"
 version = "0.0.0"
 dependencies = [
  "bitflags",
+ "bun_engine_bigint",
  "bun_engine_number",
  "bun_engine_regexp",
  "bun_engine_standalone",
  "bun_engine_text",
  "bun_engine_unicode",
  "bun_highway",
- "hashbrown 0.15.5",
- "smallvec",
 ]
 
 [[package]]

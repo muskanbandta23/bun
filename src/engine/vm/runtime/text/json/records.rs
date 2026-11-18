@@ -62,7 +62,8 @@ impl RecordBuilder {
 
     /// Moves the last ones that are pending, and returns where to.
     fn settle(&mut self, cx: &Cx, count: usize) -> JsResult<Range<u32>> {
-        let reserved = (self.records.try_reserve(count)).and(self.values.try_reserve(count));
+        let reserved = self.records.try_reserve(count);
+        let reserved = reserved.and_then(|()| self.values.try_reserve(count));
         cx.or_out_of_memory(reserved.map_err(|_| AllocError))?;
         let first = self.records.len();
         for (record, value) in self.pending.drain(self.pending.len() - count..) {

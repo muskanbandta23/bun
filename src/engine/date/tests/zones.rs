@@ -42,6 +42,11 @@ fn names() {
     let kelvin_sign: Vec<u16> = "Asia/To\u{212a}yo".encode_utf16().collect();
     assert_eq!(TimeZoneId::find(Text::Utf16(&kelvin_sign)), None);
 
+    let japan = zone("Japan");
+    assert_eq!(TimeZoneId::from_index(japan.to_index()), Some(japan));
+    let mut all = (0..70_000).filter_map(TimeZoneId::from_index);
+    assert!(all.all(|id| zone(id.identifier()) == id));
+
     let primaries = TimeZoneId::primaries();
     assert!(primaries.is_sorted_by(|a, b| a.identifier() < b.identifier()));
     assert!(primaries.iter().all(|&id| id.primary() == id));

@@ -53,6 +53,16 @@ impl TimeZoneId {
         primary_at(Table::get().find(Text::Utf16(standard.as_deref().unwrap_or(name)))?)
     }
 
+    /// For an embedder to hold on to, within the process.
+    pub fn to_index(self) -> u32 {
+        self.0.into()
+    }
+
+    pub fn from_index(index: u32) -> Option<TimeZoneId> {
+        let index = u16::try_from(index).ok()?;
+        (index < Table::get().len() && primary_at(index).is_some()).then_some(TimeZoneId(index))
+    }
+
     pub fn identifier(self) -> &'static str {
         match self {
             TimeZoneId::UTC => "UTC",

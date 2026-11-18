@@ -371,8 +371,8 @@ macro_rules! instruction_table {
         Await r#await Suspends { generator: Mut, value: Src, point: SuspendPoint };
         /// Restores the registers of `point`.
         Resume resume Pure { generator: Dst, point: SuspendPoint };
-        /// The value of the resumption. Throws it or jumps with it if the mode says so.
-        ResumeAfterYield resume_after_yield Throws { dst: Dst, on_return: Target } => Value;
+        /// The value of the resumption. Throws it if the mode says so, and jumps unless it is to be returned.
+        ResumeAfterYield resume_after_yield Throws { dst: Dst, normal: Target } => Value;
         ResumeAfterAwait resume_after_await Throws { dst: Dst } => Value;
         ResumeAfterDelegate resume_after_delegate Pure { value: Dst, mode: Dst } => Value;
         /// Marks the generator completed.
@@ -386,7 +386,9 @@ macro_rules! instruction_table {
 
         // Tools
 
-        Debug debug Throws { hook: DebugHook, scope: Reg, generator: Src };
+        Debug debug Throws { hook: DebugHook, scope: Reg };
+        /// Creates `generator` as `await` would.
+        DebugAwait debug_await Throws { hook: DebugHook, scope: Reg, generator: Mut };
         Cover cover Pure { block: CoverageBlock } => Coverage;
     } };
 }

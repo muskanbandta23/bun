@@ -62,6 +62,8 @@ pub struct FunctionInfo {
     /// Whether `name` stands in the source as the name of the function or class.
     pub(crate) has_own_name: bool,
     pub(crate) context: EvalContext,
+    /// Of a constructor, as far as a byte counts.
+    pub(crate) instance_fields: u8,
     pub(crate) text: Range<u32>,
     pub(crate) start: u32,
     pub(crate) parameters_start: u32,

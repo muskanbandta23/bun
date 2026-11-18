@@ -941,6 +941,8 @@ bitflags::bitflags! {
         const ONLY_ARGUMENTS_LENGTH = 1 << 4;
         /// Here or in an inner function.
         const TAGGED_TEMPLATE = 1 << 5;
+        /// `super()` does too.
+        const USES_NEW_TARGET = 1 << 6;
     }
 }
 

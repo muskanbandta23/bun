@@ -88,9 +88,7 @@ impl JsString {
             return Ok(Self::allocate(cx, sum));
         }
         let other_string = other.primitive_to_string(cx)?;
-        if !other.is_cell()
-            && let Some(sum) = (other_string.try_impl()).and_then(|it| try_copy(it.text()))
-        {
+        if let Some(sum) = (other_string.try_impl()).and_then(|it| try_copy(it.text())) {
             return Ok(Self::allocate(cx, sum));
         }
         if is_string_first {
@@ -114,7 +112,7 @@ impl JsString {
             };
             builder.push(cx, string)?;
         }
-        builder.finish(cx)
+        Ok(builder.finish(cx))
     }
 }
 
@@ -149,11 +147,11 @@ impl RopeBuilder {
     }
 
     #[inline(always)]
-    pub fn finish(self, cx: &Cx) -> JsResult<Gc<JsString>> {
-        Ok(match self.fibers {
-            [Some(a), Some(b), c] => JsRopeString::concatenation(cx, a, b, c, self.length),
+    pub fn finish(self, vm: &Vm) -> Gc<JsString> {
+        match self.fibers {
+            [Some(a), Some(b), c] => JsRopeString::concatenation(vm, a, b, c, self.length),
             [Some(only), None, _] => only,
-            [None, ..] => cx.small_strings.empty(),
-        })
+            [None, ..] => vm.small_strings.empty(),
+        }
     }
 }

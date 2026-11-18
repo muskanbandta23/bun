@@ -78,7 +78,7 @@ impl JsString {
             power = Self::concat(cx, power, power)?;
         }
         builder.push(cx, self.substring(cx, 0, length % pattern_length)?)?;
-        builder.finish(cx)
+        Ok(builder.finish(cx))
     }
 
     /// StringPad

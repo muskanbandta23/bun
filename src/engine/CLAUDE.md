@@ -88,6 +88,8 @@ Cells do not move. The collector is generational mark and sweep, finds roots by 
 | a reference from outside the heap     | `Strong`, `Weak`                                                            |
 | state of the `Vm`                     | the `State` of the module, which is a `Service` and visits what it holds    |
 
+The compiler does not check this. `bun run rust:rootcheck` does, in seconds (`tools/rootcheck/README.md`): run it before you commit.
+
 What a function may do is in its signature:
 
 | Parameter     | May                                                        |

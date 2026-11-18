@@ -16,6 +16,7 @@ use crate::{Attributes, Cx, JsResult, JsString, Value};
 const WINDOW: usize = 64;
 
 /// No collection runs while it is alive: all that it makes is part of the result.
+#[cfg_attr(rootcheck, rootcheck::allow("collection is deferred"))]
 pub(super) struct Parser<'a, E: Encoding, R> {
     cx: &'a Cx,
     /// Once the end is near, a copy that is followed by a window of zeros.

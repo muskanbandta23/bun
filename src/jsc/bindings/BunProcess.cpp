@@ -2888,7 +2888,7 @@ __attribute__((minsize)) static JSValue constructReportObjectComplete(VM& vm, Zi
         // TODO: allow errors as an argument
         {
             WTF::Vector<JSC::StackFrame> stackFrames;
-            vm.interpreter.getStackTrace(javascriptStack, stackFrames, 1);
+            vm.interpreter.getStackTrace(stackFrames, 1);
             String name = "Error"_s;
             String message = "JavaScript Callstack"_s;
             OrdinalNumber line = OrdinalNumber::beforeFirst();

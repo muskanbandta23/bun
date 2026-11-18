@@ -22,7 +22,7 @@ fn hooks() -> Hooks {
         jettison: |_, _| {},
         debug: |_, _, _, _| Ok(()),
         debug_await: |_, _, _, _| Ok(()),
-        cover: |_, _, _, _| {},
+        cover: bun_engine_inspector::profiling::cover,
         access_handler: |_, _, _| 0,
         tier_up: |_, code_block, _, _| {
             code_block.execution_counter().set(i32::MIN);
@@ -34,6 +34,7 @@ fn hooks() -> Hooks {
         did_start_having_a_bad_time: |_, _| {},
         did_declare_global_lexical: |_, _, _| {},
         builtin_source: bun_engine_builtins::builtin_source,
+        grow_wasm_memory: |_, _, _| false,
         temporal_to_locale_string: bun_engine_intl::temporal_to_locale_string,
         parse_json: |cx, text| {
             let text = cx.new_string(text)?.into();

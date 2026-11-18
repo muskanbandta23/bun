@@ -5,7 +5,7 @@
 extern "C" bool Bun__AOT__hasCompiler()
 {
 #if ENABLE(AOT)
-    return !JSC::isFeatureRemoved(JSC::RemovableFeature::ImageCompiler);
+    return !JSC::isFeatureRemoved(Bun::Feature::ImageCompiler);
 #else
     return false;
 #endif

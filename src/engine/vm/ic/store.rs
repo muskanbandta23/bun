@@ -9,7 +9,8 @@ use super::{AccessCase, AccessCases, AccessKind, Key, PrototypeLookup, is_live, 
 use crate::code::metadata::Entry;
 use crate::heap::Survivors;
 use crate::{
-    Attributes, CodeBlock, CustomSetter, Cx, Gc, GetterSetter, JsObject, JsResult, PutContext,
+    Attributes, CodeBlock, CustomSetter, Cx, Gc, GetterSetter, JsObject, JsResult, ProxyObject,
+    PutContext,
     PutKind, PutPropertySlot, Shape, ShapeId, Value, Visitor, Vm,
 };
 
@@ -260,6 +261,9 @@ pub(super) fn plan(
     slot: &PutPropertySlot,
     needs_setter_miss: bool,
 ) -> Result<AccessCase, Plan> {
+    if object.is::<ProxyObject>() && needs_setter_miss && !name.is_private() {
+        return Ok(AccessCase::new(AccessKind::ProxySet, object.shape_id()));
+    }
     let (kind, offset) = (slot.cacheable_kind(), slot.cached_offset());
     let is_own = slot.base() == Some(object);
     if kind == PutKind::NewProperty && is_own {
@@ -428,6 +432,7 @@ pub(super) fn execute(
                 object.add_cached_property(new.id(), byte_offset, value);
                 Some(Ok(()))
             }
+            AccessKind::ProxySet => Some(object.set(cx, name, value, is_strict).map(|_| ())),
             AccessKind::CallOwnSetter | AccessKind::CallInheritedSetter => {
                 let accessor = match case.lookup() {
                     Some(lookup) => lookup.stored_value()?,

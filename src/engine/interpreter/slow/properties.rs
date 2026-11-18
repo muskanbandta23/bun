@@ -5,8 +5,8 @@ use bun_engine_vm::code::metadata::{
 };
 use bun_engine_vm::ic::{self, AccessCases, Key, StoreCache, StoreMode};
 use bun_engine_vm::{
-    ArrayProfile, Cx, Field, Gc, JsCell, JsObject, JsResult, OFFSET_OF_INTERNAL_FIELDS,
-    PutPropertySlot, TypeFlags, Value, errors,
+    ArrayProfile, Cx, Field, Gc, JsCell, JsObject, JsResult, JsTypedArray,
+    OFFSET_OF_INTERNAL_FIELDS, PutPropertySlot, TypeFlags, Value, errors,
 };
 
 use super::{Frame, Next, execute};
@@ -16,6 +16,19 @@ fn record_element_access(profile: &ArrayProfile, base: Value, index: u32, is_sto
     if let Some(object) = base.as_object() {
         profile.record_index(&object, index, is_store);
     }
+}
+
+/// For a key that is no array index.
+fn typed_element(
+    profile: &ArrayProfile,
+    base: Value,
+    key: Value,
+) -> Option<(Gc<JsTypedArray>, usize)> {
+    let index = JsTypedArray::index_for_number(key.as_number()?);
+    let array = base.downcast::<JsTypedArray>()?;
+    profile.record_base(base);
+    profile.record_typed_index(&array, index);
+    Some((array, index))
 }
 
 pub(super) fn get_by_val(
@@ -29,6 +42,9 @@ pub(super) fn get_by_val(
     if let Some(index) = key.as_array_index() {
         record_element_access(array, base, index, false);
         return base.get_index(cx, index);
+    }
+    if let Some((typed_array, index)) = typed_element(array, base, key) {
+        return Ok(typed_array.get_element(cx, index).unwrap_or_default());
     }
     if base.is_undefined_or_null() {
         return Err(errors::throw_not_an_object(cx, base));
@@ -67,6 +83,11 @@ pub(super) fn put_by_val(
     if let Some(index) = key.as_array_index() {
         record_element_access(&entry.array, base, index, true);
         return put_index(cx, index).map(|_| ());
+    }
+    if let StoreMode::Set { .. } = mode
+        && let Some((typed_array, index)) = typed_element(&entry.array, base, key)
+    {
+        return typed_array.set_element(cx, index, value);
     }
     if base.is_undefined_or_null() {
         return Err(errors::throw_not_an_object(cx, base));

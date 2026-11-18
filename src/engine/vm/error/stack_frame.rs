@@ -76,7 +76,8 @@ impl StackFrame {
             return match self.wasm_names(vm) {
                 None => StringRef::from_literal("wasm-stub"),
                 Some(names) => names.function.unwrap_or_else(|| {
-                    let index = bun_engine_number::NumberText::from(f64::from(self.bytecode_offset));
+                    let index =
+                        bun_engine_number::NumberText::from(f64::from(self.bytecode_offset));
                     StringRef::from_text(index.text())
                 }),
             };

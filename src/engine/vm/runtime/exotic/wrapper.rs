@@ -3,7 +3,7 @@ use bun_engine_macros::cell;
 use crate::{Cx, Field, Gc, JsObject, JsObjectInit, Shape, Value, Vm};
 
 /// An object that holds a primitive.
-#[cell(name = "Object")]
+#[cell(name = "Object", export = "engine_class_WrapperObject")]
 pub struct JsWrapperObject {
     base: JsObject,
     pub internal_value: Field<Value>,

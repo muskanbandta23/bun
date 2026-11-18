@@ -4,6 +4,7 @@ use core::ffi::{CStr, c_char};
 
 use smallvec::SmallVec;
 
+use crate::argument::locale_id;
 use crate::error::Status;
 use crate::ffi::{call, length, open};
 use crate::formatted_value::{FormattedValue, UFormattedValue};
@@ -29,6 +30,10 @@ icu_functions! {
     );
     fn ulistfmt_resultAsValue(result: *const UFormattedList, status: &mut Status) -> *const UFormattedValue;
 }
+
+/// More than a pattern adds to an element.
+const MAX_LITERAL_LENGTH: usize = 32;
+const MAX_TOTAL_LENGTH: usize = 1 << 29;
 
 /// The field of `Category::LIST` that covers one of the strings.
 pub const ELEMENT_FIELD: i32 = 1;
@@ -59,8 +64,9 @@ icu_handle! {
 
 impl ListFormatter {
     pub fn open(locale: &CStr, kind: Kind, width: Width) -> Result<ListFormatter> {
+        let locale = locale_id(locale)?;
         // SAFETY: `locale` is terminated.
-        open(|status| unsafe { ulistfmt_openForType(locale.as_ptr(), kind, width, status) })
+        open(|status| unsafe { ulistfmt_openForType(locale, kind, width, status) })
             .map(ListFormatter)
     }
 
@@ -70,8 +76,13 @@ impl ListFormatter {
     ) -> Result<FormattedList> {
         let mut pointers = SmallVec::<[*const u16; 8]>::new();
         let mut lengths = SmallVec::<[i32; 8]>::new();
+        let mut total_length = 0usize;
         for string in strings {
-            if pointers.try_reserve(1).is_err() || lengths.try_reserve(1).is_err() {
+            total_length = total_length.saturating_add(string.len() + MAX_LITERAL_LENGTH);
+            if total_length > MAX_TOTAL_LENGTH
+                || pointers.try_reserve(1).is_err()
+                || lengths.try_reserve(1).is_err()
+            {
                 return Err(Error::MEMORY_ALLOCATION);
             }
             pointers.push(string.as_ptr());

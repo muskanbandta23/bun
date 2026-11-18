@@ -1,6 +1,7 @@
 //! One method for each form of instruction. Operands are in the order of Arm's manual.
 
-use super::opcode::Cc;
+use super::opcode::{Barrier, Cc};
+use super::registers::{LR, SP, ZR};
 use crate::buffer::CodeBuffer;
 use crate::features::Arm64Features;
 use crate::label::Label;
@@ -38,8 +39,17 @@ pub(crate) fn padding(offset: u32, log2: u8, max: u8) -> u32 {
     if needed > u32::from(max) { 0 } else { needed }
 }
 
+/// For a field in which 31 is the zero register.
 #[inline(always)]
 pub(super) fn gpr(reg: Gpr) -> u32 {
+    debug_assert!(reg < SP || reg == ZR, "this operand cannot be sp");
+    u32::from(reg.0 & 31)
+}
+
+/// For a field in which 31 is the stack pointer.
+#[inline(always)]
+pub(super) fn gpr_or_sp(reg: Gpr) -> u32 {
+    debug_assert!(reg <= SP, "this operand cannot be the zero register");
     u32::from(reg.0 & 31)
 }
 
@@ -50,13 +60,15 @@ pub(super) fn fpr(reg: Fpr) -> u32 {
 
 /// The bit that selects 64 bits.
 #[inline(always)]
-pub(super) fn sf(width: Width) -> u32 {
+pub(super) const fn sf(width: Width) -> u32 {
     (width as u32) << 31
 }
 
 pub struct Assembler {
     pub(crate) buffer: CodeBuffer<SiteKind>,
     pub(crate) features: Arm64Features,
+    /// By the index of an external target, the jump after the code that leads there.
+    pub(super) routes: Vec<Option<Label>>,
 }
 
 impl Assembler {
@@ -64,6 +76,7 @@ impl Assembler {
         Self {
             buffer: CodeBuffer::new(MAX_CODE_SIZE),
             features,
+            routes: Vec::new(),
         }
     }
 
@@ -79,8 +92,30 @@ impl Assembler {
 
     #[inline(always)]
     fn emit_with_target(&mut self, word: u32, target: Label, kind: SiteKind) {
-        self.buffer.record(self.buffer.offset(), target, kind);
-        self.emit(word);
+        self.buffer
+            .put_with_site(word.to_le_bytes(), 4, 0, target, kind);
+    }
+
+    fn emit_short_branch(&mut self, word: u32, target: Label, kind: SiteKind) {
+        if target.is_external() {
+            return self.emit_branch_to_route(word, target, kind);
+        }
+        self.emit_with_target(word, target, kind);
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn emit_branch_to_route(&mut self, word: u32, external: Label, kind: SiteKind) {
+        let route = self.route_to(external);
+        self.emit_with_target(word, route, kind);
+    }
+
+    pub(super) fn route_to(&mut self, external: Label) -> Label {
+        let index = self.buffer.state(external).link as usize;
+        if index >= self.routes.len() {
+            self.routes.resize(index + 1, None);
+        }
+        *self.routes[index].get_or_insert_with(|| self.buffer.new_label())
     }
 
     #[inline]
@@ -90,26 +125,29 @@ impl Assembler {
 
     #[inline]
     pub fn bind(&mut self, label: Label) {
-        if self.buffer.len < self.buffer.replaceable_end {
-            self.nop();
-        }
+        self.leave_replaceable_bytes();
         self.buffer.bind(label);
     }
 
+    #[inline]
+    pub(super) fn leave_replaceable_bytes(&mut self) {
+        if self.buffer.len < self.buffer.replaceable_end {
+            self.nop();
+        }
+    }
+
     pub fn replaceable_point(&mut self) -> Label {
-        self.buffer.replaceable_end = self.buffer.len + super::patch::REPLACEMENT_JUMP_SIZE;
+        self.buffer.replaceable_end = self.buffer.len + super::patch::REPLACEMENT_JUMP_SIZE as u32;
         self.buffer.mark()
     }
 
     /// Makes the offset a multiple of `1 << log2` if `max` bytes are enough.
     pub(crate) fn pad(&mut self, log2: u8, max: u8) {
-        if self.buffer.len < self.buffer.replaceable_end {
-            self.nop();
-        }
+        self.leave_replaceable_bytes();
         self.buffer.require_alignment(1 << log2);
-        let size = padding(self.buffer.offset(), log2, max) as u8;
+        let size = padding(self.buffer.len, log2, max) as u8;
         self.buffer.record(
-            self.buffer.offset(),
+            self.buffer.len,
             Label(0),
             SiteKind::Padding { log2, max, size },
         );
@@ -130,45 +168,74 @@ impl Assembler {
         self.emit_with_target(0x9400_0000, target, SiteKind::Branch26);
     }
 
+    #[inline]
     pub fn b_cond(&mut self, cc: Cc, target: Label) {
-        self.emit_with_target(0x5400_0000 | cc as u32, target, SiteKind::Branch19);
+        self.emit_short_branch(0x5400_0000 | cc as u32, target, SiteKind::Branch19);
     }
 
+    #[inline]
     pub fn cbz(&mut self, width: Width, reg: Gpr, target: Label) {
-        self.emit_with_target(
+        self.emit_short_branch(
             0x3400_0000 | sf(width) | gpr(reg),
             target,
             SiteKind::Branch19,
         );
     }
 
+    #[inline]
     pub fn cbnz(&mut self, width: Width, reg: Gpr, target: Label) {
-        self.emit_with_target(
+        self.emit_short_branch(
             0x3500_0000 | sf(width) | gpr(reg),
             target,
             SiteKind::Branch19,
         );
     }
 
+    #[inline]
     fn test_bit_and_branch(&mut self, opcode: u32, reg: Gpr, bit: u8, target: Label) {
         assert!(bit < 64);
         let bit = u32::from(bit);
-        self.emit_with_target(
+        self.emit_short_branch(
             opcode | (bit >> 5) << 31 | (bit & 31) << 19 | gpr(reg),
             target,
             SiteKind::Branch14,
         );
     }
 
+    #[inline]
     pub fn tbz(&mut self, reg: Gpr, bit: u8, target: Label) {
         self.test_bit_and_branch(0x3600_0000, reg, bit, target);
     }
 
+    #[inline]
     pub fn tbnz(&mut self, reg: Gpr, bit: u8, target: Label) {
         self.test_bit_and_branch(0x3700_0000, reg, bit, target);
     }
 
-    /// May overwrite x17, which `dst` is not.
+    pub fn br(&mut self, target: Gpr) {
+        self.emit(0xd61f_0000 | gpr(target) << 5);
+    }
+
+    pub fn blr(&mut self, target: Gpr) {
+        self.emit(0xd63f_0000 | gpr(target) << 5);
+    }
+
+    pub fn ret(&mut self) {
+        self.emit(0xd65f_0000 | gpr(LR) << 5);
+    }
+
+    pub fn brk(&mut self, imm: u16) {
+        self.emit(0xd420_0000 | u32::from(imm) << 5);
+    }
+
+    pub fn udf(&mut self, imm: u16) {
+        self.emit(imm.into());
+    }
+
+    pub fn dmb(&mut self, barrier: Barrier) {
+        self.emit(0xd503_30bf | (barrier as u32) << 8);
+    }
+
     pub fn adr(&mut self, dst: Gpr, target: Label) {
         self.emit_with_target(0x1000_0000 | gpr(dst), target, SiteKind::Address21);
     }

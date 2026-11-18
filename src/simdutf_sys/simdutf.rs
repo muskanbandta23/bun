@@ -59,6 +59,14 @@ unsafe extern "C" {
         length: usize,
         utf8_buffer: *mut u8,
     ) -> usize;
+    fn simdutf__convert_utf8_to_latin1(
+        input: *const u8,
+        length: usize,
+        latin1_buffer: *mut u8,
+    ) -> usize;
+    fn simdutf__latin1_length_from_utf8(input: *const u8, length: usize) -> usize;
+    fn simdutf__validate_utf16le_with_errors(buf: *const u16, len: usize) -> SIMDUTFResult;
+    fn simdutf__to_well_formed_utf16le(input: *const u16, length: usize, output: *mut u16);
 }
 
 pub mod validate {
@@ -70,6 +78,11 @@ pub mod validate {
         pub fn utf8(input: &[u8]) -> SIMDUTFResult {
             // SAFETY: input is a valid slice; FFI reads exactly len bytes.
             unsafe { simdutf__validate_utf8_with_errors(input.as_ptr(), input.len()) }
+        }
+
+        pub fn utf16le(input: &[u16]) -> SIMDUTFResult {
+            // SAFETY: input is a valid slice; FFI reads exactly len u16s.
+            unsafe { simdutf__validate_utf16le_with_errors(input.as_ptr(), input.len()) }
         }
     }
 
@@ -125,6 +138,11 @@ impl<'a> WithUtf8Len<'a, u16> {
 impl<'a> WithUtf8Len<'a, u8> {
     pub fn latin1(slice: &'a [u8]) -> Self {
         let utf8_len = length::utf8::from::latin1(slice);
+        Self { slice, utf8_len }
+    }
+
+    pub fn latin1_worst_case(slice: &'a [u8]) -> Self {
+        let utf8_len = slice.len() * 2;
         Self { slice, utf8_len }
     }
 }
@@ -187,6 +205,22 @@ pub mod convert {
                     }
                 }
             }
+
+            /// Returns false, having appended nothing, unless `input` is UTF-8 with no character above U+00FF, and
+            /// not empty. Panics if `output` is shorter than `input`.
+            pub fn latin1(input: &[u8], mut output: BorrowedCursor<'_, u8>) -> bool {
+                assert!(input.len() <= output.capacity());
+                // SAFETY: simdutf writes at most a byte for each byte it reads, and returns their count or zero.
+                unsafe {
+                    let written = simdutf__convert_utf8_to_latin1(
+                        input.as_ptr(),
+                        input.len(),
+                        output.as_mut().as_mut_ptr().cast(),
+                    );
+                    output.advance(written);
+                    written != 0
+                }
+            }
         }
     }
 
@@ -194,6 +228,21 @@ pub mod convert {
         use super::*;
         pub mod to {
             use super::*;
+
+            /// Each unpaired surrogate becomes U+FFFD. Panics if `output` is shorter than `input`.
+            pub fn well_formed_le(input: &[u16], mut output: BorrowedCursor<'_, u16>) {
+                assert!(input.len() <= output.capacity());
+                // SAFETY: simdutf writes a unit for each unit of `input`.
+                unsafe {
+                    simdutf__to_well_formed_utf16le(
+                        input.as_ptr(),
+                        input.len(),
+                        output.as_mut().as_mut_ptr().cast(),
+                    );
+                    output.advance(input.len());
+                }
+            }
+
             pub mod utf8 {
                 use super::*;
                 pub mod with_errors {
@@ -286,6 +335,17 @@ pub mod length {
             pub fn utf8(input: &[u8]) -> usize {
                 // SAFETY: input is a valid slice; FFI reads exactly len bytes.
                 unsafe { simdutf__utf16_length_from_utf8(input.as_ptr(), input.len()) }
+            }
+        }
+    }
+
+    pub mod latin1 {
+        use super::*;
+        pub mod from {
+            use super::*;
+            pub fn utf8(input: &[u8]) -> usize {
+                // SAFETY: input is a valid slice; FFI reads exactly len bytes.
+                unsafe { simdutf__latin1_length_from_utf8(input.as_ptr(), input.len()) }
             }
         }
     }

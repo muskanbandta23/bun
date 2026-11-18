@@ -2,9 +2,20 @@ use super::{FloatAssembly, ScratchNeeds};
 use crate::label::Label;
 use crate::operand::{Address, Amount, FloatWidth, Sign, Size, TestCond};
 use crate::register::{Fpr, Gpr};
-use crate::vector::{VectorBinary, VectorReduce, VectorShift, VectorTernary, VectorUnary};
+use crate::vector::{Relaxed, VectorBinary, VectorReduce, VectorShift, VectorTernary, VectorUnary};
 
-/// A `Size` is that of an integer lane, a `FloatWidth` that of a float lane.
+bitflags::bitflags! {
+    /// Vector operands, any of which saves a move if its register is also the destination.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub struct Reuse: u8 {
+        const FIRST = 1 << 0;
+        const SECOND = 1 << 1;
+        const THIRD = 1 << 2;
+    }
+}
+
+/// A `Size` is that of an integer lane, a `FloatWidth` that of a float lane. The methods up to `replace_float_lane`
+/// need no scratch register other than for an address.
 pub trait VectorAssembly: FloatAssembly {
     fn move_vector_constant(&mut self, dst: Fpr, bits: u128);
     /// Reads 8 bytes and doubles the size of each lane.
@@ -31,10 +42,13 @@ pub trait VectorAssembly: FloatAssembly {
     fn vector_ternary(&mut self, op: VectorTernary, dst: Fpr, a: Fpr, b: Fpr, c: Fpr);
     fn vector_shift(&mut self, op: VectorShift, dst: Fpr, src: Fpr, amount: impl Into<Amount>);
     fn vector_reduce(&mut self, op: VectorReduce, dst: Gpr, src: Fpr);
-    /// Byte `i` of `dst` is byte `lanes[i]` of the 32 bytes of `lhs` and `rhs`.
+    /// Byte `i` of `dst` is byte `lanes[i]` of the 32 bytes of `lhs` and `rhs`, or zero if there is none.
     fn vector_shuffle(&mut self, dst: Fpr, lhs: Fpr, rhs: Fpr, lanes: [u8; 16]);
     /// `cond` is `Zero` or `NonZero`.
     fn branch_test_vector(&mut self, cond: TestCond, vector: Fpr, target: Label);
+
+    /// What the relaxed operations do.
+    fn relaxed(features: Self::Features) -> Relaxed;
 
     // What the operations above take from the scratch registers, however their operands coincide.
 
@@ -48,4 +62,15 @@ pub trait VectorAssembly: FloatAssembly {
     ) -> ScratchNeeds;
     fn scratch_for_reduce(features: Self::Features, op: VectorReduce) -> ScratchNeeds;
     fn scratch_for_shuffle(features: Self::Features, lanes: [u8; 16]) -> ScratchNeeds;
+    fn scratch_for_branch_test(features: Self::Features) -> ScratchNeeds;
+
+    // Where their destination is best.
+
+    fn reuse_for_unary(features: Self::Features, op: VectorUnary) -> Reuse;
+    fn reuse_for_binary(features: Self::Features, op: VectorBinary) -> Reuse;
+    fn reuse_for_ternary(features: Self::Features, op: VectorTernary) -> Reuse;
+    fn reuse_for_shift(features: Self::Features) -> Reuse;
+    fn reuse_for_shuffle(features: Self::Features, lanes: [u8; 16]) -> Reuse;
+    /// For `load_vector_lane`, `replace_int_lane` and `replace_float_lane`.
+    fn reuse_for_replace_lane(features: Self::Features) -> Reuse;
 }

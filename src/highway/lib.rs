@@ -1,6 +1,8 @@
 // Direct `extern "C"` re-exports of the Google Highway SIMD C++ helpers.
 // Per crate map: `bun.highway.*` → `bun_highway::*` (same C++ backing).
 
+pub mod text;
+pub mod url;
 pub mod webp;
 
 unsafe extern "C" {
@@ -799,6 +801,51 @@ impl ScannerStopsBuffer {
             after_name: Stops(after_name),
             after_blanks: Stops(after_blanks),
             in_string: Stops(&rest[..plane_len]),
+        }
+    }
+}
+
+/// The [`ScannerStops`] of a part of a text, for a scanner that skips much of what it is given.
+pub struct ScannerWindow([[u8; ScannerWindow::PLANE_LEN]; 3]);
+
+impl Default for ScannerWindow {
+    #[inline]
+    fn default() -> Self {
+        Self([[0xFF; Self::PLANE_LEN]; 3])
+    }
+}
+
+impl ScannerWindow {
+    const CAPACITY: usize = 1024;
+    const PLANE_LEN: usize = Self::CAPACITY / 8 + 8;
+    /// [`Stops::run`] is right for the positions below this.
+    pub const REACH: usize = Self::CAPACITY - 64;
+
+    /// The window starts where `text` starts.
+    #[inline]
+    pub fn fill(&mut self, text: &[u8]) {
+        let text = &text[..text.len().min(Self::CAPACITY)];
+        let written = text.len().div_ceil(64) * 8;
+        for plane in &mut self.0 {
+            plane[written..written + 8].fill(0xFF);
+        }
+        // SAFETY: `text` is readable, and the kernel writes `written` bytes to each of the three planes.
+        unsafe {
+            highway_scanner_run_stops(
+                text.as_ptr(),
+                text.len(),
+                self.0.as_flattened_mut().as_mut_ptr(),
+                Self::PLANE_LEN,
+            );
+        }
+    }
+
+    #[inline(always)]
+    pub fn stops(&self) -> ScannerStops<'_> {
+        ScannerStops {
+            after_name: Stops(&self.0[0]),
+            after_blanks: Stops(&self.0[1]),
+            in_string: Stops(&self.0[2]),
         }
     }
 }

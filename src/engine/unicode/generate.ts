@@ -2,10 +2,11 @@
 //
 //   bun generate.ts <characters> <properties>
 //
-// <characters> decides identifiers and case, and has the version of the ICU that Bun links: UnicodeData.txt,
-// SpecialCasing.txt, CaseFolding.txt, DerivedCoreProperties.txt.
-// <properties> decides what `\p{..}` matches: UnicodeData.txt, the files in `binaryFiles` and `sequenceFiles`,
-// Scripts.txt, ScriptExtensions.txt, PropertyAliases.txt, PropertyValueAliases.txt.
+// <characters> decides identifiers and case conversion, and has the version of the ICU that Bun links:
+// UnicodeData.txt, SpecialCasing.txt, DerivedCoreProperties.txt.
+// <properties> decides what `\p{..}` matches, and the folding that is applied to those sets: UnicodeData.txt,
+// CaseFolding.txt, the files in `binaryFiles` and `sequenceFiles`, Scripts.txt, ScriptExtensions.txt,
+// PropertyAliases.txt, PropertyValueAliases.txt.
 
 import assert from "node:assert";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -168,7 +169,7 @@ function emitCase(core: Map<string, Range[]>) {
     upper.set(hex(c), hexList(toUpper));
   }
   const folded = new Map<number, number>();
-  for (const [c, status, to] of rows(charactersFolder, "CaseFolding.txt")) {
+  for (const [c, status, to] of rows(propertiesFolder, "CaseFolding.txt")) {
     if (status === "C" || status === "S") folded.set(hex(c), hex(to));
   }
   // Canonicalize of ECMA-262 without the flags `u` and `v`.
@@ -361,7 +362,7 @@ function emitProperties() {
   writeFileSync(join(import.meta.dirname, "properties.bin"), new Uint8Array(sections.flat()));
 }
 
-source += `//! Written by generate.ts: identifiers and case of Unicode ${version(charactersFolder)}, properties of Unicode ${version(propertiesFolder)}.
+source += `//! Written by generate.ts: identifiers and case conversion of Unicode ${version(charactersFolder)}, properties and folding of Unicode ${version(propertiesFolder)}.
 
 use crate::case::SPECIAL;
 use crate::ignore_case::{CaseRun, Step::{Adjacent, Cycle, Offset}, run};

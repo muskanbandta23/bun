@@ -2,22 +2,20 @@
 
 use core::ffi::{CStr, c_char};
 
-use crate::enumeration::UEnumeration;
+use crate::argument::locale_id;
 use crate::error::Status;
-use crate::ffi::{call, filled};
-use crate::{Buffer, CText, Enumeration, Error, Result};
+use crate::ffi::filled;
+use crate::{Buffer, Result};
 
 icu_functions! {
-    fn uloc_forLanguageTag(tag: *const c_char, out: *mut u8, capacity: i32, parsed: &mut i32, status: &mut Status) -> i32;
     fn uloc_toLanguageTag(locale: *const c_char, out: *mut u8, capacity: i32, strict: i8, status: &mut Status) -> i32;
-    fn uloc_openKeywords(locale: *const c_char, status: &mut Status) -> *mut UEnumeration;
     fn uloc_getDefault() -> *const c_char;
     fn uloc_countAvailable() -> i32;
     fn uloc_getAvailable(index: i32) -> *const c_char;
     fn uloc_toUnicodeLocaleType(key: *const c_char, value: *const c_char) -> *const c_char;
     fn uloc_addLikelySubtags(locale: *const c_char, out: *mut u8, capacity: i32, status: &mut Status) -> i32;
     fn uloc_minimizeSubtags(locale: *const c_char, out: *mut u8, capacity: i32, status: &mut Status) -> i32;
-    fn uloc_getCharacterOrientation(locale: *const c_char, status: &mut Status) -> i32;
+    fn uloc_isRightToLeft(locale: *const c_char) -> i8;
 }
 
 /// # Safety
@@ -60,66 +58,26 @@ pub fn unicode_type(key: &CStr, value: &CStr) -> Option<&'static [u8]> {
 
 /// Add Likely Subtags of UTS #35.
 pub fn add_likely_subtags(locale: &CStr) -> Result<Buffer<u8>> {
+    let locale = locale_id(locale)?;
     // SAFETY: `locale` is terminated, and `out` has room for `capacity`.
-    filled(|out, capacity, status| unsafe {
-        uloc_addLikelySubtags(locale.as_ptr(), out, capacity, status)
-    })
+    filled(|out, capacity, status| unsafe { uloc_addLikelySubtags(locale, out, capacity, status) })
 }
 
 /// Remove Likely Subtags of UTS #35, which favors the region over the script.
 pub fn minimize_subtags(locale: &CStr) -> Result<Buffer<u8>> {
+    let locale = locale_id(locale)?;
     // SAFETY: `locale` is terminated, and `out` has room for `capacity`.
-    filled(|out, capacity, status| unsafe {
-        uloc_minimizeSubtags(locale.as_ptr(), out, capacity, status)
-    })
+    filled(|out, capacity, status| unsafe { uloc_minimizeSubtags(locale, out, capacity, status) })
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Orientation {
-    LeftToRight,
-    RightToLeft,
-    TopToBottom,
-    BottomToTop,
-}
-
-/// Of the characters in a line.
-pub fn character_orientation(locale: &CStr) -> Result<Orientation> {
+/// Of the script that `locale` names, or of its likely one.
+pub fn is_right_to_left(locale: &CStr) -> bool {
     // SAFETY: `locale` is terminated.
-    let layout = call(|status| unsafe { uloc_getCharacterOrientation(locale.as_ptr(), status) })?;
-    Ok(match layout {
-        1 => Orientation::RightToLeft,
-        2 => Orientation::TopToBottom,
-        3 => Orientation::BottomToTop,
-        _ => Orientation::LeftToRight,
-    })
-}
-
-/// Fails unless all of `tag` is a BCP 47 language tag.
-pub fn for_language_tag(tag: &CStr) -> Result<CText> {
-    let mut parsed = 0;
-    // SAFETY: `tag` is terminated, and `out` has room for `capacity`.
-    let locale = filled(|out, capacity, status| unsafe {
-        uloc_forLanguageTag(tag.as_ptr(), out, capacity, &mut parsed, status)
-    })?;
-    if usize::try_from(parsed) != Ok(tag.count_bytes()) {
-        return Err(Error::ILLEGAL_ARGUMENT);
-    }
-    CText::from_buffer(locale)
+    locale_id(locale).is_ok_and(|locale| unsafe { uloc_isRightToLeft(locale) } != 0)
 }
 
 pub fn to_language_tag(locale: &CStr) -> Result<Buffer<u8>> {
+    let locale = locale_id(locale)?;
     // SAFETY: `locale` is terminated, and `out` has room for `capacity`.
-    filled(|out, capacity, status| unsafe {
-        uloc_toLanguageTag(locale.as_ptr(), out, capacity, 0, status)
-    })
-}
-
-/// `None` if the locale has no keywords.
-pub fn keywords(locale: &CStr) -> Result<Option<Enumeration>> {
-    // SAFETY: `locale` is terminated.
-    let keywords = call(|status| unsafe { uloc_openKeywords(locale.as_ptr(), status) })?;
-    if keywords.is_null() {
-        return Ok(None);
-    }
-    Enumeration::open(|_| keywords).map(Some)
+    filled(|out, capacity, status| unsafe { uloc_toLanguageTag(locale, out, capacity, 0, status) })
 }

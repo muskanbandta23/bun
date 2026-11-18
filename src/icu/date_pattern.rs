@@ -5,8 +5,9 @@ use core::ptr;
 
 use smallvec::SmallVec;
 
+use crate::argument::{locale_id, pattern_length};
 use crate::error::Status;
-use crate::ffi::{fill, filled, length, open};
+use crate::ffi::{fill, filled, open};
 use crate::{Buffer, Result};
 
 bun_opaque::opaque_ffi! { struct UDateTimePatternGenerator; }
@@ -78,13 +79,14 @@ icu_handle! {
 
 impl PatternGenerator {
     pub fn open(locale: &CStr) -> Result<PatternGenerator> {
+        let locale = locale_id(locale)?;
         // SAFETY: `locale` is terminated.
-        open(|status| unsafe { udatpg_open(locale.as_ptr(), status) }).map(PatternGenerator)
+        open(|status| unsafe { udatpg_open(locale, status) }).map(PatternGenerator)
     }
 
     /// The hour is as wide as in `skeleton`, unless the locale has a pattern for that very width.
     pub fn best_pattern(&mut self, skeleton: &[u16]) -> Result<Pattern> {
-        let length = length(skeleton)?;
+        let length = pattern_length(skeleton)?;
         let mut pattern = Pattern::new();
         // SAFETY: the generator is open, `skeleton` has `length` units, and `out` has room for `capacity`.
         fill(&mut pattern, |out, capacity, status| unsafe {
@@ -112,7 +114,7 @@ impl PatternGenerator {
 
 /// Of the first 50 items of `pattern`, where an item is a field or one unit of anything else.
 pub fn skeleton(pattern: &[u16]) -> Result<Buffer<u16>> {
-    let length = length(pattern)?;
+    let length = pattern_length(pattern)?;
     // SAFETY: `pattern` has `length` units, and `out` has room for `capacity`.
     filled(|out, capacity, status| unsafe {
         udatpg_getSkeleton(

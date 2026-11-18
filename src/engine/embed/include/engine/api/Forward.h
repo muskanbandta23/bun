@@ -257,6 +257,10 @@ enum class SourceProviderSourceType : uint8_t {
 };
 
 enum class InternalMicrotask : uint8_t;
+enum class IterationKind : uint8_t;
+enum class MessageLevel : uint8_t;
+enum class MessageType : uint8_t;
+enum class TemporalType : uint8_t;
 
 enum class SubspaceAccess { OnMainThread,
     Concurrently };

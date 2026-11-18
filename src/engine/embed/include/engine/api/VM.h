@@ -13,7 +13,6 @@ class DeferredWorkTimer;
 class EntryFrame;
 class FunctionHasExecutedCache;
 class HeapProfiler;
-class JSONCache;
 class MicrotaskQueue;
 class PersistentBytecodePayloads;
 class QueuedTask;
@@ -99,7 +98,7 @@ public:
 class DateCache {
 public:
     void clearForTimeZoneChange();
-    double gregorianDateTimeToMS(int32_t year, int32_t month, int32_t day, int32_t hour, int32_t minute, int32_t second, double milliseconds, TimeType);
+    double gregorianDateTimeToMS(int32_t year, int32_t month, int32_t day, int32_t hour, int32_t minute, int32_t second, int32_t millisecond, TimeType);
     PlainGregorianDateTime msToGregorianDateTime(double milliseconds, TimeType);
     double parseDate(JSGlobalObject*, VM&, const String&);
 
@@ -268,7 +267,6 @@ public:
     SourceProviderCache* addSourceProviderCache(SourceProvider*);
     PersistentBytecodePayloads& persistentBytecodePayloads();
     PersistentBytecodePayloads* persistentBytecodePayloadsIfExists();
-    JSONCache& jsonCache();
 
     bool enableControlFlowProfiler();
     ControlFlowProfiler* controlFlowProfiler();

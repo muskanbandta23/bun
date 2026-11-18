@@ -44,10 +44,6 @@ pub struct ConsoleHooks {
     pub time: fn(&mut Cx, label: &StringRef) -> JsResult<()>,
     pub time_log: fn(&mut Cx, label: &StringRef, &[Value]) -> JsResult<()>,
     pub time_end: fn(&mut Cx, label: &StringRef) -> JsResult<()>,
-    pub time_stamp: fn(&mut Cx, &[Value]) -> JsResult<()>,
-    pub record: fn(&mut Cx, &[Value]) -> JsResult<()>,
-    pub record_end: fn(&mut Cx, &[Value]) -> JsResult<()>,
-    pub screenshot: fn(&mut Cx, &[Value]) -> JsResult<()>,
 }
 
 impl Cx {

@@ -5,7 +5,7 @@ use bun_highway::url::PlainBytes;
 /// A union of groups of bytes.
 pub(crate) type Set = u16;
 
-const CONTROL_OR_NOT_ASCII: Set = 1 << 0;
+const OTHER_CONTROL_OR_NOT_ASCII: Set = 1 << 0;
 const SPACE_QUOTE_OR_ANGLE: Set = 1 << 1;
 const BACKTICK: Set = 1 << 2;
 const APOSTROPHE: Set = 1 << 3;
@@ -19,18 +19,19 @@ pub(crate) const BACKSLASH: Set = 1 << 10;
 pub(crate) const PERCENT: Set = 1 << 11;
 pub(crate) const TAB_OR_NEWLINE: Set = 1 << 12;
 
-// The percent-encode sets. Those of the query and the path leave out `?` and `#`, which end what the parser reads.
-pub(crate) const C0_CONTROL: Set = CONTROL_OR_NOT_ASCII;
+// The percent-encode sets. Those up to the path leave out what the parser does not encode where it reads a whole URL:
+// tabs and newlines, and the `?` and `#` that end a part.
+pub(crate) const C0_CONTROL: Set = OTHER_CONTROL_OR_NOT_ASCII;
 pub(crate) const FRAGMENT: Set = C0_CONTROL | SPACE_QUOTE_OR_ANGLE | BACKTICK;
 pub(crate) const QUERY: Set = C0_CONTROL | SPACE_QUOTE_OR_ANGLE;
 pub(crate) const SPECIAL_QUERY: Set = QUERY | APOSTROPHE;
 pub(crate) const PATH: Set = QUERY | CARET_OR_BRACE | BACKTICK;
 pub(crate) const USERINFO: Set =
-    PATH | NUMBER_SIGN | QUESTION_MARK | BACKSLASH | AUTHORITY_PUNCTUATION;
+    PATH | TAB_OR_NEWLINE | NUMBER_SIGN | QUESTION_MARK | BACKSLASH | AUTHORITY_PUNCTUATION;
 pub(crate) const FORM: Set = USERINFO | PERCENT | APOSTROPHE | FORM_PUNCTUATION;
 /// The path percent-encode set and what RFC 1738 calls unsafe, but for the backslash.
 pub(crate) const FILE_PATH: Set =
-    PATH | NUMBER_SIGN | QUESTION_MARK | PERCENT | UNSAFE_IN_FILE_NAME;
+    PATH | TAB_OR_NEWLINE | NUMBER_SIGN | QUESTION_MARK | PERCENT | UNSAFE_IN_FILE_NAME;
 
 const fn add(table: &mut [u16; 256], mut bytes: &[u8], bits: u16) {
     while let [byte, rest @ ..] = bytes {
@@ -49,8 +50,10 @@ const fn add_range(table: &mut [u16; 256], first: u8, last: u8, bits: u16) {
 
 static GROUPS: [Set; 256] = {
     let mut table = [0; 256];
-    add_range(&mut table, 0, 0x1f, CONTROL_OR_NOT_ASCII);
-    add_range(&mut table, 0x7f, 0xff, CONTROL_OR_NOT_ASCII);
+    add_range(&mut table, 0, 0x08, OTHER_CONTROL_OR_NOT_ASCII);
+    add_range(&mut table, 0x0b, 0x0c, OTHER_CONTROL_OR_NOT_ASCII);
+    add_range(&mut table, 0x0e, 0x1f, OTHER_CONTROL_OR_NOT_ASCII);
+    add_range(&mut table, 0x7f, 0xff, OTHER_CONTROL_OR_NOT_ASCII);
     add(&mut table, b" \"<>", SPACE_QUOTE_OR_ANGLE);
     add(&mut table, b"`", BACKTICK);
     add(&mut table, b"'", APOSTROPHE);
@@ -71,6 +74,12 @@ pub(crate) fn is_in(set: Set, byte: u8) -> bool {
     GROUPS[usize::from(byte)] & set != 0
 }
 
+/// How many bytes of `set` there are at the start of `text`.
+#[inline(always)]
+pub(crate) fn run_length(set: Set, text: &[u8]) -> usize {
+    text.iter().take_while(|&&byte| is_in(set, byte)).count()
+}
+
 /// What a host has in it that takes a closer look.
 pub(crate) type HostTraits = u16;
 
@@ -82,7 +91,8 @@ pub(crate) const UPPERCASE: HostTraits = 1 << 4;
 /// A number and an ACE label start with one.
 pub(crate) const DIGIT_OR_X: HostTraits = 1 << 5;
 pub(crate) const AT_SIGN: HostTraits = 1 << 6;
-const IN_SCHEME: u16 = 1 << 7;
+pub(crate) const TO_BE_REMOVED: HostTraits = 1 << 7;
+const IN_SCHEME: u16 = 1 << 8;
 
 static TRAITS: [u16; 256] = {
     let mut table = [0; 256];
@@ -100,6 +110,7 @@ static TRAITS: [u16; 256] = {
     add_range(&mut table, b'A', b'Z', UPPERCASE | IN_SCHEME);
     add(&mut table, b"0123456789x", DIGIT_OR_X);
     add(&mut table, b"@", AT_SIGN);
+    add(&mut table, b"\t\n\r", TO_BE_REMOVED);
     add_range(&mut table, b'a', b'z', IN_SCHEME);
     add(&mut table, b"0123456789+-.", IN_SCHEME);
     table

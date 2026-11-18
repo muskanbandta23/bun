@@ -12,7 +12,8 @@ function from(items /*, mapFn, thisArg */) {
 
   var length = 0;
   var iteratorMethod = items.@@iterator;
-  if (@isUndefinedOrNull(iteratorMethod)) length = @toLength(source.length);
+  var isArrayLike = @isUndefinedOrNull(iteratorMethod);
+  if (isArrayLike) length = @toLength(source.length);
   else {
     if (!@isCallable(iteratorMethod))
       @throwTypeError(
@@ -32,10 +33,15 @@ function from(items /*, mapFn, thisArg */) {
   var result = new this(length);
   if (@typedArrayLength(result) < length)
     @throwTypeError("TypedArray.from constructed typed array of insufficient length");
-  if (mapFn === @undefined) {
-    for (var i = 0; i < length; i++) result[i] = source[i];
-  } else {
-    for (var i = 0; i < length; i++) result[i] = mapFn.@call(thisArg, source[i], i);
+  var sourceCanShrink = @isTypedArrayView(source);
+  for (var i = 0; i < length; i++) {
+    if (sourceCanShrink && !(i in source)) break;
+    var value = source[i];
+    if (mapFn !== @undefined) {
+      value = mapFn.@call(thisArg, value, i);
+      if (isArrayLike && !(i in result)) break;
+    }
+    result[i] = value;
   }
   return result;
 }

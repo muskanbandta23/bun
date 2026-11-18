@@ -12,22 +12,21 @@ pub(crate) enum Assertion {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum ClassKind {
+pub(crate) enum ClassEscape {
     Digit,
+    NotDigit,
     Space,
+    NotSpace,
     Word,
+    NotWord,
     Property(Property),
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct ClassEscape {
-    pub(crate) kind: ClassKind,
-    pub(crate) negated: bool,
+    NotProperty(Property),
 }
 
 impl ClassEscape {
+    #[inline(always)]
     pub(crate) fn has_strings(self) -> bool {
-        matches!(self.kind, ClassKind::Property(property) if property.has_strings())
+        matches!(self, ClassEscape::Property(property) if property.has_strings())
     }
 }
 

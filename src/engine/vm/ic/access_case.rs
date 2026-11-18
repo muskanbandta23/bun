@@ -32,6 +32,10 @@ pub enum AccessKind {
     /// For any shape.
     ArrayLength,
     StringLength,
+    /// What the getter of the library returns, while the lookup is valid. The length of the buffer is fixed.
+    TypedArrayLength,
+    TypedArrayByteLength,
+    TypedArrayByteOffset,
     /// `pointer` is the namespace, `second_pointer` the address of the slot.
     LoadModuleBinding,
     /// `pointer` is the address of the `GlobalBinding`, and `new_shape` that of the target of the proxy.
@@ -380,8 +384,8 @@ impl AccessCases {
     pub(super) fn did_fail_to_cache(&self, vm: &Vm, owner: &CodeBlock, key: Key) {
         let last = self.ensure_last(vm, owner, key);
         last.did_miss.set(true);
-        last.failures.update(|count| count + 1);
-        if last.failures.get() >= Self::MAX_FAILURES {
+        last.failures.update(|count| count.saturating_add(1));
+        if last.failures.get() == Self::MAX_FAILURES {
             self.end_with(vm, owner, AccessKind::Generic, key);
         }
     }
@@ -405,7 +409,7 @@ unsafe impl Entry for AccessCases {
     fn visit(&self, visitor: &mut Visitor) {
         for case in self.iter() {
             // SAFETY: zero, or a cell that has been kept alive so far.
-            unsafe { visitor.append_hidden_word(case.lookup as u64) };
+            unsafe { visitor.append_word(case.lookup as u64) };
         }
     }
 

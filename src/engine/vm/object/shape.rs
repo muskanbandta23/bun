@@ -196,6 +196,8 @@ pub struct Shape {
 pub struct Properties(Option<Rc<PropertyTable>>);
 
 impl Properties {
+    pub(super) const NONE: Properties = Properties(None);
+
     /// With those that have been removed.
     pub fn entries(&self) -> &[PropertyEntry] {
         self.0.as_ref().map_or_default(|table| table.entries())
@@ -262,6 +264,11 @@ impl ShapeSpec {
 
     pub const fn with_flags(mut self, flags: TypeFlags) -> ShapeSpec {
         self.flags = self.flags.union(flags);
+        self
+    }
+
+    pub(crate) const fn with_mutable_prototype(mut self) -> ShapeSpec {
+        self.flags = (self.flags).difference(TypeFlags::IS_IMMUTABLE_PROTOTYPE_EXOTIC_OBJECT);
         self
     }
 

@@ -372,17 +372,19 @@ impl JsObject {
     pub fn skip_holes(&self, range: Range<u64>) -> u64 {
         /// Looking at an entry is that much cheaper than a turn of the loop.
         const ENTRIES_PER_TURN: u64 = 8;
-        let (Some(sparse), Ok(start)) = (self.sparse_elements(), u32::try_from(range.start)) else {
-            return range.start;
-        };
-        let (count, turns) = (sparse.len() as u64, range.end.saturating_sub(range.start));
-        if count * count >= turns.saturating_mul(ENTRIES_PER_TURN)
-            || range.end > u64::from(u32::MAX)
-            || self.holes_must_forward_to_prototype()
-        {
+        let turns = range.end.saturating_sub(range.start);
+        if turns < ENTRIES_PER_TURN || range.end > u64::from(u32::MAX) {
             return range.start;
         }
-        let next = sparse.first_index_from(start);
+        let (start, sparse) = (range.start as u32, self.sparse_elements());
+        let is_worth_it = match sparse.map(|it| it.len() as u64) {
+            Some(count) => count * count < turns * ENTRIES_PER_TURN,
+            None => start >= self.public_length() || self.element_kind() == ElementKind::Undecided,
+        };
+        if !is_worth_it || self.holes_must_forward_to_prototype() {
+            return range.start;
+        }
+        let next = sparse.and_then(|it| it.first_index_from(start));
         next.map_or(range.end, |next| range.end.min(next.into()))
     }
 
@@ -496,7 +498,7 @@ impl JsObject {
         Ok(())
     }
 
-    pub(crate) fn convert_to_sparse(&self, vm: &Vm) -> Result<Gc<SparseElements>, AllocError> {
+    pub fn convert_to_sparse(&self, vm: &Vm) -> Result<Gc<SparseElements>, AllocError> {
         if let Some(sparse) = self.sparse_elements() {
             return Ok(sparse);
         }

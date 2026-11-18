@@ -4,6 +4,7 @@ use bun_engine_vm::{
     iterator_close_on_throw, iterator_close_quietly,
 };
 
+use super::hidden_function;
 use crate::js::iterator_prototype as js;
 use crate::prelude::*;
 
@@ -11,8 +12,8 @@ const ACCESSOR: Attributes = Attributes::DONT_ENUM.union(Attributes::CUSTOM_ACCE
 
 static_table!(static PROPERTIES = [
     StaticProperty::custom(names::constructor, ACCESSOR, get_constructor, Some(set_on_receiver)),
-    StaticProperty::function(names::toArray, to_array, 0),
-    StaticProperty::builtin(names::forEach, js::forEach),
+    StaticProperty::made(names::toArray, |cx, _| hidden_function(cx, names::toArray, to_array, 0, Intrinsic::None).into()),
+    StaticProperty::made(names::forEach, |cx, _| hidden_function(cx, names::forEach, for_each, 1, Intrinsic::None).into()),
     StaticProperty::builtin(names::some, js::some),
     StaticProperty::builtin(names::every, js::every),
     StaticProperty::builtin(names::find, js::find),
@@ -88,6 +89,24 @@ fn to_array(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let message = "Iterator.prototype.toArray requires that |this| be an Object.";
     let iterator = this_iterator(cx, frame, message)?;
     (IteratorRecord::direct(cx, iterator)?.to_array(cx)).map(Into::into)
+}
+
+#[native_abi]
+fn for_each(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let message = "Iterator.prototype.forEach requires that |this| be an Object.";
+    let (iterator, callback) = (this_iterator(cx, frame, message)?, frame.argument(0));
+    if !callback.is_callable() {
+        iterator_close_quietly(cx, iterator)?;
+        let message = "Iterator.prototype.forEach requires the callback argument to be callable.";
+        return Err(cx.throw_type_error(message));
+    }
+    let mut counter = 0u64;
+    IteratorRecord::direct(cx, iterator)?.for_each(cx, |cx, value| {
+        cx.call(callback, Value::UNDEFINED, &[value, counter.into()])?;
+        counter += 1;
+        Ok(())
+    })?;
+    Ok(Value::UNDEFINED)
 }
 
 #[cold]

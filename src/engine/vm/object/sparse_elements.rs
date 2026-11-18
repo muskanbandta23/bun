@@ -20,7 +20,7 @@ impl SparseEntry {
 }
 
 /// The elements of an object that has few of them for its length, or some with unusual attributes.
-#[cell(cell_type = SparseElements, flags = TypeFlags::SHAPE_IS_IMMORTAL)]
+#[cell(name = "SparseArrayValueMap", cell_type = SparseElements, flags = TypeFlags::SHAPE_IS_IMMORTAL)]
 pub struct SparseElements {
     base: JsCell,
     pub(self) map: TracedMap<u32, SparseEntry>,

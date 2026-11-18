@@ -1,6 +1,6 @@
 use bun_engine_text::{CodeUnit, Text};
 
-use crate::decimal_scanner::{finish_decimal, scan_few_digits};
+use crate::decimal_scanner::{finish_decimal, scan_whole_digits};
 use crate::double::with_sign;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -33,7 +33,7 @@ pub fn parse_json_number<T: CodeUnit>(units: &[T]) -> Result<(JsonNumber, usize)
     let start = usize::from(units.first().is_some_and(|unit| unit.is(b'-')));
     let (point, whole) = match units.get(start) {
         Some(first) if first.is(b'0') => (start + 1, 0),
-        Some(first) if first.is_ascii_digit() => scan_few_digits(units, start, 0),
+        Some(first) if first.is_ascii_digit() => scan_whole_digits(units, start),
         _ => return Err(JsonNumberError::NoDigits),
     };
     let goes_on = units

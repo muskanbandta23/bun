@@ -103,7 +103,7 @@ fn array_shape_index(mode: IndexingMode) -> usize {
     usize::from(mode.bits() >> 1) % ARRAY_SHAPE_COUNT
 }
 
-#[cell(name = "GlobalObject", cell_type = GlobalObject, ops, static_table = GLOBAL_PROPERTIES,
+#[cell(name = "GlobalObject", cell_type = GlobalObject, ops, analyze_heap, static_table = GLOBAL_PROPERTIES,
     export = "engine_class_GlobalObject", flags = TypeFlags::IS_IMMUTABLE_PROTOTYPE_EXOTIC_OBJECT)]
 pub struct GlobalObject {
     base: JsDestructibleObject,
@@ -277,7 +277,17 @@ impl GlobalObject {
     }
 
     pub fn create(vm: &Vm, hooks: &'static RealmHooks) -> Gc<GlobalObject> {
-        let shape = Shape::create(vm, None, Value::NULL, ShapeSpec::of::<GlobalObject>());
+        Self::create_with(vm, hooks, ShapeSpec::of::<GlobalObject>())
+    }
+
+    /// Scripts can change its prototype.
+    pub fn create_for_shadow_realm(vm: &Vm, hooks: &'static RealmHooks) -> Gc<GlobalObject> {
+        let spec = ShapeSpec::of::<GlobalObject>().with_mutable_prototype();
+        Self::create_with(vm, hooks, spec)
+    }
+
+    fn create_with(vm: &Vm, hooks: &'static RealmHooks, spec: ShapeSpec) -> Gc<GlobalObject> {
+        let shape = Shape::create(vm, None, Value::NULL, spec);
         let init = Self::init(vm, shape, hooks, core::ptr::null());
         let global = vm.allocate::<GlobalObject>(init);
         global.finish_creation(vm);
@@ -358,6 +368,12 @@ impl GlobalObject {
     #[inline(always)]
     pub(super) fn realm_watchpoints(&self) -> &RealmWatchpoints {
         &self.watchpoints
+    }
+
+    fn analyze_heap(&self, analyzer: &mut crate::heap::HeapAnalyzer) {
+        self.analyze_properties(analyzer);
+        self.variables.analyze(self, analyzer);
+        self.lexicals.analyze(self, analyzer);
     }
 
     pub fn variables(&self) -> &GlobalBindings {

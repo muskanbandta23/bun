@@ -1,5 +1,7 @@
 //! Operations on lists of ranges that ascend with a gap between any two.
 
+use core::ops::Deref;
+
 use bun_engine_text::AllocError;
 use bun_engine_unicode::MAX_CODE_POINT;
 use smallvec::SmallVec;
@@ -7,25 +9,50 @@ use smallvec::SmallVec;
 use super::CharRange;
 
 #[derive(Default)]
-pub(super) struct RangeList(SmallVec<[CharRange; 8]>);
+pub(super) struct RangeList(SmallVec<[CharRange; 4]>);
 
-impl RangeList {
+impl Deref for RangeList {
+    type Target = [CharRange];
+
     #[inline]
-    pub(super) fn as_slice(&self) -> &[CharRange] {
+    fn deref(&self) -> &[CharRange] {
         &self.0
     }
+}
 
-    /// `range` does not start before the last one does.
+impl RangeList {
+    fn with_capacity(capacity: usize) -> Result<RangeList, AllocError> {
+        let mut list = RangeList::default();
+        list.0.try_reserve(capacity).map_err(|_| AllocError)?;
+        Ok(list)
+    }
+
     #[inline]
-    fn push(&mut self, range: CharRange) -> Result<(), AllocError> {
-        match self.0.last_mut() {
-            Some(last) if range.first <= last.last + 1 => last.last = last.last.max(range.last),
-            _ => {
-                self.0.try_reserve(1).map_err(|_| AllocError)?;
-                self.0.push(range);
-            }
+    pub(super) fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    #[inline]
+    pub(super) fn push(&mut self, range: CharRange) -> Result<(), AllocError> {
+        if self.0.len() == self.0.capacity() {
+            self.0.try_reserve(1).map_err(|_| AllocError)?;
         }
+        self.0.push(range);
         Ok(())
+    }
+
+    /// Brings ranges that overlap or come in any order into the form that the operations take.
+    pub(super) fn normalize(&mut self) {
+        if !self.0.is_sorted_by_key(|range| range.first) {
+            self.0.sort_unstable_by_key(|range| range.first);
+        }
+        self.0.dedup_by(|range, kept| {
+            let touches = range.first <= kept.last + 1;
+            if touches {
+                kept.last = kept.last.max(range.last);
+            }
+            touches
+        });
     }
 }
 
@@ -55,18 +82,24 @@ pub(super) fn union<'a>(
     mut a: &'a [CharRange],
     mut b: &'a [CharRange],
 ) -> Result<RangeList, AllocError> {
-    let mut result = RangeList::default();
-    loop {
-        let source = match (a.first(), b.first()) {
-            (Some(x), Some(y)) if y.first < x.first => &mut b,
-            (None, _) => &mut b,
-            _ => &mut a,
-        };
-        match source.split_off_first() {
-            Some(&range) => result.push(range)?,
-            None => return Ok(result),
+    let mut result = RangeList::with_capacity(a.len().max(b.len()))?;
+    let mut next = || match (a.first(), b.first()) {
+        (Some(x), Some(y)) if x.first <= y.first => a.split_off_first(),
+        (Some(_), None) => a.split_off_first(),
+        _ => b.split_off_first(),
+    };
+    let Some(mut joined) = next().copied() else {
+        return Ok(result);
+    };
+    while let Some(&range) = next() {
+        if range.first <= joined.last + 1 {
+            joined.last = joined.last.max(range.last);
+        } else {
+            result.push(core::mem::replace(&mut joined, range))?;
         }
     }
+    result.push(joined)?;
+    Ok(result)
 }
 
 pub(super) fn intersection(
@@ -112,18 +145,4 @@ pub(super) fn difference(a: &[CharRange], mut b: &[CharRange]) -> Result<RangeLi
 /// Among the characters above U+00FF.
 pub(super) fn complement(ranges: &[CharRange]) -> Result<RangeList, AllocError> {
     difference(&[CharRange::new(0x100, MAX_CODE_POINT)], ranges)
-}
-
-/// Brings ranges that overlap or come in any order into the form that the other operations take.
-pub(super) fn normalize(ranges: &mut Vec<CharRange>) {
-    if !ranges.is_sorted_by_key(|range| range.first) {
-        ranges.sort_unstable_by_key(|range| range.first);
-    }
-    ranges.dedup_by(|range, kept| {
-        let touches = range.first <= kept.last + 1;
-        if touches {
-            kept.last = kept.last.max(range.last);
-        }
-        touches
-    });
 }

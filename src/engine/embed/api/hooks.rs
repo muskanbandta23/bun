@@ -2,7 +2,7 @@
 
 use bun_engine_text::StringRef;
 use bun_engine_vm::{
-    Cx, Exception, Gc, GlobalObject, JsObject, JsPromise, ModuleHooks, PromiseRejectionOperation,
+    Cx, Exception, Gc, GlobalObject, JsObject, JsPromise, PromiseRejectionOperation,
     RealmHooks, ScriptExecutionStatus,
 };
 
@@ -22,7 +22,7 @@ unsafe extern "C" {
 }
 
 pub(super) static REALM_HOOKS: RealmHooks = RealmHooks {
-    modules: ModuleHooks::DEFAULT,
+    modules: super::module_hooks::MODULE_HOOKS,
     promise_rejection_tracker: |cx, promise, operation| {
         engine_host_track_promise_rejection(cx, promise, operation);
     },

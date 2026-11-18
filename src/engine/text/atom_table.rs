@@ -3,7 +3,7 @@
 use core::cell::{Cell, RefCell};
 
 use crate::static_names::{ATOM_SLOTS, ATOMS};
-use crate::{StringImpl, StringRef, Text, parse_array_index};
+use crate::{AllocError, StringImpl, StringRef, Text, parse_array_index};
 
 /// The address of an atom under the high 16 bits of its hash, which spare most probes a look at the string.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -156,20 +156,24 @@ thread_local! {
 
 /// The atom with these characters. `create` makes the string if there is none; it has no hash or the right one.
 #[inline]
-pub(crate) fn add(text: Text<'_>, hash: u32, create: impl FnOnce() -> StringRef) -> StringRef {
+pub(crate) fn add(
+    text: Text<'_>,
+    hash: u32,
+    create: impl FnOnce() -> Result<StringRef, AllocError>,
+) -> Result<StringRef, AllocError> {
     if text.is_empty() {
-        return StringRef::empty();
+        return Ok(StringRef::empty());
     }
     TABLE.with_borrow_mut(|table| match table.find(text, hash) {
-        Ok(atom) => StringRef::retain(atom),
+        Ok(atom) => Ok(StringRef::retain(atom)),
         Err(index) => {
-            let atom = create();
+            let atom = create()?;
             if atom.existing_hash() == 0 {
                 atom.set_hash(hash);
             }
             atom.mark_as_atom(parse_array_index(text).is_some());
             table.insert(index, &atom);
-            atom
+            Ok(atom)
         }
     })
 }

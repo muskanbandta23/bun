@@ -512,11 +512,9 @@ impl CodeBlock {
         })
     }
 
-    /// In the text of `source_provider`. What comes before the first position has that.
+    /// In the text of `source_provider`.
     pub fn position(&self, bytecode_offset: u32) -> Position {
-        let positions = self.body().positions();
-        let found = positions.find(bytecode_offset);
-        let found = found.or_else(|| Some(positions.entries().next()?.1));
+        let found = self.body().positions().find(bytecode_offset);
         found.unwrap_or_else(|| {
             let function = self.executable.downcast::<FunctionExecutable>();
             let start = function.map_or(0, |function| function.parameters_start());

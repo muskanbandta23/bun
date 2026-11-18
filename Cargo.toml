@@ -102,6 +102,7 @@ members = [
   "src/resolve_builtins",
   "src/sourcemap_jsc",
   "src/url",
+  "src/url/whatwg",
   "src/windows_sys",
   "src/jsc",
   "src/jsc_macros",
@@ -540,6 +541,7 @@ bun_perf = { path = "src/perf" }
 bun_resolve_builtins = { path = "src/resolve_builtins" }
 bun_sourcemap_jsc = { path = "src/sourcemap_jsc" }
 bun_url = { path = "src/url" }
+bun_url_whatwg = { path = "src/url/whatwg" }
 bun_windows_sys = { path = "src/windows_sys" }
 bun_jsc = { path = "src/jsc" }
 bun_jsc_macros = { path = "src/jsc_macros" }

@@ -160,7 +160,9 @@ impl Generator<'_> {
             ExprKind::Yield(argument) => self.yield_value(argument, dst),
             ExprKind::YieldDelegate { .. } => self.yield_delegate(node, dst),
             ExprKind::Await(argument) => {
+                let mark = self.top;
                 let value = self.expr(argument, Dest::Any);
+                self.top = mark;
                 let dst = self.final_dst(dst);
                 self.await_value(dst, value, node.start);
                 dst.into()

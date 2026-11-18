@@ -2559,6 +2559,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_url_whatwg"
+version = "0.0.0"
+dependencies = [
+ "bun_engine_standalone",
+ "bun_engine_text",
+ "bun_highway",
+ "bun_icu",
+ "bun_simdutf_sys",
+ "smallvec",
+]
+
+[[package]]
 name = "bun_uws"
 version = "0.0.0"
 dependencies = [

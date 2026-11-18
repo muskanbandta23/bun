@@ -121,9 +121,9 @@ extern "C" bool engine_host_inspector_dispatch(JSGlobalObjectInspectorController
     return controller->dispatchToAgent(requestId, *domain, *command);
 }
 
-extern "C" void engine_host_inspector_run_while_paused(JSGlobalObjectInspectorController* controller, JSGlobalObject* globalObject, bool* isDone)
+extern "C" void engine_host_inspector_run_while_paused(JSGlobalObjectInspectorController* controller, bool* isDone)
 {
-    controller->client().runWhilePaused(*globalObject, *isDone);
+    controller->client().runWhilePaused(controller->globalObject(), *isDone);
 }
 
 extern "C" void engine_host_inspector_frontend_initialized(JSGlobalObjectInspectorController* controller)

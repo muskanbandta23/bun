@@ -23,7 +23,6 @@ unsafe extern "C" {
     ) -> bool;
     fn engine_host_inspector_run_while_paused(
         controller: *mut InspectorController,
-        cx: &mut Cx,
         is_done: *mut bool,
     );
     fn engine_host_inspector_frontend_initialized(controller: *mut InspectorController);
@@ -75,10 +74,10 @@ impl Host for Owner {
         })
     }
 
-    fn run_while_paused(&self, cx: &mut Cx, is_done: &Cell<bool>) {
+    fn run_while_paused(&self, _: &mut Cx, is_done: &Cell<bool>) {
         if let Some(controller) = self.connected() {
             // SAFETY: as above.
-            unsafe { engine_host_inspector_run_while_paused(controller, cx, is_done.as_ptr()) }
+            unsafe { engine_host_inspector_run_while_paused(controller, is_done.as_ptr()) }
         }
     }
 

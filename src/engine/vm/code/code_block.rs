@@ -229,8 +229,7 @@ impl CodeBlock {
                     _ => LiteralRadix::Decimal,
                 };
                 let digits = literal.digits.text();
-                let value = bun_engine_bigint::from_literal(digits, radix, literal.is_negative);
-                JsBigInt::from_new(cx, value)?.into()
+                JsBigInt::from_literal(cx, digits, radix, literal.is_negative)?.into()
             }
             Constant::RegExp(literal) => {
                 RegExp::for_literal(cx, literal.pattern.string(), literal.flags.text()).into()

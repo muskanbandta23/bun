@@ -123,6 +123,15 @@ cell    JsPromise class JSC::JSPromise
 # Buffers, WebAssembly and FFI
 
 # Promises, collections, text and time
+mirror  PromiseStatus vm/runtime/control/promise.rs
+mirror  InternalMicrotask vm/runtime/control/microtask.rs
+mirror  WorkKind vm/runtime/deferred/ticket.rs
+opaque  QueuedTask class JSC::QueuedTask
+opaque  MicrotaskQueue class JSC::MicrotaskQueue
+counted MicrotaskQueueRef JSC::MicrotaskQueue
+opaque  Ticket class JSC::DeferredWorkTicket
+opaque  DeferredTask class Engine::DeferredTask
+value   WorkKind uint8_t
 
 # Modules, scopes and cached bytecode
 

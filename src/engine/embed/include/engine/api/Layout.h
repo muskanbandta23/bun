@@ -279,6 +279,18 @@ ENGINE_OFFSET(GlobalProxy, target, 16)
 // Buffers, WebAssembly and FFI
 
 // Promises, collections, text and time
+ENGINE_CONSTANT(JsPromise_payload, 16, JsPromise::OFFSET_OF_PAYLOAD)
+ENGINE_CONSTANT(JsPromise_slot, 24, JsPromise::OFFSET_OF_SLOT)
+ENGINE_CONSTANT(promiseFlagsShift, 48, (JsPromise::OFFSET_OF_FLAGS - JsPromise::OFFSET_OF_PAYLOAD) * 8)
+ENGINE_CONSTANT(promiseStatusMask, 3, JsPromise::STATUS_MASK)
+ENGINE_CONSTANT(promiseIsHandled, 4, JsPromise::IS_HANDLED)
+ENGINE_CONSTANT(promiseIsResolved, 8, JsPromise::IS_RESOLVED)
+ENGINE_SIZE(QueuedTask, 40)
+ENGINE_CONSTANT(QueuedTask_arguments, 8, QueuedTask::OFFSET_OF_ARGUMENTS)
+ENGINE_CONSTANT(queuedTaskJobShift, 48, QueuedTask::JOB_SHIFT)
+ENGINE_CONSTANT(queuedTaskPayloadShift, 56, QueuedTask::PAYLOAD_SHIFT)
+ENGINE_CONSTANT(MicrotaskQueue_start, 16, MicrotaskQueue::OFFSET_OF_START)
+ENGINE_CONSTANT(MicrotaskQueue_end, 24, MicrotaskQueue::OFFSET_OF_END)
 
 // Modules, scopes and cached bytecode
 

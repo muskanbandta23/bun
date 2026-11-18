@@ -14,7 +14,7 @@ mod template;
 mod text;
 mod value;
 
-use core::cell::{OnceCell, RefMut};
+use core::cell::{OnceCell, RefCell, RefMut};
 use std::rc::Rc;
 
 use bun_engine_date::TimeZone;
@@ -22,7 +22,7 @@ use bun_engine_temporal::{CalendarId, ZonedDateTime};
 use bun_engine_text::StringRef;
 use bun_icu::calendar::Calendar;
 use bun_icu::date_format::DateFormat;
-use bun_icu::date_interval_format::{DateIntervalFormat, FormattedDateInterval};
+use bun_icu::date_interval_format::FormattedDateInterval;
 use bun_icu::formatted_value::FormattedValue;
 
 pub(crate) use cache::DateCache;
@@ -170,9 +170,10 @@ impl DateTimeFormat {
         time + i64::from(offset_seconds) * 1000
     }
 
-    fn calendars(&self, moment: &Moment) -> bun_icu::Result<&Calendars> {
+    /// ICU needs to know the time zone only to name it.
+    fn calendars(&self, layout: &Layout) -> bun_icu::Result<&Calendars> {
         let data = &self.formats.data;
-        if moment.is_plain() {
+        if !layout.shows_time_zone {
             return data.utc_calendars();
         }
         (self.zoned_calendars)
@@ -180,28 +181,48 @@ impl DateTimeFormat {
             .map(|calendars| &**calendars)
     }
 
+    /// `calendar` is one of the `calendars` for `layout`.
+    fn set_time<'a>(
+        &self,
+        calendar: &'a RefCell<Calendar>,
+        layout: &Layout,
+        moment: &Moment,
+    ) -> bun_icu::Result<RefMut<'a, Calendar>> {
+        let mut calendar = calendar.borrow_mut();
+        calendar.set_millis(if layout.shows_time_zone {
+            moment.time
+        } else {
+            self.local_time(moment) as f64
+        })?;
+        Ok(calendar)
+    }
+
+    /// `pattern` is that of `layout` or a part of it.
     fn prepare(
         &self,
         pattern: &[u16],
+        layout: &Layout,
         moment: &Moment,
-    ) -> bun_icu::Result<(RefMut<'_, DateFormat>, RefMut<'_, Calendar>)> {
-        let mut calendar = self.calendars(moment)?.first.borrow_mut();
-        calendar.set_millis(moment.time)?;
-        Ok((self.formats.data.format(pattern)?, calendar))
+    ) -> Result<(RefMut<'_, DateFormat>, RefMut<'_, Calendar>)> {
+        let prepared = self.calendars(layout).and_then(|calendars| {
+            let calendar = self.set_time(&calendars.first, layout, moment)?;
+            Ok((self.formats.data.format(pattern)?, calendar))
+        });
+        prepared.or_type_error(FORMAT_FAILURE)
     }
 
     fn fill(
         &self,
         template: &Template,
+        layout: &Layout,
         moment: &Moment,
         text: &mut DateText,
         each_part: impl FnMut(PartKind, &[u16]) -> Result<()>,
     ) -> Result<()> {
         let mut zone_name = DateText::new();
         if let Some(field) = template.time_zone_field() {
-            self.prepare(field, moment)
-                .and_then(|(format, mut calendar)| format.format(&mut calendar, &mut zone_name))
-                .or_type_error(FORMAT_FAILURE)?;
+            let (format, mut calendar) = self.prepare(field, layout, moment)?;
+            (format.format(&mut calendar, &mut zone_name)).or_type_error(FORMAT_FAILURE)?;
             use_plain_spaces(&mut zone_name);
         }
         template.write(self.local_time(moment), &zone_name, text, each_part)
@@ -209,23 +230,21 @@ impl DateTimeFormat {
 
     fn string(&self, layout: &Layout, moment: &Moment) -> Result<StringRef> {
         let Some(template) = layout.template(&self.formats.data)? else {
-            let (format, mut calendar) =
-                (self.prepare(&layout.pattern, moment)).or_type_error(FORMAT_FAILURE)?;
+            let (format, mut calendar) = self.prepare(&layout.pattern, layout, moment)?;
             return layout.string(&format, &mut calendar);
         };
         let mut text = DateText::new();
-        self.fill(template, moment, &mut text, |_, _| Ok(()))?;
+        self.fill(template, layout, moment, &mut text, |_, _| Ok(()))?;
         new_string(&text)
     }
 
     fn parts(&self, layout: &Layout, moment: &Moment, source: Option<Source>) -> Result<Parts> {
         let Some(template) = layout.template(&self.formats.data)? else {
-            let (format, mut calendar) =
-                (self.prepare(&layout.pattern, moment)).or_type_error(FORMAT_FAILURE)?;
+            let (format, mut calendar) = self.prepare(&layout.pattern, layout, moment)?;
             return layout.parts(&format, &mut calendar, source);
         };
         let (mut text, mut parts) = (DateText::new(), Parts::default());
-        self.fill(template, moment, &mut text, |kind, value| {
+        self.fill(template, layout, moment, &mut text, |kind, value| {
             let unit = None;
             parts.push(Part { kind, unit, source }, value)
         })?;
@@ -234,16 +253,15 @@ impl DateTimeFormat {
 
     fn range(
         &self,
-        format: &DateIntervalFormat,
-        start: &Moment,
-        end: &Moment,
+        cache: &Cache,
+        layout: &Layout,
+        [start, end]: [&Moment; 2],
     ) -> Result<FormattedDateInterval> {
-        let range = self.calendars(start).and_then(|calendars| {
-            let mut second = calendars.second()?.borrow_mut();
-            let mut first = calendars.first.borrow_mut();
-            first.set_millis(start.time)?;
-            second.set_millis(end.time)?;
-            format.format(&mut first, &mut second)
+        let format = self.formats.range_format(cache, layout)?;
+        let range = self.calendars(layout).and_then(|calendars| {
+            let mut end = self.set_time(calendars.second()?, layout, end)?;
+            let mut start = self.set_time(&calendars.first, layout, start)?;
+            format.format(&mut start, &mut end)
         });
         range.or_type_error(RANGE_FAILURE)
     }
@@ -266,7 +284,7 @@ impl DateTimeFormat {
         if start.time.is_nan() || end.time.is_nan() {
             return Err(Error::Range("Passed date is out of range"));
         }
-        let range = self.range(self.formats.range_format(cache, layout)?, &start, &end)?;
+        let range = self.range(cache, layout, [&start, &end])?;
         let value = range.value().or_type_error(RANGE_FAILURE)?;
         if range::shows_both_ends(value)? {
             write_range(value)

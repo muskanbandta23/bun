@@ -12,11 +12,11 @@ mod validate;
 
 pub use builder::{Builder, Operand};
 pub use effects::{EffectFlags, Effects, HeapRange};
-pub(crate) use entities::entities;
 pub use entities::{
     Block, Cases, Edge, Entity, Heap, Patchpoint, Slot, Span, State, Table, Value, Variable,
     VectorConstant,
 };
+pub(crate) use entities::{Pool, entities};
 pub use function::{Edges, Entry, Function, SlotData, Successor};
 pub use op::{
     Access, AccessFlags, Binary, Bits64, Checked, Exit, Lanes, Load, Op, Origin, Store, Token,

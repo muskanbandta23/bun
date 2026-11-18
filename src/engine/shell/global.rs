@@ -46,7 +46,9 @@ static HOOKS: RealmHooks = RealmHooks {
     },
     report_uncaught_exception: |cx, exception| {
         run::dump_exception(cx, exception.value());
-        run::exit(run::EXIT_EXCEPTION)
+        if !State::of(cx).command_line().is_inspected {
+            run::exit(run::EXIT_EXCEPTION)
+        }
     },
     current_script_execution_owner: |cx| cx.global().upcast(),
     script_execution_status: |_, _| ScriptExecutionStatus::Running,

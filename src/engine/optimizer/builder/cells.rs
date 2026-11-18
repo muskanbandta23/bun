@@ -100,6 +100,7 @@ impl Builder<'_> {
         let global = shape.global();
         let index = self.graph.shapes.add(ShapeFacts {
             id: shape.id(),
+            address: Gc::address(shape),
             cell_type: shape.instance_type(),
             ty: T::of_cell_type(shape.instance_type()),
             indexing_mode: shape.instance_indexing_mode(),

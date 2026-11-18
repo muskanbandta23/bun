@@ -276,9 +276,6 @@ extern "C" void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject*);
 extern "C" int32_t Bun__crashHandlerFromJSCFrame(void*, void*, void*, void*);
 #endif
 
-// bun_icu_default_locale.cpp
-extern "C" void Bun__ensureICUDefaultLocale();
-
 // LintHost.cpp
 namespace Bun {
 JSC::JSObject* createLintHost(JSC::VM&, JSC::JSGlobalObject*);
@@ -335,7 +332,6 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         locksBuiltinsWithoutImage = locksBuiltins;
         if (locksBuiltins)
             JSC::AOT::lockBuiltinsWithoutImage();
-        Bun__ensureICUDefaultLocale();
 
         std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
         WTF::initializeMainThread();
@@ -3783,15 +3779,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     FOR_EACH_GLOBALOBJECT_GC_MEMBER(VISIT_GLOBALOBJECT_GC_MEMBER)
 #undef VISIT_GLOBALOBJECT_GC_MEMBER
 
-    // This runs on a concurrent GC helper thread. Fetch the VM through the
-    // visitor (its collector's heap, guaranteed alive for the duration of
-    // marking) rather than thisObject->vm() which
-    // dereferences JSGlobalObject::m_vm and can read stale bytes if the cell
-    // was picked up via conservative scan mid-recycle (see the
-    // visitGlobalObjectMember(unique_ptr) guard above for the same window).
-    // A stale m_vm surfaces as a SEGV in TypeCastTraits<JSVMClientData>::isType
-    // when downcast<> calls the virtual isWebCoreJSClientData() on garbage.
-    WebCore::clientData(visitor.collector().heap().vm())->httpHeaderIdentifiers().template visit<Visitor>(visitor);
+    WebCore::clientData(thisObject->heap()->vm())->httpHeaderIdentifiers().template visit<Visitor>(visitor);
 
     thisObject->visitAdditionalChildrenInGCThread<Visitor>(visitor);
 }

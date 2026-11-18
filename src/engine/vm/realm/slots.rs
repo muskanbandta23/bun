@@ -112,6 +112,7 @@ realm_slots! {
         bound_function_shape: Shape,
         custom_getter_function_shape: Shape,
         custom_setter_function_shape: Shape,
+        native_closure_shape: Shape,
         direct_arguments_shape: Shape,
         scoped_arguments_shape: Shape,
         cloned_arguments_shape: Shape,

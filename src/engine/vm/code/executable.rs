@@ -105,6 +105,7 @@ pub struct NativeExecutable {
     length: u32,
     intrinsic: Intrinsic,
     visibility: Visibility,
+    is_named_as_bound: Cell<bool>,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -142,6 +143,7 @@ impl NativeExecutable {
             length,
             intrinsic,
             visibility,
+            is_named_as_bound: Cell::new(false),
         })
     }
 
@@ -193,6 +195,11 @@ impl NativeExecutable {
 
     pub fn length(&self) -> u32 {
         self.length
+    }
+
+    /// Whether scripts see `bound ` in front of the name.
+    pub fn is_named_as_bound(&self) -> &Cell<bool> {
+        &self.is_named_as_bound
     }
 }
 
@@ -464,7 +471,8 @@ impl FunctionExecutable {
     }
 }
 
-pub(crate) fn native_source_text(cx: &Cx, name: Text<'_>) -> JsResult<Gc<JsString>> {
+/// NativeFunction of ECMA-262.
+pub fn native_source_text(cx: &Cx, name: Text<'_>) -> JsResult<Gc<JsString>> {
     let (before, after) = ("function ", "() { [native code] }");
     cx.new_string_from_parts(&[Text::from_ascii(before), name, Text::from_ascii(after)])
 }

@@ -122,7 +122,7 @@ pub(super) unsafe extern "C" fn throw_from_frame() {
 macro_rules! native_entry {
     ($name:ident, [$($load:literal),*], $($operand:ident = $value:expr),*) => {
         #[unsafe(naked)]
-        pub(super) unsafe extern "C" fn $name() {
+        pub(crate) unsafe extern "C" fn $name() {
             naked_asm!(
                 "stp x29, x30, [sp, #-16]!",
                 "mov x29, sp",

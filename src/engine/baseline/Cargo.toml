@@ -14,9 +14,10 @@ bun_engine_text.workspace = true
 bun_engine_bytecode.workspace = true
 bun_engine_asm.workspace = true
 bun_engine_exec_memory.workspace = true
+bun_engine_interpreter.workspace = true
+bun_engine_macros.workspace = true
 bun_engine_vm.workspace = true
 smallvec.workspace = true
-hashbrown.workspace = true
 
 [dev-dependencies]
 bun_engine_standalone.workspace = true

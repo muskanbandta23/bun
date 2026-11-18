@@ -299,6 +299,7 @@ impl<'a> Generator<'a> {
             scopes: buffers.scopes.drain(..).collect(),
             name_lists: buffers.name_lists.drain(..).collect(),
             string_switches: buffers.string_switches.drain(..).collect(),
+            machine_code: Default::default(),
         }))
     }
 

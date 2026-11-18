@@ -419,9 +419,7 @@ impl<'a> Dump<'a> {
             formatter,
             "coverage",
             body.coverage_blocks(),
-            |f, _, block| {
-                write!(f, "{:?} {}..{}", block.kind, block.start, block.end)
-            },
+            |f, _, block| write!(f, "{:?} {}..{}", block.kind, block.start, block.end),
         )?;
         table(formatter, "constants", &code.constants, |f, _, value| {
             constant(f, value)

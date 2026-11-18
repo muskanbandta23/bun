@@ -250,6 +250,11 @@ impl GlobalObject {
     pub const OFFSET_OF_RANDOM: usize = offset_of!(GlobalObject, random);
     pub const OFFSET_OF_REGEXP_STATE: usize = offset_of!(GlobalObject, regexp_state);
 
+    pub const OFFSET_OF_ORIGINAL_ARRAY_SHAPES: usize =
+        offset_of!(GlobalObject, original_array_shapes);
+    /// These bits of an indexing mode are twice the index of its shape.
+    pub const ARRAY_SHAPE_INDEX_MASK: u8 = (ARRAY_SHAPE_COUNT as u8 - 1) << 1;
+
     pub const fn offset_of_slot(slot: RealmSlot) -> usize {
         offset_of!(GlobalObject, slots) + slot as usize * size_of::<u64>()
     }

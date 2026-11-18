@@ -182,8 +182,9 @@ impl Drop for DeferredFire<'_> {
 pub struct InlineWatchpointSet(Cell<usize>);
 
 impl InlineWatchpointSet {
-    const IS_THIN: usize = 1;
+    pub const IS_THIN: usize = 1;
     const STATE_SHIFT: u32 = 1;
+    pub const THIN_WATCHED: usize = Self::thin(WatchpointState::Watched);
     pub const THIN_INVALIDATED: usize = Self::thin(WatchpointState::Invalidated);
 
     const fn thin(state: WatchpointState) -> usize {

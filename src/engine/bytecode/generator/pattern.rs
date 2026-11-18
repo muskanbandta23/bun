@@ -12,7 +12,7 @@ use super::reference::Reference;
 use super::scope::Place;
 use super::{Dest, Generator};
 use crate::code::HandlerKind;
-use crate::operand::{CloseMode, Operand, Register, StaticError};
+use crate::operand::{CloseMode, DebugHook, Operand, Register, StaticError};
 
 /// Where a value goes, with all that has to be evaluated before the value is known.
 #[derive(Clone, Copy)]
@@ -184,6 +184,7 @@ impl Generator<'_> {
     fn bind_array(&mut self, node: &Pattern, elements: List<PatternElementId>, value: Operand) {
         let ast = self.ast;
         let state = self.temps(3);
+        self.debug_hook(DebugHook::WillExecuteExpression, node.start);
         self.position(node.start, node.start, node.end);
         self.asm().iterator_begin(state, value);
         let (handler, try_depth) = (self.asm().label(), self.asm().try_depth());

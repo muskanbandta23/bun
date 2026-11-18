@@ -26,7 +26,9 @@ pub(super) enum Intrinsic {
     ArrayPush,
     Assert,
     CreatePromise,
-    GetByIdDirect { is_private: bool },
+    GetByIdDirect {
+        is_private: bool,
+    },
     GetByValWithThis,
     GetInternalField,
     GetPrototypeOf,
@@ -44,9 +46,13 @@ pub(super) enum Intrinsic {
     NewArrayWithSize,
     NewArrayWithSpecies,
     NewPromise,
-    PutByIdDirect { is_private: bool },
+    PutByIdDirect {
+        is_private: bool,
+    },
     PutByValDirect,
-    PutByValWithThis { is_strict: bool },
+    PutByValWithThis {
+        is_strict: bool,
+    },
     PutInternalField,
     ResumeGenerator,
     Throw(ErrorKind),

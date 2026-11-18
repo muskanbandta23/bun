@@ -538,7 +538,7 @@ impl FunctionExecutable {
         })
     }
 
-    fn shape_slot_for(info: &FunctionInfo) -> RealmSlot {
+    pub fn shape_slot_for(info: &FunctionInfo) -> RealmSlot {
         match (info.is_async(), info.is_generator()) {
             (true, true) => RealmSlot::async_generator_function_shape,
             (true, false) => RealmSlot::async_function_shape,

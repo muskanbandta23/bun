@@ -65,6 +65,44 @@ pub enum AccessKind {
 }
 
 impl AccessKind {
+    pub const ALL: [AccessKind; AccessKind::Instanceof as usize + 1] = [
+        AccessKind::End,
+        AccessKind::Megamorphic,
+        AccessKind::Generic,
+        AccessKind::LoadOwn,
+        AccessKind::LoadConstant,
+        AccessKind::LoadInherited,
+        AccessKind::CallOwnGetter,
+        AccessKind::CallInheritedGetter,
+        AccessKind::CallCustomAccessorGetter,
+        AccessKind::CallCustomValueGetter,
+        AccessKind::ArrayLength,
+        AccessKind::StringLength,
+        AccessKind::TypedArrayLength,
+        AccessKind::TypedArrayByteLength,
+        AccessKind::TypedArrayByteOffset,
+        AccessKind::LoadModuleBinding,
+        AccessKind::LoadGlobalBinding,
+        AccessKind::LoadOwnThroughGlobalProxy,
+        AccessKind::ProxyGet,
+        AccessKind::ProxySet,
+        AccessKind::ProxyHas,
+        AccessKind::Replace,
+        AccessKind::Transition,
+        AccessKind::TransitionAndGrow,
+        AccessKind::CallOwnSetter,
+        AccessKind::CallInheritedSetter,
+        AccessKind::CallCustomAccessorSetter,
+        AccessKind::CallCustomValueSetter,
+        AccessKind::HasOwn,
+        AccessKind::HasInherited,
+        AccessKind::HasNot,
+        AccessKind::Delete,
+        AccessKind::DeleteMissing,
+        AccessKind::DeleteNonConfigurable,
+        AccessKind::Instanceof,
+    ];
+
     pub fn is_last(self) -> bool {
         self as u8 <= AccessKind::Generic as u8
     }
@@ -112,6 +150,7 @@ impl AccessCase {
     pub const OFFSET_OF_SHAPE: usize = offset_of!(AccessCase, shape);
     pub const OFFSET_OF_BYTE_OFFSET: usize = offset_of!(AccessCase, byte_offset);
     pub const OFFSET_OF_NEW_SHAPE: usize = offset_of!(AccessCase, new_shape);
+    pub const OFFSET_OF_KIND: usize = offset_of!(AccessCase, kind);
     pub const OFFSET_OF_LOOKUP: usize = offset_of!(AccessCase, lookup);
     pub const OFFSET_OF_POINTER: usize = offset_of!(AccessCase, pointer);
     pub const OFFSET_OF_SECOND_POINTER: usize = offset_of!(AccessCase, second_pointer);

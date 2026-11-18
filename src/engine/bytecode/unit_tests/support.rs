@@ -160,6 +160,7 @@ pub(super) fn code(body: Body, entries: u32) -> Code {
             .map(|len| names[..len].into())
             .collect(),
         string_switches: Box::default(),
+        machine_code: Default::default(),
     };
     add_keys(&mut code);
     code

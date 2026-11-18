@@ -1,5 +1,7 @@
 //! Generated code, before a realm links it.
 
+use core::any::Any;
+use core::cell::OnceCell;
 use core::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -255,6 +257,10 @@ impl Body {
     }
 }
 
+/// What a compiler has made of code that serves all realms.
+#[derive(Default)]
+pub struct SharedMachineCode(pub OnceCell<Arc<dyn Any + Send + Sync>>);
+
 pub struct Code {
     pub body: Arc<Body>,
     pub identifiers: Box<[Identifier]>,
@@ -263,6 +269,7 @@ pub struct Code {
     pub scopes: Box<[Rc<StaticScope>]>,
     pub name_lists: Box<[Box<[Identifier]>]>,
     pub string_switches: Box<[Box<[Atom]>]>,
+    pub machine_code: SharedMachineCode,
 }
 
 /// Functions nest as deep as the stack of the parser went.

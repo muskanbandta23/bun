@@ -632,7 +632,7 @@ impl Generator<'_> {
         let (direct, done) = (self.asm().label(), self.asm().label());
         let eval = self.link_time(LinkTimeConstant::EVAL);
         self.asm().jump_if_builtin(function, eval, direct);
-        self.before_call(site);
+        self.position(site.divot, site.start, site.end);
         self.emit_call(result, function.into(), this, arguments, site.tail);
         self.asm().jump(done);
         self.asm().bind(direct);

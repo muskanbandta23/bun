@@ -125,7 +125,10 @@ impl Generator<'_> {
             return;
         }
         let node = &self.ast[id];
-        if self.debugs && node.pause && !matches!(node.kind, StmtKind::Debugger) {
+        if self.debugs
+            && node.pause
+            && !matches!(node.kind, StmtKind::Debugger | StmtKind::StaticBlock { .. })
+        {
             self.debug_hook(DebugHook::WillExecuteStatement, node.start);
         }
         let mark = self.top;

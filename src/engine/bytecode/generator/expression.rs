@@ -26,10 +26,17 @@ impl Generator<'_> {
         self.pause_before(node);
         let mark = self.top;
         let value = self.dispatch(node, dst, tail);
-        self.top = match value.as_register().and_then(Register::local_index) {
-            Some(index) if index >= mark => index + 1,
-            _ => mark,
-        };
+        match value.as_register().and_then(Register::local_index) {
+            Some(index) if index >= mark => {
+                if let Dest::Prefer(register) = dst {
+                    self.asm().mov(register, value);
+                    self.top = mark;
+                    return register.into();
+                }
+                self.top = index + 1;
+            }
+            _ => self.top = mark,
+        }
         value
     }
 

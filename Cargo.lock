@@ -616,10 +616,11 @@ dependencies = [
  "bun_engine_asm",
  "bun_engine_bytecode",
  "bun_engine_exec_memory",
+ "bun_engine_interpreter",
+ "bun_engine_macros",
  "bun_engine_standalone",
  "bun_engine_text",
  "bun_engine_vm",
- "hashbrown 0.15.5",
  "smallvec",
 ]
 

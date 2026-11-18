@@ -14,6 +14,8 @@ pub unsafe auto trait GcFree {}
 pub struct Gc<T>(NonNull<T>);
 
 impl<T> !GcFree for Gc<T> {}
+// SAFETY: what refers to a cell stays on its thread.
+unsafe impl GcFree for bun_engine_bytecode::SharedMachineCode {}
 
 /// A type whose values exist only as cells in the heap. `#[cell]` implements it for a struct whose first field is
 /// `base`, the type it extends:

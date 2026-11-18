@@ -182,7 +182,10 @@ impl CodeBlock {
             functions: at(functions),
             scopes: at(scopes),
             executable,
-            execution_counter: Cell::new(-crate::options().threshold_for_baseline),
+            execution_counter: Cell::new(match code.machine_code.0.get() {
+                Some(_) => 0,
+                None => -crate::options().threshold_for_baseline,
+            }),
             tier: Cell::new(Tier::Interpreter),
             is_jettisoned: Cell::new(false),
             saved_words: code.body.saved_words(),

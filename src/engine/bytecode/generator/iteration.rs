@@ -463,6 +463,7 @@ impl Generator<'_> {
 
     pub(super) fn suspend(&mut self, value: Operand, kind: SuspendKind) {
         self.suspensions += 1;
+        self.last_hook = None;
         let Some(generator) = self.generator.as_register() else {
             return;
         };

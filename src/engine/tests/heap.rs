@@ -123,7 +123,11 @@ fn a_queue_keeps_its_order() {
             }
             if round % 100 == 0 {
                 let length = u64::from(array.length());
-                assert!(array.try_splice(cx, length, 1, 0, &[Value::NULL; 5]).unwrap());
+                assert!(
+                    array
+                        .try_splice(cx, length, 1, 0, &[Value::NULL; 5])
+                        .unwrap()
+                );
                 assert!(array.try_splice(cx, length + 5, 1, 5, &[]).unwrap());
                 cx.heap.collect_and_sweep(None);
             }

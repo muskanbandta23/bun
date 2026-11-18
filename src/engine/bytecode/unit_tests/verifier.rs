@@ -188,7 +188,7 @@ fn instructions_that_need_a_flag() {
          create_promise to_object has_shape_with_flags resume_generator \
          async_iterator_next resume_dispatch create_generator create_async_generator suspend await resume \
          resume_after_yield resume_after_await resume_after_delegate generator_return generator_throw \
-         tail_call tail_call_varargs debug cover"
+         tail_call tail_call_varargs debug debug_await cover"
     );
 }
 

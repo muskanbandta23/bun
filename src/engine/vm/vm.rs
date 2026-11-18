@@ -203,6 +203,38 @@ pub struct Vm {
 // SAFETY: visits its roots.
 unsafe impl GcFree for Vm {}
 
+/// A table that is too large to be made on the stack.
+///
+/// # Safety
+/// `complete` makes a valid value of zeros.
+pub(crate) unsafe trait StartsZeroed {
+    /// # Safety
+    /// Memory for a `Self` that is all zero.
+    unsafe fn complete(_: *mut Self) {}
+}
+
+/// `Box::new(Vm { .. })`, field by field.
+macro_rules! new_vm {
+    (zeroed: [$($table:ident),*], $($field:ident: $value:expr,)*) => {{
+        let _has_no_other_fields = |Vm { $($table: _,)* $($field: _,)* }: &Vm| ();
+        let mut vm = Box::<Vm>::new_zeroed();
+        let fields = vm.as_mut_ptr();
+        $(
+            let value = $value;
+            // SAFETY: inside the allocation.
+            unsafe { (&raw mut (*fields).$field).write(value) };
+        )*
+        // SAFETY: all fields are initialized.
+        unsafe {
+            $(StartsZeroed::complete(&raw mut (*fields).$table);)*
+            vm.assume_init()
+        }
+    }};
+}
+
+// SAFETY: anything goes.
+unsafe impl<T> StartsZeroed for MaybeUninit<T> {}
+
 /// A counted reference. The last one has to go on the thread of the `Vm`.
 pub struct VmRef(NonNull<Vm>);
 
@@ -213,7 +245,8 @@ impl VmRef {
         getrandom::fill(&mut seed).expect("a source of randomness");
         let seed = u64::from_ne_bytes(seed);
         let heap = Heap::new(heap_kind, seed);
-        let vm: &Vm = Box::leak(Box::new(Vm {
+        let vm: &Vm = Box::leak(new_vm! {
+            zeroed: [heap_padding, small_strings, string_caches, number_strings],
             exception: Root::new(),
             top_call_frame: Cell::new(0),
             top_entry_frame: Cell::new(0),
@@ -230,11 +263,9 @@ impl VmRef {
             scratch: Default::default(),
             shapes: VmShapes::new(),
             embedder_members: UnsafeCell::new(MaybeUninit::zeroed()),
-            heap,
-            heap_padding: MaybeUninit::uninit(),
-            small_strings: SmallStrings::new(),
+            heap: heap,
             ref_count: AtomicU32::new(1),
-            hooks,
+            hooks: hooks,
             embedder: Embedder::default(),
             stack_bounds: StackBounds::current(),
             lowest_stack_pointer: Cell::new(stack_pointer()),
@@ -255,15 +286,13 @@ impl VmRef {
             shapes_by_class: RefCell::default(),
             extensions: RefCell::default(),
             default_microtask_queue: MicrotaskQueueRef::unregistered(),
-            string_caches: StringCaches::new(),
-            number_strings: NumberStrings::new(),
             shape_cache: ShapeCache::default(),
             symbols: WeakValueMap::default(),
             weakly_held_symbols: WeaklyHeldSymbols::default(),
             native_executables: WeakValueMap::default(),
             custom_accessor_functions: WeakValueMap::default(),
             services: Default::default(),
-        }));
+        });
         core::ptr::from_ref(vm).expose_provenance();
         vm.initialize();
         VmRef(NonNull::from(vm))

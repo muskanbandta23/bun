@@ -135,7 +135,7 @@ impl JsString {
                 append_substitution(out, template, dollar, view.text(), range);
             });
         }
-        Ok(splicer.finish(cx)?.unwrap_or(self.into()))
+        Ok(splicer.finish(cx)?.unwrap_or_else(|| self.into()))
     }
 
     #[inline(never)]
@@ -154,6 +154,6 @@ impl JsString {
             let range = start..start + search_view.text().len();
             splicer.replace(range, replacement.to_string(cx)?);
         }
-        Ok(splicer.finish(cx)?.unwrap_or(self.into()))
+        Ok(splicer.finish(cx)?.unwrap_or_else(|| self.into()))
     }
 }

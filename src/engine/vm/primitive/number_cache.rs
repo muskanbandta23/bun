@@ -7,9 +7,9 @@ use bun_engine_number::NumberText;
 use bun_engine_text::StringRef;
 
 use crate::heap::{Scope, Survivors};
+use crate::vm::StartsZeroed;
 use crate::{Gc, JsString, Value, Visitor, Vm};
 
-#[derive(Default)]
 #[repr(C)]
 pub struct NumberStringEntry {
     /// The bits of the `Value`, or zero.
@@ -40,6 +40,14 @@ pub struct NumberStrings {
     has_doubles: Cell<bool>,
 }
 
+// SAFETY: the others are integers and `bool`s.
+unsafe impl StartsZeroed for NumberStrings {
+    unsafe fn complete(this: *mut NumberStrings) {
+        // SAFETY: the caller's.
+        unsafe { (&raw mut (*this).doubles).write(OnceCell::new()) }
+    }
+}
+
 impl NumberStrings {
     pub const OFFSET_OF_SMALL: usize = offset_of!(NumberStrings, small);
     pub const OFFSET_OF_INT32S: usize = offset_of!(NumberStrings, int32s);
@@ -48,17 +56,6 @@ impl NumberStrings {
     pub const INT32_MULTIPLIER: u32 = 0x9e37_79b1;
     pub const INT32_SHIFT: u32 = u32::BITS - Self::INT32_COUNT.ilog2();
     const DOUBLE_COUNT: usize = 4096;
-
-    pub(crate) fn new() -> NumberStrings {
-        NumberStrings {
-            small: [const { Cell::new(0) }; Self::SMALL_COUNT],
-            int32s: core::array::from_fn(|_| NumberStringEntry::default()),
-            doubles: OnceCell::new(),
-            has_young_small: Cell::new(false),
-            has_int32s: Cell::new(false),
-            has_doubles: Cell::new(false),
-        }
-    }
 
     pub(crate) fn initialize(&self, vm: &Vm) {
         for (entry, digit) in self.small.iter().zip(b'0'..=b'9') {

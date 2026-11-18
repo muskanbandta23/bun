@@ -3,6 +3,7 @@ use core::cell::Cell;
 use bun_engine_text::{PropertyName, STATIC_ATOM_COUNT, StringRef};
 
 use crate::heap::Scope;
+use crate::vm::StartsZeroed;
 use crate::{Gc, JsString, Visitor, Vm};
 
 /// The strings of the static atoms. They never die.
@@ -14,21 +15,17 @@ pub struct SmallStrings {
     has_young: Cell<bool>,
 }
 
+// SAFETY: integers and a `bool`.
+unsafe impl StartsZeroed for SmallStrings {}
+
 impl SmallStrings {
     pub const OFFSET_OF_EMPTY: usize = core::mem::offset_of!(SmallStrings, empty);
     pub const OFFSET_OF_SINGLE_CHARACTERS: usize =
         core::mem::offset_of!(SmallStrings, of_static_atoms);
 
-    pub(crate) const fn new() -> SmallStrings {
-        SmallStrings {
-            empty: Cell::new(0),
-            of_static_atoms: [const { Cell::new(0) }; STATIC_ATOM_COUNT],
-            has_young: Cell::new(true),
-        }
-    }
-
     pub(crate) fn initialize(&self, vm: &Vm) {
         let allocate = |string| JsString::allocate(vm, string).address();
+        self.has_young.set(true);
         self.empty.set(allocate(StringRef::empty()));
         for (entry, character) in self.of_static_atoms.iter().zip(0..=u8::MAX) {
             entry.set(allocate(StringRef::single_character(character)));

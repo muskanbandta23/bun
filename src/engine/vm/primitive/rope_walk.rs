@@ -160,7 +160,7 @@ impl JsString {
                 for &(rope, which) in path.iter().rev() {
                     let mut fibers = fibers_at(rope);
                     fibers[which] = Some(result);
-                    let [a, b, c] = fibers.map(|it| it.unwrap_or(cx.small_strings.empty()));
+                    let [a, b, c] = fibers.map(|it| it.unwrap_or_else(|| cx.small_strings.empty()));
                     result = Self::concat3(cx, a, b, c)?;
                 }
                 Gc::from(self).keep_alive();

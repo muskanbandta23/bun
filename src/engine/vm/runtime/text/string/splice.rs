@@ -105,7 +105,7 @@ impl<'a> StringSplicer<'a> {
         match self.state {
             State::Unchanged => Ok(None),
             State::ReplacedOnce { start, replacement } => {
-                let replacement = replacement.unwrap_or(cx.small_strings.empty());
+                let replacement = replacement.unwrap_or_else(|| cx.small_strings.empty());
                 (self.source.replaced(cx, start..self.position, replacement)).map(Some)
             }
             State::Copying(mut builder) => {

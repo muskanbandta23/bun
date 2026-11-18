@@ -4,6 +4,7 @@ use core::cell::{Cell, RefCell};
 
 use bun_engine_text::{Atom, StringImpl, StringRef, Text};
 
+use crate::vm::StartsZeroed;
 use crate::{FastHashSet, Gc, JsString, Vm};
 
 const BY_ADDRESS_SIZE: usize = 512;
@@ -22,16 +23,15 @@ pub(crate) struct StringCaches {
     retired: RefCell<Vec<(usize, StringRef)>>,
 }
 
-impl StringCaches {
-    pub(crate) const fn new() -> StringCaches {
-        StringCaches {
-            by_address: [const { Cell::new(0) }; BY_ADDRESS_SIZE],
-            by_hash: [const { Cell::new(0) }; BY_HASH_SIZE],
-            pairs: [const { Cell::new(0) }; PAIRS_SIZE],
-            retired: RefCell::new(Vec::new()),
-        }
+// SAFETY: the others are integers.
+unsafe impl StartsZeroed for StringCaches {
+    unsafe fn complete(this: *mut StringCaches) {
+        // SAFETY: the caller's.
+        unsafe { (&raw mut (*this).retired).write(RefCell::default()) }
     }
+}
 
+impl StringCaches {
     pub(super) fn retire(&self, owner: usize, string: StringRef) {
         self.retired.borrow_mut().push((owner, string));
     }

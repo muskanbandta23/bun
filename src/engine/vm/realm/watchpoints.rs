@@ -56,6 +56,7 @@ realm_watchpoints! {
     StringSymbolReplace,
     StringSymbolSearch,
     StringSymbolSplit,
+    StringSymbolToPrimitive,
     StringToString,
     StringValueOf,
     NumberToString,

@@ -78,6 +78,11 @@ impl SparseElements {
         entries
     }
 
+    /// In no order.
+    pub(crate) fn indices(&self) -> Vec<u32> {
+        self.map().keys()
+    }
+
     pub(super) fn entries(&self) -> RootVec<(u32, SparseEntry)> {
         self.map().entries()
     }

@@ -818,6 +818,7 @@ objectUndefined = [object Undefined]
 segmenterStringIterator = Segmenter String Iterator
 starDefaultText = *default*
 stopBeforePartial = stop-before-partial
+stringIteratorTag = String Iterator
 timedOut = timed-out
 useStrict = use strict
 @@asyncDispose

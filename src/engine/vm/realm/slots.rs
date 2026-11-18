@@ -139,6 +139,8 @@ realm_slots! {
         string_constructor: JsObject = @String,
         string_object_shape: Shape,
         string_prototype_iterator: JsFunction,
+        string_prototype_trim_start: JsFunction,
+        string_prototype_trim_end: JsFunction,
         string_iterator_prototype: JsObject,
         string_iterator_shape: Shape,
         number_prototype: JsObject,

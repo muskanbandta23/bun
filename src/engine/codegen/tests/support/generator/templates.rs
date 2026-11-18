@@ -109,10 +109,10 @@ impl Generator<'_> {
             _ => V128,
         };
         let lanes = match kind {
-            "v8" => S8,
-            "v16" => S16,
-            "v32" => S32,
-            "v64" => S64,
+            "w8" => S8,
+            "w16" => S16,
+            "w32" => S32,
+            "w64" => S64,
             _ => self.random.pick(&[S8, S16, S32, S64]),
         };
         let mut theme = self.theme(ty, Vec::new(), lanes);

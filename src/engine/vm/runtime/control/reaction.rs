@@ -4,8 +4,8 @@ use bun_engine_macros::cell;
 
 use super::tagged_field::TaggedField;
 use crate::{
-    Cx, Gc, GlobalObject, InternalFieldTuple, InternalMicrotask, JsCell, PromiseStatus, QueuedTask, TypeFlags,
-    Value, Vm,
+    Cx, Gc, GlobalObject, InternalFieldTuple, InternalMicrotask, JsCell, PromiseStatus, QueuedTask,
+    TypeFlags, Value, Vm,
 };
 
 /// A job of the engine that runs in place of a handler. What `cell` and `context` are depends on the task.

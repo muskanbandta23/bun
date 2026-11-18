@@ -6,9 +6,9 @@ use bun_engine_macros::{cell, native_abi};
 use bun_engine_text::names;
 
 use crate::{
-    CallFrame, Cx, ElementKind, ErrorInstance, Gc, InternalMicrotask,
-    JsArray, JsCell, JsFinalObject, JsFunctionWithFields, JsObject, JsPromise, JsResult, JsString,
-    PromiseStatus, TypeFlags, Value,
+    CallFrame, Cx, ElementKind, ErrorInstance, Gc, InternalMicrotask, JsArray, JsCell,
+    JsFinalObject, JsFunctionWithFields, JsObject, JsPromise, JsResult, JsString, PromiseStatus,
+    TypeFlags, Value,
 };
 
 #[cell(flags = TypeFlags::SHAPE_IS_IMMORTAL)]

@@ -33,7 +33,12 @@ const fn job_for(task: InternalMicrotask) -> Job {
         PromiseRaceElement => settle_race,
         PromiseAllElement | PromiseAllSettledElement | PromiseAnyElement => {
             |cx, header, combinator, value, index, _| {
-                (combinator.cast::<PromiseCombinator>()).did_settle(cx, index, header.status(), value)
+                (combinator.cast::<PromiseCombinator>()).did_settle(
+                    cx,
+                    index,
+                    header.status(),
+                    value,
+                )
             }
         }
         PromiseFinally => call_finally,

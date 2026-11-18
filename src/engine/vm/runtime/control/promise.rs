@@ -9,8 +9,8 @@ use super::tagged_field::{TAG_SHIFT, TaggedField};
 use crate::{
     CellKind, CellType, Cx, ErrorInstance, ErrorType, Field, Gc, GlobalObject, InternalMicrotask,
     InternalReaction, JsCell, JsObject, JsObjectInit, JsResult, Message, PromiseCapability,
-    PromiseReaction, PromiseRejectionOperation, QueuedTask, RealmSlot, RealmWatchpoint, Shape, ShapeFlags, Storage, Thrown,
-    TypeFlags, Value, Vm, species_constructor,
+    PromiseReaction, PromiseRejectionOperation, QueuedTask, RealmSlot, RealmWatchpoint, Shape,
+    ShapeFlags, Storage, Thrown, TypeFlags, Value, Vm, species_constructor,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -824,7 +824,11 @@ impl JsPromise {
         }
         let result = Self::new(cx);
         let (kind, handler, other) = if on_rejected.is_undefined() {
-            (InlineReactionKind::FulfillHandler, on_fulfilled, on_rejected)
+            (
+                InlineReactionKind::FulfillHandler,
+                on_fulfilled,
+                on_rejected,
+            )
         } else {
             (InlineReactionKind::RejectHandler, on_rejected, on_fulfilled)
         };

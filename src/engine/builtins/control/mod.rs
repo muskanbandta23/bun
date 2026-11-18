@@ -11,7 +11,8 @@ mod promise_prototype;
 
 use bun_engine_text::PropertyName;
 use bun_engine_vm::{
-    Attributes, CellKind, JsAsyncFunctionGenerator, JsFunctionWithFields, RealmSlot, RealmWatchpoint,
+    Attributes, CellKind, JsAsyncFunctionGenerator, JsFunctionWithFields, RealmSlot,
+    RealmWatchpoint,
 };
 
 use crate::prelude::*;

@@ -33,8 +33,8 @@ pub fn host() -> Result<Buffer<u16>> {
     #[expect(clippy::disallowed_types, reason = "bun_threading is above this crate")]
     static HAS_DEFAULT: std::sync::Mutex<bool> = std::sync::Mutex::new(false);
 
-    // The detection works in static buffers, and ICU also runs it when it first needs its default zone, on any thread. The
-    // first call here is that run or waits for it.
+    // The detection is for one thread at a time. ICU runs it too, once, for its default zone: the first call here is that
+    // run or waits for it.
     let mut has_default = HAS_DEFAULT.lock().unwrap_or_else(PoisonError::into_inner);
     let detect = if mem::replace(&mut *has_default, true) {
         ucal_getHostTimeZone

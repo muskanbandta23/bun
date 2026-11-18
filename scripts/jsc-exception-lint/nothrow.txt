@@ -85,10 +85,6 @@ indirect:reportViolationForUnsafeEval
 indirect:defaultLanguage
 indirect:trustedScriptStructure
 
-# Virtual hooks resolved to the base declaration. Bun's overrides do not throw.
-JSC::TypedArrayController::registerWrapper
-JSC::SimpleTypedArrayController::registerWrapper
-
 # Microtask and promise plumbing that only enqueues work.
 JSC::JSGlobalObject::queueMicrotask
 JSC::JSGlobalObject::queueMicrotaskSlow
@@ -107,5 +103,5 @@ JSC::JSCell::toThis
 JSC::JSValue::toThisSloppySlowCase
 indirect:toThis
 
-# Wraps an ArrayBuffer in its JS object. Bun's override does not throw.
-JSC::TypedArrayController::toJS
+# Wraps an ArrayBuffer in its JS object.
+JSC::JSArrayBuffer::wrap

@@ -547,6 +547,17 @@ impl JsObject {
         Some((unsafe { self.get_direct_unchecked(offset) }, attributes))
     }
 
+    /// Makes room for `new` out-of-line slots, and returns the address of the storage.
+    ///
+    /// # Safety
+    /// `old` is the current capacity, and a shape with the new one is stored before the next allocation.
+    pub unsafe fn grow_slots(&self, vm: &Vm, old: u32, new: u32) -> usize {
+        let storage = self.storage_with_more_slots(vm, old as usize, new as usize);
+        // SAFETY: the caller's.
+        unsafe { self.nuke_shape_and_set_storage(storage, false) };
+        storage.address()
+    }
+
     /// A storage with more slots, to go with a shape that has them. Ends the process if there is no memory.
     #[inline(never)]
     pub(crate) fn storage_with_more_slots(&self, vm: &Vm, old: usize, new: usize) -> Storage {

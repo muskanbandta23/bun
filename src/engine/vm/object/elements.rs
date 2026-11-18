@@ -448,11 +448,11 @@ impl JsObject {
         if vector_length < needed {
             vector_length = grown_vector_length(0, length, needed);
         }
+        let storage = Storage::try_allocate(vm, 0, 0, Some(vector_length))?;
         let mut deferred = DeferredFire::new(vm);
         let transition = TransitionKind::allocate(kind);
         let shape = self.shape();
         let shape = shape.non_property_transition(vm, transition, &mut deferred);
-        let storage = Storage::try_allocate(vm, 0, 0, Some(vector_length))?;
         // SAFETY: an object that shares its elements has no out-of-line slots.
         unsafe {
             self.storage().copy_words_to(storage, 0, length as usize);
@@ -478,12 +478,13 @@ impl JsObject {
         {
             self.non_property_transition(vm, TransitionKind::SwitchToSlowPut);
         }
+        // First, because there is no way back from a transition.
+        let capacity = self.shape().out_of_line_capacity();
+        let storage = Storage::try_create(vm, capacity, kind, 0, vector_length.max(1))?;
         let mut deferred = DeferredFire::new(vm);
         let transition = TransitionKind::allocate(kind);
         let shape = self.shape();
         let shape = shape.non_property_transition(vm, transition, &mut deferred);
-        let capacity = shape.out_of_line_capacity();
-        let storage = Storage::try_create(vm, capacity, kind, 0, vector_length.max(1))?;
         // SAFETY: new and of that size.
         unsafe {
             if capacity != 0 {

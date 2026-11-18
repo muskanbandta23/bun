@@ -59,11 +59,18 @@ fn object_type_counts(cx: &mut Cx, _: &CallFrame) -> JsResult<Value> {
     Ok(counts.into())
 }
 
-/// Refers to a value that is no property.
-#[cell]
+/// Refers to a value that is no property. It is a constructor that cannot be called.
+#[cell(ops)]
 struct SimpleObject {
     base: JsObject,
     pub(self) hidden_value: Field<Value>,
+}
+
+#[bun_engine_macros::object_ops]
+impl SimpleObject {
+    fn construct_data(&self) -> bun_engine_vm::CallData {
+        bun_engine_vm::CallData::native(create_simple_object)
+    }
 }
 
 #[native_abi]

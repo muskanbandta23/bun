@@ -1,7 +1,6 @@
 use crate::{
-    Attributes, CellKind, CellType, Cx, DontEnumMode, JsArray, JsObject, JsResult,
-    PropertyDescriptor, PropertyNameList, PropertyNameMode, ShapeFlags, TransitionKind, TypeFlags,
-    Vm,
+    Attributes, CellType, Cx, DontEnumMode, JsObject, JsResult, PropertyDescriptor,
+    PropertyNameList, PropertyNameMode, ShapeFlags, TransitionKind, TypeFlags, Vm,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -26,7 +25,7 @@ impl JsObject {
             | TypeFlags::OVERRIDES_OWN_PROPERTY_NAMES
             | TypeFlags::OVERRIDES_OWN_SPECIAL_PROPERTY_NAMES;
         let class = self.class();
-        if !class.is_subclass_of(JsArray::CLASS)
+        if !class.has_properties_of_arrays()
             && (self.shape().type_flags().intersects(exotic)
                 || !class.has_ordinary_define_own_property()
                 || !class.has_ordinary_prevent_extensions())

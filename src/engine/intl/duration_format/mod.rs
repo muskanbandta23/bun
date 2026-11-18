@@ -4,9 +4,10 @@ mod elements;
 mod options;
 mod output;
 
-use core::cell::OnceCell;
+use core::cell::{OnceCell, RefCell};
 use core::ops::Range;
 use std::io::Write;
+use std::rc::Rc;
 
 use bun_engine_temporal::{Duration, Unit};
 use bun_engine_text::StringRef;
@@ -35,13 +36,18 @@ const LIST_FAILURE: &str = "failed to format list of strings";
 /// Where the items of a list are in the text that joins them.
 type Items = SmallVec<[Range<usize>; Unit::ALL.len()]>;
 
-pub struct DurationFormat {
+/// Those with the same locale and options are one.
+#[derive(Clone)]
+pub struct DurationFormat(Rc<Shared>);
+
+struct Shared {
     locale: NumericLocale,
     icu_locale: CText,
     units: Units,
     fractional_digits: Option<FractionalDigits>,
     list_formatter: ListFormatter,
     number_formatters: [OnceCell<NumberFormatter>; Unit::ALL.len()],
+    number: RefCell<FormattedNumber>,
     time_separator: OnceCell<Buffer<u16>>,
 }
 
@@ -61,27 +67,24 @@ fn find_time_separator(locale: &CText, system: NumberingSystem) -> bun_icu::Resu
         .map(Buffer::from_slice)
 }
 
-impl DurationFormat {
-    pub fn new(
-        cache: &Cache,
-        requested: &[LanguageTag],
-        options: &Options,
-    ) -> Result<DurationFormat> {
-        let locale = NumericLocale::resolve(cache, requested, options.numbering_system.as_ref())?;
+impl Shared {
+    fn new(locale: &NumericLocale, options: &Options) -> Result<Shared> {
+        let failure = "failed to initialize DurationFormat";
         let icu_locale = locale.icu_locale()?;
         let width = match options.units.style() {
             Style::Long => list_format::Width::Wide,
             Style::Short | Style::Digital => list_format::Width::Short,
             Style::Narrow => list_format::Width::Narrow,
         };
-        Ok(DurationFormat {
+        Ok(Shared {
             list_formatter: ListFormatter::open(&icu_locale, list_format::Kind::Units, width)
-                .or_type_error("failed to initialize DurationFormat")?,
-            locale,
+                .or_type_error(failure)?,
+            locale: locale.clone(),
             icu_locale,
             units: options.units,
             fractional_digits: options.fractional_digits,
             number_formatters: Default::default(),
+            number: (FormattedNumber::open().or_type_error(failure)?).into(),
             time_separator: OnceCell::new(),
         })
     }
@@ -144,7 +147,7 @@ impl DurationFormat {
     }
 
     fn write_items(&self, duration: &Duration, out: &mut impl Output) -> Result<Items> {
-        let mut number = FormattedNumber::open().or_type_error(NUMBER_FAILURE)?;
+        let mut number = self.number.borrow_mut();
         let mut items = Items::new();
         let mut start = 0;
         for element in &elements(&self.units, duration) {
@@ -166,25 +169,43 @@ impl DurationFormat {
             .format(items.iter().map(|item| &text[item.clone()]))
             .or_type_error(LIST_FAILURE)
     }
+}
+
+impl DurationFormat {
+    pub fn new(
+        cache: &Cache,
+        requested: &[LanguageTag],
+        options: &Options,
+    ) -> Result<DurationFormat> {
+        let locale = NumericLocale::resolve(cache, requested, options.numbering_system.as_ref())?;
+        cache.duration_formats.find_or_insert(
+            |it| {
+                it.0.units == options.units
+                    && it.0.fractional_digits == options.fractional_digits
+                    && it.0.locale == locale
+            },
+            || Shared::new(&locale, options).map(|it| DurationFormat(Rc::new(it))),
+        )
+    }
 
     pub fn format(&self, duration: &Duration) -> Result<StringRef> {
         let mut text = SmallVec::new();
-        let items = self.write_items(duration, &mut text)?;
+        let items = self.0.write_items(duration, &mut text)?;
         if items.len() <= 1 {
             return new_string(&text);
         }
-        let list = self.format_list(&text, &items)?;
+        let list = self.0.format_list(&text, &items)?;
         new_string((list.value().and_then(FormattedValue::text)).or_type_error(LIST_FAILURE)?)
     }
 
     pub fn format_to_parts(&self, duration: &Duration) -> Result<Parts> {
         let mut item_parts = Parts::default();
-        let items = self.write_items(duration, &mut item_parts)?;
+        let items = self.0.write_items(duration, &mut item_parts)?;
         if items.len() <= 1 {
             return Ok(item_parts);
         }
 
-        let list = self.format_list(item_parts.text(), &items)?;
+        let list = self.0.format_list(item_parts.text(), &items)?;
         let list = list.value().or_type_error(LIST_FAILURE)?;
         let text = list.text().or_type_error(LIST_FAILURE)?;
         let mut fields = (list.fields_matching(Category::LIST, list_format::ELEMENT_FIELD))
@@ -212,10 +233,10 @@ impl DurationFormat {
 
     pub fn resolved_options(&self) -> Result<ResolvedOptions<'_>> {
         Ok(ResolvedOptions {
-            locale: self.locale.tag(),
-            numbering_system: self.locale.numbering_system()?,
-            units: &self.units,
-            fractional_digits: self.fractional_digits,
+            locale: self.0.locale.tag(),
+            numbering_system: self.0.locale.numbering_system()?,
+            units: &self.0.units,
+            fractional_digits: self.0.fractional_digits,
         })
     }
 }

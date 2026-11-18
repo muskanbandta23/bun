@@ -52,6 +52,25 @@ impl Default for Compiler {
 }
 
 impl Compiler {
+    /// The first half of [`Self::compile`].
+    pub fn translate(
+        &mut self,
+        env: &Environment<'_>,
+        code: CodeIndex,
+        loop_entry: Option<u32>,
+        feedback: &dyn Feedback,
+    ) -> Result<&Function, TooComplex> {
+        if env.module.body_span(code).len > MAX_BODY_SIZE {
+            return Err(TooComplex);
+        }
+        let (function, buffers) = (&mut self.function, core::mem::take(&mut self.buffers));
+        let mut translator = Translator::new(env, code, loop_entry, feedback, function, buffers);
+        let translated = translator.translate();
+        self.buffers = translator.into_buffers();
+        translated.map_err(|_| TooComplex)?;
+        Ok(&self.function)
+    }
+
     /// With `loop_entry` the code is entered at the start of that loop and takes over a [`crate::baseline::Frame`].
     pub fn compile(
         &mut self,
@@ -61,15 +80,7 @@ impl Compiler {
         level: Level,
         feedback: &dyn Feedback,
     ) -> Result<CompiledFunction, TooComplex> {
-        if env.module.body_span(code).len > MAX_BODY_SIZE {
-            return Err(TooComplex);
-        }
-        let (function, buffers) = (&mut self.function, core::mem::take(&mut self.buffers));
-        let mut translator = Translator::new(env, code, loop_entry, feedback, function, buffers);
-        let translated = translator.translate();
-        self.buffers = translator.into_buffers();
-        translated.map_err(|_| TooComplex)?;
-
+        self.translate(env, code, loop_entry, feedback)?;
         let mut masm = MacroAssembler::new(AssemblerOptions {
             features: env.features,
             shorten_jumps: true,
@@ -81,6 +92,7 @@ impl Compiler {
             level,
             records_origins: sites.has_inline_frames(),
         };
+        let function = &mut self.function;
         let compiled = (self.back_end).compile(function, options, &mut masm, &mut emitter)?;
         Ok(emitter.finish(masm.finish().map_err(|_| TooComplex)?, &compiled))
     }

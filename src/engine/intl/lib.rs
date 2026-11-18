@@ -40,7 +40,8 @@ pub use available_locales::AvailableLocales;
 pub use cache::Cache;
 pub use classes::{
     bigint_to_locale_string, date_to_locale_string, initialize_slot, locale_compare,
-    normalize_string, number_to_locale_string, set_preferred_languages, to_locale_case,
+    normalize_string, number_to_locale_string, set_preferred_languages, temporal_to_locale_string,
+    to_locale_case,
 };
 pub use error::{Error, ErrorKind, Result};
 pub use language_tag::{KeywordValue, LanguageTag};

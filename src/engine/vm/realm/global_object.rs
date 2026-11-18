@@ -13,7 +13,7 @@ use crate::{
     Field, FieldArray, Gc, GcFree, GlobalBinding, GlobalBindings, GlobalProxy, IndexingMode,
     JsArray, JsCell, JsDestructibleObject, JsFinalObject, JsObject, JsObjectInit, JsResult,
     MicrotaskQueueRef, PropertyDescriptor, PropertyNameList, PropertySlot, PutPropertySlot,
-    RealmHooks, RealmSlot, RealmWatchpoint, RegExpGlobalState, Shape, ShapeSpec, StaticProperty,
+    RealmHooks, RealmSlot, RealmWatchpoint, RegExpGlobalState, Shape, ShapeFlags, ShapeSpec, StaticProperty,
     TracedVec, TransitionKind, TypeFlags, Value, Vm, errors, static_table,
     validate_property_descriptor,
 };
@@ -305,6 +305,17 @@ impl GlobalObject {
             last.set_prototype_direct(vm, self.object_prototype().into());
         }
         self.init_global_this(GlobalProxy::create(vm, self.into()));
+        for only_instance in [
+            self.as_object(),
+            self.object_prototype(),
+            self.function_prototype(),
+            self.array_prototype(),
+            self.string_prototype(),
+            self.iterator_prototype(),
+            self.array_iterator_prototype(),
+        ] {
+            only_instance.shape().set_flags(ShapeFlags::IS_CLAIMED);
+        }
         self.is_initialized.set(true);
         self.watchpoints(vm, RealmWatchpoint::ArrayPrototypeChainIsSane);
         self.watchpoints(vm, RealmWatchpoint::ArrayIteratorProtocol);
@@ -394,6 +405,11 @@ impl GlobalObject {
                 let shape = shape.non_property_transition(vm, kind, &mut DeferredFire::new(vm));
                 shapes.set(index, Some(shape));
             }
+        }
+        if self.slot_if_initialized(RealmSlot::cloned_arguments_shape).is_some() {
+            let shape = self.cloned_arguments_shape(vm);
+            let shape = shape.non_property_transition(vm, kind, &mut DeferredFire::new(vm));
+            self.init_cloned_arguments_shape(shape);
         }
         (vm.hooks().did_start_having_a_bad_time)(vm, self);
     }

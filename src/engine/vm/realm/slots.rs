@@ -5,7 +5,7 @@ use bun_engine_bytecode::LinkTimeConstant;
 use bun_engine_text::{PropertyName, private_names};
 
 use crate::{
-    Cx, Gc, GlobalObject, GlobalProxy, InternalFieldTuple, JsCell, JsFunction, JsObject,
+    Cx, Gc, GetterSetter, GlobalObject, GlobalProxy, InternalFieldTuple, JsCell, JsFunction, JsObject,
     ModuleLoader, Shape, Vm,
 };
 
@@ -109,6 +109,7 @@ realm_slots! {
         function_prototype_apply: JsFunction = @applyFunction,
         function_prototype_has_instance: JsFunction,
         throw_type_error_function: JsFunction,
+        throw_type_error_accessor: GetterSetter,
         bound_function_shape: Shape,
         custom_getter_function_shape: Shape,
         custom_setter_function_shape: Shape,

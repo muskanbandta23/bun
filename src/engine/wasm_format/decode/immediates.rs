@@ -2,7 +2,6 @@
 
 use bun_engine_asm::Width;
 
-use super::types;
 use super::{Decoder, Mode, Purpose};
 use crate::error::Error;
 use crate::index::{
@@ -24,29 +23,25 @@ pub(super) enum Access {
     Vector,
 }
 
-impl<M: Mode> Decoder<'_, M> {
+impl<M: Mode> Decoder<'_, '_, M> {
     /// Error messages quote the index that the code has. Compilers get the one that value types have.
     #[inline(always)]
     pub(super) fn visible_type_index(&self, index: TypeIndex) -> TypeIndex {
         if M::PURPOSE == Purpose::Run {
-            self.header.types.first_index(index)
+            self.cx.header.types.first_index(index)
         } else {
             index
         }
     }
 
     #[inline]
-    pub(crate) fn value_type(&mut self) -> Option<ValType> {
-        let header = self.header;
-        types::value_type(&mut self.reader, header.features, |index| {
-            header.types.get_heap_type(index)
-        })
+    pub(super) fn value_type(&mut self) -> Option<ValType> {
+        self.cx.header.value_type(&mut self.reader)
     }
 
     #[inline]
     pub(super) fn heap_type(&mut self) -> Option<HeapType> {
-        let header = self.header;
-        types::heap_type(&mut self.reader, |index| header.types.get_heap_type(index))
+        self.cx.header.heap_type(&mut self.reader)
     }
 
     /// The visitor knows how many there are.
@@ -58,7 +53,7 @@ impl<M: Mode> Decoder<'_, M> {
     #[inline(always)]
     pub(super) fn global(&mut self) -> Result<GlobalIndex, M::Error> {
         let index = read!(self, self.reader.u32(), "can't get global's index");
-        let count = self.header.globals.len();
+        let count = self.cx.header.globals.len();
         ensure!(
             self,
             (index as usize) < count,
@@ -76,7 +71,7 @@ impl<M: Mode> Decoder<'_, M> {
     #[inline(always)]
     pub(super) fn table_as(&mut self, role: &'static str) -> Result<TableIndex, M::Error> {
         let index = read!(self, self.reader.u32(), "can't parse {role}table index");
-        let count = self.header.tables.len();
+        let count = self.cx.header.tables.len();
         ensure!(
             self,
             (index as usize) < count,
@@ -88,7 +83,7 @@ impl<M: Mode> Decoder<'_, M> {
 
     pub(super) fn elem(&mut self) -> Result<ElemIndex, M::Error> {
         let index = read!(self, self.reader.u32(), "can't parse element index");
-        let count = self.header.elems.len();
+        let count = self.cx.header.elems.len();
         ensure!(
             self,
             (index as usize) < count,
@@ -100,7 +95,7 @@ impl<M: Mode> Decoder<'_, M> {
 
     pub(super) fn data(&mut self) -> Result<DataIndex, M::Error> {
         let index = read!(self, self.reader.u32(), "can't parse data segment index");
-        let count = self.header.data_count.unwrap_or(0);
+        let count = self.cx.header.data_count.unwrap_or(0);
         ensure!(
             self,
             index < count,
@@ -115,7 +110,7 @@ impl<M: Mode> Decoder<'_, M> {
         let index = read!(self, self.reader.u32(), "can't get memory index");
         ensure!(
             self,
-            (index as usize) < self.header.memories.len(),
+            (index as usize) < self.cx.header.memories.len(),
             validation,
             "memory index {index} is out of range"
         );
@@ -131,7 +126,7 @@ impl<M: Mode> Decoder<'_, M> {
         };
         ensure!(
             self,
-            !self.header.memories.is_empty(),
+            !self.cx.header.memories.is_empty(),
             parse,
             "{name} is only valid if a memory is defined or imported"
         );
@@ -147,7 +142,7 @@ impl<M: Mode> Decoder<'_, M> {
         };
         if reader.u8().is_some_and(fits)
             && let Some(offset) = reader.u32()
-            && (M::PURPOSE != Purpose::Check || !self.header.memories.is_empty())
+            && (M::PURPOSE != Purpose::Check || !self.cx.header.memories.is_empty())
         {
             self.reader = reader;
             return Ok(MemArg {
@@ -167,7 +162,7 @@ impl<M: Mode> Decoder<'_, M> {
             Access::Store(_) | Access::AtomicStore => "store",
             Access::Vector => "simd memory op",
         };
-        if M::PURPOSE == Purpose::Check && self.header.memories.is_empty() {
+        if M::PURPOSE == Purpose::Check && self.cx.header.memories.is_empty() {
             match access {
                 Access::Load(_) | Access::Store(_) if dead => {
                     fail!(self, parse, "load/store instruction without memory")
@@ -234,7 +229,7 @@ impl<M: Mode> Decoder<'_, M> {
         let offset = read!(self, self.reader.u64(), "can't get memory offset");
         ensure!(
             self,
-            offset <= u32::MAX.into() || self.header.memory(memory).address == Width::W64,
+            offset <= u32::MAX.into() || self.cx.header.memory(memory).address == Width::W64,
             validation,
             "memory offset {offset} is out of range for an i32 memory"
         );

@@ -592,6 +592,7 @@ dependencies = [
  "bun_engine_intl",
  "bun_engine_optimizer",
  "bun_engine_regexp_jit",
+ "bun_engine_standalone",
  "bun_engine_temporal",
  "bun_engine_text",
  "bun_engine_vm",
@@ -675,6 +676,7 @@ dependencies = [
  "bitflags",
  "bun_engine_asm",
  "bun_engine_exec_memory",
+ "libc",
  "smallvec",
 ]
 
@@ -682,6 +684,7 @@ dependencies = [
 name = "bun_engine_date"
 version = "0.0.0"
 dependencies = [
+ "bun_alloc",
  "bun_engine_standalone",
  "bun_engine_text",
  "bun_engine_unicode",
@@ -771,6 +774,7 @@ version = "0.0.0"
 dependencies = [
  "bun_engine_standalone",
  "bun_engine_text",
+ "bun_engine_unicode",
 ]
 
 [[package]]
@@ -837,14 +841,13 @@ name = "bun_engine_syntax"
 version = "0.0.0"
 dependencies = [
  "bitflags",
+ "bun_engine_bigint",
  "bun_engine_number",
  "bun_engine_regexp",
  "bun_engine_standalone",
  "bun_engine_text",
  "bun_engine_unicode",
  "bun_highway",
- "hashbrown 0.15.5",
- "smallvec",
 ]
 
 [[package]]
@@ -899,6 +902,7 @@ dependencies = [
  "bun_highway",
  "bun_simdutf_sys",
  "bun_threading",
+ "getrandom",
  "hashbrown 0.15.5",
  "libc",
  "smallvec",
@@ -2498,7 +2502,6 @@ dependencies = [
  "bun_highway",
  "bun_icu",
  "bun_simdutf_sys",
- "smallvec",
 ]
 
 [[package]]

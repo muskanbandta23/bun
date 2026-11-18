@@ -66,7 +66,7 @@ fn local_times(cache: &DateCache) {
         ("2024-11-03", "2024-11-03T00:00:00.000Z"),
     ] {
         let time = cache.parse(Text::from_ascii(local));
-        assert_eq!(iso_string(time).as_deref(), Some(expected));
+        assert_eq!(iso_string(time).unwrap().to_string(), expected);
     }
     let too_late = make_date_from_integers([275_760, 8, 12, 20, 0, 0, 1]);
     assert!(time_clip(cache.utc(too_late)).is_nan());

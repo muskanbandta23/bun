@@ -6,7 +6,7 @@ use crate::{ByteUrl, Error, Scheme};
 impl<S: Storage> Record<S> {
     /// `scheme://host:port`, or `scheme:` if there is no host.
     pub fn scheme_and_host(&self) -> Result<StringRef, AllocError> {
-        concat(&self.without_credentials(self.parts.authority_end()))
+        concat(self.without_credentials(self.parts.authority_end()))
     }
 
     fn has_tuple_origin(&self) -> bool {

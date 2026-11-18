@@ -46,7 +46,7 @@ pub trait FloatAssembly: MacroAssembly {
     /// Rounds once. Clears the rest of `dst`.
     fn convert_f64_to_f16_bits(&mut self, dst: Gpr, src: Fpr);
     fn convert_int_to_float(&mut self, sign: Sign, from: Width, to: FloatWidth, dst: Fpr, src: Gpr);
-    /// Rounds toward zero. The result fits.
+    /// Rounds toward zero. What does not fit gives any integer of that width.
     fn truncate_float(&mut self, from: FloatWidth, sign: Sign, to: Width, dst: Gpr, src: Fpr);
     /// Rounds toward zero, to the nearest integer that fits. NaN gives 0.
     fn truncate_float_saturating(

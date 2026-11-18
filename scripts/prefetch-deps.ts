@@ -54,6 +54,8 @@ for (const dep of allDeps) {
   const src = dep.source(cfg);
   if (src.kind === "github-archive") {
     queue.push({ url: `https://github.com/${src.repo}/archive/${src.commit}.tar.gz` });
+  } else if (src.kind === "tarball") {
+    queue.push({ url: src.url });
   } else if (src.kind === "prebuilt") {
     queue.push({
       url: src.url,

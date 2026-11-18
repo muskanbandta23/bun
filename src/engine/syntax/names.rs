@@ -2,7 +2,9 @@
 
 use core::num::NonZeroU32;
 
-use bun_engine_text::{CodeUnit, Text, with_text};
+use bun_engine_text::Text;
+
+use crate::source::Source;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Name(NonZeroU32);
@@ -27,6 +29,12 @@ impl Name {
             Some(index) => Some(Name(index)),
             None => None,
         }
+    }
+
+    /// The text of one of the constants.
+    #[inline]
+    pub fn known_text(index: usize) -> Option<&'static str> {
+        KNOWN.get(index).copied()
     }
 
     /// Whether only the engine can refer to it.
@@ -149,63 +157,6 @@ known_names! {
     IMPORT_META = "*import.meta*",
 }
 
-const KNOWN_SLOT_BITS: u32 = 10;
-const LONGEST_KNOWN: usize = 14;
-
-#[inline(always)]
-const fn known_slot(first: u32, second: u32, last: u32, length: u32, multiplier: u32) -> usize {
-    let key = first | second << 8 | last << 16 | length << 24;
-    (key.wrapping_mul(multiplier) >> (32 - KNOWN_SLOT_BITS)) as usize
-}
-
-/// A multiplier that gives each name a slot of its own, and the slots.
-const KNOWN_TABLE: (u32, [u8; 1 << KNOWN_SLOT_BITS]) = {
-    let mut multiplier = 0x9e37_79b1u32;
-    'search: loop {
-        let mut slots = [0; 1 << KNOWN_SLOT_BITS];
-        let mut index = 1;
-        while index < Name::EMPTY.index() {
-            let text = KNOWN[index].as_bytes();
-            assert!(text.len() >= 2 && text.len() <= LONGEST_KNOWN);
-            let slot = known_slot(
-                text[0] as u32,
-                text[1] as u32,
-                text[text.len() - 1] as u32,
-                text.len() as u32,
-                multiplier,
-            );
-            if slots[slot] != 0 {
-                multiplier = multiplier.wrapping_add(0x0123_4568);
-                continue 'search;
-            }
-            slots[slot] = index as u8;
-            index += 1;
-        }
-        break (multiplier, slots);
-    }
-};
-static KNOWN_SLOTS: [u8; 1 << KNOWN_SLOT_BITS] = KNOWN_TABLE.1;
-
-/// The constant of [`Name`] with this text, but for the empty one.
-#[inline(always)]
-pub(crate) fn find_known<C: CodeUnit>(units: &[C]) -> Option<Name> {
-    let &[first, second, ..] = units else {
-        return None;
-    };
-    if units.len() > LONGEST_KNOWN {
-        return None;
-    }
-    let slot = known_slot(
-        first.to_u32(),
-        second.to_u32(),
-        units[units.len() - 1].to_u32(),
-        units.len() as u32,
-        KNOWN_TABLE.0,
-    );
-    let name = Name::from_word(u32::from(KNOWN_SLOTS[slot]))?;
-    (C::text(units) == Text::Latin1(KNOWN[name.index()].as_bytes())).then_some(name)
-}
-
 /// What `@` makes of a name in the source of a built-in.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
@@ -229,90 +180,194 @@ enum Storage {
 struct Entry {
     start: u32,
     length: u32,
+    /// Past the end of the table if it has none.
+    slot: u32,
     storage: Storage,
     kind: NameKind,
 }
 
-/// For a text of up to eight Latin-1 characters the key is the text itself.
+/// A short text is in there as it is, with its length and kind in the last byte. Of another, `head` is the hash and
+/// `tail` has the length, the kind and whether it is wide.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct Key {
+    head: u64,
+    tail: u64,
+}
+
 #[derive(Clone, Copy, Default)]
 struct Slot {
-    key: u64,
-    /// The length of such a text, and the kind.
-    shape: u32,
+    key: Key,
     name: u32,
 }
 
-const INLINE_LENGTH: usize = 8;
-const INITIAL_SLOTS: usize = 128;
+/// What it takes to make the key of a short text.
+pub(crate) type Chunk = [u8; 16];
+
+pub(crate) const LONGEST_SHORT: usize = size_of::<Chunk>() - 1;
+const SHORT: u64 = 1 << 63;
+const WIDE: u64 = 1 << 34;
+const INITIAL_SLOTS: usize = 512;
+/// A table of up to this size is emptied for the next parse.
+const KEPT_SLOTS: usize = 8192;
+/// A literal that is longer is not worth looking up.
+const LONGEST_INTERNED_LITERAL: usize = 64;
+
+/// By length: which bits of a chunk are text, and the last byte.
+static SHORT_SHAPES: [[u64; 4]; LONGEST_SHORT + 1] = {
+    let mut shapes = [[0; 4]; LONGEST_SHORT + 1];
+    let mut length = 0;
+    while length <= LONGEST_SHORT {
+        let mask = (1u128 << (8 * length)) - 1;
+        let last = SHORT | (length as u64) << 56;
+        shapes[length] = [mask as u64, (mask >> 64) as u64, last, 0];
+        length += 1;
+    }
+    shapes
+};
+
+#[inline(always)]
+fn words(chunk: &Chunk) -> (u64, u64) {
+    let both = u128::from_le_bytes(*chunk);
+    (both as u64, (both >> 64) as u64)
+}
+
+#[inline(always)]
+fn mix(hash: u64, chunk: &Chunk) -> u64 {
+    let (head, tail) = words(chunk);
+    let product = u128::from(head ^ hash) * u128::from(tail ^ 0x8bb8_4b93_962e_acc9);
+    product as u64 ^ (product >> 64) as u64
+}
+
+impl Key {
+    /// Of the first `length` bytes of `chunk`.
+    #[inline(always)]
+    pub(crate) fn short(chunk: &Chunk, length: usize) -> Key {
+        let (head, tail) = words(chunk);
+        let [head_mask, tail_mask, last, _] = SHORT_SHAPES[length];
+        Key {
+            head: head & head_mask,
+            tail: tail & tail_mask | last,
+        }
+    }
+
+    #[inline(always)]
+    fn narrow(characters: &[u8], kind: NameKind) -> Key {
+        let Some(last) = characters.last_chunk() else {
+            let mut chunk = Chunk::default();
+            chunk[..characters.len()].copy_from_slice(characters);
+            let mut key = Key::short(&chunk, characters.len());
+            key.tail |= (kind as u64) << 60;
+            return key;
+        };
+        let (chunks, _) = characters.as_chunks();
+        Key {
+            head: mix(chunks.iter().fold(0x2d35_8dcc_aa6c_78a5, mix), last),
+            tail: (kind as u64) << 32 | characters.len() as u64,
+        }
+    }
+
+    fn wide(units: &[u16]) -> Key {
+        Key {
+            head: u64::from(Text::Utf16(units).hash()),
+            tail: WIDE | units.len() as u64,
+        }
+    }
+
+    #[inline(always)]
+    fn is_short(self) -> bool {
+        self.tail & SHORT != 0
+    }
+
+    fn length(self) -> usize {
+        if self.is_short() {
+            (self.tail >> 56) as usize & LONGEST_SHORT
+        } else {
+            self.tail as u32 as usize
+        }
+    }
+
+    /// The upper bits of the product are the ones that all of the key has gone into.
+    #[inline(always)]
+    fn hash(self) -> usize {
+        (self.head ^ self.tail.rotate_left(29))
+            .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+            .swap_bytes() as usize
+    }
+}
+
+/// `a` and `b` have the same length, which is no less than that of a chunk.
+#[inline(always)]
+fn are_equal(a: &[u8], b: &[u8]) -> bool {
+    if a.len() > 2 * size_of::<Chunk>() {
+        return a == b;
+    }
+    a.first_chunk::<16>() == b.first_chunk() && a.last_chunk::<16>() == b.last_chunk()
+}
 
 pub struct Names {
-    entries: Vec<Entry>,
     slots: Vec<Slot>,
+    entries: Vec<Entry>,
+    /// How many more names the table takes.
+    room: usize,
     latin1: Vec<u8>,
     utf16: Vec<u16>,
 }
 
 impl Default for Names {
     fn default() -> Names {
+        let mut names = Names::unallocated();
+        names.allocate(INITIAL_SLOTS);
+        names
+    }
+}
+
+impl Names {
+    /// Takes the place of one that is lent out.
+    pub(crate) const fn unallocated() -> Names {
         Names {
+            slots: Vec::new(),
             entries: Vec::new(),
-            slots: vec![Slot::default(); INITIAL_SLOTS],
+            room: 0,
             latin1: Vec::new(),
             utf16: Vec::new(),
         }
     }
-}
 
-#[inline(always)]
-fn mix(a: u64, b: u64) -> u64 {
-    let product = u128::from(a) * u128::from(b);
-    product as u64 ^ (product >> 64) as u64
-}
-
-/// The key of a text, and whether texts of one length with this key are equal.
-#[inline(always)]
-fn key_of(text: Text<'_>) -> (u64, bool) {
-    match text {
-        Text::Latin1(characters) => {
-            if let (Some(head), Some(tail)) = (characters.first_chunk(), characters.last_chunk()) {
-                let (head, tail) = (u64::from_le_bytes(*head), u64::from_le_bytes(*tail));
-                match characters.len() {
-                    INLINE_LENGTH => (head, true),
-                    length @ ..=16 => (
-                        mix(head ^ 0x2d35_8dcc_aa6c_78a5, tail ^ 0x8bb8_4b93_962e_acc9)
-                            ^ length as u64,
-                        false,
-                    ),
-                    _ => (u64::from(text.hash()), false),
-                }
-            } else {
-                (packed(characters), true)
-            }
+    /// The constants go in first, so they are found whichever of the others are taken out. Returns the old table.
+    fn allocate(&mut self, size: usize) -> Vec<Slot> {
+        let old = core::mem::replace(&mut self.slots, vec![Slot::default(); size]);
+        for (index, text) in KNOWN[..Name::THIS_VALUE.index()].iter().enumerate().skip(1) {
+            let key = Key::narrow(text.as_bytes(), NameKind::Ordinary);
+            self.put(key, index as u32);
         }
-        Text::Utf16(units) => {
-            if units.len() <= INLINE_LENGTH && text.fits_latin1() {
-                (packed(units), true)
-            } else {
-                (u64::from(text.hash()), false)
-            }
-        }
+        self.room = size / 2 - KNOWN.len();
+        old
     }
-}
 
-#[inline(always)]
-fn packed<C: CodeUnit>(units: &[C]) -> u64 {
-    units
-        .iter()
-        .rfold(0, |key, unit| key << 8 | u64::from(unit.to_u16()))
-}
+    fn put(&mut self, key: Key, name: u32) -> usize {
+        let mask = self.slots.len() - 1;
+        let mut index = key.hash() & mask;
+        while self.slots[index].name != 0 {
+            index = (index + 1) & mask;
+        }
+        self.slots[index] = Slot { key, name };
+        index
+    }
 
-impl Names {
     pub(crate) fn clear(&mut self) {
-        self.entries.clear();
-        self.latin1.clear();
-        self.utf16.clear();
-        self.slots.truncate(INITIAL_SLOTS);
-        self.slots.fill(Slot::default());
+        if self.slots.len() > KEPT_SLOTS {
+            *self = Names::default();
+            return;
+        }
+        for entry in self.entries.drain(..) {
+            if let Some(slot) = self.slots.get_mut(entry.slot as usize) {
+                *slot = Slot::default();
+            }
+        }
+        self.room = self.slots.len() / 2 - KNOWN.len();
+        crate::clear_buffer(&mut self.entries);
+        crate::clear_buffer(&mut self.latin1);
+        crate::clear_buffer(&mut self.utf16);
     }
 
     /// One more than the greatest index of a name.
@@ -362,133 +417,226 @@ impl Names {
             .map(|entry| entry.start)
     }
 
-    /// `source[start..end]`, which [`find_known`] does not find.
-    #[inline(always)]
-    pub(crate) fn intern_unknown<C: CodeUnit>(
-        &mut self,
-        source: &[C],
-        start: u32,
-        end: u32,
-        kind: NameKind,
-    ) -> Name {
-        let text = C::text(&source[start as usize..end as usize]);
-        match self.find(C::text(source), text, kind) {
-            Ok(name) => name,
-            Err(vacant) => self.insert(vacant, start, Storage::Source, kind),
+    /// The start and the length in the source. For a constant, its index and zero.
+    #[inline]
+    pub(crate) fn place(&self, name: Name) -> Option<(u32, u32, NameKind)> {
+        match self.entry(name) {
+            Some(entry) if entry.storage == Storage::Source && entry.length != 0 => {
+                Some((entry.start, entry.length, entry.kind))
+            }
+            Some(_) => None,
+            None => Some((name.index() as u32, 0, NameKind::Ordinary)),
         }
     }
 
-    pub(crate) fn intern_source<C: CodeUnit>(
-        &mut self,
-        source: &[C],
-        start: u32,
-        end: u32,
-    ) -> Name {
-        if start == end {
-            return Name::EMPTY;
+    /// If it is where it is looked for first.
+    #[inline(always)]
+    pub(crate) fn find_at_once(&self, key: Key) -> Option<u32> {
+        let slot = (self.slots).get(key.hash() & self.slots.len().wrapping_sub(1))?;
+        ((slot.key.head ^ key.head) | (slot.key.tail ^ key.tail) == 0).then_some(slot.name)
+    }
+
+    /// `key` is that of a short text at `start` in the source.
+    #[inline(always)]
+    pub(crate) fn intern_short(&mut self, key: Key, start: usize) -> Name {
+        match self.find(key, |_| true) {
+            Ok(name) => name,
+            Err(slot) => self.insert(key, slot, start, Storage::Source, NameKind::Ordinary),
         }
-        find_known(&source[start as usize..end as usize])
-            .unwrap_or_else(|| self.intern_unknown(source, start, end, NameKind::Ordinary))
+    }
+
+    /// A range of the source that has only Latin-1 characters.
+    #[inline]
+    pub(crate) fn intern_narrow(
+        &mut self,
+        source: Source<'_>,
+        start: usize,
+        end: usize,
+        kind: NameKind,
+    ) -> Name {
+        let characters = &source.bytes[start..end];
+        let key = Key::narrow(characters, kind);
+        match self.find_narrow(source, key, characters) {
+            Ok(name) => name,
+            Err(slot) => self.insert(key, slot, start, Storage::Source, kind),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn intern_source(&mut self, source: Source<'_>, start: usize, end: usize) -> Name {
+        if let Text::Utf16(units) = source.text
+            && !Text::Utf16(&units[start..end]).fits_latin1()
+        {
+            return self.intern_wide(source, start, &units[start..end]);
+        }
+        match source.bytes[start..].first_chunk() {
+            Some(chunk) if end - start <= LONGEST_SHORT => {
+                self.intern_short(Key::short(chunk, end - start), start)
+            }
+            _ => self.intern_narrow(source, start, end, NameKind::Ordinary),
+        }
+    }
+
+    fn intern_wide(&mut self, source: Source<'_>, start: usize, units: &[u16]) -> Name {
+        let key = Key::wide(units);
+        match self.find(key, |name| {
+            self.text(name, source.text) == Text::Utf16(units)
+        }) {
+            Ok(name) => name,
+            Err(slot) => self.insert(key, slot, start, Storage::Source, NameKind::Ordinary),
+        }
     }
 
     /// A text that is not in the source as it is.
-    pub(crate) fn intern_text<C: CodeUnit>(&mut self, source: &[C], text: Text<'_>) -> Name {
-        if text.is_empty() {
-            return Name::EMPTY;
-        }
-        if let Some(name) = with_text!(text, |units| find_known(units)) {
-            return name;
-        }
-        // Equal texts get equal keys only if they have the same width: that of the source, where it will do.
-        let (latin1, utf16) = (self.latin1.len(), self.utf16.len());
-        let (storage, start) = if C::IS_LATIN1 && text.fits_latin1() {
-            self.latin1.extend(text.code_units().map(|unit| unit as u8));
-            (Storage::Latin1, latin1)
+    pub(crate) fn intern_text(&mut self, source: Source<'_>, text: Text<'_>) -> Name {
+        let (storage, start) = self.store(text);
+        let (key, found) = if storage == Storage::Latin1 {
+            let characters = &self.latin1[start..];
+            let key = Key::narrow(characters, NameKind::Ordinary);
+            (key, self.find_narrow(source, key, characters))
         } else {
-            self.utf16.extend(text.code_units());
-            (Storage::Utf16, utf16)
+            let key = Key::wide(&self.utf16[start..]);
+            let found = self.find(key, |name| self.text(name, source.text) == text);
+            (key, found)
         };
-        let copy = match storage {
-            Storage::Utf16 => Text::Utf16(&self.utf16[start..]),
-            _ => Text::Latin1(&self.latin1[start..]),
-        };
-        match self.find(C::text(source), copy, NameKind::Ordinary) {
-            Ok(name) => {
-                self.latin1.truncate(latin1);
-                self.utf16.truncate(utf16);
+        match found {
+            Ok(name) if storage == Storage::Latin1 => {
+                self.latin1.truncate(start);
                 name
             }
-            Err(vacant) => self.insert(vacant, start as u32, storage, NameKind::Ordinary),
+            Ok(name) => {
+                self.utf16.truncate(start);
+                name
+            }
+            Err(slot) => self.insert(key, slot, start, storage, NameKind::Ordinary),
         }
     }
 
-    #[inline(always)]
-    fn first_slot(&self, key: u64) -> usize {
-        mix(key, 0x9e37_79b9_7f4a_7c15) as usize & (self.slots.len() - 1)
+    /// The value of a literal, which is not compared with other names.
+    #[inline]
+    pub(crate) fn literal_in_source(
+        &mut self,
+        source: Source<'_>,
+        start: usize,
+        end: usize,
+    ) -> Name {
+        if end - start <= LONGEST_INTERNED_LITERAL {
+            return self.intern_source(source, start, end);
+        }
+        self.add_entry(
+            start,
+            end - start,
+            usize::MAX,
+            Storage::Source,
+            NameKind::Ordinary,
+        )
+    }
+
+    pub(crate) fn literal(&mut self, source: Source<'_>, text: Text<'_>) -> Name {
+        if text.len() <= LONGEST_INTERNED_LITERAL {
+            return self.intern_text(source, text);
+        }
+        let (storage, start) = self.store(text);
+        self.add_entry(start, text.len(), usize::MAX, storage, NameKind::Ordinary)
+    }
+
+    fn store(&mut self, text: Text<'_>) -> (Storage, usize) {
+        let (latin1, utf16) = (self.latin1.len(), self.utf16.len());
+        match text {
+            Text::Latin1(characters) => self.latin1.extend_from_slice(characters),
+            Text::Utf16(units) if text.fits_latin1() => {
+                self.latin1.extend(units.iter().map(|&unit| unit as u8));
+            }
+            Text::Utf16(units) => {
+                self.utf16.extend_from_slice(units);
+                return (Storage::Utf16, utf16);
+            }
+        }
+        (Storage::Latin1, latin1)
     }
 
     #[inline(always)]
-    fn find(&self, source: Text<'_>, text: Text<'_>, kind: NameKind) -> Result<Name, Vacant> {
-        let (key, is_exact) = key_of(text);
-        let length = text.len() as u32;
-        let shape = if is_exact { length + 1 } else { 0 } | (kind as u32) << 4;
-        let mut index = self.first_slot(key);
+    fn find_narrow(&self, source: Source<'_>, key: Key, characters: &[u8]) -> Result<Name, usize> {
+        self.find(key, |name| {
+            key.is_short()
+                || self.entry(name).is_some_and(|entry| {
+                    let storage = match entry.storage {
+                        Storage::Source => source.bytes,
+                        Storage::Latin1 | Storage::Utf16 => &self.latin1,
+                    };
+                    are_equal(
+                        &storage[entry.start as usize..][..characters.len()],
+                        characters,
+                    )
+                })
+        })
+    }
+
+    /// The name, or the slot for it.
+    #[inline(always)]
+    fn find(&self, key: Key, has_same_text: impl Fn(Name) -> bool) -> Result<Name, usize> {
+        let mask = self.slots.len().wrapping_sub(1);
+        let mut index = key.hash() & mask;
         loop {
-            let slot = &self.slots[index];
+            let slot = self.slots[index];
             let Some(name) = Name::from_word(slot.name) else {
-                return Err(Vacant {
-                    index,
-                    key,
-                    shape,
-                    length,
-                });
+                return Err(index);
             };
-            if slot.key == key
-                && slot.shape == shape
-                && (is_exact || self.text(name, source) == text)
-            {
+            if slot.key == key && has_same_text(name) {
                 return Ok(name);
             }
-            index = (index + 1) & (self.slots.len() - 1);
+            index = (index + 1) & mask;
         }
     }
 
-    fn insert(&mut self, vacant: Vacant, start: u32, storage: Storage, kind: NameKind) -> Name {
-        let name = Name::new(self.limit());
-        self.entries.push(Entry {
-            start,
-            length: vacant.length,
-            storage,
-            kind,
-        });
-        self.slots[vacant.index] = Slot {
-            key: vacant.key,
-            shape: vacant.shape,
+    #[inline(never)]
+    fn insert(
+        &mut self,
+        key: Key,
+        slot: usize,
+        start: usize,
+        storage: Storage,
+        kind: NameKind,
+    ) -> Name {
+        let name = self.add_entry(start, key.length(), slot, storage, kind);
+        self.slots[slot] = Slot {
+            key,
             name: name.index() as u32,
         };
-        if self.entries.len() * 2 > self.slots.len() {
+        self.room -= 1;
+        if self.room == 0 {
             self.grow();
         }
         name
     }
 
+    #[inline]
+    fn add_entry(
+        &mut self,
+        start: usize,
+        length: usize,
+        slot: usize,
+        storage: Storage,
+        kind: NameKind,
+    ) -> Name {
+        let name = Name::new(self.limit());
+        self.entries.push(Entry {
+            start: start as u32,
+            length: length as u32,
+            slot: slot as u32,
+            storage,
+            kind,
+        });
+        name
+    }
+
     #[cold]
     fn grow(&mut self) {
-        let grown = vec![Slot::default(); self.slots.len() * 4];
-        let old = core::mem::replace(&mut self.slots, grown);
-        for slot in old.into_iter().filter(|slot| slot.name != 0) {
-            let mut index = self.first_slot(slot.key);
-            while self.slots[index].name != 0 {
-                index = (index + 1) & (self.slots.len() - 1);
+        for slot in self.allocate(self.slots.len() * 4) {
+            if let Some(index) = (slot.name as usize).checked_sub(KNOWN.len()) {
+                self.entries[index].slot = self.put(slot.key, slot.name) as u32;
+                self.room -= 1;
             }
-            self.slots[index] = slot;
         }
     }
-}
-
-struct Vacant {
-    index: usize,
-    key: u64,
-    shape: u32,
-    length: u32,
 }

@@ -1,7 +1,9 @@
 //! The IANA time zone database as ICU compiles it: the bundle `zoneinfo64`.
 
+use core::cmp::Ordering;
 use core::ffi::CStr;
 
+use bun_engine_text::Text;
 use bun_icu::resource_bundle::ResourceBundle;
 use bun_icu::{CText, Error};
 
@@ -13,9 +15,24 @@ fn section(key: &CStr) -> bun_icu::Result<ResourceBundle> {
     ResourceBundle::open_direct(c"zoneinfo64")?.by_key(key)
 }
 
-/// An array of strings.
+/// An array of strings, in the order of their code units.
 pub(super) fn names() -> bun_icu::Result<ResourceBundle> {
     section(c"Names")
+}
+
+/// In `names`. Case matters.
+pub(super) fn position_of(name: Text<'_>) -> Option<usize> {
+    let names = names().ok()?;
+    let mut range = 0..names.item_count();
+    while !range.is_empty() {
+        let middle = range.start.midpoint(range.end);
+        match Text::Utf16(names.string_at(middle).ok()?).cmp(&name) {
+            Ordering::Less => range.start = middle + 1,
+            Ordering::Equal => return Some(middle),
+            Ordering::Greater => range.end = middle,
+        }
+    }
+    None
 }
 
 /// The position in `names` of the zone whose rules the one at `position` has.

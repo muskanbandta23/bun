@@ -55,7 +55,7 @@ git clone https://github.com/oven-sh/mimalloc ~/code/mimalloc
 bun bd --local-deps=mimalloc=~/code/mimalloc test foo.test.ts
 ```
 
-Any `github-archive` dep the graph compiles or includes can be redirected
+Any fetched dep the graph compiles or includes can be redirected
 (so not lolhtml or rust-argon2, which cargo reads from `vendor/` via the workspace
 `Cargo.toml` — point that path at your checkout instead); several at once
 with `name=path,name=path`. Cross-dep references (`depSourceDir()`, e.g.
@@ -70,6 +70,30 @@ build banner shows `local:<name>` while this is on. Don't edit
 `vendor/<name>/` in place instead — it is wiped whenever the pin or patches
 change.
 
+## ICU
+
+`--icu=bundled`, the default but for macOS, compiles the release tarball that
+`icu.ts` pins by checksum. The tarball, unlike ICU's repository, holds the data
+as one ready package, which `../icu/data.ts` filters and compresses
+(`../icu/items.ts` has the lists), so none of ICU's own tools is built.
+
+`--icu=system` links the host's ICU (74 or later on Linux), or the static build
+whose `include/` and `lib/` are in `$BUN_ICU_ROOT`.
+
+`--local-deps=icu=<dir>` takes a directory laid out like the tarball. From a
+clone of unicode-org/icu that is `icu4c/`, with the package and then the
+patches (ICU's own tools do not link once they are applied):
+
+```sh
+mkdir icu/build && cd icu/build
+../icu4c/source/configure --with-data-packaging=archive && make -j
+cp data/out/icudt*l.dat ../icu4c/source/data/in/
+for patch in $BUN/patches/icu/*.patch; do patch -d ../icu4c -p1 < $patch; done
+```
+
+To update: change `ICU_VERSION` and `ICU_SHA256`, compare the source lists with
+`source/{common,i18n}/sources.txt`, and drop the patches the release has.
+
 ## Common fields
 
 ```ts
@@ -79,10 +103,11 @@ export const mydep: Dependency = {
   // Source tarball. Fetched from GitHub's archive endpoint (no git history,
   // just the files at `commit`). Most deps use this.
   //
-  // Other kinds: `prebuilt` (download a release tarball, e.g. the Node.js
-  // headers), `local` (user-managed checkout: what a github-archive dep
-  // becomes via `--local-deps`, see above), `in-tree` (source in src/),
-  // `system` (already on the machine).
+  // Other kinds: `tarball` (a source release, checked against its sha256),
+  // `prebuilt` (download a release tarball, e.g. the Node.js headers),
+  // `local` (user-managed checkout: what a fetched dep becomes via
+  // `--local-deps`, see above), `in-tree` (source in src/), `system`
+  // (already on the machine).
   source: () => ({ kind: "github-archive", repo: "owner/repo", commit: "..." }),
 
   // Optional: macro name for bun_dependency_versions.h (process.versions).
@@ -144,7 +169,7 @@ export const mydep: Dependency = {
 - **sqlite.ts** — direct build, in-tree source (lives in `src/`, not `vendor/`)
 - **libuv.ts** — `enabled: cfg => cfg.windows` for a platform-only dep
 - **lolhtml.ts** — cargo build with rustflags
-- **icu.ts** — `system` source: nothing fetched or built, libraries named for the link
+- **icu.ts** — `tarball` source, with a host tool and a step whose output one source embeds; or `system` source: nothing fetched or built, libraries named for the link
 
 ## How a dep builds
 

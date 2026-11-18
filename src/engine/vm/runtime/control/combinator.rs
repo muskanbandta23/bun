@@ -6,9 +6,9 @@ use bun_engine_macros::{cell, native_abi};
 use bun_engine_text::names;
 
 use crate::{
-    Attributes, CallFrame, Cx, ElementKind, ErrorInstance, ErrorType, Gc, InternalMicrotask,
-    JsArray, JsCell, JsFinalObject, JsFunctionWithFields, JsObject, JsPromise, JsResult, JsString,
-    PromiseStatus, TypeFlags, Value,
+    CallFrame, Cx, ElementKind, ErrorInstance, Gc, InternalMicrotask, JsArray, JsCell,
+    JsFinalObject, JsFunctionWithFields, JsObject, JsPromise, JsResult, JsString, PromiseStatus,
+    TypeFlags, Value,
 };
 
 #[cell(flags = TypeFlags::SHAPE_IS_IMMORTAL)]
@@ -46,10 +46,12 @@ impl PromiseCombinator {
     }
 
     /// Returns its index.
-    #[inline]
+    #[inline(always)]
     pub fn add_element(&self, cx: &mut Cx) -> JsResult<Value> {
         let index = self.values.length();
-        self.values.append(cx, Value::UNDEFINED)?;
+        if !self.values.try_set_dense(index, Value::UNDEFINED) {
+            self.values.append(cx, Value::UNDEFINED)?;
+        }
         self.remaining.update(|count| count + 1);
         Ok(index.into())
     }
@@ -60,18 +62,23 @@ impl PromiseCombinator {
         self.count_down(cx)
     }
 
-    #[inline]
+    #[inline(always)]
     fn count_down(&self, cx: &mut Cx) -> JsResult<()> {
         self.remaining.update(|count| count - 1);
         if self.remaining.get() != 0 {
             return Ok(());
         }
-        let (rejects, mut result) = (self.rejects(), self.values.as_value());
-        if rejects {
-            let error = ErrorInstance::new(cx, ErrorType::AggregateError, None);
-            error.put_direct(cx, names::errors, result, Attributes::DONT_ENUM);
-            result = error.into();
-        }
+        self.finish(cx)
+    }
+
+    #[inline(never)]
+    fn finish(&self, cx: &mut Cx) -> JsResult<()> {
+        let rejects = self.task == InternalMicrotask::PromiseAnyElement;
+        let result = if rejects {
+            ErrorInstance::aggregate(cx, self.values, None).into()
+        } else {
+            self.values.into()
+        };
         match self.promise() {
             Some(promise) if rejects => promise.reject(cx, result),
             Some(promise) => promise.resolve(cx, result)?,
@@ -80,11 +87,7 @@ impl PromiseCombinator {
         Ok(())
     }
 
-    fn rejects(&self) -> bool {
-        self.task == InternalMicrotask::PromiseAnyElement
-    }
-
-    #[inline]
+    #[inline(always)]
     fn record(
         &self,
         cx: &mut Cx,
@@ -104,7 +107,7 @@ impl PromiseCombinator {
     }
 
     /// The target is a promise.
-    #[inline(never)]
+    #[inline(always)]
     pub(super) fn did_settle(
         &self,
         cx: &mut Cx,
@@ -113,7 +116,7 @@ impl PromiseCombinator {
         value: Value,
     ) -> JsResult<()> {
         let promise = self.target.cast::<JsPromise>();
-        let cx = cx.in_realm(promise.global());
+        let cx = cx.in_realm_of(&promise);
         match (self.task, status) {
             (InternalMicrotask::PromiseAllElement, PromiseStatus::Rejected) => {
                 promise.reject(cx, value);
@@ -145,6 +148,7 @@ impl PromiseCombinator {
     }
 }
 
+#[inline(never)]
 fn describe_outcome(cx: &Cx, status: PromiseStatus, value: Value) -> Value {
     let (shape, status) = match status {
         PromiseStatus::Rejected => (cx.rejected_outcome_shape(), names::rejected),

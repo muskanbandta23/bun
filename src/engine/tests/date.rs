@@ -1,3 +1,4 @@
+use bun_engine_macros::native_abi;
 use bun_engine_standalone as _;
 use bun_engine_text::{Identifier, PropertyName, StringRef, Text, names, symbols};
 use bun_engine_vm::heap::{HeapKind, Scope};
@@ -175,10 +176,26 @@ fn change_of_zone(cx: &mut Cx) {
         let fields = date.cast::<DateInstance>().local_fields(cx);
         assert_eq!(fields.unwrap().hour(), 9);
     }
+}
 
-    with_realm(|other| assert!(other.set_time_zone(Text::from_ascii("UTC"))));
+#[native_abi]
+fn hours_after_another_thread_moves_to_utc(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let other = std::thread::Builder::new().spawn(|| {
+        with_realm(|other| assert!(other.set_time_zone(Text::from_ascii("UTC"))));
+    });
+    other.unwrap().join().unwrap();
+    let new = new_date(cx, &[86_400_000.into()]);
+    assert_eq!(invoke(cx, new, names::getHours, &[]), "9");
+    cx.invoke(frame.this_value(), names::getHours, &[])
+}
+
+fn change_of_zone_by_another_thread(cx: &mut Cx) {
+    let date = new_date(cx, &[0.into()]);
+    let name = StringRef::empty();
+    let function = JsFunction::native(cx, 0, &name, hours_after_another_thread_moves_to_utc);
+    assert_eq!(cx.call(function.into(), date, &[]).unwrap(), 9.into());
     assert_eq!(cx.date_cache().time_zone().identifier(), "Asia/Tokyo");
-    assert_eq!(invoke(cx, old, names::getHours, &[]), "0");
+    assert_eq!(invoke(cx, date, names::getHours, &[]), "0");
 }
 
 /// One test, because the zone is that of the process.
@@ -191,5 +208,6 @@ fn dates() {
         constructor(cx);
         conversions(cx);
         change_of_zone(cx);
+        change_of_zone_by_another_thread(cx);
     });
 }

@@ -161,7 +161,8 @@ impl Session<'_> {
         parameters_end: Option<u32>,
     ) -> Parsed<Begun> {
         let parameters_start = self.start();
-        if let Some(summary) = self.skip_known_function() {
+        if let Some(mut summary) = self.skip_known_function() {
+            summary.flags |= flags;
             return Ok(Begun::Skipped(parameters_start, summary));
         }
         let context = self.context.of_parameters(kind, flags);

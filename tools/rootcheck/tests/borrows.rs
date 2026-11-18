@@ -263,6 +263,48 @@ pub fn passes_on(owner: &Owner, run: impl FnOnce(Text<'_>)) {
     reached_from_another_crate(owner, run);
 }
 
+pub static IN_A_STATIC: fn(&Vm, &Owner) -> Gc<JsString> =
+    |vm, owner| JsString::from_text(vm, owner.text()); //~ borrow: held while this may collect
+
+pub fn beside_a_constant(vm: &Vm, owner: &Owner) -> Gc<JsString> {
+    const { assert!(size_of::<Owner>() != 0) };
+    JsString::from_text(vm, owner.text()) //~ borrow: held while this may collect
+}
+
+pub fn closure_that_lends_what_would_fit(vm: &Vm, owner: Option<&Owner>) {
+    let count = owner.map(|it| &it.rare.get_or_default().count); //~ borrow: held while this may collect
+    allocate(vm);
+    see(count);
+}
+
+pub fn pattern(vm: &Vm, owner: &Owner) {
+    let Owner { string, count, .. } = owner; //~ borrow: held while this may collect
+    allocate(vm);
+    see((string, count));
+}
+
+struct InDestructor<'a>(&'a Vm, &'a Owner);
+
+impl Drop for InDestructor<'_> {
+    fn drop(&mut self) {
+        JsString::from_text(self.0, self.1.text()); //~ borrow: held while this may collect
+    }
+}
+
+impl AsRef<StringRef> for Owner {
+    fn as_ref(&self) -> &StringRef {
+        &self.string
+    }
+}
+
+fn knows_nothing_of_cells<T: AsRef<StringRef>>(vm: &Vm, value: &T) -> Gc<JsString> {
+    JsString::from_text(vm, value.as_ref().text()) //~ borrow: held while this may collect
+}
+
+pub fn gives_it_a_cell(vm: &Vm, owner: &Owner) -> Gc<JsString> {
+    knows_nothing_of_cells(vm, owner)
+}
+
 pub trait Named: CellKind {
     fn name(&self) -> Text<'_>;
 }

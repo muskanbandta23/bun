@@ -26,6 +26,16 @@ pub(crate) trait Positions: Copy {
         )
     }
 
+    /// Whether `gather` is not zero. Asked in that way, the compiler takes the test apart.
+    #[inline(always)]
+    fn any_gathered<const SIZE: usize, const PARTS: usize>(self, starts: [usize; PARTS]) -> bool {
+        let failing = collect::<SIZE, PARTS>(
+            #[inline(always)]
+            |part, lane| !self.passes::<SIZE>(starts[part], lane),
+        );
+        failing != (1 << (SIZE * PARTS)) - 1
+    }
+
     /// Whether a position passes in one of the blocks from `starts`.
     #[inline(always)]
     fn any_in<const PARTS: usize>(self, starts: [usize; PARTS]) -> bool {
@@ -76,7 +86,7 @@ pub(crate) fn union_of_quarters(length: usize, word: impl Fn(usize) -> u32) -> u
 /// All of 1 to 3 positions.
 #[inline(always)]
 pub(crate) fn singles(length: usize) -> [usize; 3] {
-    [0, length / 2, length - 1]
+    [0, (length - 1).min(1), length - 1]
 }
 
 /// The bits for the lanes of `PARTS` parts, each of which `test` is given as the part and the lane in it.
@@ -269,7 +279,11 @@ fn pick_short(positions: impl Positions, pick: impl Fn(u32) -> Option<usize>) ->
 pub(crate) fn any(positions: impl Positions) -> bool {
     let length = positions.len();
     let Some(last) = length.checked_sub(BLOCK) else {
-        return pick_short(positions, lowest).is_some();
+        return match length {
+            0 => false,
+            1..QUARTER => positions.any_gathered::<1, 3>(singles(length)),
+            _ => positions.any_gathered::<QUARTER, 4>(quarters(length)),
+        };
     };
     let last_but_one = length.saturating_sub(2 * BLOCK);
     let mut at = 0;

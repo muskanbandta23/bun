@@ -62,12 +62,16 @@ impl Era {
         }
     }
 
-    const fn alias(self) -> Option<Text<'static>> {
-        match self {
-            Era::Ce => Some(Text::from_ascii("ad")),
-            Era::Bce => Some(Text::from_ascii("bc")),
+    #[inline(never)]
+    fn is_named(self, name: Text<'_>) -> bool {
+        let alias = match self {
+            Era::Ce => Some("ad"),
+            Era::Bce => Some("bc"),
             _ => None,
-        }
+        };
+        (alias.map(Text::from_ascii).into_iter())
+            .chain([self.code().text()])
+            .any(|it| name.eq_ignore_ascii_case(it))
     }
 
     const fn counts_backwards(self) -> bool {
@@ -122,10 +126,9 @@ impl CalendarId {
 
     /// CanonicalizeEraInCalendar, ignoring ASCII case.
     pub(crate) fn find_era(self, name: Text<'_>) -> Option<Era> {
-        let is_named = |code| name.eq_ignore_ascii_case(code);
         (self.eras_around_epoch()?.into_iter())
             .chain(self.mid_year_eras().iter().map(|&(era, _)| era))
-            .find(|era| is_named(era.code().text()) || era.alias().is_some_and(is_named))
+            .find(|era| era.is_named(name))
     }
 
     /// CalendarDateArithmeticYearForEraYear

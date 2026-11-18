@@ -79,6 +79,8 @@ public:
     explicit JSGlobalObjectInspectorController(JSC::JSGlobalObject&);
     ~JSGlobalObjectInspectorController();
 
+    JSC::JSGlobalObject& globalObject() const { return m_globalObject; }
+
     // The client outlives the realm.
     void connectFrontend(FrontendChannel&, InspectorClient&);
     void disconnectFrontend(FrontendChannel&);

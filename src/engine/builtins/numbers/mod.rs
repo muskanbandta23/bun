@@ -31,6 +31,17 @@ pub(crate) fn add_conditions(
     conditions: &mut Conditions<'_>,
 ) -> bool {
     match which {
+        RealmWatchpoint::DateConversions => {
+            for name in [
+                symbols::toPrimitive,
+                names::valueOf,
+                names::toString,
+                names::toJSON,
+                names::toISOString,
+            ] {
+                conditions.pristine(&cx.date_prototype(), name);
+            }
+        }
         RealmWatchpoint::NumberToString => {
             conditions.pristine(&cx.number_prototype(), names::toString);
         }

@@ -1,9 +1,9 @@
 use bun_engine_text::{StringRef, names};
 
 use crate::{
-    CallData, CellKind, CellType, Cx, Gc, JsBigInt, JsCell, JsObject, JsResult, JsString, JsSymbol,
-    JsWrapperObject, PropertyKey, SpecialProperty, StringObject, StringView, TypeFlags, Value,
-    errors,
+    CallData, CellKind, CellType, Cx, DateInstance, Gc, JsBigInt, JsCell, JsObject, JsResult,
+    JsString, JsSymbol, JsWrapperObject, PropertyKey, SpecialProperty, StringObject, StringView,
+    TypeFlags, Value, errors,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -413,6 +413,14 @@ impl JsObject {
         let exotic = self.get_special_property(cx, SpecialProperty::ToPrimitive)?;
         if exotic.is_undefined_or_null() {
             return self.ordinary_to_primitive(cx, preferred);
+        }
+        if let Some(date) = self.as_value().downcast::<DateInstance>()
+            && date.has_pristine_conversions(cx)
+        {
+            return Ok(match preferred {
+                PreferredType::Number => date.time().into(),
+                _ => date.to_date_string(cx).into(),
+            });
         }
         if !exotic.is_callable() {
             let message = "Symbol.toPrimitive is not a function, undefined, or null";

@@ -402,6 +402,9 @@ impl<I: Instruction> Lowering<'_, I> {
 
     pub(crate) fn absorb(&mut self, value: Value) {
         self.tables.is_absorbed[value] = true;
+        if self.function.effects(value).has(EffectFlags::EXITS) {
+            self.origin = self.function.origin(value);
+        }
     }
 
     /// The register of an I32 has its upper half clear.

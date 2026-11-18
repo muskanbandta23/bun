@@ -350,14 +350,14 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
 
     fn emit_blocks(&mut self, mut origins: Option<&mut Vec<(Label, Origin)>>) {
         let (places, moves) = (self.places, &self.places.allocation.moves);
-        let mut note = |masm: &mut I::Masm, position: u32| {
-            if let Some(origins) = &mut origins {
-                let origin = places.code.heads[position as usize].origin;
-                if origins.last().is_none_or(|&(_, last)| last != origin) {
-                    origins.push((masm.mark(), origin));
-                }
+        let mut note = |masm: &mut I::Masm, origin: Origin| {
+            if let Some(origins) = &mut origins
+                && origins.last().is_none_or(|&(_, last)| last != origin)
+            {
+                origins.push((masm.mark(), origin));
             }
         };
+        let origin_at = |position: u32| places.code.heads[position as usize].origin;
         I::prepare(self.masm);
         for index in 0..self.tables.layout.len() {
             self.block = self.tables.layout[index];
@@ -371,7 +371,7 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
             let data = places.code.blocks[self.block];
             let label = self.label(self.block);
             self.masm.bind(label);
-            note(self.masm, data.first);
+            note(self.masm, origin_at(data.first));
             if self.cfg.predecessors(self.block).is_empty() {
                 let entry = places
                     .function
@@ -387,7 +387,7 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
             let mut next_move = self.tables.first_moves[self.block] as usize;
             for position in data.first..data.end {
                 self.position = position;
-                note(self.masm, position);
+                note(self.masm, origin_at(position));
                 while let Some(&(before, step)) = moves.get(next_move)
                     && before == position
                 {
@@ -413,7 +413,8 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
         for index in 0..self.tables.exits.len() {
             let (label, position) = self.tables.exits[index];
             self.masm.bind(label);
-            note(self.masm, position);
+            let check = places.code.sites[self.site(position)].value;
+            note(self.masm, places.function.origin(check));
             self.emit_exit(position);
         }
         self.client.out_of_line(self.masm);
@@ -560,7 +561,7 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
                 function: self.places.function,
                 frame: self.frame,
                 token: self.places.function.op(data.value).exit().unwrap().token,
-                origin: self.places.code.heads[position as usize].origin,
+                origin: self.places.function.origin(data.value),
                 state: &self.tables.locations,
             },
         );
@@ -614,7 +615,7 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
         let (results, rest) = self.tables.locations.split_at(outputs.len());
         let (operands, state) = rest.split_at(inputs.len());
 
-        let own_scratch = I::lend_scratch(self.masm, data.clobbers_early);
+        let own_scratch = I::lend_scratch(self.masm, data.clobbers_early & data.clobbers_late);
         match data.action {
             Action::Custom => self.client.patchpoint(
                 self.masm,

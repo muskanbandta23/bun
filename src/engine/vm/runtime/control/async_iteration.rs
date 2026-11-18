@@ -5,7 +5,7 @@ use bun_engine_macros::cell;
 use bun_engine_text::{names, symbols};
 
 use super::async_context::AsyncContextScope;
-use super::microtask_queue::queue_tracked;
+use super::microtask::TaskHeader;
 use crate::{
     Coroutine, CoroutineState, Cx, Field, Gc, ITERATOR_RESULT_DONE_OFFSET,
     ITERATOR_RESULT_VALUE_OFFSET, InternalMicrotask, InternalReaction, IterationMode,
@@ -76,6 +76,7 @@ pub fn request_async_step(
 
 /// In the realm of the iterator. The one who asks reads the result at once and does not pass it on, so one object does
 /// for all steps. Returns that.
+#[inline(always)]
 pub(super) fn answer(
     cx: &mut Cx,
     asker: Gc<JsObject>,
@@ -86,61 +87,91 @@ pub(super) fn answer(
 ) -> JsResult<Option<Gc<JsObject>>> {
     let task = InternalMicrotask::AsyncIteratorAnswer;
     if !cx.holds(RealmWatchpoint::PromiseThen) {
-        let result = cx.new_iterator_result(value, done);
-        InternalReaction::new(task, None, asker.into())
-            .in_async_context(async_context)
-            .resolve(cx, result.into())?;
-        return Ok(None);
+        return answer_observably(cx, asker, value, done, async_context).map(|()| None);
     }
-    let result = reusable.unwrap_or_else(|| cx.new_iterator_result(Value::UNDEFINED, false));
+    let result = reusable.unwrap_or_else(|| new_reusable_result(cx));
     let payload = PromiseStatus::Fulfilled as u8 | if done { IS_DONE } else { 0 };
     let arguments = [result.into(), value, asker.into(), async_context];
     cx.global().queue_microtask(cx, task, payload, arguments);
     Ok(Some(result))
 }
 
+#[inline(never)]
+fn answer_observably(
+    cx: &mut Cx,
+    asker: Gc<JsObject>,
+    value: Value,
+    done: bool,
+    async_context: Value,
+) -> JsResult<()> {
+    let result = cx.new_iterator_result(value, done);
+    InternalReaction::new(InternalMicrotask::AsyncIteratorAnswer, None, asker.into())
+        .in_async_context(async_context)
+        .resolve(cx, result.into())
+}
+
+#[inline(never)]
+fn new_reusable_result(cx: &Cx) -> Gc<JsObject> {
+    let result = cx.new_iterator_result(Value::UNDEFINED, false);
+    for offset in [ITERATOR_RESULT_VALUE_OFFSET, ITERATOR_RESULT_DONE_OFFSET] {
+        result.shape().did_cache_property_replacement(cx, offset);
+    }
+    result
+}
+
+#[inline(never)]
 pub(super) fn answer_with_error(cx: &Cx, asker: Gc<JsObject>, error: Value) {
     InternalReaction::new(InternalMicrotask::AsyncIteratorAnswer, None, asker.into())
         .in_current_async_context(cx)
         .queue(cx, &cx.global(), PromiseStatus::Rejected, error);
 }
 
-#[inline(never)]
-pub(super) fn run_answer(cx: &mut Cx, payload: u8, arguments: [Value; 4]) -> JsResult<()> {
-    let [result, mut value, asker, async_context] = arguments;
-    let asker = asker.cast::<Coroutine>();
-    if asker.state() != CoroutineState::SuspendedAwait {
-        keep_early_answer(cx, payload, arguments);
+pub(super) fn run_answer(
+    cx: &mut Cx,
+    header: TaskHeader,
+    result: Value,
+    value: Value,
+    asker: Value,
+    async_context: Value,
+) -> JsResult<()> {
+    if asker.cast::<Coroutine>().state() != CoroutineState::SuspendedAwait {
+        // The iterator has drained the microtasks before it returned to the one who asked.
+        let arguments = [result, value, asker, async_context].map(Some);
+        let answers = &cx.services.control.early_answers;
+        answers.enqueue(QueuedTask::from_parts(header, arguments));
         return Ok(());
     }
     let _scope = AsyncContextScope::enter(cx, async_context);
-    if let Some(result) = result.as_object() {
-        let done = Value::from(payload & IS_DONE != 0);
-        result.put_direct_at(cx, ITERATOR_RESULT_VALUE_OFFSET, value);
-        result.put_direct_at(cx, ITERATOR_RESULT_DONE_OFFSET, done);
-        value = result.into();
-    }
-    let status = PromiseStatus::from_payload(payload);
+    let value = match result.as_object() {
+        Some(object) => {
+            let done = Value::from(header.payload() & IS_DONE != 0);
+            debug_assert!(object.shape().is_valid_offset(ITERATOR_RESULT_DONE_OFFSET));
+            // SAFETY: from `new_reusable_result`, and nothing has changed its shape.
+            unsafe {
+                object.put_direct_unchecked(ITERATOR_RESULT_VALUE_OFFSET, value);
+                object.put_direct_unchecked(ITERATOR_RESULT_DONE_OFFSET, done);
+            }
+            result
+        }
+        None => value,
+    };
     match asker.downcast::<JsAsyncFunctionGenerator>() {
-        Some(function) => function.continue_with(cx, status, value),
+        Some(function) => function.continue_with(cx, header.status(), value),
         None => {
-            let task = InternalMicrotask::AsyncIteratorAnswer;
-            (asker.cast::<JsAsyncGenerator>()).continue_with(cx, task, status, value)
+            let generator = asker.cast::<JsAsyncGenerator>();
+            generator.continue_with(cx, header.job(), header.status(), value)
         }
     }
 }
 
-/// The iterator has drained the microtasks before it returned to the one who asked.
-#[cold]
-fn keep_early_answer(cx: &Cx, payload: u8, arguments: [Value; 4]) {
-    let job = InternalMicrotask::AsyncIteratorAnswer;
-    let task = QueuedTask::new(cx.global(), job, payload, arguments.map(Some));
-    cx.services.control.early_answers.enqueue(task);
+#[inline(always)]
+pub(super) fn has_early_answers(vm: &Vm) -> bool {
+    !vm.services.control.early_answers.is_empty()
 }
 
 #[inline(always)]
 pub(super) fn requeue_early_answer(vm: &Vm, asker: &Coroutine) {
-    if !vm.services.control.early_answers.is_empty() {
+    if has_early_answers(vm) {
         requeue_early_answer_slow(vm, asker);
     }
 }
@@ -150,8 +181,8 @@ pub(super) fn requeue_early_answer(vm: &Vm, asker: &Coroutine) {
 fn requeue_early_answer_slow(vm: &Vm, asker: &Coroutine) {
     let answers = &vm.services.control.early_answers;
     for task in (0..answers.len()).map_while(|_| answers.dequeue()) {
-        if task.arguments[2] == Some(asker.into()) {
-            queue_tracked(vm, &task);
+        if task.context() == asker.into() {
+            task.queue(vm, &task.global());
         } else {
             answers.enqueue(task);
         }

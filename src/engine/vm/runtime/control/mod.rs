@@ -22,14 +22,16 @@ use core::cell::{Cell, RefCell};
 use std::rc::Weak;
 
 pub(crate) use async_context::AsyncContextScope;
-pub use async_function::{JsAsyncFunctionGenerator, async_return, async_throw};
+pub use async_function::{
+    JsAsyncFunctionGenerator, async_return, async_throw, try_async_return_quickly,
+};
 pub use async_generator::JsAsyncGenerator;
 pub use async_iteration::{
     AsyncIteratorRecord, JsAsyncFromSyncIterator, open_async_iterator, request_async_step,
 };
 pub use combinator::PromiseCombinator;
-pub use coroutine::{Coroutine, CoroutineInit, CoroutineState};
-pub use disposal::{get_dispose_method, new_suppressed_error};
+pub use coroutine::{Coroutine, CoroutineState};
+pub use disposal::get_dispose_method;
 pub use generator::JsGenerator;
 pub use microtask::{InternalMicrotask, QueuedTask};
 pub(crate) use microtask_queue::RealmMicrotaskQueue;
@@ -39,8 +41,21 @@ pub use reaction::{FullPromiseReaction, InternalReaction, PromiseReaction};
 pub use resolving::{JsFunctionWithFields, PromiseCapability};
 pub use synchronous_module_queue::SynchronousModuleQueueScope;
 
-use crate::heap::Scope;
-use crate::{Visitor, Vm};
+use crate::heap::{Scope, barrier};
+use crate::{CellKind, Gc, Visitor, Vm};
+
+/// # Safety
+/// A new cell that has room for a `T`, whose shape `init` has.
+#[inline(always)]
+unsafe fn initialize_at<T: CellKind>(address: usize, init: T::Init) -> Gc<T> {
+    const { assert!(!core::mem::needs_drop::<T>()) };
+    // SAFETY: the caller's.
+    unsafe {
+        T::initialize(core::ptr::with_exposed_provenance_mut(address), init);
+        barrier::publish_fence();
+        Gc::from_address(address)
+    }
+}
 
 pub(crate) struct State {
     has_synchronous_module_queue: Cell<bool>,

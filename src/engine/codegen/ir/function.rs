@@ -913,6 +913,11 @@ impl Function {
         self.edges[edge].args = self.value_lists.add_list(args);
     }
 
+    /// For a block whose parameters the arguments fit.
+    pub fn set_target(&mut self, edge: Edge, target: Block) {
+        self.edges[edge].target = target;
+    }
+
     /// Puts an empty block in the middle of the edge.
     pub fn split_edge(&mut self, edge: Edge) -> Block {
         let middle = self.new_block();
@@ -983,6 +988,11 @@ impl Function {
         } else {
             &self.value_lists[self.states[state]]
         }
+    }
+
+    /// For a state whose users all agree on the change.
+    pub(crate) fn state_mut(&mut self, state: State) -> &mut [Value] {
+        &mut self.value_lists[self.states[state]]
     }
 
     pub fn map_state(&mut self, state: State, mut map: impl FnMut(Value) -> Value) -> State {

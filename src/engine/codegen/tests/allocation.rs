@@ -40,11 +40,7 @@ impl Subject for CompileOnly {
 
     fn shape(&mut self, seed: u64) -> Shape {
         let mut shape = shape_for(seed);
-        (
-            shape.weights.variables,
-            shape.weights.switches,
-            shape.weights.vectors,
-        ) = (0, 0, 0);
+        shape.weights.vectors = 0;
         shape
     }
 
@@ -61,7 +57,7 @@ impl Subject for CompileOnly {
             {
                 match function.op_mut(value) {
                     Op::Binary(op @ (Binary::TotalDiv | Binary::TotalRem), _) => *op = Binary::Div,
-                    Op::Switch(..) | Op::GetVariable(_) | Op::SetVariable(..) => return Ok(()),
+
                     Op::VectorUnary(..)
                     | Op::VectorBinary(..)
                     | Op::VectorTernary(..)

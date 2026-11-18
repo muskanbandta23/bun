@@ -1,5 +1,6 @@
 //! The abstract operations of ECMA-262 on values.
 
+pub mod arithmetic;
 mod compare;
 mod convert;
 mod object;

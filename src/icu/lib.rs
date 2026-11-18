@@ -12,6 +12,7 @@ mod enumeration;
 mod error;
 pub mod formatted_value;
 mod host_language;
+pub mod idna;
 pub mod list_format;
 pub mod locale;
 pub mod normalizer;

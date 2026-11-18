@@ -36,6 +36,8 @@ pub struct Hooks {
     pub builtin_source: fn(BuiltinId) -> &'static BuiltinSource,
     /// `toLocaleString` of an instance of a class of `Temporal`, with the locales and the options.
     pub temporal_to_locale_string: fn(&mut Cx, Gc<JsObject>, Value, Value) -> JsResult<Value>,
+    /// Of a `WebAssembly.Memory`, by so many pages. Returns whether it has grown.
+    pub grow_wasm_memory: fn(&mut Cx, Gc<JsObject>, usize) -> bool,
     /// `JSON.parse` without a reviver.
     pub parse_json: fn(&mut Cx, Text<'_>) -> JsResult<Value>,
     /// Settles the promise with the record of the module whose bytes are the Latin-1 characters of the source.

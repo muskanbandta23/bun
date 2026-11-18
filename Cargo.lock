@@ -1058,6 +1058,7 @@ name = "bun_executable"
 version = "0.0.0"
 dependencies = [
  "bun_aot_absent",
+ "bun_engine_embed",
  "bun_runtime",
 ]
 
@@ -1454,8 +1455,6 @@ dependencies = [
  "bun_core",
  "bun_crash_handler",
  "bun_dotenv",
- "bun_engine",
- "bun_engine_embed",
  "bun_errno",
  "bun_event_loop",
  "bun_exe_format",

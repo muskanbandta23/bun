@@ -687,7 +687,7 @@ impl<'a, 'p> Execution<'a, 'p> {
         self.read_state(stop, site);
 
         match data.action {
-            Action::Custom => {}
+            Action::Custom | Action::CustomCall => {}
             Action::Call(Target::Symbol(callee)) => {
                 require!(callee as usize == reason, "calls {reason}");
             }

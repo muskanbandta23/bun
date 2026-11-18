@@ -1,69 +1,56 @@
 //! toFixed, toExponential and toPrecision of Number.prototype.
 
-use crate::digit_words::{ZEROS, eight_digits, store};
+use crate::decimal_layout::{Ending, write_decimal, write_exponent, write_exponential};
+use crate::digit_words::{eight_digits, split_sixteen_digits, store};
 use crate::double::decompose;
 use crate::integer_text::write_integer;
 use crate::powers_of_ten::SMALL_POWERS;
-use crate::rounded::Rounded;
-use crate::shortest_text::{write_exponent, write_f64_with_exponent};
-use crate::{FormatError, NUMBER_TEXT_CAPACITY, NumberText, write_f64};
+use crate::rounded::{DigitBuffer, MAX_SCALED_DIGITS, round_by_scaling, round_exactly};
+use crate::shortest_text::write_f64_with_exponent;
+use crate::{FormatError, NUMBER_TEXT_CAPACITY, write_f64};
 
-const CAPACITY: usize = 128;
-type Buffer = [u8; CAPACITY];
+/// Room for 100 digits after the point.
+pub const FIXED_TEXT_CAPACITY: usize = 128;
 
-/// Has room for 100 digits after the point.
-pub type FixedText = NumberText<CAPACITY>;
+type Buffer = [u8; FIXED_TEXT_CAPACITY];
 
-pub fn to_fixed(value: f64, fraction_digits: i32) -> Result<FixedText, FormatError> {
+pub fn to_fixed(value: f64, fraction_digits: i32, out: &mut Buffer) -> Result<&[u8], FormatError> {
     let Ok(count @ 0..=100) = usize::try_from(fraction_digits) else {
         return Err(FormatError::FixedDigits);
     };
-    Ok(FixedText::written_forward(|out| {
-        if value.abs() < (1u64 << 53) as f64 && count <= 8 {
-            write_few_fraction_digits(value, count, short(out))
-        } else if value.abs() < 1e21 {
-            let rounded = Rounded::to_fraction_digits(value, count);
-            write_positional(value < 0.0, &rounded, count, out)
-        } else {
-            write_f64(value, short(out))
-        }
-    }))
+    let length = if value.abs() < (1u64 << 53) as f64 && count <= MAX_FEW_DIGITS {
+        write_few_fraction_digits(value, count, out)
+    } else if value.abs() < 1e21 {
+        write_many_fraction_digits(value, count, out)
+    } else {
+        write_f64(value, short(out))
+    };
+    Ok(&out[..length])
 }
 
 /// Without `fraction_digits`, as many as it takes to identify the value.
-pub fn to_exponential(value: f64, fraction_digits: Option<i32>) -> Result<FixedText, FormatError> {
-    let Some(fraction_digits) = fraction_digits.filter(|_| value.is_finite()) else {
-        return Ok(FixedText::written_forward(|out| {
-            write_f64_with_exponent(value, short(out))
-        }));
+pub fn to_exponential(
+    value: f64,
+    fraction_digits: Option<i32>,
+    out: &mut Buffer,
+) -> Result<&[u8], FormatError> {
+    let length = match fraction_digits {
+        Some(count @ 0..=100) if value.is_finite() => {
+            write_significant_digits(value, count as usize + 1, i32::MIN, out)
+        }
+        Some(_) if value.is_finite() => return Err(FormatError::ExponentialDigits),
+        _ => write_f64_with_exponent(value, short(out)),
     };
-    let Ok(count @ 0..=100) = usize::try_from(fraction_digits) else {
-        return Err(FormatError::ExponentialDigits);
-    };
-    Ok(FixedText::written_forward(|out| {
-        let rounded = Rounded::to_significant_digits(value, count + 1);
-        write_exponential(value < 0.0, &rounded, count, out)
-    }))
+    Ok(&out[..length])
 }
 
-pub fn to_precision(value: f64, precision: i32) -> Result<FixedText, FormatError> {
-    if !value.is_finite() {
-        return Ok(FixedText::written_forward(|out| {
-            write_f64(value, short(out))
-        }));
-    }
-    let Ok(count @ 1..=100) = usize::try_from(precision) else {
-        return Err(FormatError::Precision);
+pub fn to_precision(value: f64, precision: i32, out: &mut Buffer) -> Result<&[u8], FormatError> {
+    let length = match precision {
+        _ if !value.is_finite() => write_f64(value, short(out)),
+        1..=100 => write_significant_digits(value, precision as usize, precision, out),
+        _ => return Err(FormatError::Precision),
     };
-    Ok(FixedText::written_forward(|out| {
-        let rounded = Rounded::to_significant_digits(value, count);
-        if (-5..=precision).contains(&rounded.point) {
-            let fraction_digits = (precision - rounded.point) as usize;
-            write_positional(value < 0.0, &rounded, fraction_digits, out)
-        } else {
-            write_exponential(value < 0.0, &rounded, count - 1, out)
-        }
-    }))
+    Ok(&out[..length])
 }
 
 #[inline(always)]
@@ -71,94 +58,117 @@ fn short(out: &mut Buffer) -> &mut [u8; NUMBER_TEXT_CAPACITY] {
     &mut out.as_chunks_mut().0[0]
 }
 
-/// For a value below 2^53 and up to eight digits.
-fn write_few_fraction_digits(
-    value: f64,
-    count: usize,
-    out: &mut [u8; NUMBER_TEXT_CAPACITY],
-) -> usize {
+/// Twice a significand times 10^22 fits in 128 bits.
+const MAX_FEW_DIGITS: usize = 22;
+
+/// For a value below 2^53.
+#[inline(always)]
+fn write_few_fraction_digits(value: f64, count: usize, out: &mut Buffer) -> usize {
     let (significand, exponent) = decompose(value);
     let places = exponent.unsigned_abs();
-    let whole = significand.unbounded_shr(places);
+    let (lower_count, upper_count) = (count.min(16), count.saturating_sub(16));
+    let (lower_limit, upper_limit) = (SMALL_POWERS[lower_count], SMALL_POWERS[upper_count]);
+    let mut whole = significand.unbounded_shr(places);
     let fraction = significand - whole.unbounded_shl(places);
-    let doubled = u128::from(fraction) * u128::from(2 * SMALL_POWERS[count]);
-    let digits = (doubled.unbounded_shr(places) as u64).div_ceil(2);
-    let carries = digits == SMALL_POWERS[count];
-    let point = write_integer(value < 0.0, whole + u64::from(carries), out);
+    let scaled = u128::from(fraction) * u128::from(upper_limit);
+    let mut upper = scaled.unbounded_shr(places) as u64;
+    let doubled = (scaled * u128::from(2 * lower_limit)).unbounded_shr(places);
+    let mut lower = (((doubled + 1) >> 1) as u64).wrapping_sub(upper.wrapping_mul(lower_limit));
+    if lower == lower_limit {
+        (upper, lower) = (upper + 1, 0);
+        if upper == upper_limit {
+            (whole, upper) = (whole + 1, 0);
+        }
+    }
+
+    let point = write_integer(value < 0.0, whole, short(out));
     if count == 0 {
         return point;
     }
-    let characters = if carries {
-        ZEROS
-    } else {
-        eight_digits(digits as u32) >> (64 - 8 * count)
-    };
     out[point] = b'.';
-    store(out, point + 1, characters);
-    point + 1 + count
+    let mut at = point + 1;
+    let mut append = |digits: u32, count: usize| {
+        store(out, at, eight_digits(digits) >> (64 - 8 * count));
+        at += count;
+    };
+    if count <= 8 {
+        append(lower as u32, count);
+        return at;
+    }
+    if upper_count != 0 {
+        append(upper as u32, upper_count);
+    }
+    let (middle, lower) = split_sixteen_digits(lower);
+    append(middle, lower_count - 8);
+    append(lower, 8);
+    at
 }
 
-struct Cursor<'a> {
-    out: &'a mut Buffer,
-    at: usize,
+fn write_many_fraction_digits(value: f64, count: usize, out: &mut Buffer) -> usize {
+    let mut buffer = DigitBuffer::ZEROS;
+    let (digits, point) = round_exactly(value, |point| point + count as i32, &mut buffer);
+    write_positional(value < 0.0, digits, point, count, out)
 }
 
-impl Cursor<'_> {
-    fn after_sign(is_negative: bool, out: &mut Buffer) -> Cursor<'_> {
-        out[0] = b'-';
-        Cursor {
-            out,
-            at: usize::from(is_negative),
-        }
+/// With an exponent unless from -5 to `max_point` digits precede the decimal point.
+#[inline(always)]
+fn write_significant_digits(value: f64, count: usize, max_point: i32, out: &mut Buffer) -> usize {
+    if count > MAX_SCALED_DIGITS || value == 0.0 {
+        return write_many_significant_digits(value, count, max_point, out);
     }
-
-    fn push(&mut self, characters: &[u8]) {
-        self.out[self.at..self.at + characters.len()].copy_from_slice(characters);
-        self.at += characters.len();
+    let (digits, point) = round_by_scaling(value, count);
+    let digits = digits * SMALL_POWERS[MAX_SCALED_DIGITS - count];
+    let ending = Ending {
+        last: b'0' + (digits % 10) as u8,
+        is_sixteenth: false,
+        min_count: count as u8,
+    };
+    let (out, is_negative) = (short(out), value < 0.0);
+    if (-5..=max_point).contains(&point) {
+        return write_decimal(out, is_negative, digits / 10, ending, point);
     }
-
-    /// Nothing if no digits follow the point.
-    fn push_fraction(&mut self, zeros: usize, digits: &[u8]) {
-        if zeros + digits.len() != 0 {
-            self.push(b".");
-            self.out[self.at..self.at + zeros].fill(b'0');
-            self.at += zeros;
-            self.push(digits);
-        }
-    }
+    write_exponential(out, is_negative, digits / 10, ending, point)
 }
 
+fn write_many_significant_digits(
+    value: f64,
+    count: usize,
+    max_point: i32,
+    out: &mut Buffer,
+) -> usize {
+    let mut buffer = DigitBuffer::ZEROS;
+    let (digits, point) = round_exactly(value, |_| count as i32, &mut buffer);
+    if (-5..=max_point).contains(&point) {
+        let fraction_digits = (count as i32 - point) as usize;
+        return write_positional(value < 0.0, digits, point, fraction_digits, out);
+    }
+    let end = write_positional(value < 0.0, digits, 1, count - 1, out);
+    write_exponent(point - 1, out, end)
+}
+
+/// `0.digits * 10^point`
 fn write_positional(
     is_negative: bool,
-    rounded: &Rounded,
+    digits: &[u8],
+    point: i32,
     fraction_digits: usize,
     out: &mut Buffer,
 ) -> usize {
-    let mut cursor = Cursor::after_sign(is_negative, out);
-    match usize::try_from(rounded.point) {
-        Ok(point @ 1..) => {
-            let (whole, fraction) = rounded.digits(point + fraction_digits).split_at(point);
-            cursor.push(whole);
-            cursor.push_fraction(0, fraction);
-        }
-        _ => {
-            let zeros = rounded.point.unsigned_abs() as usize;
-            cursor.push(b"0");
-            cursor.push_fraction(zeros, rounded.digits(fraction_digits - zeros));
-        }
+    let start = usize::from(is_negative);
+    let (whole, zeros, rest): (&[u8], _, _) = match usize::try_from(point) {
+        Ok(point @ 1..) => (&digits[..point], 0, &digits[point..]),
+        _ => (b"0", point.unsigned_abs() as usize, digits),
+    };
+    let point_at = start + whole.len();
+    out[0] = b'-';
+    out[start..point_at].copy_from_slice(whole);
+    if fraction_digits == 0 {
+        return point_at;
     }
-    cursor.at
-}
-
-fn write_exponential(
-    is_negative: bool,
-    rounded: &Rounded,
-    fraction_digits: usize,
-    out: &mut Buffer,
-) -> usize {
-    let (first, rest) = rounded.digits(1 + fraction_digits).split_at(1);
-    let mut cursor = Cursor::after_sign(is_negative, out);
-    cursor.push(first);
-    cursor.push_fraction(0, rest);
-    write_exponent(rounded.point - 1, cursor.out, cursor.at)
+    out[point_at] = b'.';
+    let fraction = &mut out[point_at + 1..][..fraction_digits];
+    let (zeros, significant) = fraction.split_at_mut(zeros);
+    zeros.fill(b'0');
+    significant.copy_from_slice(&rest[..significant.len()]);
+    point_at + 1 + fraction_digits
 }

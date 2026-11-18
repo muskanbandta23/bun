@@ -12,6 +12,8 @@ doctest = false
 [dependencies]
 # The functions that `bun_aot_interface` declares.
 bun_aot_absent.workspace = true
+# The functions that the bindings call.
+bun_engine_embed.workspace = true
 bun_runtime = { path = "../runtime" }
 
 [lints]

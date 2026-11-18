@@ -134,6 +134,16 @@ pub unsafe fn free_strong_slot(slot: usize) {
     }
 }
 
+/// Another slot with the same content, or zero if the heap is gone.
+///
+/// # Safety
+/// `slot` came from `Heap::allocate_strong_slot` on this thread and has not been freed.
+pub unsafe fn duplicate_strong_slot(slot: usize) -> usize {
+    // SAFETY: as in `free_strong_slot`.
+    let set = unsafe { chunk_of(slot).set.get().as_ref() };
+    set.map_or(0, |set| set.allocate(slot_at(slot).get()))
+}
+
 /// Keeps a value alive from anywhere in memory.
 #[repr(transparent)]
 pub struct Strong<T> {

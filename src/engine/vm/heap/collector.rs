@@ -180,6 +180,16 @@ impl Heap {
             }
             self.vm().visit_output_constraints(visitor);
             set_root_reason(visitor, RootReason::Embedder);
+            if is_first_round {
+                for space in self.spaces_with_output_constraints.borrow().iter() {
+                    self.for_each_marked_cell_in(space, |cell| {
+                        visitor.with_referrer(&cell, |visitor| {
+                            // SAFETY: the method of its class.
+                            unsafe { (cell.class().ops().visit_output_constraints)(&cell, visitor) }
+                        });
+                    });
+                }
+            }
             for constraint in self.constraints.borrow().iter() {
                 if is_first_round || constraint.depends_on_marking {
                     constraint.execute(visitor);

@@ -1,16 +1,13 @@
 //! Fills in distances, and replaces the instructions that do not reach with sequences that do.
 
 use super::assembler::{Assembler, NOP, SiteKind, padding};
-use super::patch::REACH;
-use super::registers::X17;
 use crate::buffer::{CodeBuffer, Site};
 use crate::label::{Code, CodeTooLarge, Label, LabelState, Relocation, RelocationKind, resolve};
 
 const B: u32 = 0x1400_0000;
-const ADR: u32 = 0x1000_0000;
-const MOVZ_W: u32 = 0x5280_0000;
-const MOVK_W_SHIFTED: u32 = 0x72a0_0000;
-const ADD_X_SXTW: u32 = 0x8b20_c000;
+const ADRP: u32 = 0x9000_0000;
+const ADD_X_IMMEDIATE: u32 = 0x9100_0000;
+const LOG2_PAGE: u32 = 12;
 
 impl Assembler {
     pub fn finish(mut self) -> Result<Code, CodeTooLarge> {
@@ -79,9 +76,8 @@ fn reach(kind: SiteKind) -> u32 {
 
 fn growth(kind: SiteKind) -> i32 {
     match kind {
-        SiteKind::Branch14 | SiteKind::Branch19 => 4,
+        SiteKind::Branch14 | SiteKind::Branch19 | SiteKind::Address21 => 4,
         SiteKind::Literal19 { size } => 4 + i32::from(size),
-        SiteKind::Address21 => 12,
         SiteKind::Branch26 | SiteKind::TableEntry { .. } | SiteKind::Padding { .. } => {
             unreachable!("always reaches")
         }
@@ -145,7 +141,7 @@ fn rewrite(
     let len = buffer
         .len
         .wrapping_add_signed(added[buffer.sites.len()] as isize);
-    if len > REACH {
+    if len > buffer.limit {
         return Err(CodeTooLarge);
     }
     let old = &buffer.bytes[..buffer.len];
@@ -191,16 +187,14 @@ fn rewrite(
                 new.extend_from_slice(&old[target.offset as usize..][..size.into()]);
             }
             SiteKind::Address21 => {
-                let (dst, origin) = (word & 31, u32::from(X17.0));
-                assert!(dst != origin);
-                let distance = target
+                let dst = word & 31;
+                let to = target
                     .offset
-                    .wrapping_add_signed(added[target.link as usize])
-                    .wrapping_sub(new_at);
-                put(ADR | origin);
-                put(MOVZ_W | (distance & 0xffff) << 5 | dst);
-                put(MOVK_W_SHIFTED | (distance >> 16) << 5 | dst);
-                put(ADD_X_SXTW | dst << 16 | origin << 5 | dst);
+                    .wrapping_add_signed(added[target.link as usize]);
+                let pages = (to >> LOG2_PAGE).wrapping_sub(new_at >> LOG2_PAGE);
+                put(with_distance(site.kind, ADRP | dst, pages as i32));
+                put(ADD_X_IMMEDIATE | (to % (1 << LOG2_PAGE)) << 10 | dst << 5 | dst);
+                buffer.alignment = 1 << LOG2_PAGE;
             }
             _ => unreachable!("always reaches"),
         }

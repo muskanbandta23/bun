@@ -30,6 +30,8 @@ extern crate alloc;
 // inside this crate.
 extern crate self as bun_jsc;
 
+use bun_engine as _;
+use bun_engine_embed as _;
 use core::ffi::c_char;
 
 // ──────────────────────────────────────────────────────────────────────────

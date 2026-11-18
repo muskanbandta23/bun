@@ -10,15 +10,12 @@ libraries/headers it provides.
 2. Fill in `name`, `repo`, `commit`, `sources`, `includes`, `provides.includes`
 3. Add `import { <name> } from "./<name>.ts"` + entry in `allDeps` array in `index.ts`
 4. Add the name to `DepName` in `../source.ts`
-5. `bun run scripts/build/phase3-test.ts` to verify it builds
+5. `bun run build --target=<name>` to verify it builds
 
-That's it. For most deps you're done. A dep with several libraries, its own
-generators or helper executables adds `groups` and `steps` to the same
-`direct` spec — see `webkit.ts`.
+That's it. For most deps you're done. A dep with generators of its own adds
+`steps` to the same `direct` spec.
 
-**`name` must match the directory on disk** (`vendor/<name>/`). If your repo
-is `oven-sh/WebKit`, name it `"WebKit"` — that's what `git clone` creates.
-Case-sensitive filesystems enforce this.
+**`name` is the directory on disk** (`vendor/<name>/`) and the ninja target.
 
 **Ordering in `allDeps` matters:**
 
@@ -73,11 +70,6 @@ build banner shows `local:<name>` while this is on. Don't edit
 `vendor/<name>/` in place instead — it is wiped whenever the pin or patches
 change.
 
-WebKit is prebuilt unless redirected: `--webkit=local` (the `-local`
-profiles, `bun run build:local`) is `--local-deps=WebKit=$BUN_WEBKIT_PATH`,
-or `vendor/WebKit` when that is unset, and `--local-deps=WebKit=<path>` on any
-profile means the same for one build.
-
 ## Common fields
 
 ```ts
@@ -87,9 +79,10 @@ export const mydep: Dependency = {
   // Source tarball. Fetched from GitHub's archive endpoint (no git history,
   // just the files at `commit`). Most deps use this.
   //
-  // Other kinds: `prebuilt` (download pre-compiled .a, e.g. WebKit default),
-  // `local` (user-managed checkout: what a github-archive dep becomes via
-  // `--local-deps`, see above), `in-tree` (source in src/).
+  // Other kinds: `prebuilt` (download a release tarball, e.g. the Node.js
+  // headers), `local` (user-managed checkout: what a github-archive dep
+  // becomes via `--local-deps`, see above), `in-tree` (source in src/),
+  // `system` (already on the machine).
   source: () => ({ kind: "github-archive", repo: "owner/repo", commit: "..." }),
 
   // Optional: macro name for bun_dependency_versions.h (process.versions).
@@ -106,7 +99,7 @@ export const mydep: Dependency = {
   // How to build. `direct` lists sources explicitly; emitDirect compiles
   // each as a first-class cc/cxx edge and the resulting .o's go straight
   // into bun's link line. See `DirectBuild` in ../source.ts for all
-  // optional fields (lang/pic/defines/headers/codegen/groups/steps/forbidUndefined).
+  // optional fields (lang/pic/defines/headers/codegen/steps/libs/forbidUndefined).
   build: cfg => ({
     kind: "direct",
     sources: ["src/foo.c", "src/bar.c"],
@@ -123,6 +116,7 @@ export const mydep: Dependency = {
     libs: [],
     includes: ["include"],
     // defines: ["MY_DEP_STATIC=1"],  // Preprocessor defines for bun's compile.
+    // linkFlags: ["-lmydep"],        // Libraries the linker finds by name.
   }),
 
   // Optional: skip this dep on some platforms.
@@ -137,7 +131,7 @@ export const mydep: Dependency = {
   LTO sees across the dep boundary into bun's call sites. See `DirectBuild` in
   `../source.ts`.
 - **`cargo`**: Rust deps (currently lolhtml and rust-argon2). See `CargoBuild` in `../source.ts`.
-- **`none`**: Header-only or prebuilt. No build step; `.ref` stamp is the output.
+- **`none`**: Header-only, prebuilt or the system's. No build step; the fetch stamp, if any, is the output.
 
 ## Worked examples
 
@@ -150,10 +144,7 @@ export const mydep: Dependency = {
 - **sqlite.ts** — direct build, in-tree source (lives in `src/`, not `vendor/`)
 - **libuv.ts** — `enabled: cfg => cfg.windows` for a platform-only dep
 - **lolhtml.ts** — cargo build with rustflags
-- **webkit.ts** — `prebuilt`, and for a local checkout a direct build with
-  source `groups` (bmalloc, WTF, JavaScriptCore), generator and executable
-  `steps`, a per-group PCH, and file lists read from the checkout's own CMake
-  files at configure (`../cmake.ts`)
+- **icu.ts** — `system` source: nothing fetched or built, libraries named for the link
 
 ## How a dep builds
 

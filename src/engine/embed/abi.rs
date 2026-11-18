@@ -1,7 +1,7 @@
 //! How the types of an `#[export]` function cross to C++. `src/codegen/generate-engine-headers.ts` writes the other side.
 //!
 //! - A slice, a `Text` and an `AsciiLiteral` are passed in parts.
-//! - What can be empty is an `Option`. A `&StringImpl` or `StringRef` is empty where C++ has a null string.
+//! - What can be empty is an `Option`. A `&StringImpl`, `StringRef` or `&Identifier` is empty where C++ has a null one.
 //! - A `JsResult` comes back as zero when it is an error, and the exception is pending in the `Vm`.
 //! - A counted reference that is passed or returned by value changes hands.
 //!

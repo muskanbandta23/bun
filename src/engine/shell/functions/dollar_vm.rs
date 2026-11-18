@@ -438,7 +438,7 @@ fn count_lazy_functions(_: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 #[native_abi]
 fn set_time_zone(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let name = frame.argument(0).to_string_view(cx)?;
-    Ok(cx.set_time_zone(name.text()).into())
+    Ok(bun_engine_date::set_time_zone_override(name.text()).into())
 }
 
 #[native_abi]

@@ -7,7 +7,9 @@ use crate::assembly::{FloatAssembly, Reuse, VectorAssembly};
 use crate::features::X64Features;
 use crate::operand::Size;
 use crate::register::Fpr;
-use crate::vector::pattern::{ANY, Pattern, Side, ZERO, lanes_with, mask_of, whole_lanes};
+use crate::vector::pattern::{
+    ANY, Pattern, Side, ZERO, highest, lanes_with, lowest, mask_of, whole_lanes,
+};
 
 const INSTRUCTION: u8 = 2;
 const CONSTANT: u8 = 1;
@@ -111,14 +113,6 @@ fn separate(first: u16, second: u16) -> Option<(Size, u16)> {
         .into_iter()
         .map(|size| (size, whole_lanes(size, second)))
         .find(|&(_, lanes)| lanes & first == 0)
-}
-
-fn lowest(set: u16) -> u8 {
-    set.trailing_zeros() as u8
-}
-
-fn highest(set: u16) -> u8 {
-    set.ilog2() as u8
 }
 
 impl Single {

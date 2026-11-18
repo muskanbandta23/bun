@@ -25,13 +25,14 @@ use std::collections::HashMap;
 use bun_engine_asm::{Bank, Fpr, Gpr, Reg, RegisterSet, arm64, x64};
 use bun_engine_codegen::Target;
 use bun_engine_codegen::ir::{
-    Access, AccessFlags, Action, EffectFlags, Function, Heap, Input, Op, Output, PatchpointFlags,
-    Token, Type, Value,
+    Access, AccessFlags, Action, EffectFlags, Function, Heap, Input, Op, Output, Patchpoint,
+    PatchpointFlags, Token, Type, Value,
 };
 
 use super::datum::{Datum, Kind, Open, all_bits};
 use super::interpreter::{Machine, Source, Stop};
 use super::memory::Memory;
+use super::nodes::token_of;
 use super::random::mix;
 
 bitflags::bitflags! {
@@ -52,6 +53,8 @@ bitflags::bitflags! {
         const SMALL_RESULTS = 1 << 5;
         /// The first result is the address of an object.
         const GIVES_OBJECT = 1 << 6;
+        /// The first result is the first operand.
+        const GIVES_OPERAND = 1 << 7;
     }
 }
 
@@ -75,6 +78,13 @@ pub(crate) fn sites(function: &Function) -> HashMap<Token, Value> {
         ref op => Some((op.exit()?.token, value)),
     };
     instructions.filter_map(with_token).collect()
+}
+
+pub(crate) fn result_types(function: &Function, site: Value) -> impl Iterator<Item = Type> {
+    let ty = function.type_of(site);
+    let elements = (0..).map_while(move |position| function.tuple_element_type(site, position));
+    let elements = elements.filter(move |_| ty == Type::Tuple);
+    elements.chain(ty.is_data().then_some(ty))
 }
 
 fn result_bits(ty: Type, behaviour: Behaviour, seed: u64) -> u128 {
@@ -102,20 +112,13 @@ fn result_bits(ty: Type, behaviour: Behaviour, seed: u64) -> u128 {
 }
 
 impl Machine<'_> {
-    /// Gives the position of the successor, for the end of a block. `uses` are the operands and then the state.
-    pub(crate) fn invoke(
-        &mut self,
+    /// `CALLEE_COUNT` if it is no call, and the uses without the address.
+    fn callee<'a>(
+        &self,
         function: &Function,
-        site: Value,
-        uses: &[Datum],
-        results: &mut Vec<Datum>,
-    ) -> Result<usize, Stop> {
-        const WORD: u32 = 8;
-        let Op::Patchpoint(patchpoint) = *function.op(site) else {
-            unreachable!("not a patchpoint")
-        };
-        let data = *function.patchpoint(patchpoint);
-        let (effects, behaviour) = (data.effects, behaviour(data.token));
+        patchpoint: Patchpoint,
+        uses: &'a [Datum],
+    ) -> Result<(usize, &'a [Datum]), Stop> {
         let callee_at = |address: u64| {
             let found = self
                 .layout
@@ -124,7 +127,7 @@ impl Machine<'_> {
                 .position(|&callee| callee == address);
             found.ok_or(Stop::Undefined("call of what is no function"))
         };
-        let (callee, uses) = match data.action {
+        let (callee, uses) = match function.patchpoint(patchpoint).action {
             Action::Custom => (CALLEE_COUNT, uses),
             Action::Call(bun_engine_asm::Target::Symbol(callee)) => (callee as usize, uses),
             Action::Call(bun_engine_asm::Target::Address(address)) => {
@@ -144,6 +147,31 @@ impl Machine<'_> {
                 return Err(Stop::Undefined("call with another signature"));
             }
         }
+        Ok((callee, uses))
+    }
+
+    /// Gives the position of the successor, for the end of a block. `uses` are the operands and then the state.
+    pub(crate) fn invoke(
+        &mut self,
+        function: &Function,
+        site: Value,
+        uses: &[Datum],
+        results: &mut Vec<Datum>,
+    ) -> Result<usize, Stop> {
+        const WORD: u32 = 8;
+        let (effects, state) = (function.effects(site), function.state_of(site));
+        let (token, callee, uses) = match *function.op(site) {
+            Op::Patchpoint(patchpoint) => {
+                let (callee, uses) = self.callee(function, patchpoint, uses)?;
+                (function.patchpoint(patchpoint).token, callee, uses)
+            }
+            Op::Node { kind, data, .. } | Op::WideNode { kind, data, .. } => {
+                (token_of(kind, data), CALLEE_COUNT, uses)
+            }
+            _ => unreachable!("neither a patchpoint nor a node"),
+        };
+        let (behaviour, is_node) = (behaviour(token), function.op(site).node().is_some());
+        let first_of_state = uses.len() - function.state(state).len();
         if behaviour.contains(Behaviour::NEEDS_NONZERO) && !uses[0].is_not_zero()? {
             return Err(Stop::Undefined("operand of a patchpoint is zero"));
         }
@@ -154,17 +182,30 @@ impl Machine<'_> {
             }
             _ => value.as_bits(),
         };
-        let mut seed = Some(mix(data.token.0.into(), callee as u64));
+        let mut seed = Some(mix(token.0.into(), callee as u64));
         let first_observed = self.trace.observed.len();
-        for &value in uses {
+        for (position, &value) in uses.iter().enumerate() {
             let value = seen(value);
             self.trace.observed.push(value);
+            if is_node && position >= first_of_state {
+                continue;
+            }
             seed = seed
                 .filter(|_| value.unknown == 0)
                 .map(|seed| mix(mix(seed, value.bits as u64), (value.bits >> 64) as u64));
         }
-        if effects.has(EffectFlags::EXITS | EffectFlags::FENCE) {
-            self.record(function, Source::Site(data.token), effects, first_observed);
+        if is_node
+            && !effects.writes_memory()
+            && !effects.has(EffectFlags::FENCE | EffectFlags::KEPT)
+        {
+            self.trace.observed.truncate(first_observed);
+        } else if effects.has(EffectFlags::EXITS | EffectFlags::FENCE) {
+            if !effects.has(EffectFlags::EXITS) && is_node {
+                self.trace
+                    .observed
+                    .truncate(first_observed + first_of_state);
+            }
+            self.record(function, Source::Site(token), effects, first_observed);
         } else {
             self.trace.observed.truncate(first_observed);
             if effects.must_execute() {
@@ -211,13 +252,13 @@ impl Machine<'_> {
         }
 
         if exits {
-            let state = &uses[uses.len() - function.state(data.state).len()..];
-            return Err(self.exit(function, data.token, state));
+            return Err(self.exit(function, token, &uses[first_of_state..]));
         }
         results.clear();
-        for (position, &(ty, _)) in function.outputs(patchpoint).iter().enumerate() {
+        for (position, ty) in result_types(function, site).enumerate() {
             let seed = seed.map(|seed| mix(seed, 16 + position as u64));
             results.push(match seed {
+                _ if position == 0 && behaviour.contains(Behaviour::GIVES_OPERAND) => uses[0],
                 None => Datum::anything(ty),
                 Some(seed) if position == 0 && behaviour.contains(Behaviour::GIVES_OBJECT) => {
                     self.layout.object(seed).into()
@@ -232,9 +273,8 @@ impl Machine<'_> {
             }
             Some(count) if callee == CALLEE_COUNT => seed.ok_or(Open)? % count,
             Some(count) if count > 1 && seed.ok_or(Open)? >> 30 & 3 == 0 => {
-                let outputs = function.outputs(patchpoint).iter();
                 results.clear();
-                results.extend(outputs.map(|&(ty, _)| Datum::anything(ty)));
+                results.extend(result_types(function, site).map(Datum::anything));
                 1 + seed.ok_or(Open)? % (count - 1)
             }
             Some(_) => 0,

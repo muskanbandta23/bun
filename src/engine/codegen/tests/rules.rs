@@ -26,7 +26,7 @@ macro_rules! sources {
     };
 }
 
-const SOURCES: [(&str, &str); 19] = sources![
+const SOURCES: [(&str, &str); 20] = sources![
     "arithmetic",
     "bitwise",
     "blocks",
@@ -42,6 +42,7 @@ const SOURCES: [(&str, &str); 19] = sources![
     "memory",
     "mod",
     "params",
+    "promises",
     "selects",
     "shifts",
     "shuffles",
@@ -122,7 +123,7 @@ impl Drop for Counting<'_> {
 #[test]
 fn every_rule_applies_to_some_program() {
     let total = Mutex::new(rules());
-    campaign(6000, || Counting {
+    campaign(20_000, || Counting {
         own: Hits::new(),
         total: &total,
         analyses: Analyses::default(),

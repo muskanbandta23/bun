@@ -29,6 +29,7 @@ use super::memory::{
     ARGUMENTS_SIZE, ARGUMENTS_START, CALLEE_TABLE, CONSTANTS, DATA_SIZE, Input, Layout,
     OBJECT_COUNT, OBJECT_SIZE, OBJECT_TABLE, READ_ONLY_SIZE, Region, position,
 };
+use super::nodes;
 use super::random::{Random, mix};
 use super::vocabulary::{Registers, bank_of, registers};
 
@@ -46,6 +47,8 @@ pub(crate) struct Weights {
     pub(crate) checks: u32,
     pub(crate) patchpoints: u32,
     pub(crate) calls: u32,
+    /// Machine code cannot be generated for them.
+    pub(crate) nodes: u32,
     pub(crate) variables: u32,
     pub(crate) branches: u32,
     pub(crate) loops: u32,
@@ -78,7 +81,7 @@ pub(crate) struct Shape {
     pub(crate) withheld_percent: u32,
 }
 
-pub(crate) const PROFILES: [&str; 14] = [
+pub(crate) const PROFILES: [&str; 15] = [
     "templates",
     "themes",
     "integer themes",
@@ -91,6 +94,7 @@ pub(crate) const PROFILES: [&str; 14] = [
     "graphs",
     "variables",
     "sites",
+    "nodes",
     "shapes",
     "everything",
 ];
@@ -109,6 +113,7 @@ impl Shape {
             checks: 0,
             patchpoints: 0,
             calls: 0,
+            nodes: 0,
             variables: 0,
             branches: 0,
             loops: 0,
@@ -126,6 +131,7 @@ impl Shape {
             checks: 5,
             patchpoints: 2,
             calls: 1,
+            nodes: 3,
             branches: 8,
             ..none
         };
@@ -236,6 +242,14 @@ impl Shape {
                 pressure: 5,
                 vectors: 5,
                 loops: 4,
+                ..basic
+            },
+            "nodes" => Weights {
+                nodes: 50,
+                loops: 6,
+                switches: 3,
+                graphs: 1,
+                shapes: 3,
                 ..basic
             },
             "shapes" => Weights {
@@ -358,6 +372,7 @@ struct Scope {
     states: Vec<KnownState>,
     spots: Vec<Spot>,
     conditions: Vec<Value>,
+    nodes: Vec<Value>,
 }
 
 #[derive(Clone, Copy)]
@@ -366,6 +381,7 @@ struct Mark {
     states: usize,
     spots: usize,
     conditions: usize,
+    nodes: usize,
     sum: Value,
 }
 
@@ -536,6 +552,7 @@ impl Generator<'_> {
             self.heaps.push((range, self.function.add_heap(range)));
         }
         self.heaps.push((HeapRange::ALL, Heap::EVERYTHING));
+        self.function.set_node_kinds(nodes::kinds());
         self.function.quiets_nans = self.random.flip();
         self.function.params_are_extended = self.random.flip();
         for _ in 0..self.shape.slots {
@@ -715,6 +732,7 @@ impl Generator<'_> {
             states: self.scope.states.len(),
             spots: self.scope.spots.len(),
             conditions: self.scope.conditions.len(),
+            nodes: self.scope.nodes.len(),
             sum: self.sum,
         }
     }
@@ -731,6 +749,7 @@ impl Generator<'_> {
         self.scope.states.truncate(mark.states);
         self.scope.spots.truncate(mark.spots);
         self.scope.conditions.truncate(mark.conditions);
+        self.scope.nodes.truncate(mark.nodes);
         self.sum = mark.sum;
     }
 

@@ -3,13 +3,19 @@
 
 #![allow(clippy::disallowed_macros, clippy::disallowed_methods)]
 
+mod support;
+
 use std::time::Instant;
 
 use bun_engine_asm::prelude::*;
 use bun_engine_asm::{Features, Options as AssemblerOptions, Target};
 use bun_engine_codegen::ir::*;
-use bun_engine_codegen::passes::Level;
+use bun_engine_codegen::passes::{Analyses, Level, Pass};
 use bun_engine_codegen::{CallSite, Client, Compiler, ExitSite, Frame, Options, PatchpointSite};
+use support::generator::{Shape, generate};
+use support::harness::{pass_named, setting};
+use support::memory::Layout;
+use support::random::Random;
 
 struct Plain;
 
@@ -247,5 +253,68 @@ fn nanoseconds_per_value() {
                 total * 1e6 / f64::from(rounds),
             );
         }
+    }
+}
+
+fn measure_passes(title: &str, functions: &[Function]) {
+    let seconds: f64 = std::env::var("SECONDS").map_or(0.5, |text| text.parse().unwrap());
+    let chosen = setting("PASSES").map(|names| names.split(',').map(pass_named).collect());
+    let passes: Vec<&Pass> = chosen.unwrap_or_else(|| Pass::pipeline(Level::Full).iter().collect());
+    let size = |function: &Function| -> usize {
+        let of_block = |block| function.params(block).len() + function.instructions(block).count();
+        function.blocks().map(of_block).sum()
+    };
+    let (mut totals, mut analyses) = (vec![(0.0, 0.0, 0, 0); passes.len()], Analyses::default());
+    let (start, mut rounds) = (Instant::now(), 0);
+    while start.elapsed().as_secs_f64() < seconds {
+        for function in functions {
+            let mut function = function.clone();
+            analyses.invalidate();
+            for (pass, (analysing, running, before, after)) in passes.iter().zip(&mut totals) {
+                *before += size(&function);
+                let first = Instant::now();
+                analyses.dominators(&mut function);
+                let second = Instant::now();
+                pass.run(
+                    &mut function,
+                    &mut analyses,
+                    bun_engine_codegen::Target::host(),
+                );
+                *running += second.elapsed().as_secs_f64();
+                *analysing += (second - first).as_secs_f64();
+                *after += size(&function);
+            }
+        }
+        rounds += 1;
+    }
+    println!("{title}, nanoseconds per value for dominators and the pass, values before and after");
+    for (pass, (analysing, running, before, after)) in passes.iter().zip(totals) {
+        let [analysing, running] = [analysing, running].map(|time| time * 1e9 / before as f64);
+        let (name, before, after) = (pass.name, before / rounds, after / rounds);
+        println!("    {name:28} {analysing:6.1} {running:6.1} {before:8} {after:8}");
+    }
+}
+
+#[test]
+#[ignore = "a measurement"]
+fn nanoseconds_per_value_of_each_pass() {
+    for statements in [30, 1000] {
+        let mut function = Function::new(abi::PINNED);
+        build(&mut function, statements);
+        measure_passes(&format!("{statements} statements"), &[function]);
+    }
+    for (profile, size) in [
+        ("memory", 40),
+        ("loops", 40),
+        ("everything", 40),
+        ("everything", 3000),
+    ] {
+        let generate_one = |seed| {
+            let shape = Shape::of_profile(profile, &mut Random::new(seed));
+            let (shape, target) = (Shape { size, ..shape }, bun_engine_codegen::Target::host());
+            generate(seed, &shape, target, &Layout::default()).function
+        };
+        let functions: Vec<Function> = (0..u64::from(6000 / size)).map(generate_one).collect();
+        measure_passes(&format!("random programs, {profile} {size}"), &functions);
     }
 }

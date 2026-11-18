@@ -39,6 +39,8 @@ pub struct Registers {
     pub program_counter: usize,
     pub stack_pointer: usize,
     pub frame_pointer: usize,
+    /// `r12` or `x20`, where the interpreter has it.
+    pub bytecode_pointer: usize,
     #[cfg(target_arch = "aarch64")]
     pub link_register: usize,
 }

@@ -27,12 +27,14 @@ fn registers_in(state: &State) -> Registers {
         program_counter: state.__rip as usize,
         stack_pointer: state.__rsp as usize,
         frame_pointer: state.__rbp as usize,
+        bytecode_pointer: state.__r12 as usize,
     };
     #[cfg(target_arch = "aarch64")]
     return Registers {
         program_counter: state.__pc as usize,
         stack_pointer: state.__sp as usize,
         frame_pointer: state.__fp as usize,
+        bytecode_pointer: state.__x[20] as usize,
         link_register: state.__lr as usize,
     };
 }

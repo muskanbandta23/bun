@@ -27,12 +27,14 @@ fn registers_in(context: &CONTEXT) -> Registers {
         program_counter: context.Rip as usize,
         stack_pointer: context.Rsp as usize,
         frame_pointer: context.Rbp as usize,
+        bytecode_pointer: context.R12 as usize,
     };
     #[cfg(target_arch = "aarch64")]
     return Registers {
         program_counter: context.Pc as usize,
         stack_pointer: context.Sp as usize,
         frame_pointer: context.Fp as usize,
+        bytecode_pointer: context.X[20] as usize,
         link_register: context.Lr as usize,
     };
 }

@@ -14,7 +14,7 @@ unsafe extern "C" fn Support__readEntireFile(
     receive: unsafe extern "C" fn(*mut c_void, *const u8, usize),
 ) -> bool {
     // SAFETY: the caller's.
-    let path = unsafe { bun_core::ffi::slice(path, length) };
+    let path = unsafe { core::slice::from_raw_parts(path, length) };
     let Ok(contents) = File::read_from(Fd::cwd(), path) else {
         return false;
     };

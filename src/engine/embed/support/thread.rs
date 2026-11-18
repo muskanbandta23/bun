@@ -28,7 +28,7 @@ unsafe extern "C" fn Support__Thread__spawn(
 ) -> Option<Box<JoinHandle<()>>> {
     const STACK_SIZE: usize = 2 << 20;
     // SAFETY: the caller's.
-    let name = unsafe { bun_core::ffi::slice(name, length) };
+    let name = unsafe { core::slice::from_raw_parts(name, length) };
     let context = context.expose_provenance();
     std::thread::Builder::new()
         .name(name.iter().copied().map(char::from).collect())

@@ -47,12 +47,14 @@ fn registers_in(context: &libc::ucontext_t) -> Registers {
         program_counter: machine.gregs[libc::REG_RIP as usize] as usize,
         stack_pointer: machine.gregs[libc::REG_RSP as usize] as usize,
         frame_pointer: machine.gregs[libc::REG_RBP as usize] as usize,
+        bytecode_pointer: machine.gregs[libc::REG_R12 as usize] as usize,
     };
     #[cfg(all(not(target_os = "freebsd"), target_arch = "aarch64"))]
     return Registers {
         program_counter: machine.pc as usize,
         stack_pointer: machine.sp as usize,
         frame_pointer: machine.regs[29] as usize,
+        bytecode_pointer: machine.regs[20] as usize,
         link_register: machine.regs[30] as usize,
     };
     #[cfg(all(target_os = "freebsd", target_arch = "x86_64"))]
@@ -60,12 +62,14 @@ fn registers_in(context: &libc::ucontext_t) -> Registers {
         program_counter: machine.mc_rip as usize,
         stack_pointer: machine.mc_rsp as usize,
         frame_pointer: machine.mc_rbp as usize,
+        bytecode_pointer: machine.mc_r12 as usize,
     };
     #[cfg(all(target_os = "freebsd", target_arch = "aarch64"))]
     return Registers {
         program_counter: machine.mc_gpregs.gp_elr as usize,
         stack_pointer: machine.mc_gpregs.gp_sp as usize,
         frame_pointer: machine.mc_gpregs.gp_x[29] as usize,
+        bytecode_pointer: machine.mc_gpregs.gp_x[20] as usize,
         link_register: machine.mc_gpregs.gp_lr as usize,
     };
 }

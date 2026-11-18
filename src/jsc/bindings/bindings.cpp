@@ -6185,7 +6185,7 @@ restart:
             }
 
             // reuse memory
-            properties.data()->propertyNameVector().shrink(0);
+            properties.clear();
             if (iterating->isCallable())
                 break;
             if (iterating == globalObject || isOtherGlobal)
@@ -6267,7 +6267,7 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
         RETURN_IF_EXCEPTION(scope, );
     }
 
-    auto vector = properties.data()->propertyNameVector();
+    auto vector = properties.releaseData()->propertyNameVector();
     std::sort(vector.begin(), vector.end(), [](const Identifier& a, const Identifier& b) { return codePointCompare(a.impl(), b.impl()) < 0; });
     auto clientData = WebCore::clientData(vm);
 

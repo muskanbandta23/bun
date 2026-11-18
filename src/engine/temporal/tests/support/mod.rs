@@ -53,8 +53,7 @@ pub(crate) fn date_string(date: PlainDate) -> String {
 }
 
 pub(crate) fn date_time_string(date_time: PlainDateTime) -> String {
-    let text = date_time.to_text(Precision::AUTO, ShowCalendar::Never);
-    string(&text.unwrap())
+    string(&date_time.to_text(Precision::AUTO, ShowCalendar::Never))
 }
 
 pub(crate) fn zoned_string(zoned: &ZonedDateTime) -> String {
@@ -62,7 +61,7 @@ pub(crate) fn zoned_string(zoned: &ZonedDateTime) -> String {
 }
 
 pub(crate) fn duration_string(duration: &Duration) -> String {
-    string(&duration.to_text(Precision::AUTO).unwrap())
+    string(&duration.to_text(Precision::AUTO))
 }
 
 pub(crate) fn largest(unit: Unit) -> DifferenceOptions {

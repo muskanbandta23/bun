@@ -2,8 +2,8 @@
 
 use super::JULIAN_DAY_OF_EPOCH;
 use super::observed::Observations;
-use crate::Result;
 use crate::calendar::year::{Months, Year};
+use crate::{Error, Result};
 
 const START_OF_YEAR_ONE: i32 = 1_948_320 - JULIAN_DAY_OF_EPOCH;
 
@@ -19,10 +19,13 @@ fn first_day(number: i32) -> Result<i32> {
 
 pub(super) fn year(number: i32) -> Result<Year> {
     let (first_day, end) = (first_day(number)?, first_day(number + 1)?);
+    let days @ 365..=366 = end - first_day else {
+        return Err(Error::CalendarDataUnavailable);
+    };
     Ok(Year {
         number,
         first_day,
-        days: (end - first_day) as u16,
+        days: days as u16,
         months: Months {
             count: 12,
             leap_month: 0,

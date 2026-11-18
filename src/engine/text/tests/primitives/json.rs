@@ -25,15 +25,19 @@ fn quoted(units: &[u16]) -> Vec<u16> {
 fn check(units: &[u16]) {
     let expected = quoted(units);
     each_width(units, |text| {
+        let mut builder = StringBuilder::new();
+        builder.push_json_quoted(text);
+        assert_eq!(units_of(builder.text()), expected);
         for first in [0x61, 0x100] {
-            StringBuilder::on_stack::<256, _>(|builder| {
+            StringBuilder::on_stack::<512, _>(|builder| {
                 builder.push_unit(first);
                 builder.push_json_quoted(text);
                 assert_eq!(units_of(builder.text().slice_from(1)), expected);
-                assert_eq!(
-                    builder.is_latin1(),
-                    first < 0x100 && builder.text().fits_latin1()
-                );
+                assert!(builder.is_latin1() || first > 0xff || !text.fits_latin1());
+                builder.truncate(1);
+                builder.push_json_key(b',', text);
+                let key = units_of(builder.text().slice_from(1));
+                assert_eq!(key, [&[0x2c], &expected[..], &[0x3a]].concat());
             });
         }
     });

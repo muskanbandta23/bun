@@ -37,6 +37,9 @@ pub(crate) fn validate(graph: &Graph) -> Result<(), String> {
             if let Err(problem) = gives(graph, value, kind) {
                 return Err(at(graph, value, format_args!("{problem}")));
             }
+            if let Err(problem) = allocates(graph, value, kind) {
+                return Err(at(graph, value, format_args!("{problem}")));
+            }
         }
     }
     Ok(())
@@ -57,6 +60,21 @@ fn gives(graph: &Graph, value: Ssa, kind: Kind) -> Result<(), String> {
         if function.type_of(inside) != ty {
             return Err(format!("gives {:?}", function.type_of(inside)));
         }
+    }
+    Ok(())
+}
+
+/// A node that makes a cell names something that can make it.
+fn allocates(graph: &Graph, value: Ssa, kind: Kind) -> Result<(), String> {
+    if !matches!(kind, Kind::NewObject | Kind::NewScope | Kind::NewFunction) {
+        return Ok(());
+    }
+    let data = graph.node(value).map_or(0, |(_, data)| data);
+    let Some(allocation) = graph.allocations.get(data as usize) else {
+        return Err(format!("allocation {data}"));
+    };
+    if allocation.allocator == 0 {
+        return Err(format!("has nothing to make {} bytes", allocation.size));
     }
     Ok(())
 }

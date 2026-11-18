@@ -1,3 +1,4 @@
+use super::arguments::to_string;
 use super::prelude::*;
 use crate::{
     DifferenceOptions, FractionalSecondDigits, OptionValue, Overflow, PrecisionOptions,
@@ -30,12 +31,13 @@ impl Options {
     }
 
     /// `None` for undefined.
-    #[inline]
+    #[inline(always)]
     pub(super) fn get(self, cx: &mut Cx, name: PropertyName<'_>) -> JsResult<Option<Value>> {
-        match self.0 {
-            Some(object) => get_defined(cx, &object, name),
-            None => Ok(None),
-        }
+        let Some(object) = self.0 else {
+            return Ok(None);
+        };
+        let value = get(cx, &object, name)?;
+        Ok((!value.is_undefined()).then_some(value))
     }
 
     #[inline]
@@ -43,7 +45,7 @@ impl Options {
         let Some(value) = self.get(cx, T::PROPERTY)? else {
             return Ok(None);
         };
-        let string = value.to_string_view(cx)?;
+        let string = to_string(cx, value)?;
         T::parse(string.text()).or_throw(cx).map(Some)
     }
 
@@ -68,7 +70,7 @@ impl Options {
         let Some(value) = self.get(cx, name)? else {
             return Ok(None);
         };
-        let string = value.to_string_view(cx)?;
+        let string = to_string(cx, value)?;
         UnitOption::parse(string.text()).or_throw(cx).map(Some)
     }
 
@@ -88,10 +90,11 @@ impl Options {
         if let Some(number) = value.as_number() {
             return FractionalSecondDigits::from_number(number).or_throw(cx);
         }
-        let string = value.to_string_view(cx)?;
+        let string = to_string(cx, value)?;
         FractionalSecondDigits::parse(string.text()).or_throw(cx)
     }
 
+    #[inline]
     pub(super) fn difference(self, cx: &mut Cx) -> JsResult<DifferenceOptions> {
         Ok(DifferenceOptions {
             largest_unit: self.unit(cx, names::largestUnit)?,
@@ -101,6 +104,7 @@ impl Options {
         })
     }
 
+    #[inline]
     pub(super) fn round(self, cx: &mut Cx) -> JsResult<RoundOptions> {
         Ok(RoundOptions {
             rounding_increment: self.rounding_increment(cx)?,
@@ -109,6 +113,7 @@ impl Options {
         })
     }
 
+    #[inline]
     pub(super) fn precision(self, cx: &mut Cx) -> JsResult<PrecisionOptions> {
         Ok(PrecisionOptions {
             fractional_second_digits: self.fractional_second_digits(cx)?,
@@ -117,6 +122,7 @@ impl Options {
         })
     }
 
+    #[inline]
     pub(super) fn zoned(self, cx: &mut Cx, default: ZonedOptions) -> JsResult<ZonedOptions> {
         Ok(ZonedOptions {
             disambiguation: self.value_or(cx, default.disambiguation)?,
@@ -124,12 +130,6 @@ impl Options {
             overflow: self.value_or(cx, default.overflow)?,
         })
     }
-}
-
-#[inline(never)]
-fn get_defined(cx: &mut Cx, object: &JsObject, name: PropertyName<'_>) -> JsResult<Option<Value>> {
-    let value = object.get(cx, name)?;
-    Ok((!value.is_undefined()).then_some(value))
 }
 
 /// GetOptionsObject and GetTemporalOverflowOption

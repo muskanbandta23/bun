@@ -282,6 +282,21 @@ impl IteratorRecord {
         }
     }
 
+    /// The object whose elements it yields, and the index of the next one.
+    pub fn next_element(&self) -> Option<(Gc<JsObject>, u32)> {
+        match self.mode() {
+            IterationMode::Array | IterationMode::TypedArray => {
+                Some((self.subject.cast(), self.index()))
+            }
+            IterationMode::ArrayKeys | IterationMode::ArrayValues | IterationMode::ArrayEntries => {
+                let iterator = self.subject.cast::<JsArrayIterator>();
+                let index = iterator.index().and_then(|it| u32::try_from(it).ok());
+                Some((iterator.iterated_object(), index.unwrap_or(u32::MAX)))
+            }
+            _ => None,
+        }
+    }
+
     /// The next element of an array, if it is there and is plain data.
     #[inline(always)]
     pub fn try_step_array(&mut self) -> Option<Value> {

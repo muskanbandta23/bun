@@ -4,7 +4,7 @@ use super::load::{Plan, Reach, lookup_beyond, prepare};
 use super::{AccessCase, AccessCases, AccessKind, Key, PrototypeLookup, slot_at};
 use crate::{
     CodeBlock, Cx, DeleteKind, DeletePropertySlot, Gc, InternalMethod, JsObject, JsResult,
-    PropertySlot, Shape, Value, errors,
+    PropertySlot, ProxyObject, Shape, Value, errors,
 };
 
 fn apply(
@@ -32,6 +32,9 @@ fn plan_has(
     slot: &PropertySlot,
     reach: Reach,
 ) -> Result<AccessCase, Plan> {
+    if object.is::<ProxyObject>() && reach == Reach::Chain {
+        return Ok(AccessCase::new(AccessKind::ProxyHas, object.shape_id()));
+    }
     if !slot.is_cacheable() || slot.is_tainted_by_opaque_object() || name.as_index().is_some() {
         return Err(Plan::Fail);
     }
@@ -65,6 +68,9 @@ pub fn has_by_key(
     let variable_key = (key == Key::Variable).then_some(name);
     let key_address = variable_key.map_or(0, PropertyName::address);
     if let Some(case) = cases.find(object.shape_id(), key_address) {
+        if case.kind() == AccessKind::ProxyHas {
+            return object.has_property(cx, name);
+        }
         if case.is_valid() {
             return Ok(case.kind() != AccessKind::HasNot);
         }

@@ -103,7 +103,7 @@ impl JsRopeString {
 
     /// `base` is no rope, and the range is inside it.
     #[inline]
-    pub(crate) fn substring_of_resolved(
+    pub fn substring_of_resolved(
         vm: &Vm,
         base: Gc<JsString>,
         start: u32,

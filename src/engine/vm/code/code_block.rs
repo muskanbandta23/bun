@@ -457,6 +457,15 @@ impl CodeBlock {
         self.baseline().fields()[..self.code.constants.len()][index as usize].get()
     }
 
+    /// By the same elements in a more general kind. Code that has the address of the old one keeps that alive itself.
+    pub fn replace_array_constant(&self, index: u32, elements: Gc<ImmutableArray>) {
+        let owner = self.baseline();
+        let field = &owner.fields()[..self.code.constants.len()][index as usize];
+        assert!(field.get().is_some_and(Value::is::<ImmutableArray>));
+        // SAFETY: one of its own.
+        unsafe { field.set(&owner, Some(elements.into())) };
+    }
+
     /// # Safety
     /// There is such a function.
     #[inline(always)]

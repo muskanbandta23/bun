@@ -27,7 +27,6 @@ public:
     ENGINE_OPTION(useControlFlowProfiler)
     ENGINE_OPTION(useGC)
     ENGINE_OPTION(useJIT)
-    ENGINE_OPTION(usePrelinkedModuleInfo)
     ENGINE_OPTION(useSamplingProfiler)
     ENGINE_OPTION(useShadowRealm)
     ENGINE_OPTION(useTemporal)

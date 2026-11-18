@@ -163,8 +163,13 @@ fn change_of_zone(cx: &mut Cx) {
     cx.heap.collect_and_sweep(Some(Scope::Full));
     let young = new_date(cx, &[0.into()]);
     assert_eq!(invoke(cx, young, names::getHours, &[]), "19");
+    let locale = string(cx, "de");
+    let local = invoke(cx, old, names::toLocaleString, &[locale]);
+    assert_eq!(local, "31.12.1969, 19:00:00");
 
     assert!(cx.set_time_zone(Text::from_ascii("Asia/Tokyo")));
+    let local = invoke(cx, old, names::toLocaleString, &[locale]);
+    assert_eq!(local, "1.1.1970, 09:00:00");
     assert!(!cx.set_time_zone(Text::from_ascii("Nowhere")));
     for date in [old, young] {
         let fields = date.cast::<DateInstance>().local_fields(cx);

@@ -587,9 +587,9 @@ impl Scopes {
         is_new
     }
 
-    /// After the parameters, which hide it.
+    /// After the parameters, which hide it, as the `arguments` object does.
     pub(crate) fn declare_callee(&mut self, name: Name) {
-        if self.own_variable(name).is_none() {
+        if name != Name::ARGUMENTS && self.own_variable(name).is_none() {
             self.add_variable(name, BindingKind::Callee, 0);
         }
     }
@@ -895,21 +895,22 @@ impl Scopes {
     fn hoist_candidates(&mut self, frame: &Frame, ast: &mut Ast) {
         for index in frame.candidates as usize..self.candidates.len() {
             let Candidate { function, name, .. } = self.candidates[index];
-            if self.own_lexical(name).is_some()
-                || self.is_parameter(name)
-                || (name == Name::ARGUMENTS && self.has_own_arguments())
-            {
+            if self.own_lexical(name).is_some() || self.is_parameter(name) {
                 continue;
             }
+            ast[function].flags |= FunctionFlags::HOISTED_AS_VARIABLE;
             let is_new = self
                 .own_variable(name)
                 .is_none_or(|variable| variable.binding.kind == BindingKind::Callee);
+            if is_new && name == Name::ARGUMENTS && self.has_own_arguments() {
+                self.rewrite(name, u32::MAX - 1);
+                continue;
+            }
             let binding = self.declare_in_variable_scope(name, 0);
             binding.flags |= BindingFlags::USED | BindingFlags::WRITTEN | BindingFlags::REWRITTEN;
             if is_new {
                 binding.flags |= BindingFlags::HOISTED;
             }
-            ast[function].flags |= FunctionFlags::HOISTED_AS_VARIABLE;
         }
         self.candidates.truncate(frame.candidates as usize);
     }

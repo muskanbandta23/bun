@@ -3,7 +3,7 @@ use bun_engine_text::{AllocError, StringRef, Text};
 use crate::form::{self, Pair};
 
 /// The list of a `URLSearchParams` object. A `limit` is as for [`form::parse`].
-#[derive(Clone, Default, PartialEq, Eq, Debug)]
+#[derive(Default, PartialEq, Eq, Debug)]
 pub struct SearchParams(Vec<Pair>);
 
 impl SearchParams {
@@ -48,8 +48,15 @@ impl SearchParams {
     }
 
     /// By the code units of the names. Pairs of the same name keep their order.
-    pub fn sort(&mut self) {
-        self.0.sort_by(|a, b| a.name.text().cmp(&b.name.text()));
+    pub fn sort(&mut self) -> Result<(), AllocError> {
+        let mut numbered = Vec::new();
+        numbered
+            .try_reserve_exact(self.0.len())
+            .map_err(|_| AllocError)?;
+        numbered.extend(self.0.drain(..).enumerate());
+        numbered.sort_unstable_by(|(i, a), (j, b)| (a.name.text(), i).cmp(&(b.name.text(), j)));
+        self.0.extend(numbered.into_iter().map(|(_, pair)| pair));
+        Ok(())
     }
 
     pub fn serialize(&self) -> Result<StringRef, AllocError> {

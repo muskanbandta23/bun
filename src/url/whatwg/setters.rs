@@ -59,11 +59,14 @@ enum HostSetter {
 }
 
 impl<'a> Parser<'a> {
-    /// A parser whose output starts with the first `length` bytes of `url`.
-    fn resuming(value: Source<'a>, url: &View<'a>, length: u32, punycode: Punycode) -> Parser<'a> {
-        let mut parser = Parser::new(value, punycode, url.parts);
-        parser.out.start_with(&url.text[..length as usize], 0);
-        parser
+    /// Starts the output with the first `length` bytes of `url`.
+    #[inline]
+    fn continue_from(&mut self, url: &View<'a>, length: u32) -> Result<()> {
+        if !self.out.has_room_for(url.text) {
+            return Err(Error::OutOfMemory);
+        }
+        self.out.start_with(&url.text[..length as usize], 0);
+        Ok(())
     }
 
     /// The URL that has `rest` behind the output up to `end`.
@@ -212,7 +215,8 @@ impl Url {
                 return Ok(());
             }
             let old = url.parts;
-            let mut parser = Parser::resuming(value, &url, old.host_start, punycode);
+            let mut parser = Parser::new(value, punycode, old);
+            parser.continue_from(&url, old.host_start)?;
             if !old.has_host() {
                 parser.out.replace(0, 0, b"//")?;
                 parser.parts.set_empty_authority(parser.mark(0));
@@ -272,8 +276,8 @@ impl Url {
                 return Ok(());
             }
             let old = url.parts;
-            let mut parser =
-                Parser::resuming(value, &url, old.authority_end(), Punycode::Unchecked);
+            let mut parser = Parser::new(value, Punycode::Unchecked, old);
+            parser.continue_from(&url, old.authority_end())?;
             parser.parts.path_start = old.authority_end();
             let stays_empty = value.bytes.is_empty() && old.has_host() && !parser.is_special();
             if !stays_empty && let Step::Segments(start) = parser.first_slash(0)? {
@@ -302,7 +306,8 @@ impl Url {
         without_tab_or_newline(value.unwrap_or(Text::EMPTY), |source| {
             let url = self.valid_view()?;
             let old = url.parts;
-            let mut parser = Parser::resuming(source, &url, old.path_end, Punycode::Unchecked);
+            let mut parser = Parser::new(source, Punycode::Unchecked, old);
+            parser.continue_from(&url, old.path_end)?;
             let set = parser.query_set() | NUMBER_SIGN;
             let end = parser.encode_up_to_fragment(&mut TAIL_SCAN.scan(source.bytes, 0), set)?;
             let [head, body, pending] = parser.out.pieces(end);
@@ -323,8 +328,8 @@ impl Url {
     pub fn set_fragment(&mut self, value: Option<Text<'_>>) -> Result<()> {
         without_tab_or_newline(value.unwrap_or(Text::EMPTY), |source| {
             let url = self.valid_view()?;
-            let query_end = url.parts.query_end;
-            let mut parser = Parser::resuming(source, &url, query_end, Punycode::Unchecked);
+            let mut parser = Parser::new(source, Punycode::Unchecked, url.parts);
+            parser.continue_from(&url, url.parts.query_end)?;
             let mut scan = TAIL_SCAN.scan(source.bytes, 0);
             while parser.encode_up_to_fragment(&mut scan, FRAGMENT)? < source.bytes.len() {}
             let [head, body, pending] = parser.out.pieces(source.bytes.len());

@@ -1,6 +1,7 @@
 use bun_engine_date::{
     Component, DateFields, date_string, iso_string, make_full_year, ms_from_time, utc_string,
 };
+use bun_engine_intl::date_time_format::Purpose;
 use bun_engine_text::StringRef;
 use bun_engine_vm::{Attributes, DateInstance, JsFunction, PreferredType};
 
@@ -17,6 +18,9 @@ static_table!(static PROPERTIES = [
     StaticProperty::function(names::toISOString, to_iso_string, 0),
     StaticProperty::function(names::toDateString, to_date_string, 0),
     StaticProperty::function(names::toTimeString, to_time_string, 0),
+    StaticProperty::function(names::toLocaleString, to_locale_string, 0),
+    StaticProperty::function(names::toLocaleDateString, to_locale_date_string, 0),
+    StaticProperty::function(names::toLocaleTimeString, to_locale_time_string, 0),
     getter!(valueOf, get_time, DatePrototypeGetTime),
     getter!(getTime, get_time, DatePrototypeGetTime),
     getter!(getFullYear, get_full_year, DatePrototypeGetFullYear),
@@ -99,6 +103,30 @@ fn to_time_string(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let fields = this_date(cx, frame)?.local_fields(cx);
     let string = fields.map(|fields| cx.date_cache().time_string(fields));
     Ok(or_invalid_date(cx, string))
+}
+
+fn format_for_locale(cx: &mut Cx, frame: &CallFrame, purpose: Purpose) -> JsResult<Value> {
+    let time = this_date(cx, frame)?.time();
+    if time.is_nan() {
+        return Ok(or_invalid_date(cx, None));
+    }
+    let (locales, options) = (frame.argument(0), frame.argument(1));
+    bun_engine_intl::date_to_locale_string(cx, time, purpose, locales, options)
+}
+
+#[native_abi]
+fn to_locale_string(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    format_for_locale(cx, frame, Purpose::DateAndTime)
+}
+
+#[native_abi]
+fn to_locale_date_string(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    format_for_locale(cx, frame, Purpose::Date)
+}
+
+#[native_abi]
+fn to_locale_time_string(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    format_for_locale(cx, frame, Purpose::Time)
 }
 
 #[native_abi]

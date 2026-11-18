@@ -86,6 +86,10 @@ impl FunctionInfo {
         self.kind
     }
 
+    pub fn flags(&self) -> FunctionFlags {
+        self.flags
+    }
+
     pub fn is_strict(&self) -> bool {
         self.flags.contains(FunctionFlags::STRICT)
     }

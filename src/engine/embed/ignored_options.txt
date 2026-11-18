@@ -267,7 +267,6 @@ flag useRegExpLookbehindJIT
 flag useRunOnceCodeRelease
 flag useSharedModuleFunctionExpressionExecutables
 flag useSourceCodeDump
-flag useSourceProviderCache
 flag useStochasticMutatorScheduler
 flag useSuperSampler
 flag useTextMarkers

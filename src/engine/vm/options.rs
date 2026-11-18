@@ -117,6 +117,7 @@ options! {
     use_async_stack_trace / useAsyncStackTrace: bool = true,
     use_tail_calls / useTailCalls: bool = true,
     use_code_cache / useCodeCache: bool = true,
+    use_source_cache / useSourceProviderCache: bool = true,
     log_bytecode_cache / verboseDiskCache: bool = false,
     use_prelinked_modules / usePrelinkedModuleInfo: bool = true,
     runs_only_static_code / disallowNonStaticCode: bool = false,

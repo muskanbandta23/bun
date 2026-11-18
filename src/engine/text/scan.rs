@@ -3,8 +3,20 @@
 
 use bun_highway::text as kernels;
 
-use crate::block::{self, BLOCK, Not, Positions, Units};
+use crate::block::{self, BLOCK, Not, Pairs, Positions, Units};
 use crate::{CodeUnit, Text, with_text};
+
+/// A bit for each unit that passes, the first one lowest.
+#[inline(always)]
+pub fn mask<T: CodeUnit>(units: &[T; BLOCK], test: impl Fn(T) -> bool + Copy) -> u32 {
+    Units(units, test).mask(0)
+}
+
+/// A bit for each index at which both have the same.
+#[inline(always)]
+pub fn equal_mask(a: &[u8; BLOCK], b: &[u8; BLOCK]) -> u32 {
+    Pairs::new(a, b, |a, b| a == b).mask(0)
+}
 
 /// The index of the first unit that passes.
 #[inline(always)]
@@ -47,8 +59,9 @@ pub fn positions<T: CodeUnit>(
     })
 }
 
+/// A quotation mark, a backslash or a control character.
 #[inline(always)]
-pub(crate) fn is_json_special(unit: u16) -> bool {
+pub fn is_json_special(unit: u16) -> bool {
     (unit < 0x20) | (unit == 0x22) | (unit == 0x5c)
 }
 

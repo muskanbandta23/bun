@@ -1,10 +1,14 @@
 use core::ops::Deref;
 
+use bun_alloc::AllocError;
+use bun_engine_text::PropertyName;
+
+use super::property_table::PropertyTable;
 use crate::heap::visit_children_of;
 use crate::{
-    CellKind, CellType, CellTypeRange, Class, ClassOps, Extends, Field, Gc, GcFree, GlobalObject,
-    JsCell, JsObject, JsObjectInit, PropertyOffset, Shape, ShapeSpec, Storage, TypeFlags, Value,
-    Visitor, Vm, ascii_literal,
+    CellKind, CellType, CellTypeRange, Class, ClassOps, Cx, Extends, Field, Gc, GcFree,
+    GlobalObject, JsCell, JsObject, JsObjectInit, PropertyOffset, Shape, ShapeFlags, ShapeSpec,
+    Storage, TypeFlags, Value, Visitor, Vm, ascii_literal,
 };
 
 /// An ordinary object. The first slots follow the header.
@@ -180,6 +184,97 @@ impl JsFinalObject {
     pub fn create_with_values(vm: &Vm, shape: Gc<Shape>, values: &[Value]) -> Gc<JsFinalObject> {
         // SAFETY: only reads a slice.
         unsafe { Self::create_from_iter(vm, shape, values.iter().copied()) }
+    }
+
+    /// The same, for as many as a script likes.
+    #[inline(always)]
+    pub fn try_create_with_values(
+        vm: &Vm,
+        shape: Gc<Shape>,
+        values: &[Value],
+    ) -> Result<Gc<JsFinalObject>, AllocError> {
+        const UNFIT: ShapeFlags =
+            (ShapeFlags::DICTIONARY.union(ShapeFlags::IS_CLAIMED)).union(ShapeFlags::HAS_ANY_ACCESSOR);
+        let (count, capacity) = (values.len(), shape.inline_capacity());
+        if (shape.max_offset().get() + 1) as usize != count
+            || count.wrapping_sub(1) >= capacity
+            || shape.has(UNFIT)
+            || shape.instance_indexing_mode().has_elements()
+        {
+            return Self::try_create_with_storage(vm, shape, values);
+        }
+        assert!(shape.instance_type() == CellType::FinalObject);
+        let address = vm.allocate_cell_memory(Self::allocation_size(capacity));
+        // SAFETY: a new cell of that size, each word of which is written.
+        unsafe {
+            let object = Gc::<JsFinalObject>::from_address(address);
+            let init = JsObjectInit::with_storage(shape, Storage::NONE);
+            JsObject::initialize(object.as_ptr().cast(), init);
+            let (used, unused) = object.inline_slots(capacity).split_at_unchecked(count);
+            for (slot, &value) in used.iter().zip(values) {
+                slot.set_without_barrier(Some(value));
+            }
+            for slot in unused {
+                slot.set_without_barrier(None);
+            }
+            crate::heap::barrier::publish_fence();
+            Ok(object)
+        }
+    }
+
+    #[inline(never)]
+    fn try_create_with_storage(
+        vm: &Vm,
+        shape: Gc<Shape>,
+        values: &[Value],
+    ) -> Result<Gc<JsFinalObject>, AllocError> {
+        let (size, capacity) = (shape.out_of_line_size(), shape.out_of_line_capacity());
+        if size == 0 || shape.instance_indexing_mode().has_elements() {
+            return Ok(Self::create_with_values(vm, shape, values));
+        }
+        assert!(
+            values.len() == shape.slot_count()
+                && !shape.has(ShapeFlags::IS_CLAIMED | ShapeFlags::HAS_ANY_ACCESSOR)
+        );
+        let storage = Storage::try_allocate(vm, 0, capacity, None)?;
+        if shape.is_dictionary() {
+            shape.set_flags(ShapeFlags::IS_CLAIMED);
+        }
+        let (inline, out_of_line) = values.split_at(shape.inline_capacity());
+        // SAFETY: each slot is written, and the caller keeps the values alive.
+        unsafe {
+            storage.clear_slots(size, capacity);
+            for (slot, &value) in storage.slots(size).iter().rev().zip(out_of_line) {
+                slot.set_without_barrier(Some(value));
+            }
+            let object = Self::allocate(vm, JsObjectInit::with_storage(shape, storage));
+            for (slot, &value) in object.inline_slots(inline.len()).iter().zip(inline) {
+                slot.set_without_barrier(Some(value));
+            }
+            Ok(object)
+        }
+    }
+
+    /// With a value for each name, none of which is an index. Of those for the same name, the last one counts. What
+    /// `values` has afterwards is unspecified.
+    pub fn try_create_dictionary<'a>(
+        cx: &Cx,
+        names: impl Iterator<Item = PropertyName<'a>>,
+        values: &mut [Value],
+    ) -> Result<Gc<JsFinalObject>, AllocError> {
+        let capacity = Self::DEFAULT_INLINE_CAPACITY;
+        let mut table = PropertyTable::try_with_room_for(values.len())?;
+        for (index, name) in (0..values.len()).zip(names) {
+            assert!(name.as_index().is_none());
+            values[table.find_or_add(name, capacity)] = values[index];
+        }
+        let count = table.len();
+        let spec = ShapeSpec::of::<JsFinalObject>().with_inline_capacity(capacity);
+        let (global, prototype) = (Some(cx.global()), cx.object_prototype().into());
+        let shape = Shape::create_dictionary(cx, global, prototype, spec);
+        shape.adopt_table(table);
+        shape.set_flags(ShapeFlags::HAS_BEEN_DICTIONARY);
+        Self::try_create_with_values(cx, shape, &values[..count])
     }
 
     /// # Safety

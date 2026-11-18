@@ -1,3 +1,4 @@
+use bun_alloc::AllocError;
 use bun_engine_macros::FieldOffsets;
 use bun_engine_text::{Identifier, PropertyName};
 
@@ -42,6 +43,22 @@ impl PropertyTable {
             entries: Vec::with_capacity(capacity),
             ..PropertyTable::default()
         }
+    }
+
+    /// Adding that many allocates nothing.
+    pub(crate) fn try_with_room_for(count: usize) -> Result<PropertyTable, AllocError> {
+        let (mut entries, mut index) = (Vec::new(), Vec::new());
+        entries.try_reserve_exact(count).map_err(|_| AllocError)?;
+        if count > LINEAR_LIMIT {
+            let capacity = (count * 2).next_power_of_two();
+            index.try_reserve_exact(capacity).map_err(|_| AllocError)?;
+            index.resize(capacity, 0);
+        }
+        Ok(PropertyTable {
+            entries,
+            index: index.into_boxed_slice(),
+            ..PropertyTable::default()
+        })
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -111,6 +128,15 @@ impl PropertyTable {
             Self::insert(&mut self.index, name, self.entries.len() as u32);
         }
         offset
+    }
+
+    /// The position of the property, which is added without attributes if it is not there. Nothing has been removed.
+    #[inline]
+    pub(crate) fn find_or_add(&mut self, name: PropertyName<'_>, inline_capacity: usize) -> usize {
+        self.position(name).unwrap_or_else(|| {
+            self.add(name, Attributes::NONE, inline_capacity);
+            self.entries.len() - 1
+        })
     }
 
     fn insert(index: &mut [u32], name: PropertyName<'_>, value: u32) {

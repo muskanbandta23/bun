@@ -1,5 +1,6 @@
 //! JSON text (ECMA-404) to values and back.
 
+mod encoding;
 mod lines;
 mod parser;
 mod raw;
@@ -9,9 +10,12 @@ mod stringify;
 mod syntax_error;
 mod token;
 
-use bun_engine_text::{CodeUnit, Text};
+use bun_engine_text::Text;
 
-use crate::{Cx, JsResult, Thrown, Value};
+use crate::heap::Survivors;
+use crate::services::Service;
+use crate::{Cx, JsResult, Thrown, Value, Visitor, Vm};
+use encoding::{Encoding, Latin1, Utf8, Utf16};
 use parser::Parser;
 use syntax_error::SyntaxError;
 
@@ -19,6 +23,21 @@ pub use lines::{LinesEnd, ParsedLines, parse_lines};
 pub use raw::RawJson;
 pub use reviver::parse_with_reviver;
 pub use stringify::stringify;
+
+#[derive(Default)]
+pub(super) struct State {
+    parser: parser::State,
+}
+
+impl Service for State {
+    fn visit(&self, visitor: &mut Visitor) {
+        self.parser.visit(visitor);
+    }
+
+    fn reconcile_weak_references(&self, vm: &Vm, survivors: &Survivors) {
+        self.parser.reconcile_weak_references(vm, survivors);
+    }
+}
 
 #[derive(Clone, Copy)]
 pub enum Source<'a> {
@@ -32,28 +51,6 @@ impl<'a> From<Text<'a>> for Source<'a> {
     fn from(text: Text<'a>) -> Source<'a> {
         Source::Text(text)
     }
-}
-
-trait Encoding {
-    type Unit: CodeUnit;
-    const IS_UTF8: bool = false;
-}
-
-struct Latin1;
-struct Utf16;
-struct Utf8;
-
-impl Encoding for Latin1 {
-    type Unit = u8;
-}
-
-impl Encoding for Utf16 {
-    type Unit = u16;
-}
-
-impl Encoding for Utf8 {
-    type Unit = u8;
-    const IS_UTF8: bool = true;
 }
 
 /// Calls a function that is generic over the `Encoding` with the units of a `Source` as its second argument.

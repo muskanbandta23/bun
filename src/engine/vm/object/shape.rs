@@ -946,6 +946,16 @@ impl Shape {
             .unwrap_or(PropertyOffset::INVALID)
     }
 
+    /// The shape has neither properties nor instances yet, and nothing has been removed from the table.
+    pub(super) fn adopt_table(&self, table: PropertyTable) {
+        for (name, offset, attributes) in table.iter() {
+            self.did_add_property(name, attributes);
+            self.set_max_offset(offset);
+        }
+        self.table.set(Some(Rc::new(table)));
+        self.set_flags(ShapeFlags::IS_PINNED);
+    }
+
     /// The caller makes room in the only instance and then raises `max_offset`.
     pub(super) fn add_property_in_place(
         &self,

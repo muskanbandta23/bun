@@ -2,7 +2,7 @@
 
 use core::cell::Cell;
 
-use super::{BLOCK_SIZE, Heap, JsCell, MutatorState, Scope, barrier};
+use super::{BLOCK_SIZE, DeferCollection, Heap, JsCell, MutatorState, Scope, barrier};
 use crate::options;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -98,10 +98,20 @@ impl Policy {
         if limit != 0 && allocated > limit {
             return true;
         }
-        let allowed = self.max_heap_size.get() - self.sizes.get().after_last;
         // A large allocation that has just been made is alive, and says little about the rest.
-        allocated > allowed
+        allocated > self.allowed()
             && (self.kind != HeapKind::Large || self.last_oversized.get() <= allocated / 3)
+    }
+
+    fn allowed(&self) -> usize {
+        self.max_heap_size.get() - self.sizes.get().after_last
+    }
+
+    /// Whether a collection would become due before so much more is allocated, and has something to find now.
+    fn is_due_ahead_of(&self, bytes: usize) -> bool {
+        let (allocated, allowed) = (self.allocated.get(), self.allowed());
+        allocated.saturating_add(bytes) > allowed
+            && allocated.saturating_sub(self.last_oversized.get()) >= allowed / 8
     }
 
     pub(super) fn choose_scope(&self, requested: Option<Scope>) -> Scope {
@@ -208,6 +218,20 @@ impl Heap {
         } else {
             self.collect(None);
         }
+    }
+
+    /// For making about so many bytes of cells that are all alive in the end, which a collection in the middle of it
+    /// could only waste time on. May collect now.
+    #[inline]
+    pub(crate) fn defer_collection_for(&self, bytes: usize) -> DeferCollection<'_> {
+        #[cfg(debug_assertions)]
+        self.collect_if_stressed();
+        if (self.did_defer_collection.get() || bytes >= BLOCK_SIZE)
+            && (self.policy.is_due() || self.policy.is_due_ahead_of(bytes))
+        {
+            self.collect(None);
+        }
+        self.defer_collection()
     }
 
     #[cfg(debug_assertions)]

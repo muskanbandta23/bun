@@ -1,6 +1,7 @@
 //! A value on each line, in a text that may break off anywhere.
 
 use bun_engine_text::{CodeUnit, Text, scan};
+use bun_simdutf_sys::simdutf;
 
 use super::parser::Parser;
 use super::{Encoding, Failure, Latin1, Source, Utf8, Utf16, with_source};
@@ -38,6 +39,9 @@ fn lacks_only_exponent<T: CodeUnit>(units: &[T], at: usize) -> bool {
 }
 
 fn length_when_repaired(bytes: &[u8]) -> usize {
+    if simdutf::validate::utf8(bytes) {
+        return bytes.len();
+    }
     let replacement = char::REPLACEMENT_CHARACTER.len_utf8();
     let length = |chunk: core::str::Utf8Chunk<'_>| {
         chunk.valid().len() + usize::from(!chunk.invalid().is_empty()) * replacement
@@ -84,7 +88,7 @@ fn parse_units<E: Encoding>(
             }
         };
         if let Source::Utf8(bytes) = source
-            && parser.has_repaired_text()
+            && parser.has_non_ascii_bytes()
         {
             read = length_when_repaired(&bytes[..read]);
         }

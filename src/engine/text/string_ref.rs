@@ -96,6 +96,23 @@ impl StringRef {
         Ok(writer.finish())
     }
 
+    /// The first `length` units, in an allocation for all of them. Panics unless `length` is from 1 to `N`.
+    #[inline(always)]
+    pub fn try_from_prefix<T: CodeUnit, const N: usize>(
+        units: &[T; N],
+        length: usize,
+    ) -> Result<StringRef, AllocError> {
+        assert!((1..=N).contains(&length));
+        let string = StringImpl::allocate::<T>(N)?;
+        // SAFETY: new, with room for `N` units, and aligned for them.
+        unsafe {
+            string.byte_add(StringImpl::TAIL).cast().write(*units);
+            let field = string.byte_add(StringImpl::OFFSET_OF_LENGTH);
+            field.cast::<u32>().write(length as u32);
+        }
+        Ok(StringRef(string))
+    }
+
     /// A copy of the same width.
     #[inline]
     pub fn try_from_text(text: Text<'_>) -> Result<StringRef, AllocError> {

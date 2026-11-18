@@ -2627,6 +2627,12 @@ dependencies = [
 [[package]]
 name = "bun_yarr"
 version = "0.0.0"
+dependencies = [
+ "bun_core",
+ "bun_engine_regexp",
+ "bun_engine_standalone",
+ "bun_engine_text",
+]
 
 [[package]]
 name = "bun_zlib"

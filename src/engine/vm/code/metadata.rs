@@ -284,7 +284,9 @@ unsafe impl Entry for GetPrivateName {
     }
 
     fn reconcile(&self, owner: &CodeBlock, survivors: &Survivors) {
-        self.name.clear_if_dead(survivors);
+        if self.name.clear_if_dead(survivors) {
+            self.cache.reset();
+        }
         self.cache.reconcile(owner, survivors);
     }
 }
@@ -300,7 +302,9 @@ unsafe impl Entry for PutPrivateName {
     }
 
     fn reconcile(&self, owner: &CodeBlock, survivors: &Survivors) {
-        self.name.clear_if_dead(survivors);
+        if self.name.clear_if_dead(survivors) {
+            self.cache.reset();
+        }
         self.cache.reconcile(owner, survivors);
     }
 }

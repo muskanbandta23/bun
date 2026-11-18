@@ -656,6 +656,12 @@ opt-level = 2
 opt-level = 2
 [profile.dev.package.bun_engine_wasm]
 opt-level = 2
+[profile.dev.package.bun_engine_wasm_compiler]
+opt-level = 2
+[profile.dev.package.bun_engine_wasm_format]
+opt-level = 2
+[profile.dev.package.bun_engine_wasm_runtime]
+opt-level = 2
 
 # A bytecode handler that calls nothing runs on the frame of the JavaScript function.
 [profile.dev.package.bun_engine_interpreter]

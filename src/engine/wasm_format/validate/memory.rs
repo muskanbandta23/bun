@@ -97,7 +97,9 @@ impl VisitMemory for Validator<'_> {
     #[inline(always)]
     fn store(&mut self, op: StoreOp, arg: MemArg) -> Checked {
         let address = self.address_type(arg.memory);
-        if self.top() == Some(&mut [address, op.value_type()]) {
+        if let Some(top) = self.top()
+            && ValType::pair(*top) == ValType::pair([address, op.value_type()])
+        {
             self.height -= 2;
             return Ok(());
         }

@@ -992,6 +992,11 @@ impl Function {
         self.value_lists.add(values.iter().copied())
     }
 
+    #[inline]
+    pub fn values_in(&self, span: Span<Value>) -> &[Value] {
+        &self.value_lists[span]
+    }
+
     // States. Instructions share them, so they change only by what holds for the whole function.
 
     pub fn add_state(&mut self, values: &[Value]) -> State {

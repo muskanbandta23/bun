@@ -1,6 +1,7 @@
 // Direct `extern "C"` re-exports of the Google Highway SIMD C++ helpers.
 // Per crate map: `bun.highway.*` → `bun_highway::*` (same C++ backing).
 
+pub mod elements;
 pub mod url;
 pub mod webp;
 

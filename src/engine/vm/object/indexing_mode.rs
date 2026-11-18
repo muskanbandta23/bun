@@ -28,6 +28,29 @@ impl ElementKind {
         }
     }
 
+    /// The least general kind that can represent what this one can, and `values`.
+    #[inline]
+    pub fn generalized_for(self, values: impl IntoIterator<Item = Value>) -> ElementKind {
+        let mut kind = self;
+        for value in values {
+            if kind >= ElementKind::Contiguous {
+                break;
+            }
+            kind = kind.max(ElementKind::for_value(value));
+        }
+        kind
+    }
+
+    /// The word for a hole.
+    #[inline(always)]
+    pub(super) fn hole(self) -> u64 {
+        if self == ElementKind::Double {
+            Value::PURE_NAN_BITS
+        } else {
+            0
+        }
+    }
+
     #[inline(always)]
     pub fn is_dense(self) -> bool {
         self != ElementKind::None && self != ElementKind::Sparse

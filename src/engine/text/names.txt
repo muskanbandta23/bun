@@ -885,6 +885,7 @@ useStrict = use strict
 @charCodeAt
 @clear
 @cloneObject
+@collectForSpread
 @constructor
 @copyDataProperties
 @create

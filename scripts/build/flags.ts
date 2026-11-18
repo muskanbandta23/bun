@@ -1943,6 +1943,12 @@ export const fileOverrides: FileOverride[] = [
     desc: "Same as highway_json.cpp below: the kernels run over every byte of what is in a gzip or zlib stream.",
   },
   {
+    file: "src/jsc/bindings/highway_elements.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run over every element of an array that is searched.",
+  },
+  {
     file: "src/jsc/bindings/highway_jpeg.cpp",
     extraFlags: ["-O2"],
     when: c => c.debug,

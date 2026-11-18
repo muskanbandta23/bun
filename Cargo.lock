@@ -812,13 +812,12 @@ version = "0.0.0"
 dependencies = [
  "bun_engine_bigint",
  "bun_engine_date",
- "bun_engine_heap",
- "bun_engine_macros",
  "bun_engine_number",
  "bun_engine_standalone",
  "bun_engine_text",
- "bun_engine_vm",
+ "bun_engine_unicode",
  "bun_icu",
+ "hashbrown 0.15.5",
  "smallvec",
 ]
 

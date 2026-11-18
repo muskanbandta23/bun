@@ -1,7 +1,7 @@
 //! The `Intl` object.
 
 #![forbid(unsafe_code)]
-#![feature(once_cell_try)]
+#![feature(maybe_uninit_fill, once_cell_try)]
 #![expect(dead_code, reason = "the constructors that use it are to come")]
 
 #[macro_use]

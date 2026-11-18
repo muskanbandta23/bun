@@ -20,7 +20,7 @@ pub use exception::Exception;
 pub use source_appender::SourceAppender;
 pub use stack_frame::{StackFrame, WasmNames, stack_trace_text};
 pub use stack_trace::{StackTrace, StackTraceRequest, capture_stack_trace};
-pub use stack_visitor::{FrameKind, StackVisitor, VisitedFrame, WasmFrame};
+pub use stack_visitor::{FrameKind, SampledWasmFrame, StackVisitor, VisitedFrame, WasmFrame, WasmTier};
 pub use termination::{AfterDeferral, DeferTermination, TerminationDeadline};
 pub use throw::Message;
 

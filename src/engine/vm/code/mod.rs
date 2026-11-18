@@ -9,6 +9,7 @@ mod dynamic_function;
 mod eval;
 mod executable;
 pub mod metadata;
+mod optimization;
 mod profile;
 mod script;
 mod source;
@@ -29,12 +30,13 @@ pub use executable::{
     ProgramExecutable, ScriptExecutable, native_source_text,
 };
 pub(crate) use executable::NativeExecutableKey;
+pub use optimization::{ExitKind, ExitKinds, OptimizerState};
 pub use profile::{Arithmetic, ArithmeticProfile, ArrayModes, ArrayProfile, ValueProfile};
 pub use script::{evaluate_compiled_script, evaluate_script, evaluate_script_in_scope};
-pub use speculation::SpeculatedType;
 pub use source::{
     LineColumn, SourceCode, SourceProvider, SourceProviderBuilder, SourceProviderRef, SourceType,
 };
+pub use speculation::SpeculatedType;
 
 use crate::Vm;
 use crate::heap::Scope;

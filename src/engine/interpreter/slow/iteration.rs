@@ -18,7 +18,7 @@ impl Frame<'_> {
     }
 }
 
-fn record_mode(modes: &Flags, mode: IterationMode) {
+pub(super) fn record_mode(modes: &Flags, mode: IterationMode) {
     modes.0.set(modes.0.get() | mode.flag());
 }
 

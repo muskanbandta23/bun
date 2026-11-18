@@ -46,6 +46,7 @@ pub use field::{
 };
 pub(crate) use gc::keep_alive;
 pub use gc::{CellKind, Extends, Gc, GcFree, Held};
+pub use marking::is_helper_thread;
 pub use once_box::OnceBox;
 pub use policy::{HeapKind, HeapSizes};
 pub use precise::{PRECISE_BIT, PreciseAllocation};

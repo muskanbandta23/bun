@@ -19,7 +19,7 @@ pub type PropertyCallback = unsafe extern "C" fn(&Vm, &JsObject) -> Option<Value
 pub type PropertyCallback =
     for<'a> unsafe extern "C" fn(&'a mut Option<Value>, &Vm, &JsObject) -> &'a Option<Value>;
 /// For a value that takes no script to make.
-pub type PropertyMaker = fn(&Vm, &JsObject) -> Value;
+pub type PropertyMaker = fn(&crate::Cx, &JsObject) -> Value;
 
 /// Kinds of entries that only tables in Rust have.
 const ENGINE_BUILTIN: u32 = 1 << 24;

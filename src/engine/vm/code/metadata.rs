@@ -341,6 +341,12 @@ macro_rules! entry_types {
     ($($kind:ident => $type:ty,)*) => {
         $(const _: () = assert!(size_of::<$type>() == MetadataKind::$kind.words() as usize * 8);)*
 
+        fn entry_type_of(kind: MetadataKind) -> core::any::TypeId {
+            match kind {
+                $(MetadataKind::$kind => core::any::TypeId::of::<$type>(),)*
+            }
+        }
+
         macro_rules! for_each_entry {
             ($code_block:expr, |$entry:ident| $body:expr) => {
                 for (kind, range) in $code_block.body().metadata().ranges() {
@@ -424,6 +430,15 @@ impl CodeBlock {
     pub unsafe fn metadata<T: Entry>(&self, word: u32) -> &T {
         // SAFETY: the caller's.
         unsafe { &*self.metadata_ptr().add(word as usize).cast() }
+    }
+
+    /// Panics unless an entry of that kind, which has that type, starts at the word.
+    pub fn checked_metadata<T: Entry + 'static>(&self, kind: MetadataKind, word: u32) -> &T {
+        let range = self.body().metadata().range(kind);
+        assert!(range.contains(&word) && (word - range.start).is_multiple_of(kind.words()));
+        assert!(entry_type_of(kind) == core::any::TypeId::of::<T>());
+        // SAFETY: just checked.
+        unsafe { self.metadata(word) }
     }
 
     pub(crate) fn allocate_call_targets(&self) -> *const CallTargetCount {

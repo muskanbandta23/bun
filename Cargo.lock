@@ -705,11 +705,13 @@ dependencies = [
  "bun_engine_date",
  "bun_engine_macros",
  "bun_engine_number",
+ "bun_engine_platform",
  "bun_engine_standalone",
  "bun_engine_text",
  "bun_engine_unicode",
  "bun_engine_vm",
  "bun_icu",
+ "bun_sys",
  "bun_threading",
  "bun_url_whatwg",
  "libc",
@@ -813,6 +815,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_engine_platform"
+version = "0.0.0"
+dependencies = [
+ "bun_alloc",
+ "bun_core",
+ "bun_engine_standalone",
+ "bun_sys",
+ "bun_threading",
+ "bun_windows_sys",
+ "libc",
+]
+
+[[package]]
 name = "bun_engine_regexp"
 version = "0.0.0"
 dependencies = [
@@ -855,6 +870,7 @@ name = "bun_engine_standalone"
 version = "0.0.0"
 dependencies = [
  "bun_alloc",
+ "bun_core",
  "cc",
 ]
 
@@ -909,6 +925,7 @@ dependencies = [
 name = "bun_engine_vm"
 version = "0.0.0"
 dependencies = [
+ "allocator-api2",
  "bitflags",
  "bun_alloc",
  "bun_engine_asm",
@@ -918,6 +935,7 @@ dependencies = [
  "bun_engine_exec_memory",
  "bun_engine_macros",
  "bun_engine_number",
+ "bun_engine_platform",
  "bun_engine_regexp",
  "bun_engine_regexp_jit",
  "bun_engine_standalone",
@@ -961,7 +979,9 @@ dependencies = [
  "bitflags",
  "bun_engine_asm",
  "bun_engine_codegen",
+ "bun_engine_standalone",
  "bun_engine_wasm_format",
+ "hashbrown 0.15.5",
  "smallvec",
 ]
 
@@ -983,8 +1003,10 @@ dependencies = [
  "bun_alloc",
  "bun_engine_asm",
  "bun_engine_exec_memory",
+ "bun_engine_macros",
  "bun_engine_wasm_compiler",
  "bun_engine_wasm_format",
+ "bun_sys",
  "bun_threading",
  "libc",
  "smallvec",

@@ -866,6 +866,7 @@ useStrict = use strict
 @GeneratorResumeModeReturn
 @GeneratorResumeModeThrow
 @GeneratorStateCompleted
+@GeneratorStateDelegate
 @GeneratorStateExecuting
 @GeneratorStateInit
 @Infinity
@@ -955,6 +956,7 @@ useStrict = use strict
 @derivedConstructor
 @disposableStackFieldCapability
 @disposableStackFieldState
+@disposeAsyncStack
 @emptyPropertyNameEnumerator
 @endsWith
 @enqueueJob
@@ -973,6 +975,7 @@ useStrict = use strict
 @generatorFieldThis
 @generatorFrame
 @generatorNext
+@generatorResume
 @generatorResumeMode
 @generatorState
 @generatorThis
@@ -1124,6 +1127,7 @@ useStrict = use strict
 @resolvePromise
 @resolvePromiseWithFirstResolvingFunctionCallCheck
 @resolveWithInternalMicrotaskForAsyncAwait
+@resumeGenerator
 @sameValue
 @sentinelString
 @set

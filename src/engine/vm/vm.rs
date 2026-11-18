@@ -784,7 +784,9 @@ impl Vm {
         (self.hooks.visit_code_on_stack)(self, addresses, visitor);
     }
 
-    pub(crate) fn visit_output_constraints(&self, _: &mut Visitor) {}
+    pub(crate) fn visit_output_constraints(&self, visitor: &mut Visitor) {
+        self.services.visit_output_constraints(visitor);
+    }
 
     pub(crate) fn reconcile_weak_references(&self, survivors: &Survivors) {
         self.shape_cache.prune(survivors);

@@ -10,8 +10,10 @@ pub const BLOCK_SIZE: usize = 16 * 1024;
 pub const ATOM_SIZE: usize = 16;
 const ATOMS_PER_BLOCK: usize = BLOCK_SIZE / ATOM_SIZE;
 const BITMAP_WORDS: usize = ATOMS_PER_BLOCK / 64;
-const HEADER_ATOMS: usize = size_of::<Block>().div_ceil(ATOM_SIZE);
-pub(super) const PAYLOAD_SIZE: usize = BLOCK_SIZE - HEADER_ATOMS * ATOM_SIZE;
+/// The same on every target, and so are the size classes.
+const HEADER_ATOMS: usize = 24;
+const _: () = assert!(size_of::<Block>() <= HEADER_ATOMS * ATOM_SIZE);
+pub const PAYLOAD_SIZE: usize = BLOCK_SIZE - HEADER_ATOMS * ATOM_SIZE;
 const RECIPROCAL_SHIFT: u32 = 20;
 
 /// Bits stamped with another version than the heap's are stale, so nothing has to visit every block to clear them.

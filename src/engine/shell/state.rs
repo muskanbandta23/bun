@@ -3,9 +3,10 @@
 use core::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
-use bun_engine_vm::{FastHashSet, Vm};
+use bun_engine_vm::{FastHashSet, JsPromise, Strong, Vm};
 
 use crate::command_line::CommandLine;
+use crate::functions::Inbox;
 use crate::prelude::*;
 
 #[derive(Default)]
@@ -16,6 +17,9 @@ pub(crate) struct State {
     pub(crate) expected_async_passes: Cell<u32>,
     /// What the shell adds to global objects, which does not show when their properties are listed.
     pub(crate) hidden_globals: RefCell<FastHashSet<Identifier>>,
+    /// Those that had no handler at the time.
+    pub(crate) rejected_promises: RefCell<Vec<Strong<Gc<JsPromise>>>>,
+    pub(crate) inbox: Inbox,
 }
 
 impl State {

@@ -6,6 +6,7 @@ use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering, fence};
 
 use bun_engine_bytecode::Directives;
 use bun_engine_syntax::LineTable;
+use bun_engine_macros::FieldOffsets;
 use bun_engine_text::{StringRef, Text};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -31,6 +32,7 @@ pub struct LineColumn {
 }
 
 /// A text and where it came from. The embedder extends it in C++.
+#[derive(FieldOffsets)]
 #[repr(C)]
 pub struct SourceProvider {
     /// Null unless C++ made it.
@@ -40,14 +42,15 @@ pub struct SourceProvider {
     has_live_exports: Cell<bool>,
     /// Zero until it is asked for, unless the embedder knows it.
     hash: Cell<u32>,
-    id: Cell<usize>,
-    source: StringRef,
-    url: Option<StringRef>,
-    source_url_directive: RefCell<Option<StringRef>>,
-    source_mapping_url_directive: RefCell<Option<StringRef>>,
     /// Where the text starts in its document, from zero.
     start_line: i32,
     start_column: i32,
+    source: StringRef,
+    /// The last field whose offset C++ knows.
+    url: Option<StringRef>,
+    id: Cell<usize>,
+    source_url_directive: RefCell<Option<StringRef>>,
+    source_mapping_url_directive: RefCell<Option<StringRef>>,
     /// For text that was made at run time: that of the code which made it.
     origin: Option<SourceProviderRef>,
     lines: OnceCell<LineTable>,
@@ -66,6 +69,16 @@ impl SourceProviderBuilder {
     pub fn origin(mut self, origin: Option<&SourceProvider>) -> SourceProviderBuilder {
         self.0.origin = origin.map(|origin| SourceProviderRef::retain(origin.origin()));
         self
+    }
+
+    /// # Safety
+    /// `place` is the start of an object of C++, which has written nothing but the vtable.
+    pub unsafe fn finish_in(mut self, place: *mut SourceProvider) {
+        // SAFETY: the caller's.
+        unsafe {
+            self.0.embedder_vtable = (&raw const (*place).embedder_vtable).read();
+            place.write(*self.0);
+        }
     }
 
     pub fn finish(self) -> SourceProviderRef {
@@ -198,6 +211,12 @@ impl SourceProvider {
 pub struct SourceProviderRef(NonNull<SourceProvider>);
 
 impl SourceProviderRef {
+    /// # Safety
+    /// The caller hands over a reference that it holds.
+    pub unsafe fn from_raw(provider: NonNull<SourceProvider>) -> SourceProviderRef {
+        SourceProviderRef(provider)
+    }
+
     pub fn retain(provider: &SourceProvider) -> SourceProviderRef {
         provider.ref_count.fetch_add(1, Ordering::Relaxed);
         SourceProviderRef(NonNull::from(provider))
@@ -243,7 +262,7 @@ impl Drop for SourceProviderRef {
 }
 
 /// A part of a text.
-#[derive(Clone)]
+#[derive(Clone, FieldOffsets)]
 #[repr(C)]
 pub struct SourceCode {
     pub provider: SourceProviderRef,

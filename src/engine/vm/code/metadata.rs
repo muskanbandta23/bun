@@ -150,6 +150,11 @@ pub struct GetImport {
     pub environment: Cell<usize>,
 }
 
+impl GetImport {
+    /// In place of an address: the code runs in several instances of the module.
+    pub const VARIES: usize = 1;
+}
+
 #[repr(C)]
 pub struct Call {
     pub value: ValueProfile,

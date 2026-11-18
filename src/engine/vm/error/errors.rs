@@ -1,8 +1,8 @@
 //! Errors that several places throw.
 
-use bun_engine_text::{PropertyName, StringBuilder};
+use bun_engine_text::{PropertyName, StringBuilder, StringRef, Text};
 
-use crate::{Class, Cx, ErrorInstance, ErrorType, Message, SourceAppender, Thrown, Value};
+use crate::{Class, Cx, ErrorInstance, ErrorType, Gc, Message, SourceAppender, Thrown, Value};
 
 pub const NON_EXTENSIBLE_DEFINE: &str =
     "Attempting to define property on object that is not extensible.";
@@ -28,6 +28,11 @@ pub const INVALID_ARRAY_LENGTH: &str = "Invalid array length";
 pub const LENGTH_EXCEEDS_MAXIMUM: &str = "Length exceeded the maximum array length";
 pub const SYMBOL_TO_STRING: &str = "Cannot convert a symbol to a string";
 pub const ITERATOR_RESULT_NOT_OBJECT: &str = "Iterator result interface is not an object.";
+pub const SYNTAX_ERROR: &str = "Syntax error";
+pub const OUT_OF_MEMORY: &str = "Out of memory";
+pub const NOT_ENOUGH_ARGUMENTS: &str = "Not enough arguments";
+pub const RESTRICTED_PROPERTY_ACCESS: &str =
+    "'arguments', 'callee', and 'caller' cannot be accessed in this context.";
 
 /// Runs no script.
 pub fn describe_value(cx: &Cx, value: Value, out: &mut StringBuilder) {
@@ -36,7 +41,10 @@ pub fn describe_value(cx: &Cx, value: Value, out: &mut StringBuilder) {
         out.push_text(string.to_string_without_resolving().text());
         out.push_latin1(b'"');
     } else if let Some(symbol) = value.as_symbol() {
-        out.push_text(symbol.descriptive_string().unwrap_or_default().text());
+        match symbol.descriptive_string() {
+            Ok(description) => out.push_text(description.text()),
+            Err(_) => out.push_ascii("Symbol"),
+        }
     } else if value.is_callable() {
         out.push_ascii("function");
     } else if let Some(object) = value.as_object() {
@@ -53,61 +61,87 @@ pub fn describe_value(cx: &Cx, value: Value, out: &mut StringBuilder) {
 
 #[cold]
 #[inline(never)]
-fn throw_about(cx: &Cx, value: Value, message: &str, appender: SourceAppender) -> Thrown {
+fn create_about(
+    cx: &Cx,
+    value: Value,
+    message: &str,
+    appender: SourceAppender,
+) -> Gc<ErrorInstance> {
     let mut text = StringBuilder::new();
     describe_value(cx, value, &mut text);
     text.push_latin1(b' ');
     text.push_ascii(message);
     match text.finish() {
-        Ok(text) => {
-            let error = ErrorInstance::with_source(cx, ErrorType::TypeError, text, appender, value);
-            cx.throw(error.into())
-        }
-        Err(_) => cx.throw_out_of_memory(),
+        Ok(text) => ErrorInstance::with_source(cx, ErrorType::TypeError, text, appender, value),
+        Err(_) => ErrorInstance::out_of_memory(cx, OUT_OF_MEMORY.into_string()),
     }
+}
+
+macro_rules! errors_about_values {
+    ($($create:ident, $throw:ident, $message:literal, $appender:ident;)*) => {$(
+        #[cold]
+        pub fn $create(cx: &Cx, value: Value) -> Gc<ErrorInstance> {
+            create_about(cx, value, $message, SourceAppender::$appender)
+        }
+
+        #[cold]
+        #[inline(never)]
+        pub fn $throw(cx: &Cx, value: Value) -> Thrown {
+            cx.throw($create(cx, value).into())
+        }
+    )*};
+}
+
+errors_about_values! {
+    create_not_a_function, throw_not_a_function, "is not a function", NotAFunction;
+    create_not_a_constructor, throw_not_a_constructor, "is not a constructor", Default;
+    create_not_an_object, throw_not_an_object, "is not an object", Default;
+    create_invalid_in_parameter, throw_invalid_in_parameter, "is not an Object.", In;
+    create_instanceof_not_a_function, throw_instanceof_not_a_function, " is not a function", InstanceofNotAFunction;
+    create_has_instance_not_a_function, throw_has_instance_not_a_function,
+        "[Symbol.hasInstance] is not a function, undefined, or null", HasInstanceNotAFunction;
+    create_invalid_prototype, throw_invalid_prototype, "is not an object or null", InvalidPrototype;
 }
 
 /// With the text of the expression that failed.
 #[cold]
+#[inline(never)]
 pub fn throw_type_error_with_source(cx: &Cx, message: &'static str) -> Thrown {
     let (message, appender) = (message.into_string(), SourceAppender::Default);
     let error_type = ErrorType::TypeError;
     cx.throw(ErrorInstance::with_source(cx, error_type, message, appender, Value::NULL).into())
 }
 
-pub fn throw_not_a_function(cx: &Cx, value: Value) -> Thrown {
-    throw_about(cx, value, "is not a function", SourceAppender::NotAFunction)
+pub fn throw_invalid_apply_parameter(cx: &Cx) -> Thrown {
+    let message = "second argument to Function.prototype.apply must be an Array-like object";
+    throw_type_error_with_source(cx, message)
 }
 
-pub fn throw_not_a_constructor(cx: &Cx, value: Value) -> Thrown {
-    throw_about(cx, value, "is not a constructor", SourceAppender::Default)
-}
-
-pub fn throw_not_an_object(cx: &Cx, value: Value) -> Thrown {
-    throw_about(cx, value, "is not an object", SourceAppender::Default)
-}
-
-pub fn throw_invalid_in_parameter(cx: &Cx, value: Value) -> Thrown {
-    throw_about(cx, value, "is not an Object.", SourceAppender::In)
-}
-
-pub fn throw_instanceof_not_a_function(cx: &Cx, value: Value) -> Thrown {
-    let appender = SourceAppender::InstanceofNotAFunction;
-    throw_about(cx, value, " is not a function", appender)
-}
-
-pub fn throw_has_instance_not_a_function(cx: &Cx, value: Value) -> Thrown {
-    let message = "[Symbol.hasInstance] is not a function, undefined, or null";
-    throw_about(cx, value, message, SourceAppender::HasInstanceNotAFunction)
-}
-
-pub fn throw_invalid_prototype(cx: &Cx, value: Value) -> Thrown {
-    let appender = SourceAppender::InvalidPrototype;
-    throw_about(cx, value, "is not an object or null", appender)
+#[cold]
+pub fn throw_called_without_new(cx: &Cx, constructor: &str) -> Thrown {
+    cx.throw_type_error(format_args!(
+        "calling {constructor} constructor without new is invalid"
+    ))
 }
 
 /// `fallback` is for when there is no memory to put the name in.
 #[cold]
+pub fn create_naming(
+    cx: &Cx,
+    error_type: ErrorType,
+    before: &str,
+    name: PropertyName<'_>,
+    after: &str,
+    fallback: &'static str,
+) -> Gc<ErrorInstance> {
+    let (before, after) = (Text::from_ascii(before), Text::from_ascii(after));
+    let text = StringRef::try_concat(&[before, name.text(), after]);
+    let text = text.unwrap_or_else(|_| fallback.into_string());
+    ErrorInstance::new(cx, error_type, Some(text))
+}
+
+#[cold]
+#[inline(never)]
 pub fn throw_naming(
     cx: &Cx,
     error_type: ErrorType,
@@ -116,22 +150,22 @@ pub fn throw_naming(
     after: &str,
     fallback: &'static str,
 ) -> Thrown {
-    let mut text = StringBuilder::new();
-    text.push_ascii(before);
-    text.push_text(name.text());
-    text.push_ascii(after);
-    let text = text.finish().unwrap_or_else(|_| fallback.into_string());
-    cx.throw_error(error_type, text)
+    cx.throw(create_naming(cx, error_type, before, name, after, fallback).into())
 }
 
-pub fn throw_undefined_variable(cx: &Cx, name: PropertyName<'_>) -> Thrown {
+pub fn create_undefined_variable(cx: &Cx, name: PropertyName<'_>) -> Gc<ErrorInstance> {
     let (before, after, fallback) = if name.is_private() {
         let fallback = "Can't find private variable";
         ("Can't find private variable: PrivateSymbol.", "", fallback)
     } else {
         ("", " is not defined", "Variable is not defined")
     };
-    throw_naming(cx, ErrorType::ReferenceError, before, name, after, fallback)
+    create_naming(cx, ErrorType::ReferenceError, before, name, after, fallback)
+}
+
+#[cold]
+pub fn throw_undefined_variable(cx: &Cx, name: PropertyName<'_>) -> Thrown {
+    cx.throw(create_undefined_variable(cx, name).into())
 }
 
 pub fn throw_uninitialized_variable(cx: &Cx, name: PropertyName<'_>) -> Thrown {
@@ -143,11 +177,32 @@ pub fn throw_uninitialized_variable(cx: &Cx, name: PropertyName<'_>) -> Thrown {
     throw_naming(cx, ErrorType::ReferenceError, before, name, after, fallback)
 }
 
+/// `accessor` is `getter` or `setter`.
+pub fn wrong_receiver_message(class: Text<'_>, name: Text<'_>, accessor: &str) -> StringRef {
+    let ascii = Text::from_ascii;
+    let parts = [
+        ascii("The "),
+        class,
+        ascii("."),
+        name,
+        ascii(" "),
+        ascii(accessor),
+        ascii(" can only be used on instances of "),
+        class,
+    ];
+    StringRef::try_concat(&parts).unwrap_or_default()
+}
+
+#[cold]
 pub fn throw_getter_type_error(cx: &Cx, class: &Class, name: PropertyName<'_>) -> Thrown {
-    let class = class.name();
-    let message =
-        format_args!("The {class}.{name} getter can only be used on instances of {class}");
-    let error = ErrorInstance::new(cx, ErrorType::TypeError, Some(message.into_string()));
+    let message = wrong_receiver_message(class.name_literal().text(), name.text(), "getter");
+    let error = ErrorInstance::new(cx, ErrorType::TypeError, Some(message));
     error.set_native_getter_type_error();
     cx.throw(error.into())
+}
+
+#[cold]
+pub fn throw_setter_type_error(cx: &Cx, class: &Class, name: PropertyName<'_>) -> Thrown {
+    let class = class.name_literal().text();
+    cx.throw_type_error(wrong_receiver_message(class, name.text(), "setter"))
 }

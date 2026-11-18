@@ -406,6 +406,26 @@ impl FunctionExecutable {
         self.info.name_text(self.provider().text())
     }
 
+    fn is_default_constructor(&self) -> bool {
+        self.info.origin().contains(Origin::DEFAULT_CONSTRUCTOR)
+    }
+
+    /// The text that the positions in the code refer to.
+    pub fn code_provider(&self) -> SourceProviderRef {
+        if self.is_default_constructor() {
+            return self.heap().vm().default_constructor_provider(&self.info);
+        }
+        self.provider().clone()
+    }
+
+    /// In that text.
+    pub fn parameters_start(&self) -> u32 {
+        if self.is_default_constructor() {
+            return "(function ".len() as u32;
+        }
+        self.info.parameters_start()
+    }
+
     #[inline(always)]
     pub(crate) fn did_create(&self, vm: &Vm, function: Gc<JsFunction>) {
         if self.singleton_watchpoints.is_still_valid() {

@@ -12,12 +12,12 @@ use bun_engine_syntax::SourceCache;
 pub use bun_engine_syntax::{
     Error as CompileError, ErrorKind as CompileErrorKind, Recovery as CompileErrorRecovery,
 };
-use bun_engine_text::{StringRef, names};
+use bun_engine_text::StringRef;
 
 use super::cache::{CodeCache, Goal, Key, Unit};
 use crate::{
-    Attributes, Cx, ErrorInstance, ErrorType, FastHashMap, FunctionExecutable, Gc, GlobalObject,
-    JsResult, JsString, Message, SourceProvider, Thrown, Vm, options,
+    Cx, ErrorInstance, ErrorType, FastHashMap, FunctionExecutable, Gc, GlobalObject, JsResult,
+    Message, SourceProvider, Thrown, Vm, options,
 };
 
 #[derive(Default)]
@@ -314,15 +314,8 @@ pub fn create_compile_error_in(
 ) -> Gc<ErrorInstance> {
     let instance = create_compile_error(cx, error);
     if error.kind == CompileErrorKind::Syntax {
-        if let Err(thrown) = instance.materialize(cx) {
-            cx.discard_unless_termination(thrown);
-        }
         let line = provider.position_in_document(error.offset).line;
-        instance.put_direct(cx, names::line, line.into(), Attributes::DONT_ENUM);
-        if let Some(url) = provider.url() {
-            let url = JsString::new(cx, url.clone()).into();
-            instance.put_direct(cx, names::sourceURL, url, Attributes::DONT_ENUM);
-        }
+        instance.locate_in_source(cx, line, provider.url());
     }
     instance
 }

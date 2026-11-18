@@ -3,8 +3,9 @@ use bun_engine_text::{Identifier, PropertyName};
 
 use crate::heap::{Scope, Survivors};
 use crate::{
-    BuiltinId, CallFrame, CodeBlock, CompileError, Cx, Gc, GlobalObject, Intrinsic, JsObject,
-    JsResult, PropertyCondition, RealmSlot, RealmWatchpoint, SourceProvider, Value, Visitor, Vm,
+    BuiltinId, CallFrame, CodeBlock, CompileError, Cx, Gc, GlobalObject, Intrinsic, JsCell,
+    JsObject, JsResult, PropertyCondition, RealmSlot, RealmWatchpoint, SourceProvider, Value,
+    Visitor, Vm, WasmFrame, WasmNames,
 };
 
 /// What this crate needs from those above it.
@@ -30,6 +31,11 @@ pub struct Hooks {
     /// `toLocaleString` of an instance of a class of `Temporal`, with the locales and the options.
     pub temporal_to_locale_string: fn(&mut Cx, Gc<JsObject>, Value, Value) -> JsResult<Value>,
     pub find_wasm_handler: fn(&Vm, &CallFrame) -> Option<(usize, u32)>,
+    /// With the address that the callee returns to, or zero if the frame has called an operation, and the number of
+    /// inlined functions that have been visited.
+    pub wasm_frame: fn(&Vm, &CallFrame, usize, u32) -> WasmFrame,
+    /// Of the function with that index. The cell may have just died.
+    pub wasm_names: fn(Gc<JsCell>, u32) -> WasmNames,
     pub debugger_did_parse: fn(&Cx, &SourceProvider, Option<&CompileError>),
     pub debugger_will_unwind: fn(&Vm, &CallFrame),
     pub debugger_did_unwind_frame: fn(&Vm, &CallFrame),

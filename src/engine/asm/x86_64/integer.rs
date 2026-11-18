@@ -1,6 +1,6 @@
 use super::abi;
 use super::assembler::{Assembler, GprMem, Rm};
-use super::opcode::{Alu, BitCount, BitTest, Cc, ShiftOp, ShiftX, SseStore, Unary};
+use super::opcode::{Alu, BitCount, BitTest, Cc, ShiftOp, ShiftX, Sse, SseLoad, SseStore, Unary};
 use super::registers::{RAX, RBP, RCX, RDX, RSP};
 use crate::assembly::{MacroAssembly, Options, Scratch};
 use crate::blinding::Blinding;
@@ -333,9 +333,10 @@ impl MacroAssembler {
         let address = self.address(dst);
         let src = match src {
             RegOrImm::Imm(value) | RegOrImm::Untrusted(value) if self.is_scratch_base(address) => {
-                Stored::Imm(
-                    short_immediate(size, value).expect("one scratch register serves the address"),
-                )
+                match short_immediate(size, value) {
+                    Some(short) => Stored::Imm(short),
+                    None => return self.update_memory_in_a_vector_register(op, address, value),
+                }
             }
             _ => self.stored(size, src),
         };
@@ -343,6 +344,39 @@ impl MacroAssembler {
             Stored::Reg(src) => self.asm.alu_mem(op, size, address, src),
             Stored::Imm(src) => self.asm.alu_imm(op, size, address, src),
         }
+    }
+
+    #[cold]
+    fn update_memory_in_a_vector_register(&mut self, op: Alu, address: Address, value: i64) {
+        let op = match op {
+            Alu::Add => Sse::Paddq,
+            Alu::And => Sse::Pand,
+            Alu::Or => Sse::Por,
+            _ => unreachable!("no such update"),
+        };
+        let data = self.scratch_fpr(0);
+        self.asm.sse_load(SseLoad::Movsd, data, address);
+        self.sse_with_constant(op, data, data, (value as u64).into());
+        self.asm.sse_store(SseStore::Movsd, address, data);
+    }
+
+    /// A signal may arrive at any time, and overwrite what is below the stack pointer.
+    #[cold]
+    fn set_stack_pointer(&mut self, op: Alu, lhs: Gpr, rhs: Operand) {
+        let scratch = self.scratch_gpr();
+        match (op, rhs) {
+            (Alu::Sub, Operand::Imm(_)) => self.subtract(op, Width::W64, scratch, lhs, rhs),
+            (Alu::Sub, Operand::Reg(rhs)) => {
+                self.neg(Width::W64, scratch, rhs);
+                self.asm.alu(Alu::Add, Size::S64, scratch, lhs);
+            }
+            (Alu::Sub, Operand::Mem(rhs)) => {
+                self.asm.mov(Width::W64, scratch, rhs);
+                return self.set_stack_pointer(op, lhs, Operand::Reg(scratch));
+            }
+            _ => self.commutative(op, Width::W64, scratch, lhs, rhs),
+        }
+        self.asm.mov(Width::W64, RSP, scratch);
     }
 
     fn store_long_constant_at_absolute(&mut self, dst: Absolute, value: i64) {
@@ -552,7 +586,7 @@ impl MacroAssembly for MacroAssembler {
         if self.asm.buffer.overflowed {
             usize::MAX
         } else {
-            self.asm.buffer.len
+            self.asm.buffer.len as usize
         }
     }
 
@@ -673,6 +707,7 @@ impl MacroAssembly for MacroAssembler {
     }
 
     fn patchable_move64(&mut self, dst: Gpr, value: u64) -> Label {
+        self.asm.leave_replaceable_bytes();
         self.asm.movabs(dst, value);
         self.mark()
     }
@@ -704,6 +739,7 @@ impl MacroAssembly for MacroAssembler {
     }
 
     fn pop_pair(&mut self, low: Gpr, high: Gpr) {
+        assert!(low != high);
         self.asm.pop(low);
         self.asm.pop(high);
     }
@@ -847,10 +883,13 @@ impl MacroAssembly for MacroAssembler {
         match self.operand(width, rhs) {
             Operand::Imm(0) => self.move_int(width, dst, lhs),
             Operand::Imm(rhs) if dst != lhs => self.asm.lea(width, dst, Address::new(lhs, rhs)),
-            Operand::Reg(rhs) if dst != lhs && dst != rhs => {
+            Operand::Reg(rhs) if dst != lhs && dst != rhs && (lhs, rhs) != (RSP, RSP) => {
                 let (base, index) = if rhs == RSP { (rhs, lhs) } else { (lhs, rhs) };
                 self.asm
                     .lea(width, dst, Address::indexed(base, index, Scale::One, 0));
+            }
+            rhs @ Operand::Mem(_) if dst == RSP && lhs != RSP => {
+                self.set_stack_pointer(Alu::Add, lhs, rhs)
             }
             rhs => self.commutative(Alu::Add, width, dst, lhs, rhs),
         }
@@ -863,6 +902,7 @@ impl MacroAssembly for MacroAssembler {
             Operand::Imm(rhs) if dst != lhs && rhs != i32::MIN => {
                 self.asm.lea(width, dst, Address::new(lhs, -rhs))
             }
+            rhs if dst == RSP && lhs != RSP => self.set_stack_pointer(Alu::Sub, lhs, rhs),
             Operand::Reg(rhs) if dst == rhs && dst != lhs => {
                 self.asm.unary(Unary::Neg, width.size(), dst);
                 self.asm.alu(Alu::Add, width.size(), dst, lhs);
@@ -880,6 +920,10 @@ impl MacroAssembly for MacroAssembler {
     #[inline]
     fn and(&mut self, width: Width, dst: Gpr, lhs: Gpr, rhs: impl Into<Src>) {
         let rhs = rhs.into();
+        if dst == RSP && lhs != RSP {
+            let rhs = self.operand(width, rhs);
+            return self.set_stack_pointer(Alu::And, lhs, rhs);
+        }
         if let Src::Imm(mask) = rhs {
             return self.and_constant(width, dst, lhs, mask);
         }

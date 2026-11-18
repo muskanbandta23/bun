@@ -6,6 +6,8 @@ use crate::label::{CodeTooLarge, Label, LabelState, Target, resolve};
 pub(crate) const WINDOW: usize = 32;
 
 const INITIAL_CAPACITY: usize = 512;
+/// A guess at how often labels are made and used.
+const BYTES_FOR_EACH_REFERENCE: usize = 16;
 const MINIMUM_ALIGNMENT: u32 = 16;
 
 /// Bytes that depend on where a label ends up. `Kind` is the architecture's.
@@ -31,16 +33,17 @@ pub(crate) struct JumpTable {
 pub(crate) struct CodeBuffer<Kind> {
     /// Initialized beyond `len`, so that an instruction is written with one check of the bounds.
     pub(crate) bytes: Vec<u8>,
-    pub(crate) len: usize,
+    pub(crate) len: u32,
     pub(crate) labels: Vec<LabelState>,
     pub(crate) sites: Vec<Site<Kind>>,
     pub(crate) externals: Vec<Target>,
+    pub(crate) aliases_external: bool,
     pub(crate) constants: Vec<Constant>,
     pub(crate) tables: Vec<JumpTable>,
     pub(crate) table_targets: Vec<Label>,
     pub(crate) alignment: u32,
     /// Up to here a jump may be written over the code, so control does not enter.
-    pub(crate) replaceable_end: usize,
+    pub(crate) replaceable_end: u32,
     pub(crate) limit: usize,
     pub(crate) overflowed: bool,
 }
@@ -50,9 +53,10 @@ impl<Kind: Copy> CodeBuffer<Kind> {
         Self {
             bytes: vec![0; INITIAL_CAPACITY],
             len: 0,
-            labels: Vec::new(),
-            sites: Vec::new(),
+            labels: Vec::with_capacity(INITIAL_CAPACITY / BYTES_FOR_EACH_REFERENCE),
+            sites: Vec::with_capacity(INITIAL_CAPACITY / BYTES_FOR_EACH_REFERENCE),
             externals: Vec::new(),
+            aliases_external: false,
             constants: Vec::new(),
             tables: Vec::new(),
             table_targets: Vec::new(),
@@ -64,25 +68,29 @@ impl<Kind: Copy> CodeBuffer<Kind> {
     }
 
     pub(crate) fn reserve(&mut self, additional: usize) {
-        let wanted = (self.len + additional.min(self.limit)).min(self.limit) + WINDOW;
+        let wanted = (self.len as usize + additional.min(self.limit)).min(self.limit) + WINDOW;
         if wanted > self.bytes.len() {
+            let references = (wanted - self.bytes.len()) / BYTES_FOR_EACH_REFERENCE;
+            self.labels.reserve(references);
+            self.sites.reserve(references);
             self.bytes.resize(wanted, 0);
         }
     }
 
     #[inline(always)]
     pub(crate) fn window(&mut self) -> &mut [u8; WINDOW] {
-        if self.len + WINDOW > self.bytes.len() {
+        while self.len as usize + WINDOW > self.bytes.len() {
             self.grow();
         }
-        self.bytes[self.len..].first_chunk_mut().unwrap()
+        let at = self.len as usize;
+        self.bytes[at..at + WINDOW].as_mut_array().unwrap()
     }
 
     /// Past the limit the code is lost, so what follows is written over it and `finish` fails.
     #[cold]
     #[inline(never)]
     fn grow(&mut self) {
-        if self.len > self.limit {
+        if self.len as usize > self.limit {
             self.overflowed = true;
             self.len = 0;
             self.replaceable_end = 0;
@@ -93,7 +101,7 @@ impl<Kind: Copy> CodeBuffer<Kind> {
     }
 
     pub(crate) fn check_size(&self) -> Result<(), CodeTooLarge> {
-        if self.overflowed || self.len > self.limit {
+        if self.overflowed || self.len as usize > self.limit {
             Err(CodeTooLarge)
         } else {
             Ok(())
@@ -102,13 +110,27 @@ impl<Kind: Copy> CodeBuffer<Kind> {
 
     #[inline(always)]
     pub(crate) fn put<const N: usize>(&mut self, bytes: [u8; N]) {
-        *self.window().first_chunk_mut().unwrap() = bytes;
-        self.len += N;
+        self.put_first(bytes, N as u32);
     }
 
-    #[inline]
-    pub(crate) fn offset(&self) -> u32 {
-        self.len as u32
+    /// Only `count` of the bytes are kept.
+    #[inline(always)]
+    pub(crate) fn put_first<const N: usize>(&mut self, bytes: [u8; N], count: u32) {
+        let at = self.len as usize;
+        match self.bytes.get_mut(at..at + N) {
+            Some(room) => {
+                room.copy_from_slice(&bytes);
+                self.len += count;
+            }
+            None => self.grow_and_put(bytes, count),
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn grow_and_put<const N: usize>(&mut self, bytes: [u8; N], count: u32) {
+        self.grow();
+        self.put_first(bytes, count);
     }
 
     #[inline]
@@ -125,13 +147,13 @@ impl<Kind: Copy> CodeBuffer<Kind> {
 
     #[inline]
     pub(crate) fn mark(&mut self) -> Label {
-        self.push_label(self.len as u32, self.sites.len() as u32)
+        self.push_label(self.len, self.sites.len() as u32)
     }
 
     #[inline]
     pub(crate) fn external(&mut self, target: Target) -> Label {
         self.externals.push(target);
-        self.push_label(LabelState::EXTERNAL, self.externals.len() as u32 - 1)
+        Label(Label::EXTERNAL | (self.externals.len() as u32 - 1))
     }
 
     #[inline]
@@ -142,25 +164,32 @@ impl<Kind: Copy> CodeBuffer<Kind> {
             "the label is bound twice"
         );
         *state = LabelState {
-            offset: self.len as u32,
+            offset: self.len,
             link: self.sites.len() as u32,
         };
     }
 
     pub(crate) fn alias(&mut self, label: Label, mut target: Label) {
-        while self.labels[target.0 as usize].offset == LabelState::ALIAS {
-            target = Label(self.labels[target.0 as usize].link);
-        }
-        assert!(label != target, "the label stands for itself");
+        let resolved = self.state(target);
+        let new = if resolved.offset == LabelState::EXTERNAL {
+            self.aliases_external = true;
+            resolved
+        } else {
+            while self.labels[target.0 as usize].offset == LabelState::ALIAS {
+                target = Label(self.labels[target.0 as usize].link);
+            }
+            assert!(label != target, "the label stands for itself");
+            LabelState {
+                offset: LabelState::ALIAS,
+                link: target.0,
+            }
+        };
         let state = &mut self.labels[label.0 as usize];
         assert!(
             state.offset == LabelState::UNBOUND,
             "the label is bound twice"
         );
-        *state = LabelState {
-            offset: LabelState::ALIAS,
-            link: target.0,
-        };
+        *state = new;
     }
 
     #[inline]
@@ -171,6 +200,37 @@ impl<Kind: Copy> CodeBuffer<Kind> {
     #[inline]
     pub(crate) fn record(&mut self, at: u32, label: Label, kind: Kind) {
         self.sites.push(Site { at, label, kind });
+    }
+
+    /// An instruction of `count` bytes with a site `skipped` bytes from its start.
+    #[inline(always)]
+    pub(crate) fn put_with_site<const N: usize>(
+        &mut self,
+        bytes: [u8; N],
+        count: u32,
+        skipped: u32,
+        label: Label,
+        kind: Kind,
+    ) {
+        if self.sites.len() == self.sites.capacity() {
+            return self.grow_and_put_with_site(bytes, count, skipped, label, kind);
+        }
+        self.record(self.len + skipped, label, kind);
+        self.put_first(bytes, count);
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn grow_and_put_with_site<const N: usize>(
+        &mut self,
+        bytes: [u8; N],
+        count: u32,
+        skipped: u32,
+        label: Label,
+        kind: Kind,
+    ) {
+        self.record(self.len + skipped, label, kind);
+        self.put_first(bytes, count);
     }
 
     pub(crate) fn require_alignment(&mut self, alignment: u32) {
@@ -209,15 +269,14 @@ impl<Kind: Copy> CodeBuffer<Kind> {
         for size in [16, 8, 4] {
             for constant in constants.iter().filter(|constant| constant.size == size) {
                 self.bind(constant.label);
-                self.put(constant.bits.to_le_bytes());
-                self.len -= 16 - size as usize;
+                self.put_first(constant.bits.to_le_bytes(), size.into());
             }
         }
         let mut first = 0;
         for table in core::mem::take(&mut self.tables) {
             self.bind(table.label);
             for index in first..table.targets_end as usize {
-                self.record(self.offset(), self.table_targets[index], entry(table.label));
+                self.record(self.len, self.table_targets[index], entry(table.label));
                 self.put([0; 4]);
             }
             first = table.targets_end as usize;
@@ -226,5 +285,110 @@ impl<Kind: Copy> CodeBuffer<Kind> {
 
     pub(crate) fn has_data(&self) -> bool {
         !self.constants.is_empty() || !self.tables.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        Address, Arm64Features, Cond, FloatAssembly, FloatWidth, Fpr, Gpr, MacroAssembly, Options,
+        TestCond, X64Features, arm64, x64,
+    };
+
+    fn emit(masm: &mut impl FloatAssembly, rounds: u32, gap: u32) {
+        let (a, b, float) = (Gpr::new(1), Gpr::new(3), Fpr::new(2));
+        let (start, end, outside) = (masm.here(), masm.new_label(), masm.external_address(64));
+        for round in 0..rounds {
+            let (here, ahead, alias) = (masm.here(), masm.new_label(), masm.new_label());
+            masm.branch_test_bit64(TestCond::Zero, a, 40, end);
+            masm.branch64(Cond::Lt, a, b, ahead);
+            masm.branch64(Cond::Eq, Address::new(a, 0x12345), i64::MAX, outside);
+            masm.min_f64(float, float, float);
+            masm.move_float_constant(FloatWidth::F64, float, 0x1234_5678_9abc + u64::from(round));
+            masm.replaceable_point();
+            masm.patchable_jump(alias);
+            masm.align(32, round);
+            masm.bind(ahead);
+            masm.alias(alias, start);
+            masm.move_label_address(a, end);
+            masm.patchable_move64(b, 1);
+            masm.call(here);
+            masm.jump(here);
+            masm.jump_table(a, &[start, end]);
+        }
+        (0..gap).for_each(|_| masm.nop());
+        masm.bind(end);
+        masm.ret();
+    }
+
+    /// Returns the least limit that is enough, and the size of the code.
+    fn try_limits<M: FloatAssembly>(
+        with_limit: impl Fn(usize) -> M,
+        rounds: u32,
+        gap: u32,
+        step: usize,
+    ) -> (usize, usize) {
+        let finished = |limit| {
+            let mut masm = with_limit(limit);
+            emit(&mut masm, rounds, gap);
+            let size = masm.size();
+            (size, masm.finish())
+        };
+        let whole = finished(1 << 20).1.unwrap();
+        let near = whole.bytes().len().saturating_sub(200);
+        let limits = (0..near).step_by(step).chain(near..near + 2000);
+        for limit in limits {
+            if let (size, Ok(code)) = finished(limit) {
+                assert!(size <= limit && code.bytes() == whole.bytes());
+                assert!(finished(limit + 1).1.is_ok());
+                return (limit, whole.bytes().len());
+            }
+        }
+        panic!("no limit is enough");
+    }
+
+    fn options<Features>(features: Features, shorten_jumps: bool) -> Options<Features> {
+        Options {
+            features,
+            shorten_jumps,
+            seed: 0,
+        }
+    }
+
+    #[test]
+    fn x64_code_beyond_the_limit_is_refused() {
+        for shorten_jumps in [false, true] {
+            let with_limit = |limit| {
+                let mut masm =
+                    x64::MacroAssembler::new(options(X64Features::empty(), shorten_jumps));
+                masm.assembler().buffer.limit = limit;
+                masm
+            };
+            let (limit, size) = try_limits(with_limit, 12, 0, 1);
+            assert!(limit == size || shorten_jumps && limit > size);
+        }
+    }
+
+    #[test]
+    fn arm64_code_beyond_the_limit_is_refused() {
+        let with_limit = |limit| {
+            let mut masm = arm64::MacroAssembler::new(options(Arm64Features::empty(), false));
+            masm.assembler().buffer.limit = limit;
+            masm
+        };
+        for (gap, step) in [(0, 1), (8192, 999)] {
+            let (limit, size) = try_limits(with_limit, 12, gap, step);
+            assert_eq!(limit, size);
+        }
+    }
+
+    #[test]
+    fn the_size_tells_that_code_was_lost() {
+        let mut masm = arm64::MacroAssembler::new(options(Arm64Features::empty(), false));
+        masm.assembler().buffer.limit = 1000;
+        masm.reserve(usize::MAX);
+        (0..300).for_each(|_| masm.nop());
+        assert_eq!(masm.size(), usize::MAX);
+        assert!(masm.finish().is_err());
     }
 }

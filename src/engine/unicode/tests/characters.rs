@@ -129,6 +129,12 @@ fn equivalents_are_the_characters_with_the_same_canonical_form() {
 }
 
 #[test]
+fn only_assigned_characters_fold() {
+    let mut unassigned = property("Cn").ranges().flatten();
+    assert!(unassigned.all(|c| IgnoreCase::CodePoints.canonicalize(c) == c));
+}
+
+#[test]
 fn closing_a_range_adds_the_equivalents_of_its_characters() {
     for mode in [IgnoreCase::CodeUnits, IgnoreCase::CodePoints] {
         for (first, size) in (0..0x600).flat_map(|first| [0, 1, 2, 7, 40].map(|size| (first, size)))

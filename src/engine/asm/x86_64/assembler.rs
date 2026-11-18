@@ -183,8 +183,6 @@ impl Cursor<'_> {
 
     #[inline(always)]
     fn modrm_memory(&mut self, reg: u8, address: Address) {
-        const SIB: u8 = 4;
-        const ALWAYS_HAS_OFFSET: u8 = 5;
         let reg = (reg & 7) << 3;
         let base = address.base.0 & 7;
         let sib = address.scale.log2() << 6 | (address.index.0 & 7) << 3 | base;
@@ -195,17 +193,26 @@ impl Cursor<'_> {
             self.word(address.offset, 4);
             return;
         }
-        let (mode, len) = if address.offset == 0 && base != ALWAYS_HAS_OFFSET {
-            (0x00, 0)
-        } else if is_byte(address.offset) {
-            (0x40, 1)
-        } else {
-            (0x80, 4)
-        };
+        let (mode, len) = mode_and_offset_len(base, address.offset);
         let has_sib = address.has_index() || base == SIB;
         self.byte(mode | reg | if has_sib { SIB } else { base });
         self.byte_if(has_sib, sib);
         self.word(address.offset, len);
+    }
+}
+
+const SIB: u8 = 4;
+const ALWAYS_HAS_OFFSET: u8 = 5;
+
+/// `base` is the low three bits of the number.
+#[inline(always)]
+fn mode_and_offset_len(base: u8, offset: i32) -> (u8, u8) {
+    if offset == 0 && base != ALWAYS_HAS_OFFSET {
+        (0x00, 0)
+    } else if is_byte(offset) {
+        (0x40, 1)
+    } else {
+        (0x80, 4)
     }
 }
 
@@ -330,13 +337,13 @@ impl Assembler {
         };
         write(&mut cursor);
         let len = cursor.len;
-        self.buffer.len += len;
+        self.buffer.len += len as u32;
     }
 
     #[inline(always)]
     fn note_label_operand(&mut self, address: Address, imm: Immediate) {
         if address.base == Address::LABEL_BASE {
-            let at = self.buffer.offset() - u32::from(imm.len) - 4;
+            let at = self.buffer.len - u32::from(imm.len) - 4;
             self.buffer.record(
                 at,
                 Label(address.offset as u32),
@@ -359,7 +366,43 @@ impl Assembler {
         });
     }
 
+    #[inline(always)]
     fn legacy_memory(&mut self, encoding: Encoding, reg: u8, address: Address, imm: Immediate) {
+        if encoding.is_plain() && imm.len == 0 {
+            self.plain_memory(encoding, reg, address);
+        } else {
+            self.any_legacy_memory(encoding, reg, address, imm);
+        }
+    }
+
+    /// The most frequent form, with a base and an offset, fits in one write.
+    fn plain_memory(&mut self, encoding: Encoding, reg: u8, address: Address) {
+        const ONLY_BASE: u8 = SIB << 3 | SIB;
+        let Address { base, offset, .. } = address;
+        if address.has_index() || base >= Address::NO_BASE {
+            return self.any_legacy_memory(encoding, reg, address, Immediate::NONE);
+        }
+        let rex = encoding.wide() << 3 | high_bit(reg) << 2 | high_bit(base.0);
+        let base = base.0 & 7;
+        let (mode, offset_len) = mode_and_offset_len(base, offset);
+        let (has_sib, has_no_rex) = (base == SIB, rex == 0);
+        let sib = if has_sib { ONLY_BASE } else { 0 };
+        let head = [
+            0x40 | rex,
+            encoding.opcode(),
+            mode | (reg & 7) << 3 | base,
+            sib,
+        ];
+        let head_len = 3 + u32::from(has_sib);
+        let bytes =
+            u64::from(offset as u32) << (8 * head_len) | u64::from(u32::from_le_bytes(head));
+        self.buffer.put_first(
+            (bytes >> (8 * u32::from(has_no_rex))).to_le_bytes(),
+            head_len + u32::from(offset_len) - u32::from(has_no_rex),
+        );
+    }
+
+    fn any_legacy_memory(&mut self, encoding: Encoding, reg: u8, address: Address, imm: Immediate) {
         let rex = encoding.wide() << 3
             | extension_bits(reg, address)
             | byte_register_rex(encoding, Encoding::BYTE_REG, reg);
@@ -1048,17 +1091,16 @@ impl Assembler {
     }
 
     #[inline]
-    fn leave_replaceable_bytes(&mut self) {
+    pub(super) fn leave_replaceable_bytes(&mut self) {
         if self.buffer.len < self.buffer.replaceable_end {
-            self.nops((self.buffer.replaceable_end - self.buffer.len) as u32);
+            self.nops(self.buffer.replaceable_end - self.buffer.len);
         }
     }
 
     pub fn replaceable_point(&mut self) -> Label {
-        let size = JUMP_SIZE as usize;
-        if self.buffer.len + size != self.buffer.replaceable_end {
+        if self.buffer.len + JUMP_SIZE != self.buffer.replaceable_end {
             self.leave_replaceable_bytes();
-            self.buffer.replaceable_end = self.buffer.len + size;
+            self.buffer.replaceable_end = self.buffer.len + JUMP_SIZE;
         }
         self.buffer.mark()
     }
@@ -1066,40 +1108,39 @@ impl Assembler {
     /// The distance from the end of an instruction of `size` bytes that starts here.
     #[inline]
     fn distance_back(&self, target: u32, size: u32) -> i32 {
-        target.wrapping_sub(self.buffer.offset() + size) as i32
+        target.wrapping_sub(self.buffer.len + size) as i32
     }
 
     #[inline(always)]
     fn jump_to<const N: usize>(&mut self, long: [u8; N], short: u8, kind: SiteKind, target: Label) {
+        let with_distance = |distance: i32| {
+            let mut bytes = [0; 8];
+            bytes[..N].copy_from_slice(&long);
+            bytes[N..N + 4].copy_from_slice(&distance.to_le_bytes());
+            bytes
+        };
         let state = self.buffer.state(target);
-        let start = self.buffer.offset();
         if state.is_bound() {
             let distance = self.distance_back(state.offset, SHORT_JUMP_SIZE);
             if is_byte(distance) {
-                self.buffer.put([short, distance as u8]);
                 if self.shorten_jumps && state.link as usize != self.buffer.sites.len() {
-                    self.buffer.record(start + 1, target, SiteKind::Distance8);
+                    return self.jump_short(short, target);
                 }
-                return;
+                return self.buffer.put([short, distance as u8]);
             }
             if !self.shorten_jumps {
                 let distance = self.distance_back(state.offset, N as u32 + 4);
-                self.buffer.put(long);
-                self.buffer.put(distance.to_le_bytes());
-                return;
+                return self.buffer.put_first(with_distance(distance), N as u32 + 4);
             }
         }
-        if self.shorten_jumps && self.buffer.len >= self.buffer.replaceable_end {
-            self.buffer.record(start, target, kind);
-        } else {
-            self.buffer.record(
-                start + N as u32,
-                target,
-                SiteKind::Distance32 { trailing: 0 },
-            );
-        }
-        self.buffer.put(long);
-        self.buffer.put([0; 4]);
+        let (skipped, kind) =
+            if self.shorten_jumps && self.buffer.len >= self.buffer.replaceable_end {
+                (0, kind)
+            } else {
+                (N as u32, SiteKind::Distance32 { trailing: 0 })
+            };
+        self.buffer
+            .put_with_site(with_distance(0), N as u32 + 4, skipped, target, kind);
     }
 
     pub fn jmp(&mut self, target: Label) {
@@ -1118,8 +1159,7 @@ impl Assembler {
 
     fn jump_short(&mut self, opcode: u8, target: Label) {
         self.buffer
-            .record(self.buffer.offset() + 1, target, SiteKind::Distance8);
-        self.buffer.put([opcode, 0]);
+            .put_with_site([opcode, 0], 2, 1, target, SiteKind::Distance8);
     }
 
     /// `target` is at most 127 bytes ahead.
@@ -1133,12 +1173,9 @@ impl Assembler {
     }
 
     fn fixed_transfer(&mut self, opcode: u8, target: Label) {
-        self.buffer.record(
-            self.buffer.offset() + 1,
-            target,
-            SiteKind::Distance32 { trailing: 0 },
-        );
-        self.buffer.put([opcode, 0, 0, 0, 0]);
+        let kind = SiteKind::Distance32 { trailing: 0 };
+        self.buffer
+            .put_with_site(u64::from(opcode).to_le_bytes(), 5, 1, target, kind);
     }
 
     pub fn call(&mut self, target: Label) {
@@ -1183,7 +1220,7 @@ impl Assembler {
         while count != 0 {
             let part = count.min(WINDOW as u32);
             fill_with_nops(&mut self.buffer.window()[..part as usize]);
-            self.buffer.len += part as usize;
+            self.buffer.len += part;
             count -= part;
         }
     }
@@ -1194,13 +1231,13 @@ impl Assembler {
         self.buffer.require_alignment(1 << log2);
         if self.shorten_jumps {
             self.buffer.record(
-                self.buffer.offset(),
+                self.buffer.len,
                 Label(0),
                 SiteKind::Padding { log2, bias, max },
             );
             self.nops(max.into());
         } else {
-            self.nops(padding(self.buffer.offset(), log2, bias, max));
+            self.nops(padding(self.buffer.len, log2, bias, max));
         }
     }
 

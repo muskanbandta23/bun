@@ -9,7 +9,12 @@ use std::fs;
 use std::path::PathBuf;
 
 const HIGHWAY_SOURCES: [&str; 3] = ["hwy/abort.cc", "hwy/per_target.cc", "hwy/targets.cc"];
-const KERNELS: [&str; 2] = ["highway_strings.cpp", "highway_byte_set.cpp"];
+const KERNELS: &[&str] = &[
+    "highway_strings.cpp",
+    "highway_byte_set.cpp",
+    "highway_elements.cpp",
+    "highway_text.cpp",
+];
 const HEADERS: [&str; 2] = ["highway_dispatch.h", "BufferStringSearch.h"];
 
 fn main() {
@@ -36,7 +41,7 @@ fn main() {
         .cpp(true)
         .compiler(env::var("CXX").unwrap_or_else(|_| "clang++".into()))
         .std("c++23")
-        .opt_level(2)
+        .opt_level(3)
         .warnings(false)
         .flag("-fno-exceptions")
         .flag("-fno-omit-frame-pointer")
@@ -58,13 +63,17 @@ fn main() {
         .file(vendor.join("simdutf/src/simdutf.cpp"))
         .file(repository.join("src/simdutf_sys/bun-simdutf.cpp"));
 
+    if env::var("CARGO_CFG_TARGET_ARCH").unwrap() == "x86_64" {
+        native.flag("-march=nehalem");
+    }
+
     // A kernel includes "root.h", which is looked for beside the source first: the copy finds this crate's.
-    for name in KERNELS.into_iter().chain(HEADERS) {
+    for name in KERNELS.iter().chain(&HEADERS) {
         let source = bindings.join(name);
         println!("cargo:rerun-if-changed={}", source.display());
         fs::copy(&source, out.join(name)).unwrap();
     }
-    native.files(KERNELS.map(|name| out.join(name)));
+    native.files(KERNELS.iter().map(|name| out.join(name)));
 
     let allocator = out.join("mimalloc.cpp");
     fs::write(&allocator, "#include \"../src/static.c\"\n").unwrap();

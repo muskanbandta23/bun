@@ -267,3 +267,185 @@ fn canonical_numeric_indices() {
         assert!(index.zip(expected).is_none_or(|(a, b)| same(a, b)));
     }
 }
+
+#[test]
+fn fixed_exponential_and_precision() {
+    let text = |result: Result<FixedText, FormatError>| result.unwrap().to_string();
+    for (value, digits, expected) in [
+        (0.0, 0, "0"),
+        (-0.0, 2, "0.00"),
+        (0.5, 0, "1"),
+        (-2.5, 0, "-3"),
+        (1.005, 2, "1.00"),
+        (1.25, 1, "1.3"),
+        (-0.0001, 2, "-0.00"),
+        (99.995, 2, "100.00"),
+        (999.9996, 3, "1000.000"),
+        (0.1, 20, "0.10000000000000000555"),
+        (5e-21, 20, "0.00000000000000000000"),
+        (9.5e-21, 20, "0.00000000000000000001"),
+        (1e20, 2, "100000000000000000000.00"),
+        (1000000000000000128.0, 0, "1000000000000000128"),
+        (1e21, 2, "1e+21"),
+        (f64::NAN, 2, "NaN"),
+    ] {
+        assert_eq!(text(to_fixed(value, digits)), expected);
+    }
+    for (value, digits, expected) in [
+        (0.0, None, "0e+0"),
+        (-0.0, Some(2), "0.00e+0"),
+        (123456.0, None, "1.23456e+5"),
+        (123456.0, Some(2), "1.23e+5"),
+        (25.0, Some(0), "3e+1"),
+        (-9.995, Some(1), "-1.0e+1"),
+        (5e-324, Some(20), "4.94065645841246544177e-324"),
+        (f64::MAX, Some(20), "1.79769313486231570815e+308"),
+        (f64::INFINITY, Some(-1), "Infinity"),
+    ] {
+        assert_eq!(text(to_exponential(value, digits)), expected);
+    }
+    for (value, digits, expected) in [
+        (0.0, 3, "0.00"),
+        (123.456, 4, "123.5"),
+        (123.0, 3, "123"),
+        (123.0, 2, "1.2e+2"),
+        (999.5, 3, "1.00e+3"),
+        (0.00000123, 2, "0.0000012"),
+        (0.000000123, 2, "1.2e-7"),
+        (1e21, 22, "1000000000000000000000"),
+        (1.5, 20, "1.5000000000000000000"),
+        (f64::NAN, 0, "NaN"),
+    ] {
+        assert_eq!(text(to_precision(value, digits)), expected);
+    }
+    assert_eq!(to_fixed(-999999999999999900000.0, 100).unwrap().len(), 123);
+    for digits in [-1, 101] {
+        assert_eq!(
+            to_fixed(f64::NAN, digits).err(),
+            Some(FormatError::FixedDigits)
+        );
+        let error = to_exponential(1.0, Some(digits)).err();
+        assert_eq!(error, Some(FormatError::ExponentialDigits));
+    }
+    for digits in [0, 101] {
+        assert_eq!(
+            to_precision(1.0, digits).err(),
+            Some(FormatError::Precision)
+        );
+    }
+}
+
+#[test]
+fn fixed_digits_are_those_of_the_exact_value() {
+    for word in random_words().take(3000) {
+        // An odd significand this far below one is never a tie at these lengths.
+        let value = f64::from_bits(word >> 1 | 1);
+        let digits = (word % 40) as usize;
+        if value.is_finite() && !(1e-20..1e60).contains(&value) {
+            let text = to_exponential(value, Some(digits as i32))
+                .unwrap()
+                .to_string();
+            let text: String = text.chars().filter(|&character| character != '+').collect();
+            assert_eq!(text, format!("{value:.digits$e}"));
+        }
+        let value = (word >> 11 | 1) as f64 / 2f64.powi(45 + (word % 50) as i32);
+        let text = to_fixed(value, digits as i32).unwrap().to_string();
+        assert_eq!(text, format!("{value:.digits$}"));
+    }
+}
+
+#[test]
+fn radix_text() {
+    for (value, radix, expected) in [
+        (-0.0, 2, "0"),
+        (255.0, 16, "ff"),
+        (-255.5, 16, "-ff.8"),
+        (0.5, 2, "0.1"),
+        (0.1, 3, "0.0022002200220022002200220022002201"),
+        (0.1, 36, "0.3lllllllllm"),
+        (123.456, 36, "3f.gez4w97ry"),
+        (1e21, 36, "5v1j4f4ds79m9s"),
+        (-1e21, 7, "-5135235413265003022550266"),
+        (2f64.powi(63), 32, "8000000000000"),
+        (1e-7, 16, "0.000001ad7f29abcaf48"),
+        (1.5, 10, "1.5"),
+        (f64::NAN, 5, "NaN"),
+        (f64::NEG_INFINITY, 5, "-Infinity"),
+    ] {
+        with_radix_text(value, Radix::new(radix).unwrap(), |text| {
+            assert_eq!(Text::Latin1(text), Text::from_ascii(expected));
+        });
+    }
+    for (value, length) in [(-f64::MAX, 1025), (-5e-324, 1077)] {
+        assert_eq!(with_radix_text(value, Radix::BINARY, <[u8]>::len), length);
+    }
+    assert_eq!(integer_to_radix(i64::MIN, Radix::BINARY).len(), 65);
+    for (word, radix) in random_words().zip((2..=36).cycle()).take(2000) {
+        let number = word as i64 >> (word % 64);
+        let text = integer_to_radix(number, Radix::new(radix).unwrap()).to_string();
+        assert_eq!(i64::from_str_radix(&text, radix as u32), Ok(number));
+    }
+    assert_eq!(Radix::new(1), Err(FormatError::Radix));
+    assert_eq!(Radix::new(37), Err(FormatError::Radix));
+}
+
+#[test]
+fn integers_from_strings() {
+    for (text, radix, expected) in [
+        ("", 0, f64::NAN),
+        ("\u{2003} 42px", 0, 42.0),
+        ("-0", 10, -0.0),
+        ("+-1", 10, f64::NAN),
+        ("0x1F", 0, 31.0),
+        ("-0X1f", 16, -31.0),
+        ("0x1f", 10, 0.0),
+        ("0x", 16, f64::NAN),
+        ("0b1", 0, 0.0),
+        ("1e3", 0, 1.0),
+        ("Zz", 36, 1295.0),
+        ("12", 2, 1.0),
+        ("1", 1, f64::NAN),
+        ("1", 37, f64::NAN),
+        ("1", -10, f64::NAN),
+        ("9007199254740993", 10, 9007199254740992.0),
+        ("90071992547409930001", 10, 90071992547409930001.0),
+        (
+            "123456789012345678901234567890.5",
+            10,
+            123456789012345678901234567890.0,
+        ),
+        ("20000000000001001", 16, 2f64.powi(65).next_up()),
+    ] {
+        assert!(
+            same(parse_int(Text::Utf16(&wide(text)), radix), expected),
+            "{text}"
+        );
+    }
+    assert_eq!(parse_int_of_number(-0.0).map(f64::to_bits), Some(0));
+    assert_eq!(parse_int_of_number(-1.9), Some(-1.0));
+    assert_eq!(parse_int_of_number(0.000001), Some(0.0));
+    for value in [1e-7, -0.5, 1e21, f64::NAN] {
+        assert_eq!(parse_int_of_number(value), None);
+    }
+}
+
+#[test]
+fn bounded_integers() {
+    use Surroundings::*;
+    let decimal = |text, surroundings| -> Option<i16> {
+        parse_integer(Text::from_ascii(text), Radix::DECIMAL, surroundings)
+    };
+    assert_eq!(decimal("-32768", Nothing), Some(i16::MIN));
+    assert_eq!(decimal("+32767", Nothing), Some(i16::MAX));
+    assert_eq!(decimal("32768", Nothing), None);
+    assert_eq!(decimal("99999999999999999999999", Nothing), None);
+    assert_eq!(decimal(" 1", Nothing), None);
+    assert_eq!(decimal("\t1\u{b} ", WhiteSpace), Some(1));
+    assert_eq!(decimal("1x", WhiteSpace), None);
+    assert_eq!(decimal(" 1x", WhiteSpaceBeforeAnythingAfter), Some(1));
+    assert_eq!(decimal("-", WhiteSpaceBeforeAnythingAfter), None);
+    let octal = |text| parse_integer::<u32>(Text::from_ascii(text), Radix::OCTAL, Nothing);
+    assert_eq!(octal("0777"), Some(0o777));
+    assert_eq!(octal("-0"), None);
+    assert_eq!(octal("8"), None);
+}

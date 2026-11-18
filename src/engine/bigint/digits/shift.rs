@@ -47,3 +47,25 @@ pub(crate) fn shift_left(out: &mut [u64], a: &[u64], amount: usize) {
         *top = pushed_out;
     }
 }
+
+/// `a >>= bits` with `0 < bits < 64`.
+pub(crate) fn shift_bits_right_assign(a: &mut [u64], bits: u32) {
+    debug_assert!((1..64).contains(&bits));
+    for index in 1..a.len() {
+        a[index - 1] = a[index - 1] >> bits | a[index] << (64 - bits);
+    }
+    if let Some(last) = a.last_mut() {
+        *last >>= bits;
+    }
+}
+
+/// `a <<= bits` with `0 < bits < 64`, where the result fits.
+pub(crate) fn shift_bits_left_assign(a: &mut [u64], bits: u32) {
+    debug_assert!((1..64).contains(&bits));
+    for index in (1..a.len()).rev() {
+        a[index] = a[index] << bits | a[index - 1] >> (64 - bits);
+    }
+    if let Some(first) = a.first_mut() {
+        *first <<= bits;
+    }
+}

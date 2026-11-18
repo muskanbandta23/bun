@@ -3,6 +3,7 @@ use super::opcode::{
     Alu, AvxUnary, BitTest, Cc, FloatPredicate, MoveMask, ShiftOp, Sse, SseImm, SseLoad, SseStore,
     SseUnary, Unary,
 };
+use super::registers::{XMM0, XMM8};
 use crate::assembly::{FloatAssembly, MacroAssembly};
 use crate::features::X64Features;
 use crate::label::Label;
@@ -65,14 +66,14 @@ pub fn rounding_control(rounding: Rounding) -> u8 {
 }
 
 #[inline]
-fn pick<T>(width: FloatWidth, single: T, double: T) -> T {
+pub(super) fn pick<T>(width: FloatWidth, single: T, double: T) -> T {
     match width {
         FloatWidth::F32 => single,
         FloatWidth::F64 => double,
     }
 }
 
-fn sign_bits(width: FloatWidth) -> u128 {
+pub(super) fn sign_bits(width: FloatWidth) -> u128 {
     pick(
         width,
         0x8000_0000_8000_0000_8000_0000_8000_0000,
@@ -87,13 +88,22 @@ impl MacroAssembler {
     }
 
     pub(super) fn zero_vector(&mut self, dst: Fpr) {
-        self.asm.sse(Sse::Xorps, dst, dst, dst);
+        self.sse_without_source(Sse::Xorps, dst);
+    }
+
+    /// For what gives the same for any two equal operands.
+    pub(super) fn sse_without_source(&mut self, op: Sse, dst: Fpr) {
+        let any = if self.has_avx() { XMM0 } else { dst };
+        self.asm.sse(op, dst, any, any);
     }
 
     /// Without AVX this may overwrite the first scratch register.
     #[inline]
     pub(super) fn sse_binary(&mut self, op: Sse, dst: Fpr, lhs: Fpr, rhs: Fpr) {
-        if self.has_avx() || dst == lhs {
+        if self.has_avx() && op.commutes() && rhs >= XMM8 {
+            // The short form of the prefix cannot name these as the last operand.
+            self.asm.sse(op, dst, rhs, lhs);
+        } else if self.has_avx() || dst == lhs {
             self.asm.sse(op, dst, lhs, rhs);
         } else if dst != rhs {
             self.move_vector(dst, lhs);
@@ -328,6 +338,28 @@ impl FloatAssembly for MacroAssembler {
             .sse_store(pick(width, SseStore::Movss, SseStore::Movsd), dst, src);
     }
 
+    fn load_pair_f64(&mut self, low: Fpr, high: Fpr, src: Address) {
+        assert!(low != high);
+        self.load_f64(low, src);
+        self.load_f64(high, src.plus(8));
+    }
+
+    fn store_pair_f64(&mut self, dst: Address, low: Fpr, high: Fpr) {
+        self.store_f64(dst, low);
+        self.store_f64(dst.plus(8), high);
+    }
+
+    fn load_pair_vector(&mut self, low: Fpr, high: Fpr, src: Address) {
+        assert!(low != high);
+        self.load_vector(low, src);
+        self.load_vector(high, src.plus(16));
+    }
+
+    fn store_pair_vector(&mut self, dst: Address, low: Fpr, high: Fpr) {
+        self.store_vector(dst, low);
+        self.store_vector(dst.plus(16), high);
+    }
+
     fn add_float(&mut self, width: FloatWidth, dst: Fpr, lhs: Fpr, rhs: Fpr) {
         self.sse_binary(pick(width, Sse::Addss, Sse::Addsd), dst, lhs, rhs);
     }
@@ -471,7 +503,10 @@ impl FloatAssembly for MacroAssembler {
     fn truncate_float(&mut self, from: FloatWidth, sign: Sign, to: Width, dst: Gpr, src: Fpr) {
         match (sign, to) {
             (Sign::Signed, _) => self.asm.cvtts2si(from, to, dst, src),
-            (Sign::Unsigned, Width::W32) => self.asm.cvtts2si(from, Width::W64, dst, src),
+            (Sign::Unsigned, Width::W32) => {
+                self.asm.cvtts2si(from, Width::W64, dst, src);
+                self.asm.mov(Width::W32, dst, dst);
+            }
             (Sign::Unsigned, Width::W64) => {
                 let done = self.new_label();
                 self.truncate_or_skip_if_below_two_to_the_63(from, dst, src, done);
@@ -673,6 +708,19 @@ impl FloatAssembly for MacroAssembler {
     ) {
         let flags = self.set_float_flags(width, cond, lhs, rhs);
         self.select_vector_on_flags(flags, dst, then, or);
+    }
+
+    fn select_float_test(
+        &mut self,
+        width: Width,
+        cond: TestCond,
+        dst: Fpr,
+        value: Gpr,
+        mask: impl Into<RegOrImm>,
+        then: Fpr,
+        or: Fpr,
+    ) {
+        self.select_vector_test(width, cond, dst, value, mask, then, or);
     }
 
     fn select_vector_test(

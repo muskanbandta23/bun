@@ -1,5 +1,6 @@
 //! Families of instructions that share a form.
 
+use crate::family::family;
 use crate::operand::{Cond, ResultCond, Shift, TestCond};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -92,21 +93,6 @@ impl From<ResultCond> for Cc {
             ResultCond::NoCarry => Self::Ae,
         }
     }
-}
-
-macro_rules! family {
-    ($(#[$meta:meta])* $name:ident: $repr:ty { $($variant:ident = $value:expr,)* }) => {
-        $(#[$meta])*
-        #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-        #[repr($repr)]
-        pub enum $name {
-            $($variant = $value,)*
-        }
-
-        impl $name {
-            pub const ALL: &'static [Self] = &[$(Self::$variant,)*];
-        }
-    };
 }
 
 family! {
@@ -301,6 +287,7 @@ family! {
         Pmaxud = P66 | M38 | 0x3f | COMMUTES,
         Pavgb = P66 | M0F | 0xe0 | COMMUTES,
         Pavgw = P66 | M0F | 0xe3 | COMMUTES,
+        Psadbw = P66 | M0F | 0xf6 | COMMUTES,
         Pand = P66 | M0F | 0xdb | COMMUTES,
         Pandn = P66 | M0F | 0xdf,
         Por = P66 | M0F | 0xeb | COMMUTES,
@@ -374,6 +361,7 @@ family! {
         Pmovzxbw = P66 | M38 | 0x30,
         Pmovzxwd = P66 | M38 | 0x33,
         Pmovzxdq = P66 | M38 | 0x35,
+        Phminposuw = P66 | M38 | 0x41,
     }
 }
 
@@ -497,7 +485,15 @@ family! {
         Le = 2,
         Unordered = 3,
         NeOrUnordered = 4,
+        GeOrUnordered = 5,
         Ordered = 7,
+    }
+}
+
+impl FloatPredicate {
+    #[inline]
+    pub const fn commutes(self) -> bool {
+        !matches!(self, Self::Lt | Self::Le | Self::GeOrUnordered)
     }
 }
 
@@ -536,6 +532,12 @@ impl Encoding {
     #[inline(always)]
     pub(super) fn wide(self) -> u8 {
         (self.0 >> 12 & 1) as u8
+    }
+
+    /// Nothing but REX comes before the opcode, and the operands have 32 or 64 bits.
+    #[inline(always)]
+    pub(super) fn is_plain(self) -> bool {
+        self.0 & !(Self::WIDE | 0xff) == 0
     }
 
     #[inline(always)]

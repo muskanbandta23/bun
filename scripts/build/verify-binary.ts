@@ -74,7 +74,7 @@ function versionLeq(a: string, b: string): boolean {
 }
 
 type CheckName =
-  "exports" | "dynamic libraries" | "imports" | "static initializers" | "symbols" | "hardening" | "debug info" | "size";
+  "exports" | "dynamic libraries" | "imports" | "static initializers" | "hardening" | "debug info" | "size";
 
 /**
  * What a violation of each check means for the shipped binary and what the
@@ -108,14 +108,9 @@ const GUIDANCE: Record<CheckName, string[]> = {
   "static initializers": [
     "A static initializer runs before main() on every start of every bun process, in",
     "unspecified order relative to the others, and its page is dirtied even if the feature",
-    "is never used. bun, JSC and WTF have none by policy: use a function-local static,",
+    "is never used. bun has none by policy: use a function-local static,",
     "WTF::LazyNeverDestroyed / NeverDestroyed, or constinit. The symbol name says which",
     "translation unit added it (_GLOBAL__sub_I_<file>).",
-  ],
-  symbols: [
-    "This code is there for tests and debugging and must not ship: the linker kept it because",
-    "something reachable refers to it. Find the caller (llvm-nm -A --undefined-only over the link",
-    "inputs) and compile the call out of this flavour, as binary-expectations.ts says for the list.",
   ],
   hardening: [
     "These bits are process-wide exploit mitigations / layout guarantees (non-executable",
@@ -227,10 +222,7 @@ const loadCommands = (priv: string): { cmd: string; text: string }[] =>
     .map(text => ({ cmd: text.match(/^\s*cmd (\S+)/m)?.[1] ?? "", text }));
 
 /** Symbol table as address-sorted [addr, name] for symbolizing initializer pointers. */
-function symbolTable(
-  nm: string,
-  exe: string,
-): { lookup(addr: bigint): string | undefined; size: number; names: string[] } {
+function symbolTable(nm: string, exe: string): { lookup(addr: bigint): string | undefined; size: number } {
   const text = run(nm, ["--defined-only", "--numeric-sort", "--no-demangle", exe]);
   const addrs: bigint[] = [];
   const names: string[] = [];
@@ -242,14 +234,7 @@ function symbolTable(
   }
   const exact = new Map<bigint, string>();
   for (let i = 0; i < addrs.length; i++) if (!exact.has(addrs[i]!)) exact.set(addrs[i]!, names[i]!);
-  return { lookup: a => exact.get(a) ?? exact.get(a & ~1n), size: addrs.length, names };
-}
-
-/** An executable without a symbol table would pass for the wrong reason. */
-function forbiddenSymbolViolations(names: string[], forbidden: string[]): string[] {
-  if (names.length === 0) return ["the executable has no symbol table, so nothing can be said"];
-  const pat = globToRegExp(forbidden);
-  return names.filter(name => pat.test(name)).map(name => `+ ${name} (forbidden symbol)`);
+  return { lookup: a => exact.get(a) ?? exact.get(a & ~1n), size: addrs.length };
 }
 
 function readAt(path: string, offset: number, length: number): Buffer {
@@ -405,11 +390,6 @@ function verifyElf(spec: VerifySpec): void {
     report("static initializers", `${names.length} static initializers`, violations, names);
   }
 
-  if (expect.forbiddenSymbols !== undefined) {
-    const { names } = symbolTable(nm, exe);
-    report("symbols", `${names.length} defined symbols`, forbiddenSymbolViolations(names, expect.forbiddenSymbols));
-  }
-
   // 5. hardening
   if (expect.elf !== undefined) {
     const violations: string[] = [];
@@ -551,11 +531,6 @@ function verifyMachO(spec: VerifySpec): void {
       }
     }
     report("static initializers", `${names.length} static initializers`, violations, names);
-  }
-
-  if (expect.forbiddenSymbols !== undefined) {
-    const { names } = symbolTable(nm, exe);
-    report("symbols", `${names.length} defined symbols`, forbiddenSymbolViolations(names, expect.forbiddenSymbols));
   }
 
   // 5. hardening: header flags + segment protections

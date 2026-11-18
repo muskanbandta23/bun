@@ -9,6 +9,7 @@ use bun_icu::Buffer;
 
 pub use id::TimeZoneId;
 pub use rules::{LocalOffsets, ZoneRules};
+pub(crate) use rules::{Offset, Side, Span};
 pub use system::{set_time_zone_override, system_time_zone, time_zone_generation};
 
 use crate::AsciiBuffer;

@@ -118,16 +118,68 @@ impl Form {
     }
 }
 
+/// In NFD, a text for which `has_long_run_of_marks` is false has fewer marks in a row.
+const MAX_MARKS_IN_A_ROW: usize = 160;
+
+pub(crate) fn has_long_run_of_marks(text: &[u16]) -> Result<bool> {
+    /// A run of twice as many units covers one of the windows.
+    const WINDOW_LENGTH: usize = 32;
+    const FIRST_MARK: u16 = 0x300;
+
+    let (windows, _) = text.as_chunks::<WINDOW_LENGTH>();
+    let mut candidates = (windows.iter().filter(|it| it[0] >= FIRST_MARK)).peekable();
+    if candidates.peek().is_none() {
+        return Ok(false);
+    }
+    let normalizer = Form::Nfd.normalizer()?;
+    // A pair of surrogates that the edge of the window cuts counts as a mark.
+    let continues = |it: u32| it & !0x7ff == 0xd800 || !normalizer.has_boundary_before(it);
+    Ok(candidates.any(|window| code_points(window).all(continues)))
+}
+
+/// NFD in the manner of the Stream-Safe Text Format.
+pub(crate) fn decompose_stream_safe(text: &[u16], out: &mut Buffer<u16>) -> Result<()> {
+    const COMBINING_GRAPHEME_JOINER: u16 = 0x34f;
+
+    let mut has_room = true;
+    Form::Nfd.normalize_pieces(text, |_, mut piece| {
+        let capacity = piece.len() + piece.len() / MAX_MARKS_IN_A_ROW;
+        has_room = has_room && out.try_reserve(capacity).is_ok();
+        if !has_room {
+            return;
+        }
+        let mut marks = 0;
+        for code_point in code_points(piece) {
+            marks = match combining_class(code_point) {
+                0 => 0,
+                _ if marks < MAX_MARKS_IN_A_ROW => marks + 1,
+                _ => {
+                    out.push(COMBINING_GRAPHEME_JOINER);
+                    1
+                }
+            };
+            let units;
+            (units, piece) = piece.split_at(unit_count(code_point));
+            out.extend_from_slice(units);
+        }
+    })?;
+    has_room.then_some(()).ok_or(Error::MEMORY_ALLOCATION)
+}
+
 /// A constant of the process that ICU owns.
 #[derive(Clone, Copy)]
 struct Normalizer(*const UNormalizer2);
 
 impl Normalizer {
+    fn has_boundary_before(self, code_point: u32) -> bool {
+        // SAFETY: it takes any code point.
+        unsafe { unorm2_hasBoundaryBefore(self.0, code_point) != 0 }
+    }
+
     fn piece_length(self, text: &[u16]) -> usize {
         let mut length = code_point_boundary(text, PIECE_LENGTH);
         for code_point in code_points(&text[length..]) {
-            // SAFETY: it takes any code point.
-            if unsafe { unorm2_hasBoundaryBefore(self.0, code_point) } != 0 {
+            if self.has_boundary_before(code_point) {
                 break;
             }
             length += unit_count(code_point);
@@ -175,8 +227,7 @@ fn order_marks(mut text: &mut [u16]) -> Result<()> {
     while !text.is_empty() {
         let mut starter = None;
         for code_point in code_points(text) {
-            // SAFETY: it takes any code point.
-            let class = unsafe { u_getCombiningClass(code_point) };
+            let class = combining_class(code_point);
             if class == 0 {
                 starter = Some(code_point);
                 break;
@@ -196,6 +247,11 @@ fn order_marks(mut text: &mut [u16]) -> Result<()> {
         text = &mut text[length + starter.map_or(0, unit_count)..];
     }
     Ok(())
+}
+
+fn combining_class(code_point: u32) -> u8 {
+    // SAFETY: it takes any code point.
+    unsafe { u_getCombiningClass(code_point) }
 }
 
 /// A lone surrogate is itself.

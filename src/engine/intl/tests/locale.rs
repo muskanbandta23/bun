@@ -68,12 +68,13 @@ fn options_override_the_tag() {
     options.hour_cycle = Some(HourCycle::H11);
     options.case_first = Some(CaseFirst::False);
     options.numeric = Some(true);
-    let changed = locale("en-Armn-US-abcde-u-attr-hc-h12-nu-thai-x-a").with_options(&options);
+    let changed = locale("en-Armn-US-abcde-u-attr-hc-h12-nu-thai-x-a").with_options(options);
     assert_eq!(
         tag(&changed.unwrap()),
         "hy-Armn-AM-1996-fonipa-u-attr-ca-islamic-civil-fw-sun-hc-h11-kf-false-kn-nu-thai-x-a"
     );
 
+    let mut options = Options::default();
     assert!(options.set_language(text("abcd")).is_err());
     assert!(options.set_script(text("abc")).is_err());
     assert!(options.set_region(text("a1")).is_err());

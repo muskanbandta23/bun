@@ -1,14 +1,14 @@
 use bun_alloc::AllocError;
 use bun_engine_macros::{cell, object_ops};
-use bun_engine_text::{PropertyName, names};
+use bun_engine_text::{PropertyName, names, symbols};
 
 use super::elements::{MIN_SPARSE_INDEX, is_dense_enough, store_unchecked};
 use crate::heap::barrier;
 use crate::{
-    Attributes, CellKind, Cx, DeletePropertySlot, DontEnumMode, ElementKind, Elements, Gc,
-    GlobalObject, ImmutableArray, IndexingMode, JsObject, JsObjectInit, JsResult,
-    PropertyDescriptor, PropertyNameList, PropertySlot, PutPropertySlot, Shape, ShapeFlags,
-    ShapeSpec, Storage, TransitionKind, TypeFlags, Value, Vm, errors,
+    Attributes, CellKind, CellType, Cx, DeletePropertySlot, DontEnumMode, ElementKind, Elements,
+    Gc, GlobalObject, IndexingMode, JsObject, JsObjectInit, JsResult, PropertyDescriptor,
+    PropertyNameList, PropertySlot, PutPropertySlot, Shape, ShapeFlags, ShapeSpec, Storage,
+    TransitionKind, TypeFlags, Value, Vm, errors,
 };
 
 #[cell(name = "Array", cell_type = Array..=DerivedArray, ops, export = "engine_class_Array")]
@@ -16,8 +16,6 @@ pub struct JsArray {
     base: JsObject,
 }
 
-/// `new Array(n)` is sparse from here on.
-const MIN_SPARSE_CONSTRUCTION_LENGTH: u32 = 1 << 27;
 /// Up to here, moving the elements is cheaper than what it takes to avoid that.
 const MAX_MOVED_BY_SHIFT: u32 = 32;
 
@@ -138,86 +136,6 @@ impl JsArray {
     ) -> Gc<Shape> {
         let spec = ShapeSpec::of::<JsArray>().with_indexing_mode(mode);
         Shape::create(vm, Some(global), prototype, spec)
-    }
-
-    /// # Safety
-    /// As for `JsObjectInit::with_storage`.
-    #[inline(always)]
-    pub unsafe fn create_with_storage(vm: &Vm, shape: Gc<Shape>, storage: Storage) -> Gc<JsArray> {
-        // SAFETY: the caller's.
-        let base = unsafe { JsObjectInit::with_storage(shape, storage) };
-        vm.allocate::<JsArray>(JsArrayInit { base })
-    }
-
-    #[inline(always)]
-    fn writable_dense_kind(shape: &Shape) -> ElementKind {
-        let mode = shape.instance_indexing_mode();
-        assert!(mode.kind().is_dense() && !mode.is_copy_on_write() && !shape.is_dictionary());
-        mode.kind()
-    }
-
-    /// Holes up to `length`, and room for at least `vector_length` elements.
-    #[inline]
-    pub fn try_create(
-        vm: &Vm,
-        shape: Gc<Shape>,
-        length: u32,
-        vector_length: u32,
-    ) -> Result<Gc<JsArray>, AllocError> {
-        let kind = Self::writable_dense_kind(&shape);
-        if length >= MIN_SPARSE_CONSTRUCTION_LENGTH {
-            let array = Self::try_create(vm, shape, 0, 0)?;
-            array.convert_to_sparse(vm)?;
-            // SAFETY: not dense.
-            unsafe { array.storage().set_public_length(length) };
-            return Ok(array);
-        }
-        let capacity = shape.out_of_line_capacity();
-        let wanted = length.max(vector_length.min(Storage::MAX_VECTOR_LENGTH));
-        let vector_length = Storage::optimal_vector_length(capacity, wanted);
-        let storage = Storage::try_create(vm, capacity, kind, length, vector_length)?;
-        // SAFETY: made for the shape, and without any cell.
-        unsafe {
-            for slot in storage.slots(shape.out_of_line_size()) {
-                slot.set_without_barrier(Some(Value::UNDEFINED));
-            }
-            Ok(Self::create_with_storage(vm, shape, storage))
-        }
-    }
-
-    /// The kind of the elements becomes as general as the values need.
-    #[inline]
-    pub fn try_from_values_with_shape(
-        vm: &Vm,
-        shape: Gc<Shape>,
-        values: &[Value],
-    ) -> Result<Gc<JsArray>, AllocError> {
-        if values.len() > Storage::MAX_VECTOR_LENGTH as usize {
-            return Err(AllocError);
-        }
-        let array = Self::try_create(vm, shape, 0, values.len() as u32)?;
-        array.append_values(vm, values)?;
-        Ok(array)
-    }
-
-    pub fn from_immutable(cx: &Cx, elements: Gc<ImmutableArray>) -> JsResult<Gc<JsArray>> {
-        let global = cx.global();
-        if global.is_having_a_bad_time() {
-            let length = elements.len() as usize;
-            let array = cx.new_array_with_capacity(ElementKind::Contiguous, length)?;
-            for (index, value) in (0..).zip(elements.iter()) {
-                array
-                    .store_element(cx, index, value)
-                    .map_err(|_| cx.throw_out_of_memory())?;
-            }
-            return Ok(array);
-        }
-        let mode = IndexingMode::array(elements.kind()).copy_on_write();
-        let shape = global.original_array_shape(mode);
-        // SAFETY: what such a shape describes. `elements` is alive until the array has it.
-        let array = unsafe { Self::create_with_storage(cx, shape, elements.storage()) };
-        elements.keep_alive();
-        Ok(array)
     }
 
     #[inline(always)]
@@ -349,13 +267,7 @@ impl JsArray {
                 .shape()
                 .has(ShapeFlags::DID_PREVENT_EXTENSIONS | ShapeFlags::LENGTH_IS_READ_ONLY)
         );
-        let mut kind = self.element_kind();
-        if kind != ElementKind::Contiguous {
-            kind = values
-                .iter()
-                .map(|&value| ElementKind::for_value(value))
-                .fold(kind, ElementKind::max);
-        }
+        let kind = self.element_kind().generalized_for(values.iter().copied());
         self.ensure_element_kind(vm, kind);
         let start = self.length();
         let end = u32::try_from(start as usize + values.len()).map_err(|_| AllocError)?;
@@ -502,36 +414,6 @@ impl JsArray {
         Ok(true)
     }
 
-    /// A new array of the current realm with these elements of `source`, unless reading them might run code.
-    pub fn try_fast_slice(
-        cx: &Cx,
-        source: &JsObject,
-        start: u32,
-        count: u32,
-    ) -> JsResult<Option<Gc<JsArray>>> {
-        let kind = source.element_kind();
-        if !kind.is_dense()
-            || u64::from(start) + u64::from(count) > u64::from(source.public_length())
-            || source.holes_must_forward_to_prototype()
-        {
-            return Ok(None);
-        }
-        let shape = cx.global().array_shape(kind);
-        let vector_length = Storage::optimal_vector_length(0, count);
-        let storage = Storage::try_allocate(cx, 0, 0, Some(vector_length))
-            .map_err(|_| cx.throw_out_of_memory())?;
-        // SAFETY: inside both. `source` keeps the elements alive until the new array has them.
-        let array = unsafe {
-            let from = source.storage().elements_ptr().add(start as usize);
-            core::ptr::copy_nonoverlapping(from, storage.elements_ptr(), count as usize);
-            storage.set_lengths(count, vector_length);
-            storage.clear_elements(kind, count, vector_length);
-            Self::create_with_storage(cx, shape, storage)
-        };
-        source.as_object().keep_alive();
-        Ok(Some(array))
-    }
-
     /// Copies all elements of `source`, holes included, to `start`, which is at least the length. False, having done
     /// nothing, if that is not what defining them one by one would do.
     pub fn try_append_elements(&self, cx: &Cx, start: u32, source: &JsObject) -> JsResult<bool> {
@@ -570,20 +452,28 @@ impl JsArray {
         Ok(true)
     }
 
-    /// Whether iterating over it comes down to reading its elements.
+    /// Whether iterating over it comes down to getting its length and its elements.
     #[inline]
     pub fn is_iteration_pristine(&self) -> bool {
         let shape = self.shape();
-        let Some(global) = shape.global() else {
-            return false;
-        };
-        if !global.array_iterator_protocol_is_pristine() {
-            return false;
-        }
+        shape.global().is_some_and(|global| {
+            global.array_iterator_protocol_is_pristine()
+                && self.inherits_from_array_prototype(&global, symbols::iterator)
+        })
+    }
+
+    /// `global` is its realm.
+    #[inline(always)]
+    pub fn inherits_from_array_prototype(
+        &self,
+        global: &GlobalObject,
+        name: PropertyName<'_>,
+    ) -> bool {
+        let shape = self.shape();
         global.is_original_array_shape(&shape)
-            || (shape.prototype() == global.array_prototype().into()
-                && !shape.may_intercept_indexed_access()
-                && shape.get(bun_engine_text::symbols::iterator).is_none())
+            || (self.cell_type() == CellType::Array
+                && shape.prototype() == global.array_prototype().into()
+                && shape.get(name).is_none())
     }
 
     /// The elements as values, if there are no holes and they are stored that way.

@@ -4,6 +4,7 @@
 
 mod ascii;
 mod atom_table;
+mod base64;
 mod block;
 mod builder;
 mod code_unit;
@@ -11,8 +12,10 @@ mod compare;
 mod copy;
 mod cursor;
 mod hash;
+mod hex;
 mod identifier;
 mod json;
+mod replace;
 pub mod scan;
 mod search;
 mod search_matches;
@@ -23,11 +26,13 @@ mod string_impl;
 mod string_ref;
 mod symbol;
 mod trim;
+mod uri;
 mod utf16;
 mod utf8;
 mod utf8_encode;
 mod view;
 
+pub use base64::{Base64Alphabet, BinarySyntaxError, LastChunkHandling};
 pub use builder::StringBuilder;
 pub use bun_alloc::AllocError;
 pub use code_unit::CodeUnit;
@@ -44,6 +49,7 @@ pub use string_ref::{IsolatedString, ReverseStringWriter, SharedString, StringRe
 pub use symbol::{
     OFFSET_OF_SYMBOL_FLAGS, OFFSET_OF_SYMBOL_HASH, StaticSymbol, SymbolFlags, SymbolRef,
 };
+pub use uri::{UriError, UriSet};
 pub use utf8_encode::Progress;
 pub use view::{CodePoints, CodeUnits, Text};
 

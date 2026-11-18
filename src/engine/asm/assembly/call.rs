@@ -1,8 +1,8 @@
-use smallvec::SmallVec;
+use core::mem::take;
 
 use super::FloatAssembly;
 use crate::operand::Address;
-use crate::register::{Fpr, Gpr, Reg, RegisterSet};
+use crate::register::{Bank, Fpr, Gpr, Reg, RegisterSet};
 
 /// An argument of a C function. Addresses have no index.
 #[derive(Clone, Copy, Debug)]
@@ -47,37 +47,121 @@ impl From<usize> for Argument {
 }
 
 impl Argument {
-    fn is_float(self) -> bool {
+    #[inline]
+    fn is_float(&self) -> bool {
         matches!(self, Self::Fpr(_) | Self::LoadF64(_))
     }
 
-    /// The register it reads in the bank of its destination.
-    fn source(self) -> Option<Reg> {
-        match self {
+    #[inline]
+    fn source(&self) -> Option<Reg> {
+        match *self {
             Self::Gpr(reg) => Some(reg.into()),
             Self::Fpr(reg) => Some(reg.into()),
-            Self::Imm(_) | Self::LoadF64(_) => None,
-            Self::Load32(address) | Self::Load64(address) | Self::AddressOf(address) => {
+            Self::Imm(_) => None,
+            Self::Load32(address)
+            | Self::Load64(address)
+            | Self::LoadF64(address)
+            | Self::AddressOf(address) => {
                 assert!(!address.has_index());
                 Some(address.base.into())
             }
         }
     }
 
-    fn with_source(self, reg: Reg) -> Self {
+    fn with_source(&self, reg: Reg) -> Self {
         let rebase = |address: Address| Address::new(reg.gpr(), address.offset);
-        match self {
+        match *self {
             Self::Gpr(_) => Self::Gpr(reg.gpr()),
             Self::Fpr(_) => Self::Fpr(reg.fpr()),
             Self::Load32(address) => Self::Load32(rebase(address)),
             Self::Load64(address) => Self::Load64(rebase(address)),
             Self::AddressOf(address) => Self::AddressOf(rebase(address)),
-            Self::Imm(_) | Self::LoadF64(_) => self,
+            Self::Imm(_) | Self::LoadF64(_) => unreachable!("in no cycle"),
         }
     }
 }
 
-type Moves = SmallVec<[(Reg, Argument); 8]>;
+const MOST_IN_REGISTERS: usize = 16;
+
+#[derive(Clone, Copy)]
+struct Move {
+    argument: u8,
+    dst: Reg,
+    /// What it has yet to read, or else `dst`.
+    src: Reg,
+}
+
+/// Moves to registers that take place as if at once.
+struct Moves {
+    items: [Move; MOST_IN_REGISTERS],
+    len: usize,
+    /// What the moves read, apart from their own destinations.
+    read: RegisterSet,
+}
+
+impl Moves {
+    const NONE: Self = Self {
+        items: [Move {
+            argument: 0,
+            dst: Reg::from_index(0),
+            src: Reg::from_index(0),
+        }; MOST_IN_REGISTERS],
+        len: 0,
+        read: RegisterSet::EMPTY,
+    };
+
+    #[inline]
+    fn push(&mut self, item: Move) {
+        if item.src != item.dst {
+            self.read.insert(item.src);
+        }
+        self.items[self.len] = item;
+        self.len += 1;
+    }
+
+    /// Each move reads one register at most, so a cycle that is opened with a scratch register unwinds before another
+    /// needs it.
+    #[inline]
+    fn emit(&mut self, masm: &mut impl FloatAssembly, arguments: &[Argument]) {
+        let mut opened = None;
+        while self.len != 0 {
+            let (len, read) = (take(&mut self.len), take(&mut self.read));
+            for index in 0..len {
+                let item = self.items[index];
+                let argument = &arguments[usize::from(item.argument)];
+                match opened {
+                    _ if read.contains(item.dst) => self.push(item),
+                    Some((reader, copy)) if reader == item.dst => {
+                        move_one(masm, item.dst, &argument.with_source(copy))
+                    }
+                    _ => move_one(masm, item.dst, argument),
+                }
+            }
+            if self.len == len {
+                let first = &mut self.items[0];
+                opened = Some((first.dst, copy_to_scratch(masm, first.src)));
+                self.read.remove(first.src);
+                first.src = first.dst;
+            }
+        }
+    }
+}
+
+fn copy_to_scratch(masm: &mut impl FloatAssembly, src: Reg) -> Reg {
+    const NEEDED: &str = "arguments are moved through a scratch register";
+    match src.bank() {
+        Bank::Gpr => {
+            let copy = masm.scratch().gprs[0].expect(NEEDED);
+            masm.move64(copy, src.gpr());
+            copy.into()
+        }
+        Bank::Fpr => {
+            let copy = masm.scratch().fprs[0].expect(NEEDED);
+            masm.move_float(copy, src.fpr());
+            copy.into()
+        }
+    }
+}
 
 pub trait CallAssembly: FloatAssembly {
     /// The bytes at the stack pointer that `move_arguments` writes.
@@ -93,38 +177,38 @@ pub trait CallAssembly: FloatAssembly {
 
     /// Puts the arguments where a C function finds them. Those that go on the stack are 64 bits wide.
     fn move_arguments(&mut self, arguments: &[Argument]) {
-        let scratch = self.scratch();
-        let temp = scratch.gprs[0].expect("arguments are moved through a scratch register");
         let (mut gprs, mut fprs) = (Self::ARGUMENT_GPRS.iter(), Self::ARGUMENT_FPRS.iter());
-        let (mut gpr_moves, mut fpr_moves) = (Moves::new(), Moves::new());
+        let mut moves = Moves::NONE;
         let mut slot = Address::new(Self::STACK_POINTER, 0);
-        for &argument in arguments {
-            if argument.is_float() {
-                if let Some(&dst) = fprs.next() {
-                    fpr_moves.push((dst.into(), argument));
-                    continue;
-                }
-            } else if let Some(&dst) = gprs.next() {
-                gpr_moves.push((dst.into(), argument));
+        for (index, argument) in arguments.iter().enumerate() {
+            let dst = if argument.is_float() {
+                fprs.next().map(|&reg| reg.into())
+            } else {
+                gprs.next().map(|&reg| reg.into())
+            };
+            if let Some(dst) = dst {
+                moves.push(Move {
+                    argument: u8::try_from(index).unwrap(),
+                    dst,
+                    src: argument.source().unwrap_or(dst),
+                });
                 continue;
             }
-            match argument {
+            match *argument {
                 Argument::Gpr(src) => self.store64(slot, src),
                 Argument::Fpr(src) => self.store_f64(slot, src),
                 Argument::Imm(value) => self.store64(slot, value),
                 Argument::Load64(src) | Argument::LoadF64(src) => self.transfer64(slot, src),
                 Argument::Load32(_) | Argument::AddressOf(_) => {
+                    let temp =
+                        self.scratch().gprs[0].expect("the operation needs a scratch register");
                     move_one(self, temp.into(), argument);
                     self.store64(slot, temp);
                 }
             }
             slot = slot.plus(8);
         }
-        if !fpr_moves.is_empty() {
-            let temp = scratch.fprs[0].expect("arguments are moved through a scratch register");
-            move_in_parallel(self, fpr_moves, Argument::Fpr, Reg::fpr, temp.into());
-        }
-        move_in_parallel(self, gpr_moves, Argument::Gpr, Reg::gpr, temp.into());
+        moves.emit(self, arguments);
     }
 
     /// Stores 8 bytes of each general register and then `vector_bytes`, 8 or 16, of each of the others.
@@ -178,8 +262,8 @@ pub trait CallAssembly: FloatAssembly {
 
 impl<M: FloatAssembly> CallAssembly for M {}
 
-fn move_one(masm: &mut impl FloatAssembly, dst: Reg, argument: Argument) {
-    match argument {
+fn move_one(masm: &mut impl FloatAssembly, dst: Reg, argument: &Argument) {
+    match *argument {
         Argument::Gpr(src) => masm.move64(dst.gpr(), src),
         Argument::Fpr(src) => masm.move_float(dst.fpr(), src),
         Argument::Imm(value) => masm.move64(dst.gpr(), value),
@@ -187,40 +271,5 @@ fn move_one(masm: &mut impl FloatAssembly, dst: Reg, argument: Argument) {
         Argument::Load64(src) => masm.load64(dst.gpr(), src),
         Argument::LoadF64(src) => masm.load_f64(dst.fpr(), src),
         Argument::AddressOf(address) => masm.compute_address(dst.gpr(), address),
-    }
-}
-
-/// Each move reads one register at most, so a cycle that is opened with `temp` unwinds before another needs it.
-fn move_in_parallel<R>(
-    masm: &mut impl FloatAssembly,
-    mut moves: Moves,
-    copy_of: impl Fn(R) -> Argument,
-    typed: impl Fn(Reg) -> R,
-    temp: Reg,
-) {
-    while let Some(&(blocked, _)) = moves.first() {
-        let before = moves.len();
-        let mut index = 0;
-        while index < moves.len() {
-            let (dst, argument) = moves[index];
-            let is_read = moves
-                .iter()
-                .enumerate()
-                .any(|(other, (_, reader))| other != index && reader.source() == Some(dst));
-            if is_read {
-                index += 1;
-            } else {
-                move_one(masm, dst, argument);
-                moves.swap_remove(index);
-            }
-        }
-        if moves.len() == before {
-            move_one(masm, temp, copy_of(typed(blocked)));
-            for (_, reader) in &mut moves {
-                if reader.source() == Some(blocked) {
-                    *reader = reader.with_source(temp);
-                }
-            }
-        }
     }
 }

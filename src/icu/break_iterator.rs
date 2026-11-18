@@ -23,7 +23,7 @@ icu_functions! {
 }
 
 const UBRK_WORD_NONE_LIMIT: i32 = 100;
-const MAX_TEXT_LENGTH: usize = 1 << 28;
+pub const MAX_TEXT_LENGTH: usize = 1 << 28;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(i32)]

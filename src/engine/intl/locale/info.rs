@@ -1,15 +1,17 @@
 //! What is in use where a locale is.
 
-use bun_engine_text::StringRef;
-use bun_icu::calendar::{Calendar, common_systems};
+use core::ffi::CStr;
+use std::sync::OnceLock;
+
+use bun_engine_text::{StringRef, Text};
+use bun_icu::CText;
 use bun_icu::resource_bundle::ResourceBundle;
-use bun_icu::{Buffer, CText, Enumeration};
 use smallvec::SmallVec;
 
-use super::Locale;
+use super::{Locale, WEEKDAYS};
 use crate::error::IcuResult;
-use crate::language_tag::subtag::{Subtag, is_region};
-use crate::language_tag::{Key, LanguageTag, join};
+use crate::language_tag::subtag::Subtag;
+use crate::language_tag::{Key, join};
 use crate::{AvailableLocales, HourCycle, Named, NumberingSystem, Result, calendar, collation};
 
 named_enum! {
@@ -33,8 +35,14 @@ impl Locale {
         if let Some(preferred) = self.preferred(Key::CALENDAR) {
             return Ok(preferred);
         }
-        let names = self.regional_id(&[]).and_then(|id| common_systems(&id));
-        collect(names, calendar::bcp47_name)
+        let list = self.regional_data(c"calendarPreferenceData")?;
+        (0..list.item_count())
+            .map(|index| {
+                let name = list.string_at(index).or_type_error(INVALID_LOCALE)?;
+                let name: SmallVec<[u8; 32]> = name.iter().map(|&unit| unit as u8).collect();
+                Ok(StringRef::from_latin1(calendar::bcp47_name(&name)))
+            })
+            .collect()
     }
 
     pub fn collations(&self) -> Result<Vec<StringRef>> {
@@ -55,25 +63,15 @@ impl Locale {
         if let Some(preferred) = self.preferred(Key::HOUR_CYCLE) {
             return Ok(preferred);
         }
-        let time_data = ResourceBundle::open_direct(c"supplementalData")
-            .and_then(|data| data.by_key(c"timeData"))
-            .or_type_error(INVALID_LOCALE)?;
-        let look_up = |key: &[Subtag]| {
-            let entry = time_data.by_key(&join(key.iter().copied()).ok()?).ok()?;
-            match u8::try_from(*entry.string_by_key(c"preferred").ok()?.first()?) {
-                Ok(b'K') => Some(HourCycle::H11),
-                Ok(b'h') => Some(HourCycle::H12),
-                Ok(b'H') => Some(HourCycle::H23),
-                Ok(b'k') => Some(HourCycle::H24),
-                _ => None,
-            }
+        let data = self.regional_data(c"timeData")?;
+        let symbol = (data.string_by_key(c"preferred")).or_type_error(INVALID_LOCALE)?;
+        let hour_cycle = match symbol.first().and_then(|&unit| u8::try_from(unit).ok()) {
+            Some(b'K') => HourCycle::H11,
+            Some(b'h') => HourCycle::H12,
+            Some(b'k') => HourCycle::H24,
+            _ => HourCycle::H23,
         };
-        let language = Subtag::new(self.0.language()).unwrap_or(Subtag::UND);
-        let region_override = subdivision_region(&self.0, Key::REGION_OVERRIDE);
-        let hour_cycle = (region_override.into_iter())
-            .chain(self.preferred_region()?)
-            .find_map(|region| look_up(&[language, region]).or_else(|| look_up(&[region])));
-        Ok(vec![hour_cycle.unwrap_or(HourCycle::H23).to_string_ref()])
+        Ok(vec![hour_cycle.to_string_ref()])
     }
 
     pub fn numbering_systems(&self) -> Result<Vec<StringRef>> {
@@ -89,39 +87,52 @@ impl Locale {
         let Some(region) = self.base_subtags().region else {
             return Ok(None);
         };
-        let names = CText::new(region).and_then(|it| bun_icu::time_zone::canonical_ids(Some(&it)));
-        let mut zones = collect(names, |name| name)?;
+        let mut names = CText::new(region)
+            .and_then(|region| bun_icu::time_zone::canonical_ids(Some(&region)))
+            .or_type_error(INVALID_LOCALE)?;
+        let mut zones = Vec::new();
+        while let Some(name) = names.next().or_type_error(INVALID_LOCALE)? {
+            zones.push(StringRef::from_latin1(name));
+        }
         zones.sort_unstable_by(|a, b| a.text().cmp(&b.text()));
         Ok(Some(zones))
     }
 
     /// `direction` of `getTextInfo`
     pub fn direction(&self) -> Result<Direction> {
-        let id = self.regional_id(&[]).or_type_error(INVALID_LOCALE)?;
-        Ok(match bun_icu::locale::is_right_to_left(&id) {
-            true => Direction::RightToLeft,
-            false => Direction::LeftToRight,
-        })
+        let base = self.base_subtags();
+        let subtags = [Some(base.language), base.script, base.region];
+        let id = join(subtags.into_iter().flatten().filter_map(Subtag::new));
+        match bun_icu::locale::is_right_to_left(&id.or_type_error(INVALID_LOCALE)?) {
+            true => Ok(Direction::RightToLeft),
+            false => Ok(Direction::LeftToRight),
+        }
     }
 
     pub fn week_info(&self) -> Result<WeekInfo> {
-        const UTC: [u16; 3] = [b'U' as u16, b'T' as u16, b'C' as u16];
-
-        let calendar = self
-            .regional_id(&[("calendar", Key::CALENDAR), ("fw", Key::FIRST_DAY)])
-            .and_then(|id| Calendar::open(&UTC, &id))
-            .or_type_error(INVALID_LOCALE)?;
-        // ICU counts from Sunday.
-        let mut weekend = SmallVec::new();
-        for day in 1..=7 {
-            if (calendar.starts_in_weekend(i32::from(day) % 7 + 1)).or_type_error(INVALID_LOCALE)? {
-                weekend.push(day);
-            }
-        }
+        let data = self.regional_data(c"weekData")?;
+        // These count from Sunday.
+        let Ok(&[first_day, _, weekend_start, _, weekend_end, _]) = data.int_vector() else {
+            return Err(crate::Error::Type(INVALID_LOCALE));
+        };
+        let weekend_length = (weekend_end - weekend_start).rem_euclid(7);
+        let is_in_weekend =
+            |day: u8| (i32::from(day) + 1 - weekend_start).rem_euclid(7) <= weekend_length;
         Ok(WeekInfo {
-            first_day: (calendar.first_day_of_week() + 5).rem_euclid(7) as u8 + 1,
-            weekend,
+            first_day: (self.first_day_override())
+                .unwrap_or_else(|| (first_day + 5).rem_euclid(7) as u8 + 1),
+            weekend: (1..=7).filter(|&day| is_in_weekend(day)).collect(),
         })
+    }
+
+    /// UTS #35, part 4, First Day Overrides.
+    fn first_day_override(&self) -> Option<u8> {
+        let name = Text::Latin1(self.0.keyword(Key::FIRST_DAY).unwrap_or_default());
+        if let Some(index) = WEEKDAYS.iter().position(|it| name.eq_ascii(it)) {
+            return Some(index as u8 + 1);
+        }
+        let is_iso = self.0.keyword(Key::CALENDAR) == Some(b"iso8601");
+        (is_iso && self.subdivision_region(Key::REGION_OVERRIDE).is_none()).then_some(1)
     }
 
     fn preferred(&self, key: Key) -> Option<Vec<StringRef>> {
@@ -134,61 +145,49 @@ impl Locale {
         CText::new(available.lookup(&self.0).unwrap_or(b"root"))
     }
 
-    /// [[Region]] of RegionPreference
-    fn preferred_region(&self) -> Result<Option<Subtag>> {
-        let mut id = self.parse()?.language_id;
-        id.region = (id.region).or_else(|| subdivision_region(&self.0, Key::SUBDIVISION));
-        if id.region.is_none() {
-            id.maximize();
-        }
-        Ok(id.region.or_else(|| Subtag::new(b"001")))
+    /// The entry for the language in the region, for the region, or for the world.
+    fn regional_data(&self, table: &CStr) -> Result<ResourceBundle> {
+        let table = supplemental_table(table).or_type_error(INVALID_LOCALE)?;
+        let language = Subtag::new(self.0.language()).unwrap_or(Subtag::UND);
+        let region = self.preferred_region()?;
+        let look_up = |key: &[Subtag]| table.by_key(&join(key.iter().copied())?);
+        look_up(&[language, region])
+            .or_else(|_| look_up(&[region]))
+            .or_else(|_| look_up(&[Subtag::WORLD]))
+            .or_type_error(INVALID_LOCALE)
     }
 
-    /// With what determines the region, and those of `keys` whose value is one subtag.
-    fn regional_id(&self, keys: &[(&str, Key)]) -> bun_icu::Result<CText> {
-        let base = self.base_subtags();
-        let mut id = Buffer::from_slice(base.language);
-        for subtag in [base.script, base.region].into_iter().flatten() {
-            id.push(b'_');
-            id.extend_from_slice(subtag);
+    /// RegionPreference
+    fn preferred_region(&self) -> Result<Subtag> {
+        let named = (self.subdivision_region(Key::REGION_OVERRIDE))
+            .or_else(|| self.base_subtags().region.and_then(Subtag::new))
+            .or_else(|| self.subdivision_region(Key::SUBDIVISION));
+        if let Some(region) = named {
+            return Ok(region);
         }
-        let mut separator = b'@';
-        let region_keys = [("rg", Key::REGION_OVERRIDE), ("sd", Key::SUBDIVISION)];
-        for &(name, key) in keys.iter().chain(&region_keys) {
-            if let Some(value) = self.0.keyword(key).and_then(Subtag::new) {
-                for part in [&[separator], name.as_bytes(), b"=", value.as_bytes()] {
-                    id.extend_from_slice(part);
-                }
-                separator = b';';
-            }
+        let mut likely = self.parse()?.language_id;
+        likely.maximize();
+        Ok(likely.region.unwrap_or(Subtag::WORLD))
+    }
+
+    /// The region of the subdivision that is the value of `key`, if CLDR knows it.
+    fn subdivision_region(&self, key: Key) -> Option<Subtag> {
+        const MAX_SUFFIX_LENGTH: usize = 4;
+
+        let (region, suffix) = self.0.keyword(key)?.split_at_checked(2)?;
+        let region = Subtag::new(region)?.to_uppercase();
+        if suffix.len() > MAX_SUFFIX_LENGTH || region.as_bytes() == b"ZZ" {
+            return None;
         }
-        CText::from_buffer(id)
+        let known = supplemental_table(c"territoryInfo").ok()?;
+        known.by_key(&join([region]).ok()?).ok().map(|_| region)
     }
 }
 
-/// CanonicalUnicodeSubdivision
-fn subdivision_region(tag: &LanguageTag, key: Key) -> Option<Subtag> {
-    const MAX_SUFFIX_LENGTH: usize = 4;
-
-    let subdivision = Subtag::new(tag.keyword(key)?)?;
-    let subdivision = subdivision.as_bytes();
-    let region_length = if subdivision.first()?.is_ascii_digit() {
-        3
-    } else {
-        2
-    };
-    let (region, suffix) = subdivision.split_at_checked(region_length)?;
-    if !is_region(region) || !(1..=MAX_SUFFIX_LENGTH).contains(&suffix.len()) {
-        return None;
-    }
-    Subtag::new(region).map(Subtag::to_uppercase)
-}
-
-fn collect(names: bun_icu::Result<Enumeration>, map: fn(&[u8]) -> &[u8]) -> Result<Vec<StringRef>> {
-    let mut names = names.or_type_error(INVALID_LOCALE)?;
-    let mut strings = Vec::new();
-    while let Some(name) = names.next().or_type_error(INVALID_LOCALE)? {
-        strings.push(StringRef::from_latin1(map(name)));
-    }
-    Ok(strings)
+fn supplemental_table(name: &CStr) -> bun_icu::Result<ResourceBundle> {
+    static DATA: OnceLock<bun_icu::Result<ResourceBundle>> = OnceLock::new();
+    DATA.get_or_init(|| ResourceBundle::open_direct(c"supplementalData"))
+        .as_ref()
+        .map_err(|&error| error)?
+        .by_key(name)
 }

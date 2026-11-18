@@ -246,20 +246,30 @@ impl Subject for Native {
         let base = processor::Arena::get(arena).base;
         #[cfg(not(target_os = "linux"))]
         let base = preferred_base(arena);
+        let target = self.architecture.target(seed);
         World {
             layout: Layout {
                 base,
                 callees: std::array::from_fn(|callee| stub::address(base, callee)),
             },
-            target: self.architecture.target(seed),
-            relaxed: Relaxed::empty(),
+            target,
+            relaxed: match target {
+                Target::X64(features) => {
+                    <bun_engine_asm::x64::MacroAssembler as bun_engine_asm::VectorAssembly>::relaxed(
+                        features,
+                    )
+                }
+                Target::Arm64(_) => Relaxed::empty(),
+            },
             other_threads: false,
         }
     }
 
     fn shape(&mut self, seed: u64) -> Shape {
         let mut shape = shape_for(seed);
-        shape.weights.vectors = 0;
+        if matches!(self.architecture, Architecture::Arm64) {
+            shape.weights.vectors = 0;
+        }
         shape
     }
 

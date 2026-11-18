@@ -15,6 +15,7 @@ import { boringssl } from "./boringssl.ts";
 import { brotli } from "./brotli.ts";
 import { cares } from "./cares.ts";
 import { highway } from "./highway.ts";
+import { icu } from "./icu.ts";
 import { libuv } from "./libuv.ts";
 import { lolhtml } from "./lolhtml.ts";
 import { lsqpack } from "./lsqpack.ts";
@@ -22,9 +23,9 @@ import { lsquic } from "./lsquic.ts";
 import { mimalloc } from "./mimalloc.ts";
 import { nodejsHeaders } from "./nodejs-headers.ts";
 import { rustArgon2 } from "./rust-argon2.ts";
+import { simdutf } from "./simdutf.ts";
 import { sqlite } from "./sqlite.ts";
 import { tinycc } from "./tinycc.ts";
-import { webkit } from "./webkit.ts";
 import { zlib } from "./zlib.ts";
 import { zstd } from "./zstd.ts";
 
@@ -49,6 +50,7 @@ export const allDeps: readonly Dependency[] = [
   rustArgon2,
   lsqpack,
   mimalloc,
+  simdutf,
   sqlite,
   tinycc,
   boringssl,
@@ -56,9 +58,7 @@ export const allDeps: readonly Dependency[] = [
   // a DirectBuild dep its .o files go straight on the link line so static
   // link order doesn't apply.
   lsquic,
-  // WebKit LAST in link order — WTF/JSC provide symbols that everything
-  // above might reference (via JavaScriptCore types in headers).
-  webkit,
+  icu,
 ];
 
 // Re-export individuals for direct import when needed.
@@ -67,6 +67,7 @@ export {
   brotli,
   cares,
   highway,
+  icu,
   libuv,
   lolhtml,
   lsqpack,
@@ -74,9 +75,9 @@ export {
   mimalloc,
   nodejsHeaders,
   rustArgon2,
+  simdutf,
   sqlite,
   tinycc,
-  webkit,
   zlib,
   zstd,
 };

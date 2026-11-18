@@ -10,12 +10,14 @@ mod lower;
 mod moves;
 mod shared;
 mod slots;
+mod vector;
 
 pub(crate) use code::{Class, Place, Registers, Role};
 pub use emit::Emitted;
 pub(crate) use emit::{Emitter, Isa, Operands};
 pub(crate) use lower::{Instruction, Lowering};
 pub(crate) use shared::{Shared, SharesInstructions};
+pub(crate) use vector::VectorInstruction;
 
 use bun_engine_asm::MacroAssembly;
 

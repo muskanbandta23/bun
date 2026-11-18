@@ -1,6 +1,6 @@
 //! The encoding of value types.
 
-use crate::module::Features;
+use crate::module::{Features, ModuleHeader};
 use crate::reader::Reader;
 use crate::types::{AbstractHeapType, HeapType, ValType};
 
@@ -45,7 +45,7 @@ pub(crate) fn starts_value_type(byte: u8) -> bool {
 
 /// `defined` looks up a type index.
 #[inline]
-pub(crate) fn heap_type(
+fn heap_type(
     reader: &mut Reader<'_>,
     defined: impl FnOnce(u32) -> Option<HeapType>,
 ) -> Option<HeapType> {
@@ -73,4 +73,18 @@ pub(crate) fn value_type(
         REF_NULL => heap_type(reader, defined)?.nullable().into(),
         byte => abstract_heap_type(byte)?.nullable().into(),
     })
+}
+
+impl ModuleHeader {
+    #[inline]
+    pub(crate) fn heap_type(&self, reader: &mut Reader<'_>) -> Option<HeapType> {
+        heap_type(reader, |index| self.types.get_heap_type(index))
+    }
+
+    #[inline]
+    pub(crate) fn value_type(&self, reader: &mut Reader<'_>) -> Option<ValType> {
+        value_type(reader, self.features, |index| {
+            self.types.get_heap_type(index)
+        })
+    }
 }

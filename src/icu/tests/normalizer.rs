@@ -28,3 +28,39 @@ fn results_of_any_length() {
         );
     }
 }
+
+#[test]
+fn any_number_of_marks() {
+    for count in [255, 256, 257, 511, 512, 513, 100_000] {
+        let text = format!("xa{}z", "\u{301}\u{1d16d}\u{323}".repeat(count));
+        let marks = |dots, acutes| {
+            [
+                "\u{323}".repeat(dots),
+                "\u{1d16d}".repeat(count),
+                "\u{301}".repeat(acutes),
+            ]
+            .concat()
+        };
+        assert_eq!(
+            normalize(Form::Nfd, &text),
+            format!("xa{}z", marks(count, count))
+        );
+        assert_eq!(
+            normalize(Form::Nfkc, &text),
+            format!("x\u{1ea1}{}z", marks(count - 1, count))
+        );
+        assert_eq!(
+            normalize(Form::Nfd, &"\u{f73}".repeat(count)),
+            "\u{f71}".repeat(count) + &"\u{f72}".repeat(count)
+        );
+    }
+}
+
+#[test]
+fn pairs_of_surrogates_stay_together() {
+    for offset in 0..2 {
+        let text = "a".repeat(offset) + &"\u{1d15e}".repeat(1000);
+        let expected = "a".repeat(offset) + &"\u{1d157}\u{1d165}".repeat(1000);
+        assert_eq!(normalize(Form::Nfc, &text), expected);
+    }
+}

@@ -5,7 +5,7 @@ use core::fmt;
 use bun_engine_asm::Width;
 
 use crate::alloc::TryPush;
-use crate::decode::{V128_CONST, types};
+use crate::decode::V128_CONST;
 use crate::error::Error;
 use crate::index::{FuncIndex, GlobalIndex};
 use crate::module::{ConstCode, ConstExpr, Features, ModuleHeader, Span};
@@ -115,9 +115,7 @@ impl<'a> Section<'a> {
     }
 
     pub(super) fn value_type(&mut self, header: &ModuleHeader) -> Option<ValType> {
-        types::value_type(&mut self.reader, header.features, |index| {
-            header.types.get_heap_type(index)
-        })
+        header.value_type(&mut self.reader)
     }
 
     pub(super) fn ref_type(&mut self, header: &ModuleHeader) -> Result<RefType, Error> {
@@ -239,7 +237,7 @@ impl<'a> Section<'a> {
             REF_NULL => {
                 let ty = read!(
                     self,
-                    types::heap_type(&mut self.reader, |index| header.types.get_heap_type(index)),
+                    header.heap_type(&mut self.reader),
                     "ref.null heaptype must be funcref, externref or type_idx"
                 );
                 (ConstExpr::RefNull, ty.nullable().into())

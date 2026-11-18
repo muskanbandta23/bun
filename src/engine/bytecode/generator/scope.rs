@@ -229,6 +229,10 @@ impl Generator<'_> {
                     (hash, layout.names.len() as u32 - 1, Slot::OWNED)
                 }
             };
+        let mut flags = slot_flags(binding);
+        if layout.kind == ScopeKind::Parameters {
+            flags |= SlotFlags::LEXICAL;
+        }
         let index = layout.anonymous_slot();
         if matches!(kind, SlotKind::Import | SlotKind::PrivateAccessor) {
             layout.anonymous_slot();
@@ -244,7 +248,7 @@ impl Generator<'_> {
                 u32::MAX
             },
             kind,
-            flags: slot_flags(binding),
+            flags,
         });
         index
     }

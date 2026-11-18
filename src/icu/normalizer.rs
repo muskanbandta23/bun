@@ -13,7 +13,6 @@ icu_functions! {
     fn unorm2_getNFDInstance(status: &mut Status) -> *mut UNormalizer2;
     fn unorm2_getNFKCInstance(status: &mut Status) -> *mut UNormalizer2;
     fn unorm2_getNFKDInstance(status: &mut Status) -> *mut UNormalizer2;
-    fn unorm2_isNormalized(normalizer: *const UNormalizer2, text: *const u16, length: i32, status: &mut Status) -> i8;
     fn unorm2_spanQuickCheckYes(normalizer: *const UNormalizer2, text: *const u16, length: i32, status: &mut Status) -> i32;
     fn unorm2_hasBoundaryBefore(normalizer: *const UNormalizer2, code_point: u32) -> i8;
     fn unorm2_normalize(
@@ -61,10 +60,12 @@ impl Form {
     }
 
     pub fn is_normalized(self, text: &[u16]) -> Result<bool> {
-        let (normalizer, length) = (self.normalizer()?, length(text)?);
-        // SAFETY: `text` has `length` units.
-        call(|status| unsafe { unorm2_isNormalized(normalizer.0, text.as_ptr(), length, status) })
-            .map(|answer| answer != 0)
+        let mut is_normalized = true;
+        let rest = &text[self.normalized_prefix(text)?..];
+        self.normalize_pieces(rest, |piece, normalized| {
+            is_normalized &= piece == normalized;
+        })?;
+        Ok(is_normalized)
     }
 
     /// The length of a prefix that is normalized, whatever follows it. It need not be the longest.

@@ -1,8 +1,8 @@
 //! Calendar arithmetic, time zones and date parsing.
 
 #![forbid(unsafe_code)]
+#![feature(float_conversions)]
 
-mod ascii_buffer;
 mod cache;
 mod civil;
 mod fields;
@@ -11,14 +11,16 @@ mod parse;
 mod time_value;
 mod zone;
 
-pub use ascii_buffer::AsciiBuffer;
 pub use cache::DateCache;
 pub use civil::{
     CivilDate, civil_from_days, day_of_year, days_from_civil, days_in_month, days_in_year,
     is_leap_year, week_day,
 };
 pub use fields::{BitField, Component, DateFields};
-pub use format::{date_string, iso_string, utc_string};
+pub use format::{
+    MAX_ISO_STRING_LENGTH, MAX_UTC_STRING_LENGTH, date_string, iso_string, utc_string,
+    write_iso_string, write_utc_string,
+};
 pub use parse::{parse_cookie_date, parse_date_as_utc};
 pub use time_value::{
     MAX_TIME_VALUE, MS_PER_DAY, MS_PER_HOUR, MS_PER_MINUTE, MS_PER_SECOND, current_time, make_date,

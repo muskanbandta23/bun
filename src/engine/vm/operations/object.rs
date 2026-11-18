@@ -24,6 +24,19 @@ pub fn is_array(cx: &Cx, value: Value) -> JsResult<bool> {
     ))
 }
 
+/// The steps of CreateListFromArrayLike.
+pub fn for_each_in_array_like(
+    cx: &mut Cx,
+    object: &JsObject,
+    mut visit: impl FnMut(&mut Cx, Value) -> JsResult<()>,
+) -> JsResult<()> {
+    for index in 0..object.length_of_array_like(cx)? {
+        let value = object.get_index(cx, index)?;
+        visit(cx, value)?;
+    }
+    Ok(())
+}
+
 /// SpeciesConstructor. `None` stands for the default.
 pub fn species_constructor(cx: &mut Cx, object: &JsObject) -> JsResult<Option<Gc<JsObject>>> {
     let constructor = object.get(cx, names::constructor)?;

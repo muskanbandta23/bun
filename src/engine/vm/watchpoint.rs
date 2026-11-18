@@ -194,6 +194,18 @@ impl InlineWatchpointSet {
     }
 
     #[inline(always)]
+    pub fn bits(&self) -> usize {
+        self.0.get()
+    }
+
+    /// Invalidates the set in a way that code which looks for `THIN_INVALIDATED` does not recognize.
+    pub fn invalidate_and_keep_slow(&self, vm: &Vm) {
+        let mut deferred = DeferredFire::new(vm);
+        self.invalidate_into(&mut deferred);
+        self.0.set(Self::THIN_INVALIDATED + (1 << Self::STATE_SHIFT));
+    }
+
+    #[inline(always)]
     fn fat(&self) -> Option<ManuallyDrop<Rc<WatchpointSet>>> {
         let word = self.0.get();
         // SAFETY: from `Rc::into_raw` in `inflate`. The count that `self` holds is left alone.

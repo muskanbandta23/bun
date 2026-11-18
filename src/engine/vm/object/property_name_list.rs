@@ -1,6 +1,6 @@
 use bun_engine_text::{Identifier, PropertyName};
 
-use crate::{Attributes, FastHashSet};
+use crate::{Attributes, FastHashSet, Storage};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -30,6 +30,8 @@ pub struct PropertyNameList {
     seen: FastHashSet<usize>,
     mode: PropertyNameMode,
     includes_private_names: bool,
+    has_only_indices: bool,
+    has_overflowed: bool,
 }
 
 impl PropertyNameList {
@@ -41,6 +43,16 @@ impl PropertyNameList {
             seen: FastHashSet::default(),
             mode,
             includes_private_names: false,
+            has_only_indices: true,
+            has_overflowed: false,
+        }
+    }
+
+    /// An empty one that accepts the same names.
+    pub fn new_like(&self) -> PropertyNameList {
+        PropertyNameList {
+            includes_private_names: self.includes_private_names,
+            ..PropertyNameList::new(self.mode)
         }
     }
 
@@ -51,6 +63,25 @@ impl PropertyNameList {
 
     pub fn mode(&self) -> PropertyNameMode {
         self.mode
+    }
+
+    pub fn includes_private_names(&self) -> bool {
+        self.includes_private_names
+    }
+
+    pub(super) fn has_only_indices(&self) -> bool {
+        self.has_only_indices
+    }
+
+    /// There was no memory for all of them.
+    pub(super) fn has_overflowed(&self) -> bool {
+        self.has_overflowed
+    }
+
+    #[inline]
+    fn push(&mut self, name: PropertyName<'_>) {
+        self.has_only_indices = self.has_only_indices && name.as_index().is_some();
+        self.names.push(name.to_identifier());
     }
 
     pub fn includes_strings(&self) -> bool {
@@ -84,7 +115,7 @@ impl PropertyNameList {
             self.seen.insert(name.address())
         };
         if is_new {
-            self.names.push(name.to_identifier());
+            self.push(name);
         }
     }
 
@@ -92,7 +123,7 @@ impl PropertyNameList {
     #[inline]
     pub fn add_known_unique(&mut self, name: PropertyName<'_>) {
         if self.accepts(name) {
-            self.names.push(name.to_identifier());
+            self.push(name);
         }
     }
 
@@ -107,7 +138,10 @@ impl PropertyNameList {
         if !self.includes_strings() {
             return;
         }
-        if self.is_empty() {
+        let count = indices.size_hint().0;
+        if count > Storage::MAX_VECTOR_LENGTH as usize || self.names.try_reserve(count).is_err() {
+            self.has_overflowed = true;
+        } else if self.is_empty() {
             self.names.extend(indices.map(Identifier::from_index));
         } else {
             indices.for_each(|index| self.add_index(index));

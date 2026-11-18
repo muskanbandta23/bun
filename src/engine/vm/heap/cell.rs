@@ -218,6 +218,11 @@ impl JsCell {
     }
 
     #[inline(always)]
+    pub fn state_bits(&self) -> u8 {
+        self.state()
+    }
+
+    #[inline(always)]
     pub(crate) fn set_state(&self, state: CellState) {
         self.state.store(state as u8, Ordering::Relaxed);
     }

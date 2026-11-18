@@ -3,8 +3,8 @@ use core::ops::Deref;
 use crate::heap::visit_children_of;
 use crate::{
     CellKind, CellType, CellTypeRange, Class, ClassOps, Extends, Field, Gc, GcFree, GlobalObject,
-    JsCell, JsObject, JsObjectInit, PropertyOffset, Shape, ShapeSpec, TypeFlags, Value, Visitor,
-    Vm, ascii_literal,
+    JsCell, JsObject, JsObjectInit, PropertyOffset, Shape, ShapeSpec, Storage, TypeFlags, Value,
+    Visitor, Vm, ascii_literal,
 };
 
 /// An ordinary object. The first slots follow the header.
@@ -151,15 +151,51 @@ impl JsFinalObject {
         object
     }
 
+    /// # Safety
+    /// `Shape::is_shape_of_clones` holds.
+    #[inline]
+    pub unsafe fn clone_unchecked(&self, vm: &Vm) -> Gc<JsFinalObject> {
+        let shape = self.shape();
+        let (inline, out_of_line) = (shape.inline_capacity(), shape.out_of_line_capacity());
+        let mut storage = Storage::NONE;
+        // SAFETY: both have what the shape describes. `self` keeps the values alive until the new object has them.
+        unsafe {
+            if out_of_line != 0 {
+                storage = Storage::try_allocate(vm, 0, out_of_line, None)
+                    .unwrap_or_else(|_| bun_alloc::out_of_memory());
+                (self.storage()).copy_words_to(storage, -1 - out_of_line as isize, out_of_line);
+            }
+            let address = vm.allocate_cell_memory(Self::allocation_size(inline));
+            let object = core::ptr::with_exposed_provenance_mut::<JsObject>(address);
+            JsObject::initialize(object, JsObjectInit::with_storage(shape, storage));
+            let slots = self.inline_slots(inline).as_ptr().cast::<u64>();
+            (object.add(1).cast::<u64>()).copy_from_nonoverlapping(slots, inline);
+            crate::heap::barrier::publish_fence();
+            Gc::from_address(address)
+        }
+    }
+
     /// One value for each slot of the shape, in order. Panics if there are more or fewer, or any is an accessor.
     #[inline]
     pub fn create_with_values(vm: &Vm, shape: Gc<Shape>, values: &[Value]) -> Gc<JsFinalObject> {
+        // SAFETY: only reads a slice.
+        unsafe { Self::create_from_iter(vm, shape, values.iter().copied()) }
+    }
+
+    /// # Safety
+    /// The iterator has the length that it claims, and allocates nothing.
+    #[inline(always)]
+    pub unsafe fn create_from_iter(
+        vm: &Vm,
+        shape: Gc<Shape>,
+        values: impl ExactSizeIterator<Item = Value>,
+    ) -> Gc<JsFinalObject> {
         assert!(
             values.len() == shape.slot_count() && !shape.has(crate::ShapeFlags::HAS_ANY_ACCESSOR)
         );
         let object = Self::allocate(vm, JsObjectInit::new(vm, shape));
         let capacity = shape.inline_capacity();
-        for (number, &value) in values.iter().enumerate() {
+        for (number, value) in values.enumerate() {
             let offset = PropertyOffset::for_slot(number, capacity);
             // SAFETY: a slot of the shape, in a new object.
             unsafe {

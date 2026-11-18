@@ -1,4 +1,4 @@
-use bun_engine_text::AllocError;
+use bun_engine_text::{AllocError, MAX_LENGTH};
 
 use crate::buffer::Buffer;
 
@@ -22,6 +22,12 @@ impl<'a> Output<'a> {
         }
     }
 
+    /// Whether `head` and the input are together no longer than a string, or a position might not fit in 32 bits.
+    #[inline]
+    pub(crate) fn has_room_for(&self, head: &[u8]) -> bool {
+        head.len() + self.input.len() <= MAX_LENGTH
+    }
+
     /// Puts `head` in place of the input before `at`. Nothing has been written yet.
     #[inline]
     pub(crate) fn start_with(&mut self, head: &'a [u8], at: usize) {
@@ -30,8 +36,7 @@ impl<'a> Output<'a> {
         self.pending = at;
     }
 
-    /// Where the byte at `at` of the input lands if nothing before it changes. The head with the body is no longer
-    /// than twice a string, and neither is the body with the input.
+    /// Where the byte at `at` of the input lands if nothing before it changes.
     #[inline]
     pub(crate) fn position(&self, at: usize) -> usize {
         self.head.len() + self.body.len() + (at - self.pending)

@@ -2,37 +2,36 @@ use bun_engine_unicode::IgnoreCase;
 
 use super::Builder;
 use super::strings::{StringList, StringPool, Strings};
-use crate::parser::{ClassEscape, ClassKind, SetOperator, Sink};
+use crate::parser::{ClassEscape, SetOperator, Sink};
 use crate::set::{Set, SetBuilder, SharedSet};
 use crate::{Error, Flags};
 
 /// The single characters of it.
 pub(super) fn set_of_escape(escape: ClassEscape, flags: Flags) -> Result<Set, Error> {
     let folds_case = flags.contains(Flags::IGNORE_CASE) && flags.is_unicode_aware();
-    let set = match escape.kind {
-        ClassKind::Digit => Set::DIGIT,
-        ClassKind::Space => Set::space(),
-        ClassKind::Word if folds_case => Set::WORD_IGNORING_CASE,
-        ClassKind::Word => Set::WORD,
-        ClassKind::Property(property) => {
+    let shared = match escape {
+        ClassEscape::Digit => return Ok(Set::DIGIT),
+        ClassEscape::NotDigit => return Ok(Set::NOT_DIGIT),
+        ClassEscape::Word if folds_case => return Ok(Set::WORD_IGNORING_CASE),
+        ClassEscape::Word => return Ok(Set::WORD),
+        ClassEscape::NotWord if folds_case => return Ok(Set::WORD_IGNORING_CASE.complement()?),
+        ClassEscape::NotWord => return Ok(Set::NOT_WORD),
+        ClassEscape::Space => SharedSet::space(),
+        ClassEscape::NotSpace => SharedSet::space().complement(),
+        ClassEscape::Property(property) if folds_case => {
+            SharedSet::of_property(property).closed_over_case()
+        }
+        ClassEscape::Property(property) => SharedSet::of_property(property),
+        ClassEscape::NotProperty(property) => {
             let set = SharedSet::of_property(property);
-            let set = match (escape.negated, folds_case) {
-                (false, false) => set,
-                (true, false) => set.complement(),
-                (false, true) => set.closed_over_case(),
-                (true, true) if flags.contains(Flags::UNICODE_SETS) => {
-                    set.closed_over_case().complement()
-                }
-                (true, true) => set.complement().closed_over_case(),
-            };
-            return Ok(set.to_set());
+            match (folds_case, flags.contains(Flags::UNICODE_SETS)) {
+                (false, _) => set.complement(),
+                (true, false) => set.complement().closed_over_case(),
+                (true, true) => set.closed_over_case().complement(),
+            }
         }
     };
-    Ok(if escape.negated {
-        set.complement()?
-    } else {
-        set
-    })
+    Ok(shared.to_set())
 }
 
 struct Members {
@@ -82,7 +81,7 @@ impl Classes {
     pub(super) fn add_escape(&mut self, escape: ClassEscape, flags: Flags) -> Result<(), Error> {
         let set = set_of_escape(escape, flags)?;
         self.class.characters.add_set(&set)?;
-        if let ClassKind::Property(property) = escape.kind {
+        if let ClassEscape::Property(property) = escape {
             let ignores_case = flags.contains(Flags::IGNORE_CASE);
             let mut strings = property.strings();
             while let Some(string) = strings.next() {

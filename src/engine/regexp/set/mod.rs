@@ -93,6 +93,7 @@ const fn latin1_ranges(ranges: &[(u8, u8)]) -> Latin1Set {
     set
 }
 
+const DIGIT: Latin1Set = latin1_ranges(&[(b'0', b'9')]);
 const WORD: Latin1Set = latin1_ranges(&[(b'0', b'9'), (b'A', b'Z'), (b'_', b'_'), (b'a', b'z')]);
 const LINE_TERMINATOR: Latin1Set = Latin1Set::of(b"\n\r");
 
@@ -102,8 +103,16 @@ impl Set {
         latin1: Latin1Set::ALL,
         above: Above::ALL,
     };
-    pub const DIGIT: Set = Set::from_latin1(latin1_ranges(&[(b'0', b'9')]));
+    pub const DIGIT: Set = Set::from_latin1(DIGIT);
+    pub(crate) const NOT_DIGIT: Set = Set {
+        latin1: DIGIT.complement(),
+        above: Above::ALL,
+    };
     pub const WORD: Set = Set::from_latin1(WORD);
+    pub(crate) const NOT_WORD: Set = Set {
+        latin1: WORD.complement(),
+        above: Above::ALL,
+    };
     /// WordCharacters of ECMA-262 where case is ignored among code points.
     pub const WORD_IGNORING_CASE: Set = Set {
         latin1: WORD,
@@ -125,7 +134,7 @@ impl Set {
     };
 
     pub fn space() -> Set {
-        shared::SPACE.to_set()
+        SharedSet::space().to_set()
     }
 
     #[inline]

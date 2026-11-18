@@ -22,7 +22,7 @@ enum Complement {
 
 const FIXED_SIZE: &str = "memory for character data";
 
-pub(super) static SPACE: SharedSet = SharedSet::new(
+static SPACE: SharedSet = SharedSet::new(
     Latin1Set::of(b"\t\n\x0b\x0c\r \xa0"),
     Cow::Borrowed(&[
         CharRange::single(0x1680),
@@ -51,6 +51,11 @@ impl SharedSet {
 
     fn from_set(set: &Set) -> Box<SharedSet> {
         Box::new(SharedSet::new(set.latin1, set.above().to_vec().into()))
+    }
+
+    #[inline]
+    pub fn space() -> &'static SharedSet {
+        &SPACE
     }
 
     /// The members that are single characters.

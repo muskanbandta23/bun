@@ -17,13 +17,13 @@ use smallvec::SmallVec;
 use crate::tree::Group;
 use crate::{Error, Flags};
 use cursor::Cursor;
-use escape::{ClassAtom, Context};
+use escape::Context;
 use group::Level;
 use names::Names;
 use quantifier::Atom;
 use scan::GroupTotals;
 pub(crate) use sink::{
-    Assertion, ClassEscape, ClassKind, Discard, GroupKind, NameId, Quantifier, SetOperator, Sink,
+    Assertion, ClassEscape, Discard, GroupKind, NameId, Quantifier, SetOperator, Sink,
 };
 
 /// What the syntax of a pattern tells.
@@ -142,20 +142,21 @@ impl<'a, S: Sink> Parser<'a, S> {
 
     #[inline(always)]
     fn pattern<C: CodeUnit>(mut self, mut cursor: Cursor<'a, C>) -> Result<Summary, Error> {
-        let cursor = &mut cursor;
         if scan::is_too_large(cursor.units, cursor.has_class_sets) {
             return Err(Error::PatternTooLarge);
         }
-        while let Some(&unit) = cursor.units.get(cursor.at) {
-            cursor.at += 1;
-            if let Some(atom) = self.term(cursor, token(unit))? {
-                self.quantify(cursor, atom)?;
-            }
-        }
+        self.terms(&mut cursor)?;
         if !self.outer_levels.is_empty() {
             return Err(Error::UnterminatedGroup);
         }
-        self.check_references(cursor.has_passed_escaped_k)?;
+        if self.highest_reference > u32::from(self.group_count) {
+            return Err(Error::InvalidBackReference);
+        }
+        if let Some(names) = self.names
+            && (cursor.has_passed_escaped_k || !names.all_have_groups())
+        {
+            return Err(Error::InvalidNamedReference);
+        }
         let most_units = self.sum_of_counts * 2 + cursor.units.len() as u64;
         Ok(Summary {
             group_count: self.group_count,
@@ -165,69 +166,85 @@ impl<'a, S: Sink> Parser<'a, S> {
         })
     }
 
-    /// After the first unit.
     #[inline(always)]
-    fn term<C: CodeUnit>(
-        &mut self,
-        cursor: &mut Cursor<'a, C>,
-        first: Token,
-    ) -> Result<Option<Atom<S::Outer>>, Error> {
-        let atom = match first {
-            Token::Bar => return self.next_alternative().map(|()| None),
-            Token::OpenGroup => return self.open_group(cursor).map(|()| None),
-            Token::Start => return self.sink.assertion(Assertion::Start).map(|()| None),
-            Token::End => return self.sink.assertion(Assertion::End).map(|()| None),
-            Token::Backslash => return self.atom_escape(cursor),
-            Token::CloseGroup => self.close_group()?,
-            Token::OpenClass if cursor.has_class_sets => cursor.apart(|it| self.class_set(it))?,
-            Token::OpenClass => self.class(cursor)?,
-            Token::Dot => {
-                self.sink.dot()?;
-                Atom::Complete
-            }
-            Token::CloseBracket if cursor.is_unicode => return Err(Error::LoneBracket),
-            Token::Quantifier if !cursor.is_after_literal_brace() => {
-                return Err(cursor.apart(Cursor::misplaced_quantifier));
-            }
-            Token::Literal | Token::CloseBracket | Token::Quantifier => {
-                let start = cursor.at - 1;
-                while let Some(&unit) = cursor.units.get(cursor.at)
-                    && token(unit) == Token::Literal
-                {
-                    cursor.at += 1;
+    fn terms<C: CodeUnit>(&mut self, cursor: &mut Cursor<'a, C>) -> Result<(), Error> {
+        while let Some(&first) = cursor.units.get(cursor.at) {
+            cursor.at += 1;
+            let atom = match token(first) {
+                Token::Bar => {
+                    self.next_alternative()?;
+                    continue;
                 }
-                self.sink.text(cursor.units_since(start))?;
-                Atom::Complete
-            }
-        };
-        Ok(Some(atom))
+                Token::OpenGroup => {
+                    self.open_group(cursor)?;
+                    continue;
+                }
+                Token::Start => {
+                    self.sink.assertion(Assertion::Start)?;
+                    continue;
+                }
+                Token::End => {
+                    self.sink.assertion(Assertion::End)?;
+                    continue;
+                }
+                Token::Backslash if cursor.peek() | 0x20 == b'b' => {
+                    let negated = cursor.peek() == b'B';
+                    cursor.at += 1;
+                    self.sink.assertion(Assertion::WordBoundary { negated })?;
+                    continue;
+                }
+                Token::Backslash => self.atom_escape(cursor)?,
+                Token::CloseGroup if self.outer_levels.is_empty() => {
+                    return Err(Error::UnmatchedParenthesis);
+                }
+                Token::CloseGroup => Atom::Group,
+                Token::OpenClass if cursor.has_class_sets => {
+                    cursor.apart(|it| self.class_set(it))?
+                }
+                Token::OpenClass => self.class(cursor)?,
+                Token::Dot => {
+                    self.sink.dot()?;
+                    Atom::Complete
+                }
+                Token::CloseBracket if cursor.is_unicode => return Err(Error::LoneBracket),
+                Token::Quantifier if !cursor.is_after_literal_brace() => {
+                    return Err(cursor.apart(Cursor::misplaced_quantifier));
+                }
+                Token::Literal | Token::CloseBracket | Token::Quantifier => {
+                    let start = cursor.at - 1;
+                    while let Some(&unit) = cursor.units.get(cursor.at)
+                        && token(unit) == Token::Literal
+                    {
+                        cursor.at += 1;
+                    }
+                    self.sink.text(cursor.units_since(start))?;
+                    Atom::Complete
+                }
+            };
+            self.quantify(cursor, atom)?;
+        }
+        Ok(())
     }
 
     /// After the backslash.
     #[inline(always)]
-    fn atom_escape<C: CodeUnit>(
-        &mut self,
-        cursor: &mut Cursor<'a, C>,
-    ) -> Result<Option<Atom<S::Outer>>, Error> {
-        match cursor.peek() {
-            letter @ (b'b' | b'B') => {
-                cursor.at += 1;
-                let negated = letter == b'B';
-                self.sink.assertion(Assertion::WordBoundary { negated })?;
-                return Ok(None);
+    fn atom_escape<C: CodeUnit>(&mut self, cursor: &mut Cursor<'a, C>) -> Result<Atom, Error> {
+        if let Some(c) = cursor.plain_escape() {
+            self.sink.character(c)?;
+        } else if let Some(escape) = cursor.class_escape()? {
+            if escape.has_strings() {
+                self.sink.class_member(escape)?;
+                return Ok(Atom::Class);
             }
-            b'1'..=b'9' if cursor.apart(|it| self.back_reference(it))? => {}
-            b'k' if cursor.apart(|it| self.named_reference(it))? => {}
-            _ => match cursor.escape(Context::Atom)? {
-                ClassAtom::Character(c) => self.sink.character(c)?,
-                ClassAtom::Class(escape) if escape.has_strings() => {
-                    self.sink.class_member(escape)?;
-                    return Ok(Some(Atom::Class { negated: false }));
-                }
-                ClassAtom::Class(escape) => self.sink.class_escape(escape)?,
-            },
+            self.sink.class_escape(escape)?;
+        } else {
+            match cursor.peek() {
+                b'1'..=b'9' if cursor.apart(|it| self.back_reference(it))? => {}
+                b'k' if cursor.apart(|it| self.named_reference(it))? => {}
+                _ => self.sink.character(cursor.other_escape(Context::Atom)?)?,
+            }
         }
-        Ok(Some(Atom::Complete))
+        Ok(Atom::Complete)
     }
 }
 

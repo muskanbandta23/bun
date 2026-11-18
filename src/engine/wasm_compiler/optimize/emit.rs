@@ -1,7 +1,7 @@
 //! The machine code that is not up to the back end.
 
 use bun_engine_asm::prelude::*;
-use bun_engine_asm::{Bank, Code, Scratch};
+use bun_engine_asm::{Code, Scratch};
 use bun_engine_codegen::ir::{Origin, Token};
 use bun_engine_codegen::{CallSite as CallEnd, Client, Compiled, ExitSite, Frame, PatchpointSite};
 use bun_engine_wasm_format::{CodeIndex, TypeIndex};
@@ -9,7 +9,7 @@ use bun_engine_wasm_format::{CodeIndex, TypeIndex};
 use super::map::Map;
 use super::translator::pins_memory_base;
 use crate::abi::{
-    Callable, FunctionSlot, INSTANCE, InstanceLayout, MEMORY_BASE, Operation, SLOT, Signature,
+    Callable, FunctionSlot, INSTANCE, InstanceLayout, MEMORY_BASE, SLOT, Signature,
     Trap, UNCHECKED_FRAME_SIZE, UNCHECKED_STACK_EXTENSION, callee_word, frame,
 };
 use crate::output::{CallSite, CompiledFunction, DirectCall, Environment, InlineFrame};
@@ -94,8 +94,7 @@ struct Barrier {
     start: Label,
     end: Label,
     cell: Gpr,
-    live_registers: RegisterSet,
-    live_vectors: RegisterSet,
+    temp: Gpr,
 }
 
 struct Return {
@@ -287,25 +286,16 @@ impl<'a> Emitter<'a> {
             start,
             end: masm.here(),
             cell,
-            live_registers: site.live_registers,
-            live_vectors: site.live_vectors,
+            temp: state,
         });
     }
 
     fn call_barrier(&self, masm: &mut MacroAssembler, barrier: &Barrier) {
-        let lost_vectors = barrier.live_vectors & abi::CALLEE_SAVED_LOW_HALF;
-        let saved = barrier.live_registers & abi::CALLER_SAVED | lost_vectors;
-        let count = |bank| saved.in_bank(bank).len();
-        let size = (count(Bank::Gpr) * 8 + count(Bank::Fpr) * 16).next_multiple_of(16);
-        let (stack_pointer, vector_bytes) = (abi::STACK_POINTER, 16);
         masm.bind(barrier.start);
-        masm.sub64(stack_pointer, stack_pointer, size);
-        masm.store_registers(saved, vector_bytes, Address::new(stack_pointer, 0));
-        masm.move64(abi::ARGUMENT_GPRS[1], barrier.cell);
-        masm.move64(abi::ARGUMENT_GPRS[0], INSTANCE);
-        masm.call_address(self.env.stubs.operations[Operation::WriteBarrier as usize]);
-        masm.load_registers(saved, vector_bytes, Address::new(stack_pointer, 0));
-        masm.add64(stack_pointer, stack_pointer, size);
+        masm.move64(barrier.temp, SLOT);
+        masm.move64(SLOT, barrier.cell);
+        masm.call_address(self.env.stubs.write_barrier);
+        masm.move64(SLOT, barrier.temp);
         masm.jump(barrier.end);
     }
 }

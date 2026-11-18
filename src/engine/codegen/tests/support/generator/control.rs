@@ -4,6 +4,7 @@ use bun_engine_asm::Cond;
 use bun_engine_codegen::ir::{Binary, Block, Checked, Op, Successor, Type, Value, Variable};
 
 use super::accesses::Pointer;
+use super::sites::Site;
 use super::{Class, Generator, Mark};
 use crate::support::memory::Region;
 
@@ -41,6 +42,8 @@ pub(super) struct Loop {
 pub(super) struct Way {
     target: Block,
     args: Vec<Value>,
+    /// Of the last arguments.
+    classes: Vec<Class>,
     is_rare: bool,
 }
 
@@ -65,6 +68,7 @@ enum Statement {
     Check,
     Patchpoint,
     Call,
+    CallWithHandlers,
     Variable,
     Branch,
     Loop,
@@ -117,6 +121,10 @@ impl Generator<'_> {
             (weights.checks, Statement::Check),
             (weights.patchpoints, Statement::Patchpoint),
             (weights.calls, Statement::Call),
+            (
+                if_nests(weights.calls.div_ceil(3)),
+                Statement::CallWithHandlers,
+            ),
             (weights.variables, Statement::Variable),
             (if_nests(weights.branches), Statement::Branch),
             (if_turns(weights.loops), Statement::Loop),
@@ -147,6 +155,7 @@ impl Generator<'_> {
                 let share = self.share_of(budget);
                 self.nesting += 1;
                 match statement {
+                    Statement::CallWithHandlers => self.call_with_handlers(share),
                     Statement::Branch => self.branch_statement(share),
                     Statement::Loop => self.loop_statement(share),
                     Statement::Switch => self.switch_statement(share),
@@ -213,6 +222,7 @@ impl Generator<'_> {
         Way {
             target: join.block,
             args,
+            classes: join.classes.clone(),
             is_rare: self.random.one_in(6),
         }
     }
@@ -232,6 +242,7 @@ impl Generator<'_> {
         Way {
             target: self.function.new_block(),
             args: Vec::new(),
+            classes: Vec::new(),
             is_rare: self.random.one_in(6),
         }
     }
@@ -286,7 +297,8 @@ impl Generator<'_> {
             if self.shape.weights.patchpoints != 0 && self.random.one_in(4) {
                 self.use_up(mark);
                 let sum = self.get_sum();
-                return self.terminal_patchpoint(&[], sum);
+                self.terminal_patchpoint(&[], sum);
+                return;
             }
             return self.finish_with_return(mark);
         }
@@ -607,7 +619,7 @@ impl Generator<'_> {
     // Switches
 
     /// Ends the block, and can take any of the ways, of which there are at least two.
-    pub(super) fn choose_among(&mut self, mut ways: Vec<Way>, mark: Mark) {
+    pub(super) fn choose_among(&mut self, mut ways: Vec<Way>, mark: Mark) -> Option<Site> {
         let count = ways.len();
         let ty = self.int_type();
         match self.random.below(8) {
@@ -616,7 +628,9 @@ impl Generator<'_> {
                 self.use_up(mark);
                 self.seal(&mut ways);
                 let successors: Vec<_> = ways.iter().map(Way::successor).collect();
-                self.terminal_patchpoint(&successors, chooser);
+                let site = self.terminal_patchpoint(&successors, chooser);
+                self.pass_on(site.0, &ways);
+                return Some(site);
             }
             1 | 2 => {
                 let length = self.random.between(1, 3 * count as i64) as u32;
@@ -670,6 +684,59 @@ impl Generator<'_> {
                 self.builder().switch(value, &cases, ways[0].successor());
             }
         }
+        None
+    }
+
+    /// Makes the result of the end of the block an argument of some of its first edges.
+    fn pass_on(&mut self, result: Value, ways: &[Way]) {
+        let ty = self.type_of(result);
+        for (edge, way) in self.function.successors(self.block).zip(ways) {
+            let args = self.function.args_mut(edge).iter_mut().rev();
+            for (arg, &class) in args.zip(way.classes.iter().rev()) {
+                if ty.is_data() && Class::Data(ty).satisfies(class) && self.random.flip() {
+                    *arg = result;
+                }
+            }
+        }
+    }
+
+    fn call_with_handlers(&mut self, mut budget: u32) {
+        let join = self.join(&[]);
+        let handlers: Vec<Join> = (0..self.random.between(1, 2))
+            .map(|_| self.join(&[]))
+            .collect();
+        let has_arm = self.random.flip();
+        let mut ways = vec![if has_arm {
+            self.plain_way()
+        } else {
+            self.way_to(&join, &[], false)
+        }];
+        for handler in &handlers {
+            ways.push(self.way_to(handler, &[], false));
+        }
+        self.seal(&mut ways);
+        let successors: Vec<_> = ways.iter().map(Way::successor).collect();
+        let before = self.mark();
+        let site = self.terminal_call(&successors);
+        self.pass_on(site.0, &ways[..1]);
+        if has_arm {
+            let (mark, share) = (self.mark(), self.share_of(&mut budget));
+            self.block = ways[0].target;
+            self.keep_results(site);
+            self.use_up(mark);
+            self.arm(share, &join, false);
+            self.restore(mark);
+        }
+        for handler in &handlers {
+            let (mark, share) = (self.mark(), self.share_of(&mut budget));
+            let leaves = self.random.one_in(3);
+            self.enter(handler);
+            self.use_up(mark);
+            self.arm(share, &join, leaves);
+            self.restore(mark);
+        }
+        self.enter(&join);
+        self.use_up(before);
     }
 
     fn switch_statement(&mut self, mut budget: u32) {
@@ -685,6 +752,7 @@ impl Generator<'_> {
             let way = match ways.iter().find(|way| way.target == target.block) {
                 Some(way) if shares_args || count > 8 => Way {
                     args: way.args.clone(),
+                    classes: way.classes.clone(),
                     ..*way
                 },
                 _ => self.way_to(target, &[], false),
@@ -693,10 +761,11 @@ impl Generator<'_> {
         }
         ways.push(self.way_to(&join, &[], false));
         self.random.shuffle(&mut ways);
-        self.choose_among(ways, self.mark());
+        let site = self.choose_among(ways, self.mark());
         for (position, arm) in arms.iter().enumerate() {
             let (mark, share) = (self.mark(), self.share_of(&mut budget));
             self.enter(arm);
+            site.into_iter().for_each(|site| self.keep_results(site));
             self.body(share);
             if self.random.one_in(5) {
                 self.leave(mark);
@@ -708,6 +777,7 @@ impl Generator<'_> {
             self.restore(mark);
         }
         self.enter(&join);
+        site.into_iter().for_each(|site| self.keep_results(site));
     }
 
     // The rest

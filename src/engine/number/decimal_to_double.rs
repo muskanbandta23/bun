@@ -1,10 +1,12 @@
 //! The double closest to a decimal number.
 
 use core::cmp::Ordering;
+use core::iter::once;
 
 use crate::double::{EXPONENT_BIAS, FRACTION_BITS, MAX_BIASED_EXPONENT, decompose};
-use crate::expansion::Expansion;
-use crate::powers_of_ten::{MIN_POWER, floor_log2_of_power_of_ten, power_of_ten};
+use crate::expansion::{BLOCK_DIGITS, Expansion};
+use crate::integer_text::decimal_length;
+use crate::powers_of_ten::{MIN_POWER, SMALL_POWERS, floor_log2_of_power_of_ten, power_of_ten};
 
 /// So many digits always fit in a `u64`.
 pub(crate) const MAX_SHORT_DIGITS: usize = 19;
@@ -36,11 +38,9 @@ pub(crate) fn from_short_decimal(mantissa: u64, exponent: i64, digit_count: usiz
 fn by_scaling(mantissa: u64, exponent: i64) -> f64 {
     /// Below the 53 bits of the result, the bit that rounds it and the top bit, which may be clear.
     const SPARE_MASK: u64 = (1 << 9) - 1;
-    if mantissa == 0 || exponent < i64::from(MIN_POWER) {
-        return 0.0;
-    }
-    if exponent > i64::from(f64::MAX_10_EXP) {
-        return f64::INFINITY;
+    if mantissa == 0 || !(i64::from(MIN_POWER)..=i64::from(f64::MAX_10_EXP)).contains(&exponent) {
+        let is_zero = mantissa == 0 || exponent < 0;
+        return if is_zero { 0.0 } else { f64::INFINITY };
     }
     let exponent = exponent as i32;
     let power = power_of_ten(exponent);
@@ -57,37 +57,39 @@ fn by_scaling(mantissa: u64, exponent: i64) -> f64 {
     let top_bit = (top >> 63) as i32;
     let biased =
         EXPONENT_BIAS + 63 + top_bit + floor_log2_of_power_of_ten(exponent) - leading_zeros as i32;
-    if biased >= MAX_BIASED_EXPONENT as i32 {
-        return f64::INFINITY;
-    }
-    let lost_to_underflow = (1 - biased).max(0);
     // The significand, the bit for one half, and a bit for anything less.
-    let shift = (8 + top_bit + lost_to_underflow).min(63);
-    let unrounded = top >> shift | u64::from(is_inexact);
-    let significand = (unrounded + 1 + (unrounded >> 2 & 1)) >> 2;
+    let unrounded = top >> (8 + top_bit) | u64::from(is_inexact);
+    if !(1..MAX_BIASED_EXPONENT as i32).contains(&biased) {
+        return outside_normal_range(unrounded, biased);
+    }
     // The implicit bit, and a carry out of the significand, add to the exponent.
-    f64::from_bits((((biased - 1).max(0) as u64) << FRACTION_BITS) + significand)
+    f64::from_bits((((biased - 1) as u64) << FRACTION_BITS) + round(unrounded))
 }
 
-/// `0.d1d2d3... * 10^point` for any number of digit values.
+#[inline(always)]
+fn round(unrounded: u64) -> u64 {
+    (unrounded + 1 + (unrounded >> 2 & 1)) >> 2
+}
+
+#[cold]
+fn outside_normal_range(unrounded: u64, biased: i32) -> f64 {
+    if biased > 0 {
+        return f64::INFINITY;
+    }
+    // No mantissa of 64 bits makes an exact value this small.
+    f64::from_bits(round(unrounded.unbounded_shr((1 - biased) as u32) | 1))
+}
+
+/// `0.d1d2d3... * 10^point` for any number of digit values, the first of which is not zero.
 #[cold]
 pub(crate) fn from_long_decimal(digits: impl Iterator<Item = u8> + Clone, point: i64) -> f64 {
-    let mut digits = digits.peekable();
-    let mut point = point;
-    while digits.next_if_eq(&0).is_some() {
-        point -= 1;
-    }
-    let (mantissa, count) = digits
-        .clone()
-        .take(MAX_SHORT_DIGITS)
-        .fold((0, 0), |(mantissa, count), digit| {
-            (mantissa * 10 + u64::from(digit), count + 1)
-        });
-    let below = by_scaling(mantissa, point - count);
-    if count < MAX_SHORT_DIGITS as i64 {
+    let (mantissa, count) = take_number(digits.clone(), MAX_SHORT_DIGITS);
+    let exponent = point - count as i64;
+    let below = by_scaling(mantissa, exponent);
+    if count < MAX_SHORT_DIGITS {
         return below;
     }
-    let above = by_scaling(mantissa + 1, point - count);
+    let above = by_scaling(mantissa + 1, exponent);
     if below == above {
         return below;
     }
@@ -102,17 +104,16 @@ pub(crate) fn from_long_decimal(digits: impl Iterator<Item = u8> + Clone, point:
 
 /// `digits` start with a nonzero one.
 fn compare(mut digits: impl Iterator<Item = u8>, point: i64, mut other: Expansion) -> Ordering {
-    let head = other.head();
-    if point != i64::from(head.point) {
-        return point.cmp(&i64::from(head.point));
+    let first = other.next().unwrap_or(0);
+    let first_count = decimal_length(first);
+    let other_point = i64::from(other.point()) - (BLOCK_DIGITS - first_count) as i64;
+    if point != other_point {
+        return point.cmp(&other_point);
     }
-    let other_digits = head
-        .block
-        .into_iter()
-        .skip(head.zeros)
-        .chain(other.flatten());
-    for other_digit in other_digits {
-        let ordering = digits.next().unwrap_or(0).cmp(&(other_digit - b'0'));
+    let blocks = other.map(|block| (block, BLOCK_DIGITS));
+    for (block, count) in once((first, first_count)).chain(blocks) {
+        let (value, taken) = take_number(&mut digits, count);
+        let ordering = (value * SMALL_POWERS[count - taken]).cmp(&block);
         if ordering.is_ne() {
             return ordering;
         }
@@ -122,4 +123,11 @@ fn compare(mut digits: impl Iterator<Item = u8>, point: i64, mut other: Expansio
     } else {
         Ordering::Equal
     }
+}
+
+/// The number that the next `count` digits spell, and how many there were.
+fn take_number(digits: impl Iterator<Item = u8>, count: usize) -> (u64, usize) {
+    digits.take(count).fold((0, 0), |(value, taken), digit| {
+        (value * 10 + u64::from(digit), taken + 1)
+    })
 }

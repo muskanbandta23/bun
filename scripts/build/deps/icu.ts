@@ -145,7 +145,7 @@ function bundled(cfg: Config): DirectBuild {
       ...(cfg.windows && { WINVER: 0x0601, _WIN32_WINNT: 0x0601, _HAS_EXCEPTIONS: 0 }),
     },
     // Optimized in every profile. ICU uses dynamic_cast and typeid.
-    cflags: ["-w", ...(cfg.windows ? ["/O2", "/std:c++20", "/GR"] : ["-Os", "-std=c++20", "-frtti"])],
+    cflags: ["-w", ...(cfg.windows ? ["/clang:-O2", "/std:c++20", "/GR"] : ["-Os", "-std=c++20", "-frtti"])],
     hostTools: [
       {
         output: compressor,
@@ -184,8 +184,10 @@ export const icu: Dependency = {
         },
 
   patches: [
+    "patches/icu/calendar-known-region.patch",
     "patches/icu/data-item-hook.patch",
     "patches/icu/decnum-resize-status.patch",
+    "patches/icu/likely-subtags-lazy.patch",
     "patches/icu/round-to-five-carry.patch",
   ],
 

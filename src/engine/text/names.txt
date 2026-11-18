@@ -51,6 +51,7 @@ LOG10E
 LOG2E
 LinkError
 ListFormat
+Loader
 Locale
 MAX_SAFE_INTEGER
 MAX_VALUE
@@ -232,6 +233,7 @@ deleteProperty
 deref
 description
 detached
+detail
 difference
 direction
 disambiguation
@@ -255,6 +257,7 @@ epochNanoseconds
 equals
 era
 eraYear
+errno
 error
 errors
 escape
@@ -513,6 +516,7 @@ offsetNanoseconds
 ok
 omitPadding
 or
+origin
 originalColumn
 originalLine
 overflow
@@ -774,6 +778,7 @@ yield
 zip
 zipKeyed
 zonedDateTimeISO
+arrayIterator = Array Iterator
 boundPrefix = bound 
 dollar1 = $1
 dollar2 = $2
@@ -801,12 +806,14 @@ intlPluralRules = Intl.PluralRules
 intlRelativeTimeFormat = Intl.RelativeTimeFormat
 intlSegmenter = Intl.Segmenter
 invalidDate = Invalid Date
+iteratorHelper = Iterator Helper
 negativeInfinity = -Infinity
 notEqual = not-equal
 objectArguments = [object Arguments]
 objectArray = [object Array]
 objectBoolean = [object Boolean]
 objectDate = [object Date]
+mapIterator = Map Iterator
 objectError = [object Error]
 objectFunction = [object Function]
 objectNull = [object Null]
@@ -815,9 +822,13 @@ objectObject = [object Object]
 objectRegExp = [object RegExp]
 objectString = [object String]
 objectUndefined = [object Undefined]
+regExpStringIteratorTag = RegExp String Iterator
 segmenterStringIterator = Segmenter String Iterator
+setIterator = Set Iterator
 starDefaultText = *default*
 stopBeforePartial = stop-before-partial
+stringIterator = String Iterator
+notEqual = not-equal
 timedOut = timed-out
 useStrict = use strict
 @@asyncDispose
@@ -855,6 +866,7 @@ useStrict = use strict
 @GeneratorResumeModeReturn
 @GeneratorResumeModeThrow
 @GeneratorStateCompleted
+@GeneratorStateDelegate
 @GeneratorStateExecuting
 @GeneratorStateInit
 @Infinity
@@ -909,6 +921,28 @@ useStrict = use strict
 @clear
 @cloneObject
 @collectForSpread
+@arrayFromAsyncIterator
+@arrayFromAsyncArrayLike
+@arrayIteratorStep
+@isIteratorInstance
+@getIteratorFlattenable
+@closeIteratorQuietly
+@closeIterators
+@closeIteratorsQuietly
+@iteratorLimit
+@checkChunkSize
+@mappedValues
+@filteredValues
+@takenValues
+@remainingValues
+@flatMappedValues
+@chunkedValues
+@windowedValues
+@concatenatedValues
+@zippedValues
+@zipOptions
+@zipIterators
+@map
 @constructor
 @copyDataProperties
 @create
@@ -922,6 +956,7 @@ useStrict = use strict
 @derivedConstructor
 @disposableStackFieldCapability
 @disposableStackFieldState
+@disposeAsyncStack
 @emptyPropertyNameEnumerator
 @endsWith
 @enqueueJob
@@ -940,6 +975,7 @@ useStrict = use strict
 @generatorFieldThis
 @generatorFrame
 @generatorNext
+@generatorResume
 @generatorResumeMode
 @generatorState
 @generatorThis
@@ -983,6 +1019,7 @@ useStrict = use strict
 @isDisposableStack
 @isFinite
 @isGenerator
+@isIterationPristine
 @isIteratorHelper
 @isJSArray
 @isMap
@@ -1006,7 +1043,9 @@ useStrict = use strict
 @iterationKindEntries
 @iterationKindKey
 @iterationKindValue
+@iterableWithMethod
 @iteratorGenericClose
+@iteratorPrototypeSymbolIterator
 @iteratorGenericNext
 @iteratorHelperCreate
 @iteratorHelperFieldGenerator
@@ -1039,7 +1078,6 @@ useStrict = use strict
 @newRejectedPromise
 @newResolvedPromise
 @newTargetLocal
-@orderedHashTableSentinel
 @ownKeys
 @performPromiseThen
 @pop
@@ -1052,6 +1090,11 @@ useStrict = use strict
 @promiseReturnUndefinedOnFulfilled
 @proxyFieldHandler
 @proxyFieldTarget
+@proxyGet
+@proxyHandler
+@proxyHas
+@proxySet
+@throwFalsyProxySetTrapResult
 @push
 @putArrayIteratorInternalField
 @putAsyncDisposableStackInternalField
@@ -1089,6 +1132,7 @@ useStrict = use strict
 @resolvePromise
 @resolvePromiseWithFirstResolvingFunctionCallCheck
 @resolveWithInternalMicrotaskForAsyncAwait
+@resumeGenerator
 @sameValue
 @sentinelString
 @set
@@ -1124,6 +1168,7 @@ useStrict = use strict
 @toThis
 @typedArrayFromFast
 @typedArrayLength
+@typedArraySpeciesCreate
 @undefined
 @values
 @wrapForValidIteratorCreate
@@ -1203,3 +1248,25 @@ temporalPlainMonthDay = Temporal.PlainMonthDay
 temporalPlainTime = Temporal.PlainTime
 temporalPlainYearMonth = Temporal.PlainYearMonth
 temporalZonedDateTime = Temporal.ZonedDateTime
+colonAndSpace = : 
+debug
+info
+warn
+dir
+dirxml
+table
+trace
+assert
+countReset
+profile
+profileEnd
+timeLog
+timeEnd
+timeStamp
+takeHeapSnapshot
+group
+groupCollapsed
+groupEnd
+record
+recordEnd
+screenshot

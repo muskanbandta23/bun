@@ -39,3 +39,65 @@ searches! {
     index_of_either_u64(u64, a, b) = highway_index_of_either_u64, position(|it| it == a || it == b);
     last_index_of_either_u64(u64, a, b) = highway_last_index_of_either_u64, rposition(|it| it == a || it == b);
 }
+
+/// Searches in memory that need not be aligned and that another thread may be writing. Each returns the index, or
+/// `len` if there is none.
+///
+/// # Safety
+/// `len` lanes at `elements` are readable, and they are at least [`MIN_LANE_BYTES`].
+pub trait Lane: Copy {
+    /// The first lane whose bits under the mask are `needle`.
+    unsafe fn index_of_masked(elements: *const Self, len: usize, mask: Self, needle: Self)
+    -> usize;
+
+    /// The last one.
+    unsafe fn last_index_of_masked(
+        elements: *const Self,
+        len: usize,
+        mask: Self,
+        needle: Self,
+    ) -> usize;
+
+    /// The first lane that is above `limit` without its highest bit.
+    unsafe fn index_of_magnitude_above(elements: *const Self, len: usize, limit: Self) -> usize;
+}
+
+/// The size of the widest vector.
+pub const MIN_LANE_BYTES: usize = 32;
+
+macro_rules! lanes {
+    ($($type:ty, $first:ident, $last:ident, $above:ident;)*) => {$(
+        unsafe extern "C" {
+            fn $first(elements: *const $type, len: usize, mask: $type, needle: $type) -> usize;
+            fn $last(elements: *const $type, len: usize, mask: $type, needle: $type) -> usize;
+            fn $above(elements: *const $type, len: usize, limit: $type) -> usize;
+        }
+
+        impl Lane for $type {
+            #[inline(always)]
+            unsafe fn index_of_masked(elements: *const $type, len: usize, mask: $type, needle: $type) -> usize {
+                // SAFETY: the caller's.
+                unsafe { $first(elements, len, mask, needle) }
+            }
+
+            #[inline(always)]
+            unsafe fn last_index_of_masked(elements: *const $type, len: usize, mask: $type, needle: $type) -> usize {
+                // SAFETY: the caller's.
+                unsafe { $last(elements, len, mask, needle) }
+            }
+
+            #[inline(always)]
+            unsafe fn index_of_magnitude_above(elements: *const $type, len: usize, limit: $type) -> usize {
+                // SAFETY: the caller's.
+                unsafe { $above(elements, len, limit) }
+            }
+        }
+    )*};
+}
+
+lanes! {
+    u8, highway_index_of_masked_8, highway_last_index_of_masked_8, highway_index_of_magnitude_above_8;
+    u16, highway_index_of_masked_16, highway_last_index_of_masked_16, highway_index_of_magnitude_above_16;
+    u32, highway_index_of_masked_32, highway_last_index_of_masked_32, highway_index_of_magnitude_above_32;
+    u64, highway_index_of_masked_64, highway_last_index_of_masked_64, highway_index_of_magnitude_above_64;
+}

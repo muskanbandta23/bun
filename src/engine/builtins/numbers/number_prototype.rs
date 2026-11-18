@@ -1,4 +1,5 @@
-use bun_engine_number::{FixedText, FormatError, Radix};
+use bun_engine_number::{FormatError, Radix};
+use bun_engine_text::Text;
 use bun_engine_vm::{JsWrapperObject, NumberObject, Thrown};
 
 use crate::prelude::*;
@@ -59,21 +60,27 @@ fn to_small_integer(cx: &mut Cx, value: Value) -> JsResult<i32> {
 }
 
 #[inline(always)]
-fn finish(cx: &Cx, text: &Result<FixedText, FormatError>) -> JsResult<Value> {
+fn finish(cx: &Cx, text: Result<&[u8], FormatError>) -> JsResult<Value> {
     match text {
-        Ok(text) => Ok(JsString::from_text(cx, text.text()).into()),
+        Ok(text) => Ok(JsString::from_text(cx, Text::Latin1(text)).into()),
         Err(error) => Err(cx.throw_range_error(error.message())),
+    }
+}
+
+/// Of the argument of `toString`.
+#[inline(always)]
+pub(super) fn to_radix(cx: &mut Cx, value: Value) -> JsResult<Radix> {
+    match value {
+        Value::UNDEFINED => Ok(Radix::DECIMAL),
+        radix => Radix::new(to_small_integer(cx, radix)?)
+            .map_err(|error| cx.throw_range_error(error.message())),
     }
 }
 
 #[native_abi]
 fn to_string(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let number = this_number(cx, frame)?;
-    let radix = match frame.argument(0) {
-        Value::UNDEFINED => Radix::DECIMAL,
-        radix => Radix::new(to_small_integer(cx, radix)?)
-            .map_err(|error| cx.throw_range_error(error.message()))?,
-    };
+    let radix = to_radix(cx, frame.argument(0))?;
     Ok(JsString::from_number_in_radix(cx, number, radix).into())
 }
 
@@ -93,7 +100,7 @@ fn value_of(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 fn to_fixed(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let number = this_number(cx, frame)?;
     let digits = to_small_integer(cx, frame.argument(0))?;
-    finish(cx, &bun_engine_number::to_fixed(number, digits))
+    finish(cx, bun_engine_number::to_fixed(number, digits, &mut [0; _]))
 }
 
 #[native_abi]
@@ -103,7 +110,10 @@ fn to_exponential(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
         Value::UNDEFINED => None,
         digits => Some(to_small_integer(cx, digits)?),
     };
-    finish(cx, &bun_engine_number::to_exponential(number, digits))
+    finish(
+        cx,
+        bun_engine_number::to_exponential(number, digits, &mut [0; _]),
+    )
 }
 
 #[native_abi]
@@ -113,5 +123,8 @@ fn to_precision(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
         return Ok(JsString::from_number(cx, number).into());
     }
     let precision = to_small_integer(cx, frame.argument(0))?;
-    finish(cx, &bun_engine_number::to_precision(number, precision))
+    finish(
+        cx,
+        bun_engine_number::to_precision(number, precision, &mut [0; _]),
+    )
 }

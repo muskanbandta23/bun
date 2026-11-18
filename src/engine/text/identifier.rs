@@ -4,7 +4,9 @@ use core::ptr::NonNull;
 
 use crate::static_names::ATOMS;
 use crate::symbol::{self, StaticSymbol, SymbolRef};
-use crate::{CodeUnit, StaticString, StringImpl, StringRef, Text, atom_table, with_text};
+use crate::{
+    AllocError, CodeUnit, StaticString, StringImpl, StringRef, Text, atom_table, with_text,
+};
 
 pub const MAX_ARRAY_INDEX: u32 = u32::MAX - 1;
 
@@ -27,7 +29,7 @@ pub fn parse_array_index(text: Text<'_>) -> Option<u32> {
     with_text!(text, |units| parse(units))
 }
 
-/// The one string of this thread with its characters.
+/// The one string of this thread with its characters. It is Latin-1 if they allow it.
 #[derive(Clone)]
 #[repr(transparent)]
 pub struct Atom(StringRef);
@@ -41,9 +43,8 @@ impl Atom {
     /// `hash` is `text.hash()`.
     #[inline]
     pub fn with_hash(text: Text<'_>, hash: u32) -> Atom {
-        Atom(atom_table::add(text, hash, || {
-            StringRef::try_narrowed(text).unwrap_or_else(|_| bun_alloc::out_of_memory())
-        }))
+        let atom = atom_table::add(text, hash, || StringRef::try_narrowed(text));
+        Atom(atom.unwrap_or_else(|_| bun_alloc::out_of_memory()))
     }
 
     /// Does not copy the characters.
@@ -55,28 +56,42 @@ impl Atom {
     /// Does not copy the characters.
     pub fn from_static_latin1(characters: &'static [u8]) -> Atom {
         let text = Text::Latin1(characters);
-        Atom(atom_table::add(text, text.hash(), || {
-            StringRef::from_static_units(characters)
-        }))
+        let create = || Ok(StringRef::from_static_units(characters));
+        let atom = atom_table::add(text, text.hash(), create);
+        Atom(atom.unwrap_or_else(|_| bun_alloc::out_of_memory()))
     }
 
     /// `string` itself becomes the atom if there is none yet and it may. Of a symbol, the description.
     #[inline]
-    pub fn from_string(string: &StringImpl) -> Atom {
+    pub fn try_from_string(string: &StringImpl) -> Result<Atom, AllocError> {
         if string.is_atom() {
-            return Atom(StringRef::retain(string));
+            return Ok(Atom(StringRef::retain(string)));
         }
         Self::from_string_slow(string)
     }
 
-    fn from_string_slow(string: &StringImpl) -> Atom {
-        Atom(atom_table::add(string.text(), string.hash(), || {
-            if string.is_static() || string.is_symbol() || !string.can_become_atom() {
-                StringRef::from_text(string.text())
+    /// For a string whose size no script picks.
+    #[inline]
+    pub fn from_string(string: &StringImpl) -> Atom {
+        Self::try_from_string(string).unwrap_or_else(|_| bun_alloc::out_of_memory())
+    }
+
+    fn from_string_slow(string: &StringImpl) -> Result<Atom, AllocError> {
+        let text = string.text();
+        let atom = atom_table::add(text, string.hash(), || {
+            // An atom outlives whoever asked for it, and an embedder may lend characters for no longer than that.
+            if string.borrows_characters()
+                || string.is_static()
+                || string.is_symbol()
+                || !string.can_become_atom()
+                || (!text.is_latin1() && text.fits_latin1())
+            {
+                StringRef::try_narrowed(text)
             } else {
-                StringRef::retain(string)
+                Ok(StringRef::retain(string))
             }
-        }))
+        });
+        atom.map(Atom)
     }
 
     pub fn find(text: Text<'_>) -> Option<Atom> {
@@ -88,6 +103,10 @@ impl Atom {
             return Some(Atom(StringRef::retain(string)));
         }
         atom_table::find(string.text(), string.hash()).map(Atom)
+    }
+
+    pub fn length_of_longest() -> usize {
+        atom_table::length_of_longest()
     }
 
     pub const fn empty() -> Atom {
@@ -253,6 +272,13 @@ impl<'a> PropertyName<'a> {
     #[inline]
     pub fn is_private(self) -> bool {
         symbol::flags(self.string()).is_some_and(|flags| flags.is_private())
+    }
+
+    /// Private, and unlike a property in that it belongs to a proxy itself and is left alone by `Object.freeze`.
+    #[inline]
+    pub fn is_private_element(self) -> bool {
+        symbol::flags(self.string())
+            .is_some_and(|flags| flags.is_private() && !flags.passes_through_proxies())
     }
 
     #[inline]

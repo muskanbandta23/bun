@@ -6,19 +6,20 @@ use core::ptr::NonNull;
 use std::rc::Rc;
 
 use bun_engine_bytecode::{
-    ArrayLiteral, Body, Code, CodeKind, Constant, FunctionIndex, FunctionRef, IdentifierIndex,
-    Position, ScopeIndex, Specialization, TemplateSite,
+    ArrayLiteral, Body, Code, CodeFlags, CodeKind, Constant, FunctionIndex, FunctionRef,
+    IdentifierIndex, Instructions, Opcode, Position, ScopeIndex, Specialization, TemplateSite,
 };
 use bun_engine_macros::cell;
 use bun_engine_text::{Identifier, PropertyName, names};
 
 use super::metadata;
+use super::optimization::Optimization;
 use super::profile::ValueProfile;
 use crate::heap::Survivors;
 use crate::{
     Attributes, Cx, Field, FunctionExecutable, Gc, GcFree, GlobalObject, ImmutableArray,
     IntegrityLevel, JsArray, JsBigInt, JsCell, JsResult, JsString, LineColumn, RealmSlot, RegExp,
-    ScopeTemplate, ScriptExecutable, TypeFlags, Value, ValueVec, Visitor, Vm,
+    ScopeTemplate, ScriptExecutable, SourceProviderRef, TypeFlags, Value, ValueVec, Visitor, Vm,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -77,6 +78,9 @@ pub trait CompiledCode: GcFree + Any {
     fn size(&self) -> usize;
 }
 
+/// How often a range of the source has run.
+pub type CoverageCount = Rc<Cell<u64>>;
+
 /// The constants, the executables of inner functions, the scope templates, the profiles of the arguments and the
 /// metadata.
 struct Words {
@@ -128,7 +132,10 @@ pub struct CodeBlock {
     code: Rc<Code>,
     words: Words,
     compiled: RefCell<Option<Rc<dyn CompiledCode>>>,
+    /// One for each of the coverage blocks.
+    coverage_counts: Box<[CoverageCount]>,
     pub(crate) caches: metadata::SideTables,
+    pub(super) optimization: Optimization,
 }
 
 impl CodeBlock {
@@ -155,6 +162,11 @@ impl CodeBlock {
         let count = metadata + code.body.metadata().words() as usize;
         let words = Words::zeroed(count).ok_or_else(|| cx.throw_out_of_memory())?;
         let at = |index| words.first.wrapping_add(index);
+        let coverage_counts = if code.body.flags().contains(CodeFlags::HAS_COVERAGE) {
+            (cx.hooks().cover)(cx, &executable, &code)
+        } else {
+            Box::default()
+        };
         let code_block = cx.allocate::<CodeBlock>(CodeBlockInit {
             base: cx.shapes.code_block(),
             instructions: code.body.instructions().as_ptr(),
@@ -175,8 +187,13 @@ impl CodeBlock {
             code,
             words,
             compiled: RefCell::new(None),
+            coverage_counts,
             caches: metadata::SideTables::default(),
+            optimization: Optimization::default(),
         });
+        if !code_block.coverage_counts.is_empty() {
+            code_block.link_coverage_counts();
+        }
         for (slot, constant) in code_block.fields().iter().zip(&code_block.code.constants) {
             let value = code_block.link_constant(cx, constant)?;
             // SAFETY: traced by `visit_children`.
@@ -209,8 +226,22 @@ impl CodeBlock {
             code: Rc::clone(&self.code),
             words: Words::zeroed(0).unwrap_or_else(|| bun_alloc::out_of_memory()),
             compiled: RefCell::new(None),
+            coverage_counts: Box::default(),
             caches: metadata::SideTables::default(),
+            optimization: Optimization::default(),
         })
+    }
+
+    #[cold]
+    fn link_coverage_counts(&self) {
+        let code = self.body().instructions();
+        for (_, instruction) in Instructions::new(code, 0..code.len() as u32) {
+            if let (Opcode::Cover, &[block]) = (instruction.opcode, instruction.words()) {
+                let count = &self.coverage_counts[block as usize];
+                // SAFETY: the type of its entries, and the count goes no sooner than the metadata.
+                unsafe { self.metadata::<metadata::Cover>(instruction.metadata).link(count) };
+            }
+        }
     }
 
     fn link_constant(&self, cx: &mut Cx, constant: &Constant) -> JsResult<Option<Value>> {
@@ -232,8 +263,7 @@ impl CodeBlock {
                     _ => LiteralRadix::Decimal,
                 };
                 let digits = literal.digits.text();
-                let value = bun_engine_bigint::from_literal(digits, radix, literal.is_negative);
-                JsBigInt::from_new(cx, value)?.into()
+                JsBigInt::from_literal(cx, digits, radix, literal.is_negative)?.into()
             }
             Constant::RegExp(literal) => {
                 RegExp::for_literal(cx, literal.pattern.string(), literal.flags.text()).into()
@@ -427,6 +457,31 @@ impl CodeBlock {
         self.baseline().fields()[..self.code.constants.len()][index as usize].get()
     }
 
+    /// By the same elements in a more general kind. Code that has the address of the old one keeps that alive itself.
+    pub fn replace_array_constant(&self, index: u32, elements: Gc<ImmutableArray>) {
+        let owner = self.baseline();
+        let field = &owner.fields()[..self.code.constants.len()][index as usize];
+        assert!(field.get().is_some_and(Value::is::<ImmutableArray>));
+        // SAFETY: one of its own.
+        unsafe { field.set(&owner, Some(elements.into())) };
+    }
+
+    /// # Safety
+    /// There is such a function.
+    #[inline(always)]
+    pub unsafe fn function_if_created(&self, index: FunctionIndex) -> Option<Gc<FunctionExecutable>> {
+        // SAFETY: the caller's, and only executables are stored there.
+        unsafe { (*self.functions.add(index.index()).cast::<Field<Option<_>>>()).get() }
+    }
+
+    /// # Safety
+    /// There is such a scope.
+    #[inline(always)]
+    pub unsafe fn scope_template_if_created(&self, index: ScopeIndex) -> Option<Gc<ScopeTemplate>> {
+        // SAFETY: the caller's, and only templates are stored there.
+        unsafe { (*self.scopes.add(index.index()).cast::<Field<Option<_>>>()).get() }
+    }
+
     #[inline(always)]
     pub fn function(&self, vm: &Vm, index: FunctionIndex) -> Gc<FunctionExecutable> {
         assert!(index.index() < self.code.functions.len());
@@ -456,11 +511,12 @@ impl CodeBlock {
         })
     }
 
+    /// In the text of `source_provider`.
     pub fn position(&self, bytecode_offset: u32) -> Position {
         let found = self.body().positions().find(bytecode_offset);
         found.unwrap_or_else(|| {
             let function = self.executable.downcast::<FunctionExecutable>();
-            let start = function.map_or(0, |function| function.info().parameters_start());
+            let start = function.map_or(0, |function| function.parameters_start());
             Position {
                 divot: start,
                 start,
@@ -469,9 +525,16 @@ impl CodeBlock {
         })
     }
 
+    pub fn source_provider(&self) -> SourceProviderRef {
+        match self.executable.downcast::<FunctionExecutable>() {
+            Some(function) => function.code_provider(),
+            None => self.executable.provider().clone(),
+        }
+    }
+
     pub fn line_column(&self, bytecode_offset: u32) -> LineColumn {
         let divot = self.position(bytecode_offset).divot;
-        self.executable.provider().position_in_document(divot)
+        self.source_provider().position_in_document(divot)
     }
 
     fn visit_children(&self, visitor: &mut Visitor) {

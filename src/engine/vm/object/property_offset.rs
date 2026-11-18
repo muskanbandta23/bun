@@ -1,3 +1,5 @@
+use crate::{CellType, Value};
+
 /// Where an object keeps the value of a property: inside the cell below `FIRST_OUT_OF_LINE`, else in its storage.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 #[repr(transparent)]
@@ -69,7 +71,12 @@ impl PropertyOffset {
 
     #[inline(always)]
     pub const fn out_of_line_capacity(self) -> usize {
-        match self.out_of_line_size() {
+        Self::capacity_for(self.out_of_line_size())
+    }
+
+    #[inline(always)]
+    pub const fn capacity_for(out_of_line_size: usize) -> usize {
+        match out_of_line_size {
             0 => 0,
             1..=Self::INITIAL_OUT_OF_LINE_CAPACITY => Self::INITIAL_OUT_OF_LINE_CAPACITY,
             size => size.next_power_of_two(),
@@ -82,6 +89,8 @@ bitflags::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
     #[repr(transparent)]
     pub struct Attributes: u32 {
+        /// Of an element of `MappedArguments`: the value is that of the parameter.
+        const MAPPED = 1 << 0;
         const READ_ONLY = 1 << 1;
         const DONT_ENUM = 1 << 2;
         const DONT_DELETE = 1 << 3;
@@ -116,6 +125,20 @@ impl Attributes {
     #[inline(always)]
     pub const fn for_shape(self) -> Attributes {
         Attributes::from_bits_retain(self.bits() & 0xff)
+    }
+
+    /// Those for a shape, made to agree with what the slot is going to have.
+    #[inline]
+    pub fn for_stored(self, value: Value) -> Attributes {
+        let plain = self.for_shape() - Attributes::ANY_ACCESSOR;
+        match value.as_cell().map(|cell| cell.cell_type()) {
+            Some(CellType::GetterSetter) => plain | Attributes::ACCESSOR,
+            Some(CellType::CustomGetterSetter) if self.contains(Attributes::CUSTOM_ACCESSOR) => {
+                plain | Attributes::CUSTOM_ACCESSOR
+            }
+            Some(CellType::CustomGetterSetter) => plain | Attributes::CUSTOM_VALUE,
+            _ => plain,
+        }
     }
 
     #[inline(always)]

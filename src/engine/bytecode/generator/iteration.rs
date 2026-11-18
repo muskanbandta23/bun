@@ -8,7 +8,7 @@ use smallvec::SmallVec;
 use super::control::{Control, Exit};
 use super::{Dest, Generator, Suspension};
 use crate::assembler::Site;
-use crate::code::HandlerKind;
+use crate::code::{CoverageKind, HandlerKind};
 use crate::instruction::Opcode;
 use crate::operand::{
     CloseMode, DebugHook, Operand, Register, ResumeMode, ScopeIndex, StaticError, SuspendKind,
@@ -180,7 +180,8 @@ impl Generator<'_> {
 
     fn cover_target(&mut self, it: &Enumeration) {
         if self.covers {
-            self.emit_cover(it.target_start as i32, it.divot as i32, true);
+            let (start, end) = (it.target_start as i32, it.divot as i32);
+            self.emit_cover(start, end, CoverageKind::LoopHeader);
         }
     }
 
@@ -284,10 +285,14 @@ impl Generator<'_> {
         let variable = self.loop_register(it.target);
         let value = variable.unwrap_or_else(|| self.temp());
         let mark = self.top;
-        let iterable = self.expr(it.subject, Dest::Any);
+        let known = self.iterable_with_method(it.subject);
+        let iterable = self.expr(known.map_or(it.subject, |it| it.0), Dest::Any);
         let (method, next) = (self.temp(), self.asm().label());
         self.position(divot, start, end);
-        self.get_symbol_method(method, iterable, false);
+        match known {
+            Some((_, known)) => _ = self.expr(known, Dest::Temp(method)),
+            None => self.get_symbol_method(method, iterable, false),
+        }
         self.debug_hook(DebugHook::WillExecuteExpression, start);
         self.position(divot, start, end);
         let opened = self.asm().label();
@@ -473,7 +478,6 @@ impl Generator<'_> {
     #[inline(never)]
     pub(super) fn await_value(&mut self, dst: Register, value: Operand, position: u32) {
         self.debug_hook(DebugHook::WillAwait, position);
-        self.position_at(position);
         self.suspend(value, SuspendKind::Await);
         self.asm().resume_after_await(dst);
         self.debug_hook(DebugHook::DidAwait, position);

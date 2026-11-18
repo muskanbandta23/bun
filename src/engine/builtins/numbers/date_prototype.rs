@@ -2,8 +2,9 @@ use bun_engine_date::{
     Component, DateFields, date_string, iso_string, make_full_year, ms_from_time, utc_string,
 };
 use bun_engine_intl::date_time_format::Purpose;
+use bun_engine_temporal::instant_from_epoch_milliseconds;
 use bun_engine_text::StringRef;
-use bun_engine_vm::{Attributes, DateInstance, JsFunction, PreferredType};
+use bun_engine_vm::{Attributes, DateInstance, JsFunction, PreferredType, options};
 
 use crate::prelude::*;
 
@@ -71,6 +72,12 @@ pub(super) fn create(cx: &Cx) -> Gc<JsObject> {
     for name in [names::toUTCString, names::toGMTString] {
         prototype.put_direct(cx, name, function.into(), Attributes::DONT_ENUM);
     }
+    if options().use_temporal {
+        let name = names::toTemporalInstant;
+        let text = name.to_identifier().into_string();
+        let function = JsFunction::native(cx, 0, &text, to_temporal_instant);
+        prototype.put_direct(cx, name, function.into(), Attributes::DONT_ENUM);
+    }
     prototype
 }
 
@@ -89,9 +96,7 @@ pub(super) fn or_invalid_date(cx: &Cx, string: Option<StringRef>) -> Value {
 
 #[native_abi]
 fn to_string(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
-    let fields = this_date(cx, frame)?.local_fields(cx);
-    let string = fields.map(|fields| cx.date_cache().date_time_string(fields));
-    Ok(or_invalid_date(cx, string))
+    Ok(this_date(cx, frame)?.to_date_string(cx).into())
 }
 
 #[native_abi]
@@ -146,7 +151,22 @@ fn to_iso_string(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 }
 
 #[native_abi]
+fn to_temporal_instant(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let time = this_date(cx, frame)?.time();
+    if time.is_nan() {
+        return Err(cx.throw_range_error("Invalid integer number of Epoch Millseconds"));
+    }
+    Ok(instant_from_epoch_milliseconds(cx, time as i64).into())
+}
+
+#[native_abi]
 fn to_json(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    if let Some(date) = frame.this_value().downcast::<DateInstance>()
+        && date.has_pristine_conversions(cx)
+    {
+        let string = iso_string(date.time());
+        return Ok(string.map_or(Value::NULL, |it| JsString::new(cx, it).into()));
+    }
     let object = frame.this_value().to_object(cx)?;
     let time = object.to_primitive(cx, PreferredType::Number)?;
     if time.as_number().is_some_and(|time| !time.is_finite()) {

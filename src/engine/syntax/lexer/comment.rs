@@ -1,6 +1,8 @@
 //! Comments, and the directives in them.
 
-use super::{Flaw, Lexer};
+use bun_highway::ScannerWindow;
+
+use super::{EXACT_RUN, Flaw, Lexer, Naming};
 use crate::chars::{self, Start};
 use crate::token::{Detail, TokenKind};
 
@@ -27,13 +29,37 @@ impl Lexer<'_> {
         offset
     }
 
+    #[inline(always)]
+    pub(super) fn blank(&mut self, start: usize, lead: Detail, naming: Naming) {
+        if self.byte(start + 1) <= b' ' || self.byte(start) != b' ' {
+            return self.scan_past_trivia(start, lead, naming);
+        }
+        self.scan(start + 1, lead, naming);
+    }
+
+    #[inline(always)]
+    pub(super) fn newline(&mut self, start: usize, naming: Naming) {
+        let position = (start + 1).wrapping_sub(self.window_start);
+        if position < ScannerWindow::REACH {
+            let run = self.window.stops().after_blanks.run(position);
+            let next = start + 1 + run.min(EXACT_RUN) as usize;
+            if self.byte(next) > b' ' {
+                return self.scan(next, Detail::FOLLOWS_NEWLINE, naming);
+            }
+        }
+        self.scan_past_trivia(start, Detail::FOLLOWS_NEWLINE, naming);
+    }
+
+    #[inline(never)]
+    pub(super) fn scan_past_trivia(&mut self, offset: usize, lead: Detail, naming: Naming) {
+        if let Some((offset, lead)) = self.skip_trivia(offset, lead) {
+            self.scan(offset, lead, naming);
+        }
+    }
+
     /// Where the next token starts. None if a comment does not end.
     #[inline(always)]
-    pub(super) fn skip_trivia(
-        &mut self,
-        mut offset: usize,
-        mut lead: Detail,
-    ) -> Option<(usize, Detail)> {
+    fn skip_trivia(&mut self, mut offset: usize, mut lead: Detail) -> Option<(usize, Detail)> {
         loop {
             match chars::start(self.byte(offset)) {
                 Start::Blank => offset += 1,
@@ -50,8 +76,10 @@ impl Lexer<'_> {
                 Start::Slash if self.byte(offset + 1) == b'*' => {
                     offset = self.skip_block_comment(offset, &mut lead)?;
                 }
-                Start::Less if self.opens_html_comment(offset) => offset = self.skip_line(offset),
-                Start::Minus if self.closes_html_comment(offset, lead) => {
+                Start::Operator
+                    if self.opens_html_comment(offset)
+                        || self.closes_html_comment(offset, lead) =>
+                {
                     offset = self.skip_line(offset);
                 }
                 _ => return Some((offset, lead)),

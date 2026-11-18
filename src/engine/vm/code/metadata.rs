@@ -150,6 +150,11 @@ pub struct GetImport {
     pub environment: Cell<usize>,
 }
 
+impl GetImport {
+    /// In place of an address: the code runs in several instances of the module.
+    pub const VARIES: usize = 1;
+}
+
 #[repr(C)]
 pub struct Call {
     pub value: ValueProfile,
@@ -178,6 +183,24 @@ pub struct NewObject {
 /// What its owner makes of it.
 #[repr(transparent)]
 pub struct Word(pub Cell<u64>);
+
+/// The address of the count to increment. Set before the code runs.
+#[repr(transparent)]
+pub struct Cover(Cell<*const Cell<u64>>);
+
+impl Cover {
+    /// # Safety
+    /// `count` outlives the entry.
+    pub(super) unsafe fn link(&self, count: &Cell<u64>) {
+        self.0.set(count);
+    }
+
+    #[inline(always)]
+    pub fn count(&self) -> &Cell<u64> {
+        // SAFETY: an entry is only seen once its code block is linked.
+        unsafe { &*self.0.get() }
+    }
+}
 
 #[repr(C)]
 pub struct NewArrayWithSpecies {
@@ -237,6 +260,7 @@ entries! {
     Flags {}
     Counter {}
     Word {}
+    Cover {}
     CasesAndValue { cases }
     GetById { cache }
     GetLength { cache array }
@@ -284,7 +308,9 @@ unsafe impl Entry for GetPrivateName {
     }
 
     fn reconcile(&self, owner: &CodeBlock, survivors: &Survivors) {
-        self.name.clear_if_dead(survivors);
+        if self.name.clear_if_dead(survivors) {
+            self.cache.reset();
+        }
         self.cache.reconcile(owner, survivors);
     }
 }
@@ -300,7 +326,9 @@ unsafe impl Entry for PutPrivateName {
     }
 
     fn reconcile(&self, owner: &CodeBlock, survivors: &Survivors) {
-        self.name.clear_if_dead(survivors);
+        if self.name.clear_if_dead(survivors) {
+            self.cache.reset();
+        }
         self.cache.reconcile(owner, survivors);
     }
 }
@@ -336,6 +364,12 @@ unsafe impl Entry for StrongCell {
 macro_rules! entry_types {
     ($($kind:ident => $type:ty,)*) => {
         $(const _: () = assert!(size_of::<$type>() == MetadataKind::$kind.words() as usize * 8);)*
+
+        fn entry_type_of(kind: MetadataKind) -> core::any::TypeId {
+            match kind {
+                $(MetadataKind::$kind => core::any::TypeId::of::<$type>(),)*
+            }
+        }
 
         macro_rules! for_each_entry {
             ($code_block:expr, |$entry:ident| $body:expr) => {
@@ -389,7 +423,7 @@ entry_types! {
     IterationModes => Flags,
     IteratorNext => IteratorNext,
     Catch => Counter,
-    Coverage => Word,
+    Coverage => Cover,
 }
 
 #[derive(Default)]
@@ -420,6 +454,15 @@ impl CodeBlock {
     pub unsafe fn metadata<T: Entry>(&self, word: u32) -> &T {
         // SAFETY: the caller's.
         unsafe { &*self.metadata_ptr().add(word as usize).cast() }
+    }
+
+    /// Panics unless an entry of that kind, which has that type, starts at the word.
+    pub fn checked_metadata<T: Entry + 'static>(&self, kind: MetadataKind, word: u32) -> &T {
+        let range = self.body().metadata().range(kind);
+        assert!(range.contains(&word) && (word - range.start).is_multiple_of(kind.words()));
+        assert!(entry_type_of(kind) == core::any::TypeId::of::<T>());
+        // SAFETY: just checked.
+        unsafe { self.metadata(word) }
     }
 
     pub(crate) fn allocate_call_targets(&self) -> *const CallTargetCount {

@@ -44,7 +44,16 @@ impl GlobalBinding {
         self.attributes.get()
     }
 
-    pub(super) fn make_read_only(&self) {
+    /// # Safety
+    /// The watchpoints are invalid, and the barrier of the owner follows.
+    #[inline(always)]
+    pub unsafe fn set_without_barrier(&self, value: Value) {
+        // SAFETY: the caller's.
+        unsafe { self.value.set_without_barrier(Some(value)) }
+    }
+
+    pub(super) fn make_read_only(&self, vm: &Vm) {
+        self.watchpoints.invalidate_and_keep_slow(vm);
         self.attributes
             .set(self.attributes() | Attributes::READ_ONLY);
     }
@@ -53,6 +62,7 @@ impl GlobalBinding {
 const CHUNK_SIZE: usize = 32;
 
 #[derive(Default)]
+#[cfg_attr(rootcheck, rootcheck::allow("a value gets in only through the owner"))]
 pub struct GlobalBindings {
     #[expect(clippy::vec_box, reason = "handed out by address")]
     chunks: RefCell<Vec<Box<[GlobalBinding; CHUNK_SIZE]>>>,

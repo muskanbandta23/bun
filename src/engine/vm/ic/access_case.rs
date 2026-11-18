@@ -32,12 +32,20 @@ pub enum AccessKind {
     /// For any shape.
     ArrayLength,
     StringLength,
+    /// What the getter of the library returns, while the lookup is valid. The length of the buffer is fixed.
+    TypedArrayLength,
+    TypedArrayByteLength,
+    TypedArrayByteOffset,
     /// `pointer` is the namespace, `second_pointer` the address of the slot.
     LoadModuleBinding,
     /// `pointer` is the address of the `GlobalBinding`, and `new_shape` that of the target of the proxy.
     LoadGlobalBinding,
     /// From the target of the proxy, which has `new_shape`.
     LoadOwnThroughGlobalProxy,
+    /// For any key. Unless that is private, compiled code calls `private_proxy_get`, and so on.
+    ProxyGet,
+    ProxySet,
+    ProxyHas,
     Replace,
     Transition,
     TransitionAndGrow,
@@ -59,6 +67,13 @@ pub enum AccessKind {
 impl AccessKind {
     pub fn is_last(self) -> bool {
         self as u8 <= AccessKind::Generic as u8
+    }
+
+    fn is_for_any_key(self) -> bool {
+        matches!(
+            self,
+            AccessKind::ProxyGet | AccessKind::ProxySet | AccessKind::ProxyHas
+        )
     }
 }
 
@@ -186,10 +201,11 @@ impl AccessCase {
     }
 
     #[inline(always)]
-    pub(super) fn matches(&self, shape: ShapeId, key: usize) -> bool {
-        self.shape() == shape && self.key.as_ref().map_or(0, |it| it.name().address()) == key
+    pub fn matches(&self, shape: ShapeId, key: usize) -> bool {
+        self.shape() == shape && (self.key.as_ref()).is_none_or(|it| it.name().address() == key)
     }
 
+    #[inline(always)]
     pub fn is_valid(&self) -> bool {
         self.lookup().is_none_or(|lookup| lookup.is_valid())
     }
@@ -262,7 +278,7 @@ impl AccessCases {
     }
 
     #[inline(always)]
-    pub(super) fn find(&self, shape: ShapeId, key: usize) -> Option<&AccessCase> {
+    pub fn find(&self, shape: ShapeId, key: usize) -> Option<&AccessCase> {
         self.iter().find(|case| case.matches(shape, key))
     }
 
@@ -359,7 +375,8 @@ impl AccessCases {
         if !case.new_shape.is_none() {
             owner.caches.has_transitions.set(true);
         }
-        case.key = variable_key.map(PropertyName::to_identifier);
+        case.key = (variable_key.filter(|_| !case.kind().is_for_any_key()))
+            .map(PropertyName::to_identifier);
         self.push(vm, owner, case, key);
         owner.write_barrier_for_cell();
     }
@@ -367,8 +384,8 @@ impl AccessCases {
     pub(super) fn did_fail_to_cache(&self, vm: &Vm, owner: &CodeBlock, key: Key) {
         let last = self.ensure_last(vm, owner, key);
         last.did_miss.set(true);
-        last.failures.update(|count| count + 1);
-        if last.failures.get() >= Self::MAX_FAILURES {
+        last.failures.update(|count| count.saturating_add(1));
+        if last.failures.get() == Self::MAX_FAILURES {
             self.end_with(vm, owner, AccessKind::Generic, key);
         }
     }

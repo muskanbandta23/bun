@@ -4,16 +4,19 @@ use bun_engine_text::PropertyName;
 use bun_engine_vm::heap::Scope;
 use bun_engine_vm::{CustomGetterSetter, GlobalProxy};
 
+use super::heap::clear_kept_objects;
 use super::scripts::{evaluate_in, script_from_caller};
-use super::values::create_masquerader;
-use super::{object_with, put};
+use super::values::{create_masquerader, transfer_array_buffer};
+use super::{agent, object_with, put};
 use crate::global;
 use crate::prelude::*;
 
 const FUNCTIONS: Functions = &[
     ("createRealm", create_realm, 0),
+    ("detachArrayBuffer", transfer_array_buffer, 1),
     ("evalScript", eval_script, 1),
     ("gc", gc, 0),
+    ("clearKeptObjects", clear_kept_objects, 0),
     ("globalObjectFor", global_object_for, 1),
 ];
 
@@ -23,6 +26,8 @@ pub(super) fn create(cx: &Cx) -> Gc<JsObject> {
     let name = Identifier::from_literal("IsHTMLDDA");
     let custom = CustomGetterSetter::create(cx, Some(get_is_html_dda), None, None);
     dollar.put_direct_custom(cx, name.name(), custom, Attributes::CUSTOM_VALUE);
+    let agent = object_with(cx, agent::FUNCTIONS, Attributes::DONT_ENUM);
+    put(cx, &dollar, "agent", agent.into());
     dollar
 }
 

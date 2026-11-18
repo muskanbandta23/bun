@@ -1,3 +1,4 @@
+use core::cell::UnsafeCell;
 use core::marker::{PhantomData, PhantomPinned};
 use core::ops::Deref;
 
@@ -6,17 +7,21 @@ use bun_engine_text::{StringBuilder, StringRef, Text};
 
 use crate::heap::stack::stack_pointer;
 use crate::{
-    ElementKind, Gc, GlobalObject, JsArray, JsFinalObject, JsObject, JsString, Storage, Value, Vm,
+    ElementKind, Gc, GcFree, GlobalObject, JsArray, JsFinalObject, JsObject, JsString, Storage,
+    Value, Vm,
 };
 
 /// The current realm, and the right to use the heap. With `&Cx`, or the `&Vm` that it gives, code may allocate, which
 /// may collect. Only with `&mut Cx` may it run scripts. It has no size, and its address is that of the global object.
 #[repr(C)]
 pub struct Cx {
-    _nothing: [u8; 0],
+    /// Stores to the global object go through a pointer that is made from `&Cx`.
+    _nothing: UnsafeCell<[u8; 0]>,
     _not_shared: PhantomData<*mut ()>,
     _not_unique: PhantomPinned,
 }
+
+impl !GcFree for Cx {}
 
 /// An exception is pending in the `Vm`.
 #[must_use]

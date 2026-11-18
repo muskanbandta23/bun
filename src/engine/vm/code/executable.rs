@@ -3,7 +3,8 @@ use core::mem::offset_of;
 use std::rc::Rc;
 
 use bun_engine_bytecode::{
-    Code, Eval, FunctionKind, FunctionRef, Module, Origin, Script, Specialization, Visibility,
+    Code, CodeFlags, Eval, FunctionInfo, FunctionKind, FunctionRef, Module, Origin, Script,
+    Specialization, Visibility,
 };
 use bun_engine_macros::{Trace, cell};
 use bun_engine_text::{StringRef, Text};
@@ -11,9 +12,9 @@ use bun_engine_text::{StringRef, Text};
 use super::eval::EvalKey;
 use crate::heap::{OnceBox, Owned};
 use crate::{
-    CellType, CodeBlock, Cx, Field, Gc, InlineWatchpointSet, Intrinsic, JsArray, JsCell,
-    JsFunction, JsResult, JsString, NativeFunction, Shape, SourceCode, SourceProviderRef,
-    TracedMap, TypeFlags, Vm, WatchpointState, WeakField, call,
+    CellType, CodeBlock, Cx, Field, Gc, GlobalObject, InlineWatchpointSet, Intrinsic, JsArray,
+    JsCell, JsFunction, JsResult, JsString, NativeFunction, RealmSlot, ScopeTemplate, Shape,
+    SourceCode, SourceProviderRef, TracedMap, TypeFlags, Vm, WatchpointState, WeakField, call,
 };
 
 /// What a call goes through: it stores the code block in the new frame and calls the entry.
@@ -105,6 +106,7 @@ pub struct NativeExecutable {
     length: u32,
     intrinsic: Intrinsic,
     visibility: Visibility,
+    is_named_as_bound: Cell<bool>,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -142,6 +144,7 @@ impl NativeExecutable {
             length,
             intrinsic,
             visibility,
+            is_named_as_bound: Cell::new(false),
         })
     }
 
@@ -193,6 +196,11 @@ impl NativeExecutable {
 
     pub fn length(&self) -> u32 {
         self.length
+    }
+
+    /// Whether scripts see `bound ` in front of the name.
+    pub fn is_named_as_bound(&self) -> &Cell<bool> {
+        &self.is_named_as_bound
     }
 }
 
@@ -301,7 +309,7 @@ impl ScriptExecutable {
             if let Some(program) = self.downcast::<ProgramExecutable>() {
                 Rc::clone(&program.unit().code)
             } else if let Some(module) = self.downcast::<ModuleExecutable>() {
-                Rc::clone(&module.unit().code)
+                Rc::clone(&module.unit().expect("code that may still run").code)
             } else {
                 Rc::clone(&Gc::from(self).cast::<EvalExecutable>().unit().code)
             },
@@ -347,14 +355,107 @@ macro_rules! top_level_executables {
 
 top_level_executables! {
     ProgramExecutable, ProgramExecutableInit, program_executable, Script;
-    ModuleExecutable, ModuleExecutableInit, module_executable, Module;
     EvalExecutable, EvalExecutableInit, eval_executable, Eval;
+}
+
+/// The records of a module in several loaders can have one together.
+#[cell(cell_type = ModuleExecutable, export = "engine_class_ModuleExecutable")]
+pub struct ModuleExecutable {
+    base: ScriptExecutable,
+    global: Gc<GlobalObject>,
+    template: Gc<ScopeTemplate>,
+    unit: RefCell<Option<Rc<Module>>>,
+    functions: Rc<[FunctionInfo]>,
+    flags: CodeFlags,
+    /// By `Slot::function`.
+    pub(self) lazy_functions: TracedMap<u32, Gc<FunctionExecutable>>,
+    is_shareable: bool,
+    is_shared: Cell<bool>,
+    unfinished_records: Cell<u32>,
+}
+
+impl ModuleExecutable {
+    pub fn create(
+        cx: &Cx,
+        source: &SourceCode,
+        unit: Rc<Module>,
+        is_shareable: bool,
+    ) -> Gc<ModuleExecutable> {
+        let shape = cx.shapes.module_executable();
+        cx.allocate::<ModuleExecutable>(ModuleExecutableInit {
+            base: ScriptExecutable::init(shape, source.provider.clone(), None),
+            global: cx.global(),
+            template: ScopeTemplate::create(cx, Rc::clone(&unit.scope)),
+            functions: Rc::clone(&unit.code.functions),
+            flags: unit.code.body.flags(),
+            unit: RefCell::new(Some(unit)),
+            is_shareable,
+            is_shared: Cell::new(false),
+            unfinished_records: Cell::new(1),
+        })
+    }
+
+    pub fn global(&self) -> Gc<GlobalObject> {
+        self.global
+    }
+
+    /// Of the environments that the code runs in.
+    pub fn template(&self) -> Gc<ScopeTemplate> {
+        self.template
+    }
+
+    pub fn flags(&self) -> CodeFlags {
+        self.flags
+    }
+
+    /// `None` once the code is released.
+    pub fn unit(&self) -> Option<Rc<Module>> {
+        self.unit.borrow().clone()
+    }
+
+    /// If not, all code in the module runs in the one environment.
+    pub fn is_shareable(&self) -> bool {
+        self.is_shareable
+    }
+
+    /// For another record. False if `unit` is not what this was made from.
+    pub(crate) fn share(&self, unit: &Rc<Module>) -> bool {
+        if !self.is_shareable || !Rc::ptr_eq(&unit.scope, self.template.scope()) {
+            return false;
+        }
+        self.unit.replace(Some(Rc::clone(unit)));
+        self.is_shared.set(true);
+        self.unfinished_records.update(|count| count + 1);
+        true
+    }
+
+    /// One of the records does not run the code any more. What has been shared is likely to be shared again.
+    pub(crate) fn did_finish_evaluation(&self) {
+        self.unfinished_records.update(|count| count - 1);
+        if self.unfinished_records.get() == 0 && !self.is_shared.get() {
+            self.clear_code(Specialization::Call);
+            self.unit.take();
+        }
+    }
+
+    pub(crate) fn lazy_function(&self, vm: &Vm, index: u32) -> Gc<FunctionExecutable> {
+        self.lazy_functions().get(&index).unwrap_or_else(|| {
+            let info = FunctionRef::new(Rc::clone(&self.functions), index);
+            let (provider, top_level) = (self.provider().clone(), Gc::from(self).upcast());
+            let executable = FunctionExecutable::create(vm, provider, Some(top_level), info);
+            if self.is_shareable {
+                self.lazy_functions().insert(index, executable);
+            }
+            executable
+        })
+    }
 }
 
 #[cell(cell_type = FunctionExecutable, export = "engine_class_FunctionExecutable")]
 pub struct FunctionExecutable {
     base: ScriptExecutable,
     info: FunctionRef,
+    shape_slot: RealmSlot,
     /// Valid while at most one function has been made from this.
     singleton_watchpoints: InlineWatchpointSet,
     pub(self) first_function: WeakField<Option<Gc<JsFunction>>>,
@@ -374,12 +475,32 @@ impl FunctionExecutable {
     ) -> Gc<FunctionExecutable> {
         vm.allocate::<FunctionExecutable>(FunctionExecutableInit {
             base: ScriptExecutable::init(vm.shapes.function_executable(), provider, top_level),
+            shape_slot: Self::shape_slot_for(&info),
             info,
             singleton_watchpoints: InlineWatchpointSet::new(WatchpointState::Clear),
             first_function: None,
             cached_source_text: None,
             intrinsic: Cell::new(Intrinsic::None),
         })
+    }
+
+    fn shape_slot_for(info: &FunctionInfo) -> RealmSlot {
+        match (info.is_async(), info.is_generator()) {
+            (true, true) => RealmSlot::async_generator_function_shape,
+            (true, false) => RealmSlot::async_function_shape,
+            (false, true) => RealmSlot::generator_function_shape,
+            _ if info.origin().contains(Origin::BUILTIN) => RealmSlot::builtin_function_shape,
+            _ if info.kind() == FunctionKind::Normal || info.kind().is_class_constructor() => {
+                RealmSlot::function_shape
+            }
+            _ => RealmSlot::method_shape,
+        }
+    }
+
+    /// Where a realm has the shape of the functions that are made from this.
+    #[inline(always)]
+    pub fn shape_slot(&self) -> RealmSlot {
+        self.shape_slot
     }
 
     #[inline(always)]
@@ -406,6 +527,26 @@ impl FunctionExecutable {
         self.info.name_text(self.provider().text())
     }
 
+    fn is_default_constructor(&self) -> bool {
+        self.info.origin().contains(Origin::DEFAULT_CONSTRUCTOR)
+    }
+
+    /// The text that the positions in the code refer to.
+    pub fn code_provider(&self) -> SourceProviderRef {
+        if self.is_default_constructor() {
+            return self.heap().vm().default_constructor_provider(&self.info);
+        }
+        self.provider().clone()
+    }
+
+    /// In that text.
+    pub fn parameters_start(&self) -> u32 {
+        if self.is_default_constructor() {
+            return "(function ".len() as u32;
+        }
+        self.info.parameters_start()
+    }
+
     #[inline(always)]
     pub(crate) fn did_create(&self, vm: &Vm, function: Gc<JsFunction>) {
         if self.singleton_watchpoints.is_still_valid() {
@@ -424,6 +565,7 @@ impl FunctionExecutable {
         self.first_function()
     }
 
+    #[inline(always)]
     pub fn singleton_watchpoints(&self) -> &InlineWatchpointSet {
         &self.singleton_watchpoints
     }
@@ -444,7 +586,8 @@ impl FunctionExecutable {
     }
 }
 
-pub(crate) fn native_source_text(cx: &Cx, name: Text<'_>) -> JsResult<Gc<JsString>> {
+/// NativeFunction of ECMA-262.
+pub fn native_source_text(cx: &Cx, name: Text<'_>) -> JsResult<Gc<JsString>> {
     let (before, after) = ("function ", "() { [native code] }");
     cx.new_string_from_parts(&[Text::from_ascii(before), name, Text::from_ascii(after)])
 }

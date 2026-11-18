@@ -3,8 +3,8 @@
 use core::cell::RefCell;
 
 use crate::{
-    Cx, Gc, GlobalObject, InlineWatchpointSet, JsCell, PropertyCondition, Vm, Watchpoint,
-    WatchpointState, watch_condition,
+    Cx, ElementType, Gc, GlobalObject, InlineWatchpointSet, JsCell, PropertyCondition, Vm,
+    Watchpoint, WatchpointState, watch_condition,
 };
 
 macro_rules! realm_watchpoints {
@@ -17,6 +17,7 @@ macro_rules! realm_watchpoints {
 
         impl RealmWatchpoint {
             pub const COUNT: usize = [$(stringify!($name),)*].len();
+            const ALL: [RealmWatchpoint; Self::COUNT] = [$(RealmWatchpoint::$name,)*];
         }
     };
 }
@@ -27,6 +28,8 @@ realm_watchpoints! {
     NoObjectMasqueradesAsUndefined,
     /// No global variable has been made read-only.
     GlobalVariablesAreWritable,
+    /// `RegExp.prototype.compile` has not given any object another pattern.
+    NoRegExpIsRecompiled,
     /// `Array.prototype` and `Object.prototype` have no elements, and their prototypes are the original ones.
     ArrayPrototypeChainIsSane,
     ObjectPrototypeChainIsSane,
@@ -35,7 +38,19 @@ realm_watchpoints! {
     MapIteratorProtocol,
     SetIteratorProtocol,
     StringIteratorProtocol,
-    TypedArrayIteratorProtocol,
+    /// The first of a run in the order of `ElementType`.
+    Int8ArrayIteratorProtocol,
+    Uint8ArrayIteratorProtocol,
+    Uint8ClampedArrayIteratorProtocol,
+    Int16ArrayIteratorProtocol,
+    Uint16ArrayIteratorProtocol,
+    Int32ArrayIteratorProtocol,
+    Uint32ArrayIteratorProtocol,
+    Float16ArrayIteratorProtocol,
+    Float32ArrayIteratorProtocol,
+    Float64ArrayIteratorProtocol,
+    BigInt64ArrayIteratorProtocol,
+    BigUint64ArrayIteratorProtocol,
     GeneratorProtocol,
     AsyncGeneratorProtocol,
     ArraySpecies,
@@ -44,7 +59,19 @@ realm_watchpoints! {
     ArrayIsConcatSpreadable,
     ArrayBufferSpecies,
     SharedArrayBufferSpecies,
-    TypedArraySpecies,
+    /// The first of another.
+    Int8ArraySpecies,
+    Uint8ArraySpecies,
+    Uint8ClampedArraySpecies,
+    Int16ArraySpecies,
+    Uint16ArraySpecies,
+    Int32ArraySpecies,
+    Uint32ArraySpecies,
+    Float16ArraySpecies,
+    Float32ArraySpecies,
+    Float64ArraySpecies,
+    BigInt64ArraySpecies,
+    BigUint64ArraySpecies,
     PromiseThen,
     PromiseResolve,
     PromiseSpecies,
@@ -56,14 +83,29 @@ realm_watchpoints! {
     StringSymbolReplace,
     StringSymbolSearch,
     StringSymbolSplit,
+    StringSymbolToPrimitive,
     StringToString,
     StringValueOf,
     NumberToString,
+    /// `Symbol.toPrimitive`, `valueOf`, `toString`, `toJSON` and `toISOString` of `Date.prototype`.
+    DateConversions,
     MapSet,
     SetAdd,
     SetPrimordialProperties,
     /// `Object.prototype` has none of the fields of a property descriptor.
     PropertyDescriptorFields,
+}
+
+impl RealmWatchpoint {
+    #[inline(always)]
+    pub const fn iterator_protocol_of(element_type: ElementType) -> RealmWatchpoint {
+        Self::ALL[Self::Int8ArrayIteratorProtocol as usize + element_type as usize]
+    }
+
+    #[inline(always)]
+    pub const fn species_of(element_type: ElementType) -> RealmWatchpoint {
+        Self::ALL[Self::Int8ArraySpecies as usize + element_type as usize]
+    }
 }
 
 pub(super) struct RealmWatchpoints {
@@ -85,6 +127,7 @@ impl RealmWatchpoints {
             RealmWatchpoint::NotHavingABadTime,
             RealmWatchpoint::NoObjectMasqueradesAsUndefined,
             RealmWatchpoint::GlobalVariablesAreWritable,
+            RealmWatchpoint::NoRegExpIsRecompiled,
         ] {
             watchpoints.sets[fired_directly as usize].start_watching();
         }

@@ -454,7 +454,7 @@ static void appendInspectedObject(JSC::JSGlobalObject* globalObject, MessageBuil
     RETURN_IF_EXCEPTION(scope, );
     if (className.isEmpty())
         className = "Object"_s;
-    bool isPlainObject = object->type() == JSC::FinalObjectType || object->type() == JSC::CompiledObjectType;
+    bool isPlainObject = object->type() == JSC::FinalObjectType;
     if (!isPlainObject || depth > inspectedDepth) {
         builder.append('[', className, ']');
         return;
@@ -527,9 +527,6 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, MessageBuilder& buil
         return;
     }
     case JSC::JSType::InternalFunctionType:
-    case JSC::JSType::CompiledClosureType:
-    case JSC::JSType::SlimClosureType:
-    case JSC::JSType::SlimClosureWithPropertiesType:
     case JSC::JSType::JSFunctionType: {
         auto& vm = JSC::getVM(globalObject);
         auto name = Zig::functionName(vm, cell->getObject());
@@ -625,7 +622,7 @@ static bool hasOwnEnumerableProperty(JSC::VM& vm, JSC::JSGlobalObject* globalObj
 // What util.inspect(object, { depth: -1 }) prints for a plain object. Any other object would need script to say more than "[Object]".
 static ASCIILiteral describeObjectWithoutConstructorName(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
 {
-    if (object->type() != JSC::FinalObjectType && object->type() != JSC::CompiledObjectType)
+    if (object->type() != JSC::FinalObjectType)
         return "[Object]"_s;
     bool hasProperties = hasOwnEnumerableProperty(vm, globalObject, object);
     if (object->getPrototypeDirect().isNull())
@@ -784,7 +781,7 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, Messa
             return;
         }
         // In an executable: util.inspect(value, { depth: -1 }) of a plain object, as in Node: its own custom inspect function runs, and nothing that it holds is printed.
-        if (vm.hasCompiledCode() && (cell->type() == JSC::FinalObjectType || cell->type() == JSC::CompiledObjectType)) {
+        if (vm.hasCompiledCode() && cell->type() == JSC::FinalObjectType) {
             auto customInspect = value.get(globalObject, Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s)));
             RETURN_IF_EXCEPTION(scope, void());
             if (!customInspect.isCallable()) {

@@ -1,5 +1,6 @@
 //! The collector.
 
+use bun_engine_vm::JsFinalizationRegistry;
 use bun_engine_vm::heap::Scope;
 
 use super::{put, return_undefined};
@@ -16,6 +17,17 @@ pub(super) const FUNCTIONS: Functions = &[
     ("MemoryFootprint", memory_footprint, 0),
     ("resetMemoryPeak", return_undefined, 0),
     ("mallocInALoop", return_undefined, 0),
+    ("releaseWeakRefs", clear_kept_objects, 0),
+    (
+        "finalizationRegistryLiveCount",
+        count_registrations::<true>,
+        0,
+    ),
+    (
+        "finalizationRegistryDeadCount",
+        count_registrations::<false>,
+        0,
+    ),
 ];
 
 #[native_abi]
@@ -34,6 +46,24 @@ fn full_gc(cx: &mut Cx, _: &CallFrame) -> JsResult<Value> {
 pub(super) fn eden_gc(cx: &mut Cx, _: &CallFrame) -> JsResult<Value> {
     cx.heap.collect(Some(Scope::Eden));
     Ok(cx.heap.sizes().after_last_eden.into())
+}
+
+#[native_abi]
+pub(super) fn clear_kept_objects(cx: &mut Cx, _: &CallFrame) -> JsResult<Value> {
+    cx.clear_kept_objects();
+    Ok(Value::UNDEFINED)
+}
+
+#[native_abi]
+fn count_registrations<const LIVE: bool>(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let Some(registry) = frame.argument(0).downcast::<JsFinalizationRegistry>() else {
+        return Err(cx.throw_type_error("first argument is not a finalizationRegistry"));
+    };
+    let registrations = registry.snapshot(cx);
+    let matching = registrations
+        .iter()
+        .filter(|it| it.target.is_some() == LIVE);
+    Ok(matching.count().into())
 }
 
 #[native_abi]

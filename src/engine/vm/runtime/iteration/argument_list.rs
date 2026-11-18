@@ -5,15 +5,34 @@ use core::mem::MaybeUninit;
 use super::new_array::as_spread;
 use crate::call::MAX_ARGUMENTS;
 use crate::{
-    CellType, Cx, Elements, Gc, ImmutableArray, JsArrayBufferView, JsObject, JsResult, NoGc, Value,
-    ValueVec, errors,
+    Cx, ElementWriter, Elements, HoleMode, ImmutableArray, JsObject, JsResult, JsTypedArray,
+    MappedArguments, NoGc, PlainRange, Value, ValueVec, errors,
 };
 
-fn number_view(object: &JsObject) -> Option<Gc<JsArrayBufferView>> {
-    let cell_type = object.cell_type();
-    (CellType::Int8Array..=CellType::Float64Array)
-        .contains(&cell_type)
-        .then(|| object.as_object().cast())
+/// How many arguments an object stands for if `to_argument_list` returns it as it is. Only a script changes that.
+#[inline(always)]
+fn length_as_list(object: &JsObject) -> usize {
+    if object.indexing_mode().is_array() {
+        object.public_length() as usize
+    } else if let Some(arguments) = object.downcast::<MappedArguments>() {
+        arguments.plain_length() as usize
+    } else if let Some(array) = object.downcast::<JsTypedArray>() {
+        if array.is_resizable_or_growable() {
+            0
+        } else {
+            array.known_length()
+        }
+    } else {
+        object.public_length() as usize
+    }
+}
+
+/// `length` is `length_as_list`.
+#[inline(always)]
+fn is_plain(no_gc: &NoGc<'_>, object: &JsObject, length: u64) -> bool {
+    object.plain_elements(no_gc, 0..length).is_some()
+        || object.is::<MappedArguments>()
+        || (object.downcast::<JsTypedArray>()).is_some_and(|it| !it.element_type().is_bigint())
 }
 
 /// `to_argument_list`, of a value that is not empty.
@@ -30,14 +49,7 @@ pub fn to_argument_list(cx: &mut Cx, value: Value) -> JsResult<Value> {
     if length > MAX_ARGUMENTS as u64 {
         return Err(cx.throw_stack_overflow());
     }
-    let is_readable = match number_view(&object) {
-        Some(view) => view.length() as u64 == length,
-        None => {
-            u64::from(object.public_length()) == length
-                && object.plain_elements(&cx.no_gc(), 0..length).is_some()
-        }
-    };
-    if is_readable {
+    if length == length_as_list(&object) as u64 && is_plain(&cx.no_gc(), &object, length) {
         return Ok(value);
     }
     let values = get_elements(cx, &object, length)?;
@@ -66,12 +78,9 @@ pub fn arguments_from_array_like(cx: &mut Cx, object: &JsObject) -> JsResult<Val
 /// Of what `call_varargs` and its kin get, unless that is empty. The first `skip` do not count.
 #[inline]
 pub fn argument_list_length(list: Value, skip: u32) -> usize {
-    let length = if let Some(list) = list.downcast::<ImmutableArray>() {
-        list.len() as usize
-    } else if let Some(object) = list.as_object() {
-        number_view(&object).map_or(object.public_length() as usize, |view| view.length())
-    } else {
-        0
+    let length = match list.downcast::<ImmutableArray>() {
+        Some(list) => list.len() as usize,
+        None => list.as_object().map_or(0, |object| length_as_list(&object)),
     };
     length.saturating_sub(skip as usize)
 }
@@ -92,7 +101,7 @@ fn load_elements(elements: Elements<'_>, target: &mut [MaybeUninit<Value>]) {
     }
 }
 
-/// Fills `target`, whose length is what `argument_list_length` has just said.
+/// Fills `target`, whose length is `argument_list_length`.
 #[inline]
 pub fn load_argument_list(
     no_gc: &NoGc<'_>,
@@ -108,14 +117,13 @@ pub fn load_argument_list(
         return load_elements(list.elements().slice(range), target);
     }
     let object = list.cast::<JsObject>();
-    match number_view(&object) {
-        Some(view) => {
-            for (target, index) in target.iter_mut().zip(range) {
-                target.write(view.try_get_number(index).unwrap_or_default());
-            }
-        }
-        None => load_elements(object.dense_elements(no_gc).slice(range), target),
+    if object.indexing_mode().is_array() {
+        return load_elements(object.dense_elements(no_gc).slice(range), target);
     }
+    let range = range.start as u64..range.end as u64;
+    let plain = PlainRange::of(no_gc, &object, range, HoleMode::FillWithUndefined);
+    // SAFETY: just made.
+    unsafe { (plain.expect("a list")).write_to(&mut ElementWriter::for_values(target)) };
 }
 
 /// For `call_with_spread`. Fills `target`. Panics unless its length is `spread_length`.

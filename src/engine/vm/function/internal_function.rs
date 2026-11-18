@@ -20,7 +20,7 @@ pub struct InternalFunction {
     executable: Gc<Executable>,
     function: NativeFunction,
     constructor: NativeFunction,
-    pub(self) original_name: Field<Option<Gc<JsString>>>,
+    pub original_name: Field<Option<Gc<JsString>>>,
 }
 
 const _: () = {
@@ -101,20 +101,31 @@ impl InternalFunction {
 }
 
 /// GetFunctionRealm
+#[inline]
 pub fn function_realm(cx: &Cx, object: Gc<JsObject>) -> JsResult<Gc<GlobalObject>> {
+    try_function_realm(cx, object)
+        .ok_or_else(|| cx.throw_type_error("Cannot get function realm from revoked Proxy"))
+}
+
+/// `None` where `function_realm` throws.
+pub fn try_function_realm(cx: &Cx, object: Gc<JsObject>) -> Option<Gc<GlobalObject>> {
     let mut object = object;
     loop {
-        if let Some(bound) = object.downcast::<JsBoundFunction>() {
-            object = bound.target_function();
+        if let Some(function) = object.downcast::<JsFunction>() {
+            if !function.is_native() {
+                return Some(function.function_realm());
+            }
+            match function.downcast::<JsBoundFunction>() {
+                Some(bound) => object = bound.target_function(),
+                None => return Some(function.function_realm()),
+            }
         } else if let Some(proxy) = object.downcast::<ProxyObject>() {
             if proxy.is_revoked() {
-                return Err(cx.throw_type_error("Cannot get function realm from revoked Proxy"));
+                return None;
             }
             object = proxy.target();
-        } else if let Some(function) = object.downcast::<JsFunction>() {
-            return Ok(function.function_realm());
         } else {
-            return Ok(object.realm().unwrap_or_else(|| cx.global()));
+            return Some(object.realm().unwrap_or_else(|| cx.global()));
         }
     }
 }
@@ -138,8 +149,15 @@ impl Cx {
         {
             return Ok(shape);
         }
-        let Some(prototype) = new_target.get(self, names::prototype)?.as_object() else {
-            return Ok(base);
+        let prototype = new_target.get(self, names::prototype)?;
+        // A getter may have changed what arrays are made with.
+        let base = if global.is_having_a_bad_time() && global.is_original_array_shape(&base) {
+            global.array_shape(base.instance_indexing_mode().kind())
+        } else {
+            base
+        };
+        let Some(prototype) = prototype.as_object() else {
+            return function_realm(self, new_target).map(|_| base);
         };
         let shape = if base.prototype() == prototype.into() {
             base
@@ -163,7 +181,7 @@ impl Cx {
     ) -> JsResult<Gc<Shape>> {
         match new_target.as_object() {
             Some(new_target) if !new_target.is_same(callee) => {
-                let realm = function_realm(self, new_target)?;
+                let realm = try_function_realm(self, new_target).unwrap_or_else(|| self.global());
                 let base = base(&realm, self);
                 self.subclass_shape(new_target, base)
             }

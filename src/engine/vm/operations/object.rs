@@ -8,13 +8,20 @@ use crate::{
 /// IsArray
 #[inline]
 pub fn is_array(cx: &Cx, value: Value) -> JsResult<bool> {
+    is_array_for(cx, value, "Array.isArray")
+}
+
+/// `caller` is what the error blames.
+#[inline(always)]
+pub(crate) fn is_array_for(cx: &Cx, value: Value, caller: &str) -> JsResult<bool> {
     let Some(mut object) = value.as_object() else {
         return Ok(false);
     };
     while let Some(proxy) = object.downcast::<ProxyObject>() {
         if proxy.is_revoked() {
-            let message = "Array.isArray cannot be called on a Proxy that has been revoked";
-            return Err(cx.throw_type_error(message));
+            return Err(cx.throw_type_error(format_args!(
+                "{caller} cannot be called on a Proxy that has been revoked"
+            )));
         }
         object = proxy.target();
     }
@@ -22,6 +29,19 @@ pub fn is_array(cx: &Cx, value: Value) -> JsResult<bool> {
         object.cell_type(),
         CellType::Array | CellType::DerivedArray
     ))
+}
+
+/// The steps of CreateListFromArrayLike.
+pub fn for_each_in_array_like(
+    cx: &mut Cx,
+    object: &JsObject,
+    mut visit: impl FnMut(&mut Cx, Value) -> JsResult<()>,
+) -> JsResult<()> {
+    for index in 0..object.length_of_array_like(cx)? {
+        let value = object.get_index(cx, index)?;
+        visit(cx, value)?;
+    }
+    Ok(())
 }
 
 /// SpeciesConstructor. `None` stands for the default.

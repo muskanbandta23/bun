@@ -1,7 +1,9 @@
 //! How values are represented, and values that scripts cannot make.
 
 use bun_engine_macros::cell;
-use bun_engine_vm::{InternalFunction, RealmWatchpoint, Shape, ShapeSpec, TypeFlags, call};
+use bun_engine_vm::{
+    InternalFunction, JsArrayBuffer, RealmWatchpoint, Shape, ShapeSpec, TypeFlags, call,
+};
 
 use super::{return_false, return_undefined, string};
 use crate::prelude::*;
@@ -22,6 +24,7 @@ pub(super) const FUNCTIONS: Functions = &[
     ("createNonRopeNonAtomString", create_plain_string, 1),
     ("is32BitPlatform", return_false, 0),
     ("maxArguments", max_arguments, 0),
+    ("transferArrayBuffer", transfer_array_buffer, 1),
 ];
 
 #[native_abi]
@@ -150,4 +153,18 @@ fn create_plain_string(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 fn max_arguments(cx: &mut Cx, _: &CallFrame) -> JsResult<Value> {
     let words = (cx.stack_bounds().origin - cx.soft_stack_limit()) / size_of::<Value>();
     Ok(words.min(call::MAX_ARGUMENTS).into())
+}
+
+#[native_abi]
+pub(super) fn transfer_array_buffer(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    if frame.argument_count() == 0 {
+        return Err(cx.throw_error(ErrorType::Error, "Not enough arguments"));
+    }
+    let Some(buffer) = frame.argument(0).downcast::<JsArrayBuffer>() else {
+        return Err(cx.throw_error(ErrorType::Error, "Expected an array buffer"));
+    };
+    if !buffer.is_shared() && buffer.buffer().is_detachable() {
+        buffer.buffer().detach(cx);
+    }
+    Ok(Value::UNDEFINED)
 }

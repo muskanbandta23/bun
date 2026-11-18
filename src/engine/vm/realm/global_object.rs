@@ -14,8 +14,8 @@ use crate::{
     Field, FieldArray, Gc, GcFree, GlobalBinding, GlobalBindings, GlobalProxy, IndexingMode,
     JsArray, JsCell, JsDestructibleObject, JsFinalObject, JsObject, JsObjectInit, JsResult,
     MicrotaskQueueRef, PropertyDescriptor, PropertyNameList, PropertySlot, PutPropertySlot,
-    RealmHooks, RealmSlot, RealmWatchpoint, RegExpGlobalState, Shape, ShapeSpec, StaticProperty,
-    TracedVec, TransitionKind, TypeFlags, Value, Vm, errors, static_table,
+    RealmHooks, RealmSlot, RealmWatchpoint, RegExpGlobalState, Shape, ShapeFlags, ShapeSpec,
+    StaticProperty, TracedVec, TransitionKind, TypeFlags, Value, Vm, errors, static_table,
     validate_property_descriptor,
 };
 
@@ -131,7 +131,6 @@ pub struct GlobalObject {
     microtask_queue: RealmMicrotaskQueue,
     regexp_state: RegExpGlobalState,
     random: Cell<Random>,
-    stack_trace_limit: Cell<Option<u32>>,
     eval_disabled_message: RefCell<Option<StringRef>>,
     webassembly_disabled_message: RefCell<Option<StringRef>>,
     inspector: OnceCell<Box<dyn InspectorState>>,
@@ -218,7 +217,7 @@ impl GlobalObject {
             unsafe { binding.set(cx, self, value) };
         }
         if descriptor.has_writable() && !descriptor.writable() && current.writable() {
-            binding.make_read_only();
+            binding.make_read_only(cx);
             self.watchpoints_unchecked(RealmWatchpoint::GlobalVariablesAreWritable)
                 .invalidate(cx);
         }
@@ -231,6 +230,7 @@ impl GlobalObject {
     pub const OFFSET_OF_LEXICAL_EPOCH: usize = offset_of!(GlobalObject, lexical_epoch);
     pub const OFFSET_OF_MICROTASK_QUEUE: usize = offset_of!(GlobalObject, microtask_queue);
     pub const OFFSET_OF_RANDOM: usize = offset_of!(GlobalObject, random);
+    pub const OFFSET_OF_REGEXP_STATE: usize = offset_of!(GlobalObject, regexp_state);
 
     pub const fn offset_of_slot(slot: RealmSlot) -> usize {
         offset_of!(GlobalObject, slots) + slot as usize * size_of::<u64>()
@@ -268,7 +268,6 @@ impl GlobalObject {
             microtask_queue: RealmMicrotaskQueue::new(vm.default_microtask_queue().clone()),
             regexp_state: RegExpGlobalState::default(),
             random: Cell::new(Random::new(vm.random_seed() as u32)),
-            stack_trace_limit: Cell::new(Some(crate::options().default_error_stack_trace_limit)),
             overridden_date_now: Cell::new(f64::NAN),
             eval_disabled_message: RefCell::new(None),
             webassembly_disabled_message: RefCell::new(None),
@@ -278,7 +277,17 @@ impl GlobalObject {
     }
 
     pub fn create(vm: &Vm, hooks: &'static RealmHooks) -> Gc<GlobalObject> {
-        let shape = Shape::create(vm, None, Value::NULL, ShapeSpec::of::<GlobalObject>());
+        Self::create_with(vm, hooks, ShapeSpec::of::<GlobalObject>())
+    }
+
+    /// Scripts can change its prototype.
+    pub fn create_for_shadow_realm(vm: &Vm, hooks: &'static RealmHooks) -> Gc<GlobalObject> {
+        let spec = ShapeSpec::of::<GlobalObject>().with_mutable_prototype();
+        Self::create_with(vm, hooks, spec)
+    }
+
+    fn create_with(vm: &Vm, hooks: &'static RealmHooks, spec: ShapeSpec) -> Gc<GlobalObject> {
+        let shape = Shape::create(vm, None, Value::NULL, spec);
         let init = Self::init(vm, shape, hooks, core::ptr::null());
         let global = vm.allocate::<GlobalObject>(init);
         global.finish_creation(vm);
@@ -303,6 +312,17 @@ impl GlobalObject {
             last.set_prototype_direct(vm, self.object_prototype().into());
         }
         self.init_global_this(GlobalProxy::create(vm, self.into()));
+        for only_instance in [
+            self.as_object(),
+            self.object_prototype(),
+            self.function_prototype(),
+            self.array_prototype(),
+            self.string_prototype(),
+            self.iterator_prototype(),
+            self.array_iterator_prototype(),
+        ] {
+            only_instance.shape().set_flags(ShapeFlags::IS_CLAIMED);
+        }
         self.is_initialized.set(true);
         self.watchpoints(vm, RealmWatchpoint::ArrayPrototypeChainIsSane);
         self.watchpoints(vm, RealmWatchpoint::ArrayIteratorProtocol);
@@ -376,6 +396,9 @@ impl GlobalObject {
     pub(crate) fn add_lexical(&self, vm: &Vm, name: PropertyName<'_>, attributes: Attributes) {
         self.lexicals.add(self, name, attributes, false);
         self.lexical_epoch.update(|epoch| epoch + 1);
+        if self.shape().get(name).is_some() {
+            self.change_shape_id(vm);
+        }
         (vm.hooks().did_declare_global_lexical)(vm, self, name);
     }
 
@@ -414,6 +437,18 @@ impl GlobalObject {
             if let Some(shape) = shapes.at(index) {
                 let shape = shape.non_property_transition(vm, kind, &mut DeferredFire::new(vm));
                 shapes.set(index, Some(shape));
+            }
+        }
+        for slot in [
+            RealmSlot::cloned_arguments_shape,
+            RealmSlot::regexp_match_array_shape,
+            RealmSlot::regexp_match_array_with_indices_shape,
+            RealmSlot::regexp_indices_array_shape,
+        ] {
+            if let Some(shape) = self.slot_if_initialized(slot) {
+                let shape = shape.cast::<Shape>();
+                let shape = shape.non_property_transition(vm, kind, &mut DeferredFire::new(vm));
+                self.slots().set(slot as usize, Some(shape.cell()));
             }
         }
         (vm.hooks().did_start_having_a_bad_time)(vm, self);
@@ -480,18 +515,14 @@ impl GlobalObject {
         &self.discards_microtasks
     }
 
-    pub fn regexp_state(&self) -> crate::heap::Owned<'_, RegExpGlobalState> {
-        // SAFETY: a field of the cell.
-        unsafe { crate::heap::Owned::new(self, &self.regexp_state) }
+    #[inline(always)]
+    pub(crate) fn regexp_state(&self) -> &RegExpGlobalState {
+        &self.regexp_state
     }
 
     /// That of `Math.random`.
     pub fn random_state(&self) -> &Cell<Random> {
         &self.random
-    }
-
-    pub fn stack_trace_limit(&self) -> &Cell<Option<u32>> {
-        &self.stack_trace_limit
     }
 
     /// NaN if it is not.

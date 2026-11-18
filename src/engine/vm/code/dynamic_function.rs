@@ -57,5 +57,10 @@ pub fn create_dynamic_function(
         JsFunction::shape_for(vm, global, &executable)
     })?;
     // SAFETY: compiled for the global scope.
-    Ok(unsafe { JsFunction::create_with_shape(cx, executable, cx.global().cell(), shape) })
+    let function =
+        unsafe { JsFunction::create_with_shape(cx, executable, cx.global().cell(), shape) };
+    if new_target.is_object() && new_target != constructor.as_value() {
+        function.reify_prototype(cx);
+    }
+    Ok(function)
 }

@@ -30,6 +30,11 @@ impl StringRef {
         Self::from_static(&ATOMS[usize::from(character)])
     }
 
+    /// Panics unless the index is below `STATIC_ATOM_COUNT`.
+    pub fn static_atom(index: usize) -> StringRef {
+        Self::from_static(&ATOMS[index])
+    }
+
     /// Does not copy.
     pub fn from_literal(ascii: &'static str) -> StringRef {
         debug_assert!(ascii.is_ascii());
@@ -58,6 +63,14 @@ impl StringRef {
     ) -> StringRef {
         // SAFETY: the caller's.
         StringRef(unsafe { StringImpl::external(units, context, free) })
+    }
+
+    /// For a new string: `hash` is what `hash()` would compute.
+    pub fn with_hash(self, hash: u32) -> StringRef {
+        if self.existing_hash() == 0 {
+            self.set_hash(hash);
+        }
+        self
     }
 
     /// Takes the allocation over.
@@ -212,10 +225,7 @@ impl StringRef {
         } else {
             StringRef::retain(string)
         };
-        if shared.can_become_atom() && !shared.is_static() {
-            shared.hash();
-            shared.set_never_atomize();
-        }
+        shared.set_never_atomize();
         SharedString(shared)
     }
 }
@@ -441,49 +451,5 @@ impl StringWriter<u16> {
             Text::Latin1(characters) => self.push_mapped(characters, u16::from),
             Text::Utf16(units) => self.push_slice(units),
         }
-    }
-}
-
-/// Fills a new string of a known length from the back.
-pub struct ReverseStringWriter<T: CodeUnit> {
-    string: StringRef,
-    remaining: usize,
-    unit: PhantomData<T>,
-}
-
-impl<T: CodeUnit> ReverseStringWriter<T> {
-    #[inline]
-    pub fn try_new(length: usize) -> Result<ReverseStringWriter<T>, AllocError> {
-        Ok(ReverseStringWriter {
-            string: StringWriter::<T>::try_new(length)?.string,
-            remaining: length,
-            unit: PhantomData,
-        })
-    }
-
-    /// Of a wider unit the bits that fit. Panics if there is no room.
-    #[inline]
-    pub fn prepend(&mut self, text: Text<'_>) {
-        let end = self.remaining;
-        self.remaining = end.checked_sub(text.len()).expect("room for the text");
-        // SAFETY: as in `StringWriter::units`.
-        let target = &mut unsafe { StringImpl::tail::<T>(self.string.0) }[self.remaining..end];
-        match T::units(text) {
-            Some(units) => {
-                target.write_copy_of_slice(units);
-            }
-            None => with_text!(text, |units| {
-                for (target, unit) in target.iter_mut().zip(units) {
-                    target.write(T::from_u16_truncating(unit.to_u16()));
-                }
-            }),
-        }
-    }
-
-    /// Panics if units are left to write.
-    #[inline]
-    pub fn finish(self) -> StringRef {
-        assert!(self.remaining == 0);
-        self.string
     }
 }

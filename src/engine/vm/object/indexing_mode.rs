@@ -43,7 +43,7 @@ impl ElementKind {
 
     /// The word for a hole.
     #[inline(always)]
-    pub(super) fn hole(self) -> u64 {
+    pub fn hole(self) -> u64 {
         if self == ElementKind::Double {
             Value::PURE_NAN_BITS
         } else {

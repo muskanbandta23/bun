@@ -3113,6 +3113,12 @@ void GlobalObject::finishCreation(VM& vm)
         setDefaultGlobalObject(vm, this);
     JSC::AOT::hostDidCreateRealm(this);
 
+    if (!JSC::Options::alwaysUseSharedArrayBuffer()) [[unlikely]] {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        JSCell::deleteProperty(this, this, JSC::Identifier::fromString(vm, "SharedArrayBuffer"_s));
+        scope.assertNoExceptionExceptTermination();
+    }
+
 #if ENABLE(AOT)
     if (Zig::hasExternalSourceMap()) [[unlikely]] {
         auto* debugIDs = JSC::CustomGetterSetter::create(vm, getDebugIDs, nullptr);

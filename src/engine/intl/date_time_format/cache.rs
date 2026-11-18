@@ -21,8 +21,7 @@ struct Request {
 #[derive(Default)]
 pub(crate) struct DateCache {
     generators: Recent<CText, Rc<RefCell<PatternGenerator>>, 2>,
-    locales: Recent<CText, Rc<LocaleData>, 4>,
-    formats: Recent<Request, Rc<Formats>, 16>,
+    formats: Recent<Box<Request>, Rc<Formats>, 64>,
 }
 
 impl DateCache {
@@ -49,16 +48,8 @@ impl DateCache {
         self.generator(locale)?.borrow().field_name(field, width)
     }
 
-    pub(super) fn locale_data(
-        &self,
-        locale: CText,
-        make: impl FnOnce(CText) -> LocaleData,
-    ) -> Rc<LocaleData> {
-        self.locales.find(|it| *it == locale).unwrap_or_else(|| {
-            let data = Rc::new(make(locale.clone()));
-            self.locales.insert(locale, Rc::clone(&data));
-            data
-        })
+    pub(super) fn find_locale_data(&self, locale: &CText) -> Option<Rc<LocaleData>> {
+        (self.formats).find_map(|it| (it.data.icu_locale() == locale).then(|| Rc::clone(&it.data)))
     }
 
     pub(super) fn find_formats(
@@ -68,7 +59,7 @@ impl DateCache {
         purpose: Purpose,
     ) -> Option<Rc<Formats>> {
         (self.formats)
-            .find(|it| it.purpose == purpose && it.options == *options && *it.locales == *locales)
+            .find(|it| it.purpose == purpose && *it.locales == *locales && it.options == *options)
     }
 
     pub(super) fn keep_formats(
@@ -91,7 +82,7 @@ impl DateCache {
                 options: options.clone(),
                 purpose,
             };
-            self.formats.insert(request, Rc::clone(formats));
+            self.formats.insert(Box::new(request), Rc::clone(formats));
         }
     }
 }

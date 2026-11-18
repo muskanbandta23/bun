@@ -3,6 +3,7 @@
 use super::float::pick;
 use super::integer::MacroAssembler;
 use super::opcode::{Blendv, FloatPredicate, Fma, Sse, SseImm, SseShiftImm, SseUnary, SseUnaryImm};
+use super::vector_unary::ODD_LANES_TWICE;
 use crate::assembly::{FloatAssembly, Reuse};
 use crate::features::X64Features;
 use crate::operand::{FloatWidth, Size};
@@ -228,13 +229,13 @@ pub(super) fn has_fma(features: X64Features) -> bool {
 }
 
 impl MacroAssembler {
-    /// Without AVX this may overwrite the first scratch register.
-    pub(super) fn two_sources(
+    fn compare_floats(
         &mut self,
+        width: FloatWidth,
+        predicate: FloatPredicate,
         dst: Fpr,
         lhs: Fpr,
         rhs: Fpr,
-        emit: impl FnOnce(&mut Self, Fpr, Fpr),
     ) {
         let result = if self.has_avx() || dst == lhs {
             dst
@@ -242,13 +243,14 @@ impl MacroAssembler {
             self.dst_unless(dst, rhs)
         };
         let lhs = self.first_source(result, lhs);
-        emit(self, result, lhs);
+        let compare = pick(width, SseImm::Cmpps, SseImm::Cmppd);
+        self.asm.sse_imm(compare, result, lhs, rhs, predicate as u8);
         self.move_vector(dst, result);
     }
 
     fn complement(&mut self, op: Sse, dst: Fpr, lhs: Fpr, rhs: Fpr) {
         let scratch = self.scratch_fpr(0);
-        if !self.has_avx() && dst == rhs && !op.commutes() {
+        if dst == rhs && !op.commutes() {
             self.sse_binary(op, scratch, lhs, rhs);
             self.set_all_bits(dst);
         } else {
@@ -297,9 +299,8 @@ impl MacroAssembler {
     fn mul64(&mut self, dst: Fpr, lhs: Fpr, rhs: Fpr) {
         let (cross, other) = (self.scratch_fpr(0), self.scratch_fpr(1));
         for (product, high, low) in [(cross, lhs, rhs), (other, rhs, lhs)] {
-            let order = super::vector_unary::ODD_LANES_TWICE;
             self.asm
-                .sse_unary_imm(SseUnaryImm::Pshufd, product, high, order);
+                .sse_unary_imm(SseUnaryImm::Pshufd, product, high, ODD_LANES_TWICE);
             self.asm.sse(Sse::Pmuludq, product, product, low);
         }
         self.sse_binary(Sse::Paddq, cross, cross, other);
@@ -351,16 +352,11 @@ impl MacroAssembler {
         match form {
             Form::One(op) => self.sse_binary(op, dst, lhs, rhs),
             Form::Not(op) => self.complement(op, dst, lhs, rhs),
+            Form::CompareFloats(width, predicate) if predicate.commutes() => {
+                self.compare_floats(width, predicate, dst, own, other);
+            }
             Form::CompareFloats(width, predicate) => {
-                let (lhs, rhs) = if predicate.commutes() {
-                    (own, other)
-                } else {
-                    (lhs, rhs)
-                };
-                let compare = pick(width, SseImm::Cmpps, SseImm::Cmppd);
-                self.two_sources(dst, lhs, rhs, |masm, dst, lhs| {
-                    masm.asm.sse_imm(compare, dst, lhs, rhs, predicate as u8);
-                });
+                self.compare_floats(width, predicate, dst, lhs, rhs);
             }
             Form::AtLeast { min, max, equal } => {
                 self.sse_binary(if dst == rhs { max } else { min }, dst, lhs, rhs);

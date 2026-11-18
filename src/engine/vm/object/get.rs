@@ -283,7 +283,7 @@ impl JsObject {
     /// Whether the property that a lookup finds is enumerable.
     pub fn has_enumerable_property(&self, cx: &mut Cx, name: PropertyName<'_>) -> JsResult<bool> {
         let mut slot = PropertySlot::new(self.as_value(), InternalMethod::GetOwnProperty);
-        Ok(self.get_property_slot(cx, name, &mut slot)? && is_enumerable(&slot))
+        Ok(self.get_property_slot(cx, name, &mut slot)? && slot.is_enumerable())
     }
 
     pub fn has_enumerable_index(&self, cx: &mut Cx, index: u32) -> JsResult<bool> {
@@ -291,7 +291,7 @@ impl JsObject {
             return Ok(true);
         }
         let mut slot = PropertySlot::new(self.as_value(), InternalMethod::GetOwnProperty);
-        Ok(self.get_property_slot_by_index(cx, index, &mut slot)? && is_enumerable(&slot))
+        Ok(self.get_property_slot_by_index(cx, index, &mut slot)? && slot.is_enumerable())
     }
 
     pub fn has_own_property(&self, cx: &mut Cx, name: PropertyName<'_>) -> JsResult<bool> {
@@ -310,6 +310,12 @@ impl JsObject {
         cx: &mut Cx,
         name: PropertyName<'_>,
     ) -> JsResult<Option<PropertyDescriptor>> {
+        if self.cell_type() == CellType::FinalObject
+            && let Some((value, attributes)) = self.get_direct_with_attributes(name)
+            && !attributes.intersects(Attributes::ANY_ACCESSOR)
+        {
+            return Ok(Some(PropertyDescriptor::data(value, attributes)));
+        }
         let mut slot = PropertySlot::new(self.as_value(), InternalMethod::GetOwnProperty);
         if !self.get_own_property_slot(cx, name, &mut slot)? {
             return Ok(None);
@@ -431,12 +437,6 @@ impl JsObject {
         }
         Err(cx.throw_stack_overflow())
     }
-}
-
-fn is_enumerable(slot: &PropertySlot) -> bool {
-    let unreliable = TypeFlags::GET_OWN_PROPERTY_SLOT_MAY_BE_WRONG_ABOUT_DONT_ENUM;
-    slot.attributes().is_enumerable()
-        || (slot.base()).is_some_and(|base| base.shape().type_flags().contains(unreliable))
 }
 
 #[inline(always)]

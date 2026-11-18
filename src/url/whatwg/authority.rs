@@ -1,16 +1,20 @@
-use crate::class::{self, AT_SIGN, DIGIT_OR_X, HOST_SCAN, HostTraits, TAB_OR_NEWLINE, USERINFO};
+use crate::class::{
+    self, AT_SIGN, DIGIT_OR_X, HOST_SCAN, HostTraits, TAB_OR_NEWLINE, TO_BE_REMOVED, USERINFO,
+};
 use crate::parser::{Parser, Step};
 use crate::{Error, Result, Scheme};
 
 /// The digits that `text` starts with: how many there are, and the port if they are one.
 #[inline]
 pub(crate) fn leading_port(text: &[u8]) -> (usize, Option<u16>) {
-    let (mut count, mut value) = (0, 0u32);
+    let (mut count, mut value, mut all_values) = (0, 0u32, 0);
     while let Some(digit @ b'0'..=b'9') = text.get(count) {
-        value = (value * 10 + u32::from(digit - b'0')).min(0x10000);
+        value = value.wrapping_mul(10).wrapping_add(u32::from(digit - b'0'));
+        all_values |= value;
         count += 1;
     }
-    (count, u16::try_from(value).ok().filter(|_| count != 0))
+    let is_port = count != 0 && all_values <= 0xffff;
+    (count, is_port.then_some(value as u16))
 }
 
 /// With the colon.
@@ -65,11 +69,13 @@ impl Parser<'_> {
             (host_end, traits) = self.scan_host(host_start);
         }
         let has_port = !self.ends_authority(host_end);
+        self.failure_is_final = traits & TO_BE_REMOVED == 0;
         if host_end > host_start {
             self.host(host_start, host_end, traits)?;
         } else if self.is_special() || has_port || host_start > start {
             return Err(Error::Invalid);
         }
+        self.failure_is_final = false;
         self.parts.host_end = self.mark(host_end);
         let end = if has_port {
             self.port(host_end)?
@@ -111,7 +117,7 @@ impl Parser<'_> {
                 if class::is_in(TAB_OR_NEWLINE, byte) {
                     return Err(Error::Invalid);
                 }
-                self.escape(at)?;
+                self.escape(at, at + 1)?;
             }
         }
         Ok(())

@@ -1,4 +1,4 @@
-//! Copies blocks to the ends of others, and then gives each use of a copied value the copy that reaches it.
+//! Copies instructions and blocks, and then gives each use of a copied value the copy that reaches it.
 
 use bun_engine_asm::Sign;
 
@@ -10,19 +10,41 @@ use crate::ir::{
     Type, Unary, Value, Variable, evaluate,
 };
 
-/// About the number of instructions that a copy takes, if it can be made.
-fn cost_of(function: &Function, value: Value) -> Option<u32> {
+/// About the number of instructions that a copy takes, if one can be made.
+fn cost_of_copy(function: &Function, value: Value) -> Option<u32> {
     const EXIT: u32 = 2;
     const PATCHPOINT: u32 = 4;
     match *function.op(value) {
-        _ if function.type_of(value) == Type::Tuple => None,
+        // No parameter can stand for it where it is taken apart.
+        _ if function.type_of(value) == Type::Tuple && function.next(value).is_none() => None,
         Op::Patchpoint(patchpoint) => {
             let flags = function.patchpoint(patchpoint).flags;
             (!flags.contains(PatchpointFlags::UNIQUE)).then_some(PATCHPOINT)
         }
-        Op::Check(..) | Op::Checked(..) => Some(EXIT),
-        Op::Unary(Unary::Wrap | Unary::Widen(Sign::Unsigned) | Unary::Opaque, _) => Some(0),
+        Op::Check(..) | Op::Checked(..) | Op::Node { .. } | Op::WideNode { .. } => Some(EXIT),
+        Op::Unary(Unary::Wrap | Unary::Widen(Sign::Unsigned) | Unary::Opaque, _)
+        | Op::Extract(..) => Some(0),
         _ => Some(1),
+    }
+}
+
+/// About the number of instructions that a copy of the blocks takes, if one can be made and it is no more than `most`.
+pub fn cost_of_copying(function: &Function, blocks: &[Block], most: u32) -> Option<u32> {
+    let instructions = blocks
+        .iter()
+        .flat_map(|&block| function.instructions(block));
+    instructions
+        .map(|value| cost_of_copy(function, value))
+        .try_fold(0, |sum, cost| Some(sum + cost?).filter(|&sum| sum <= most))
+}
+
+/// The edge, if its source only jumps, or else that of a new block in its middle.
+pub(super) fn as_jump(function: &mut Function, edge: Edge) -> Edge {
+    if *function.op(function.last(function.source(edge))) == Op::Jump {
+        edge
+    } else {
+        let middle = function.split_edge(edge);
+        function.successor(middle, 0)
     }
 }
 
@@ -36,58 +58,10 @@ pub(super) struct Preview {
     pub(super) settled_check_fails: Option<bool>,
 }
 
-impl Preview {
-    pub(super) const MOST_INSTRUCTIONS: usize = 8;
-
-    /// `known` gives the bits of what is constant in the copy. `None` if they are many or cannot be copied.
-    pub(super) fn of(
-        function: &Function,
-        first: Value,
-        last: Value,
-        known: impl Fn(Value) -> Option<u64>,
-    ) -> Option<Self> {
-        let mut folded = [(Value::NONE, 0); Self::MOST_INSTRUCTIONS];
-        let mut preview = Self {
-            cost: 0,
-            taken: None,
-            settled_check_fails: None,
-        };
-        let (mut value, block) = (first, function.block_of(first));
-        for position in 0..Self::MOST_INSTRUCTIONS {
-            let cost = cost_of(function, value)?;
-            let of = |operand| {
-                let mut earlier = folded[..position].iter();
-                known(operand).or_else(|| Some(earlier.find(|found| found.0 == operand)?.1))
-            };
-            if value == function.last(block) {
-                preview.taken = successor_taken(function, block, of);
-            } else if let Op::Check(condition, _) = *function.op(value)
-                && let Some(bits) = of(condition)
-            {
-                preview.settled_check_fails = Some(bits != 0);
-                preview.cost += if bits == 0 { 0 } else { cost };
-            } else if let Some(bits) = fold(function, value, of) {
-                folded[position] = (value, bits);
-            } else {
-                preview.cost += cost;
-            }
-            if value == last {
-                return Some(preview);
-            }
-            value = function.next(value);
-        }
-        None
-    }
-}
-
-/// The edge, if its source only jumps, or else that of a new block in its middle.
-pub(super) fn as_jump(function: &mut Function, edge: Edge) -> Edge {
-    if *function.op(function.last(function.source(edge))) == Op::Jump {
-        edge
-    } else {
-        let middle = function.split_edge(edge);
-        function.successor(middle, 0)
-    }
+pub struct CopyOfLoop {
+    pub header: Block,
+    /// The edges from the copy to the header of the loop that was copied.
+    pub returning: Vec<Edge>,
 }
 
 struct Copy {
@@ -96,12 +70,14 @@ struct Copy {
     value: Value,
 }
 
-/// Works on one path at a time: a series of blocks, each the successor of the one before, that are copied to one block.
-pub(super) struct Copier {
-    /// What stands for the values on the path.
+/// Until `repair_uses`, the function is not valid. What has been added since `new` cannot be copied.
+pub struct Copier {
+    /// For the values of the path or the loop that is being copied.
     stand_ins: Table<Value, Value>,
-    on_path: Vec<Value>,
+    with_stand_in: Vec<Value>,
     last_state: (State, State),
+    /// Empty until a loop is copied.
+    blocks: Table<Block, Block>,
     copies: Vec<Copy>,
     args: Vec<Value>,
 }
@@ -114,42 +90,133 @@ enum Use {
 }
 
 impl Copier {
-    /// For the values that exist now.
-    pub(super) fn new(function: &Function) -> Self {
+    pub fn new(function: &Function) -> Self {
         Self {
             stand_ins: function.value_table(Value::NONE),
-            on_path: Vec::new(),
+            with_stand_in: Vec::new(),
             last_state: (State::NONE, State::NONE),
+            blocks: Table::default(),
             copies: Vec::new(),
             args: Vec::new(),
         }
     }
 
     #[inline]
-    fn stand_in(&self, value: Value) -> Value {
+    pub(super) fn stand_in(&self, value: Value) -> Value {
         stand_in(&self.stand_ins, value)
     }
 
     pub(super) fn set_stand_in(&mut self, original: Value, value: Value) {
         self.stand_ins[original] = value;
-        self.on_path.push(original);
+        self.with_stand_in.push(original);
     }
 
-    /// What stands for a parameter of the target of the edge, or for a value from another block.
-    pub(super) fn stand_in_along(&self, function: &Function, edge: Edge, value: Value) -> Value {
-        match *function.op(value) {
-            Op::Param(position) if function.block_of(value) == function.target(edge) => {
-                function.args(edge)[position as usize]
-            }
-            _ => self.stand_in(value),
+    pub(super) fn forget_stand_ins(&mut self) {
+        self.last_state = (State::NONE, State::NONE);
+        for original in self.with_stand_in.drain(..) {
+            self.stand_ins[original] = Value::NONE;
         }
     }
 
-    /// Of the target of the edge.
-    pub(super) fn preview(&self, function: &Function, edge: Edge) -> Option<Preview> {
-        let block = function.target(edge);
-        let known = |value| function.constant_bits(self.stand_in_along(function, edge, value));
-        Preview::of(function, function.first(block), function.last(block), known)
+    fn constant(&self, function: &Function, value: Value) -> Option<u64> {
+        function.constant_bits(self.stand_in(value))
+    }
+
+    // Paths: series of blocks, each a successor of the one before, that are copied to the end of one block
+
+    /// Leaves stand-ins for what is constant. `None` if the instructions are many or cannot be copied.
+    pub(super) fn preview(
+        &mut self,
+        function: &mut Function,
+        first: Value,
+        last: Value,
+    ) -> Option<Preview> {
+        const MOST_INSTRUCTIONS: usize = 8;
+        let mut preview = Preview {
+            cost: 0,
+            taken: None,
+            settled_check_fails: None,
+        };
+        let (mut value, block) = (first, function.block_of(first));
+        for _ in 0..MOST_INSTRUCTIONS {
+            let (cost, ty) = (cost_of_copy(function, value)?, function.type_of(value));
+            if ty == Type::Tuple {
+                return None;
+            }
+            if value == function.last(block) {
+                preview.taken = self.successor_taken(function, block);
+            } else if let Op::Check(condition, _) = *function.op(value)
+                && let Some(bits) = self.constant(function, condition)
+            {
+                preview.settled_check_fails = Some(bits != 0);
+                preview.cost += if bits == 0 { 0 } else { cost };
+            } else if let Some(bits) = self.fold(function, value) {
+                let constant = function.constant(ty, bits);
+                self.set_stand_in(value, constant);
+            } else {
+                preview.cost += cost;
+            }
+            if value == last {
+                return Some(preview);
+            }
+            value = function.next(value);
+        }
+        None
+    }
+
+    /// Of the target of the edge, which leaves the path that has been previewed so far.
+    pub(super) fn preview_target(
+        &mut self,
+        function: &mut Function,
+        edge: Edge,
+    ) -> Option<Preview> {
+        let target = function.target(edge);
+        for (&param, &arg) in function.params(target).iter().zip(function.args(edge)) {
+            self.set_stand_in(param, self.stand_in(arg));
+        }
+        self.preview(function, function.first(target), function.last(target))
+    }
+
+    fn fold(&self, function: &Function, value: Value) -> Option<u64> {
+        let (of, ty) = (
+            |operand| self.constant(function, operand),
+            |value| function.type_of(value),
+        );
+        match *function.op(value) {
+            Op::Unary(Unary::Opaque, _) => None,
+            Op::Unary(op, a) => evaluate::unary(op, ty(a), ty(value), of(a)?),
+            Op::Binary(op, [a, b]) => evaluate::binary(op, ty(value), of(a)?, of(b)?),
+            Op::Checked(op, [a, b], _) => evaluate::checked(op, ty(value), of(a)?, of(b)?),
+            Op::Compare(cond, [a, b]) => {
+                Some(evaluate::compare(cond, ty(a), of(a)?, of(b)?).into())
+            }
+            Op::FloatCompare(cond, [a, b]) => {
+                Some(evaluate::float_compare(cond, ty(a), of(a)?, of(b)?).into())
+            }
+            Op::Select([condition, then, or]) => of(if of(condition)? != 0 { then } else { or }),
+            _ => None,
+        }
+    }
+
+    fn successor_taken(&self, function: &Function, block: Block) -> Option<Edge> {
+        let position = match *function.op(function.last(block)) {
+            Op::Jump => 0,
+            Op::Branch(condition) => usize::from(self.constant(function, condition)? == 0),
+            Op::Switch(subject, cases) => {
+                let (key, keys) = (
+                    function.int_constant(self.stand_in(subject))?,
+                    function.cases(cases),
+                );
+                let found = keys.iter().position(|&other| other == key);
+                found.unwrap_or(keys.len())
+            }
+            Op::JumpTable(index, cases) => {
+                let index = self.constant(function, index)?;
+                *function.cases(cases).get(index as usize)? as usize
+            }
+            _ => return None,
+        };
+        Some(function.successor(block, position))
     }
 
     /// Replaces the jump along `edge` with all instructions of its target but the last.
@@ -194,6 +261,80 @@ impl Copier {
         function.set_rare(edge, false);
     }
 
+    pub(super) fn end_path(&mut self, into: Block) {
+        self.note_copies(0, into);
+        self.forget_stand_ins();
+    }
+
+    // Loops
+
+    /// One more turn of a natural loop, whose blocks are given in order and can be copied. `entering` is an edge to the
+    /// header from elsewhere, which now goes to the copy. Without it, the copy of the header has parameters.
+    pub fn copy_loop(
+        &mut self,
+        function: &mut Function,
+        blocks: &[Block],
+        entering: Option<Edge>,
+    ) -> CopyOfLoop {
+        let header = blocks[0];
+        if self.blocks.len() == 0 {
+            take_tuples_apart_at_once(function);
+        }
+        self.blocks.grow_to(function.block_count(), Block::NONE);
+        for &block in blocks {
+            let (copy, noted) = (function.new_block(), self.with_stand_in.len());
+            self.blocks[block] = copy;
+            let entering = entering.filter(|_| block == header);
+            for position in 0..function.params(block).len() {
+                let param = function.params(block)[position];
+                let stand_in = match entering {
+                    Some(edge) => function.args(edge)[position],
+                    None => function.add_param(copy, function.type_of(param)),
+                };
+                self.set_stand_in(param, stand_in);
+            }
+            self.note_copies(noted, copy);
+        }
+        let mut result = CopyOfLoop {
+            header: self.blocks[header],
+            returning: Vec::new(),
+        };
+        if let Some(edge) = entering {
+            function.redirect(edge, result.header, &[]);
+        }
+        for &block in blocks {
+            let (copy, noted) = (self.blocks[block], self.with_stand_in.len());
+            self.copy_body_from(function, function.first(block), copy);
+            let taken = self.successor_taken(function, block);
+            self.copy_end(function, block, copy, taken);
+            self.note_copies(noted, copy);
+            for edge in function.successors(copy) {
+                let target = function.target(edge);
+                if target == header {
+                    result.returning.push(edge);
+                } else if target.index() < self.blocks.len() && !self.blocks[target].is_none() {
+                    function.set_target(edge, self.blocks[target]);
+                }
+            }
+        }
+        for &block in blocks {
+            self.blocks[block] = Block::NONE;
+        }
+        self.forget_stand_ins();
+        result
+    }
+
+    // Parts
+
+    fn note_copies(&mut self, from: usize, block: Block) {
+        let copies = self.with_stand_in[from..].iter().map(|&original| Copy {
+            original,
+            block,
+            value: self.stand_ins[original],
+        });
+        self.copies.extend(copies);
+    }
+
     fn copy_edge(&mut self, function: &mut Function, edge: Edge, into: Block) -> Edge {
         self.args.clear();
         let args = function.args(edge).iter();
@@ -207,45 +348,35 @@ impl Copier {
         function.push_successor(into, successor)
     }
 
-    pub(super) fn end_path(&mut self, into: Block) {
-        self.last_state = (State::NONE, State::NONE);
-        for original in self.on_path.drain(..) {
-            self.copies.push(Copy {
-                original,
-                block: into,
-                value: core::mem::replace(&mut self.stand_ins[original], Value::NONE),
-            });
-        }
-    }
-
     fn copy_instruction(&mut self, function: &mut Function, value: Value, into: Block) {
         let (ty, origin) = (function.type_of(value), function.origin(value));
         let state = self.copy_state(function, function.state_of(value));
-        let mut op = function.clone_op(value);
-        for operand in op.inline_operands_mut() {
-            *operand = self.stand_in(*operand);
-        }
+        let op = function.clone_op(value);
         let mut builder = Builder::at_end(function, into);
         builder.origin = origin;
+        let new = |operand| self.stand_in(operand);
         let copy = match op {
-            Op::Unary(op, a) => builder.convert(op, ty, a),
-            Op::Binary(op, [a, b]) => builder.binary(op, a, b),
-            Op::Compare(cond, [a, b]) => builder.compare(cond, a, b),
-            Op::FloatCompare(cond, [a, b]) => builder.float_compare(cond, a, b),
-            Op::Select([condition, then, or]) => builder.select(condition, then, or),
-            Op::Check(condition, exit) => return builder.check(condition, Exit { state, ..exit }),
-            Op::Checked(op, [a, b], exit) => builder.checked(op, a, b, Exit { state, ..exit }),
-            Op::Patchpoint(_) | Op::Return(_) => {
+            Op::Unary(op, a) => builder.convert(op, ty, new(a)),
+            Op::Binary(op, [a, b]) => builder.binary(op, new(a), new(b)),
+            Op::Compare(cond, [a, b]) => builder.compare(cond, new(a), new(b)),
+            Op::FloatCompare(cond, [a, b]) => builder.float_compare(cond, new(a), new(b)),
+            Op::Select([condition, then, or]) => builder.select(new(condition), new(then), new(or)),
+            Op::Check(condition, exit) => {
+                return builder.check(new(condition), Exit { state, ..exit });
+            }
+            Op::Checked(op, [a, b], exit) => {
+                builder.checked(op, new(a), new(b), Exit { state, ..exit })
+            }
+            _ => {
                 let copy = builder.insert(op, ty);
                 for operand in function.operands_mut(copy) {
-                    *operand = self.stand_in(*operand);
+                    *operand = new(*operand);
                 }
                 if !state.is_none() {
                     function.set_state_of(copy, state);
                 }
                 copy
             }
-            _ => builder.insert(op, ty),
         };
         if ty != Type::Void {
             self.set_stand_in(value, copy);
@@ -266,7 +397,7 @@ impl Copier {
         self.last_state.1
     }
 
-    pub(super) fn repair_uses(self, function: &mut Function, analyses: &mut Analyses) {
+    pub fn repair_uses(self, function: &mut Function, analyses: &mut Analyses) {
         analyses.invalidate();
         if self.copies.is_empty() {
             return;
@@ -307,46 +438,15 @@ impl Copier {
     }
 }
 
-fn fold(function: &Function, value: Value, of: impl Fn(Value) -> Option<u64>) -> Option<u64> {
-    let ty = |value| function.type_of(value);
-    match *function.op(value) {
-        Op::Unary(Unary::Opaque, _) => None,
-        Op::Unary(op, a) => evaluate::unary(op, ty(a), ty(value), of(a)?),
-        Op::Binary(op, [a, b]) => evaluate::binary(op, ty(value), of(a)?, of(b)?),
-        Op::Checked(op, [a, b], _) => evaluate::checked(op, ty(value), of(a)?, of(b)?),
-        Op::Compare(cond, [a, b]) => Some(evaluate::compare(cond, ty(a), of(a)?, of(b)?).into()),
-        Op::FloatCompare(cond, [a, b]) => {
-            Some(evaluate::float_compare(cond, ty(a), of(a)?, of(b)?).into())
+fn take_tuples_apart_at_once(function: &mut Function) {
+    for value in (0..function.value_count()).map(Value::from_index) {
+        if let Op::Extract(tuple, _) = *function.op(value)
+            && function.block_of(value) != function.block_of(tuple)
+            && let Some(next) = function.next(tuple).expand()
+        {
+            function.move_before(value, next);
         }
-        Op::Select([condition, then, or]) => of(if of(condition)? != 0 { then } else { or }),
-        _ => None,
     }
-}
-
-/// `of` gives the bits of the values that are known.
-fn successor_taken(
-    function: &Function,
-    block: Block,
-    of: impl Fn(Value) -> Option<u64>,
-) -> Option<Edge> {
-    let position = match *function.op(function.last(block)) {
-        Op::Jump => 0,
-        Op::Branch(condition) => usize::from(of(condition)? == 0),
-        Op::Switch(subject, cases) => {
-            let bits = of(subject)?;
-            let key = if function.type_of(subject) == Type::I32 {
-                (bits as i32).into()
-            } else {
-                bits as i64
-            };
-            let keys = function.cases(cases);
-            let found = keys.iter().position(|&other| other == key);
-            found.unwrap_or(keys.len())
-        }
-        Op::JumpTable(index, cases) => *function.cases(cases).get(of(index)? as usize)? as usize,
-        _ => return None,
-    };
-    Some(function.successor(block, position))
 }
 
 #[inline]

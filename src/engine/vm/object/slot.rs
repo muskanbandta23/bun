@@ -3,7 +3,7 @@ use bun_engine_text::{Identifier, PropertyName};
 
 use crate::{
     Attributes, Class, Cx, Gc, GetterSetter, JsObject, JsResult, ModuleEnvironment, PropertyOffset,
-    Value, WatchpointSet, errors,
+    TypeFlags, Value, WatchpointSet, errors,
 };
 
 /// `this` is the receiver for `CUSTOM_ACCESSOR`, and the object that has the property for `CUSTOM_VALUE`.
@@ -185,6 +185,14 @@ impl PropertySlot {
         self.attributes
     }
 
+    /// For `for`-`in`.
+    pub(crate) fn is_enumerable(&self) -> bool {
+        let unreliable = TypeFlags::GET_OWN_PROPERTY_SLOT_MAY_BE_WRONG_ABOUT_DONT_ENUM;
+        !self.is_unset()
+            && (self.attributes.is_enumerable()
+                || (self.base).is_some_and(|base| base.shape().type_flags().contains(unreliable)))
+    }
+
     #[inline(always)]
     pub fn cached_offset(&self) -> PropertyOffset {
         self.offset
@@ -276,6 +284,17 @@ impl PropertySlot {
         self.attributes = attributes;
         self.base = Some(base.into());
         self.kind = SlotKind::Custom;
+    }
+
+    /// Every object with the shape of the base has the property.
+    pub fn set_cacheable_custom(
+        &mut self,
+        base: &JsObject,
+        attributes: Attributes,
+        getter: CustomGetter,
+    ) {
+        self.set_custom(base, attributes, Some(getter), None);
+        self.allow_caching(PropertyOffset::INVALID);
     }
 
     pub(crate) fn set_required_class(&mut self, class: Option<&'static Class>) {

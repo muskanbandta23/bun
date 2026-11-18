@@ -617,24 +617,30 @@ impl Function {
     /// Of the operands other than those in a state.
     #[inline]
     pub fn resolve_operands(&mut self, value: Value) {
-        for index in 0..self.operands(value).len() {
-            let operand = self.operands(value)[index];
-            if let Op::Alias(replacement) = self.values[operand].op {
-                let resolved = self.resolve(replacement);
+        let is_alias = |&operand: &Value| matches!(self.values[operand].op, Op::Alias(_));
+        if self.operands(value).iter().any(is_alias) {
+            for index in 0..self.operands(value).len() {
+                let resolved = self.resolve(self.operands(value)[index]);
                 self.operands_mut(value)[index] = resolved;
             }
         }
     }
 
-    fn resolve_span(&mut self, span: Span<Value>) {
-        for index in 0..span.len() {
-            let resolved = self.resolve(self.value_lists[span][index]);
-            self.value_lists[span][index] = resolved;
+    #[inline]
+    fn resolve_span(&mut self, span: Span<Value>) -> bool {
+        let mut found_alias = false;
+        for value in &mut self.value_lists[span] {
+            while let Op::Alias(replacement) = self.values[*value].op {
+                (*value, found_alias) = (replacement, true);
+            }
         }
+        found_alias
     }
 
-    pub fn resolve_args(&mut self, edge: Edge) {
-        self.resolve_span(self.edges[edge].args.span);
+    /// Returns whether there was an alias among them.
+    #[inline]
+    pub fn resolve_args(&mut self, edge: Edge) -> bool {
+        self.resolve_span(self.edges[edge].args.span)
     }
 
     pub fn resolve_state(&mut self, state: State) {
@@ -858,6 +864,12 @@ impl Function {
         Edges(data.first_edge..data.first_edge + data.edge_count)
     }
 
+    /// Whether the edge is still among those that leave its source.
+    #[inline]
+    pub fn is_attached(&self, edge: Edge) -> bool {
+        self.successors(self.source(edge)).0.contains(&edge.0)
+    }
+
     #[inline]
     pub fn successor(&self, block: Block, position: usize) -> Edge {
         assert!(position < self.blocks[block].edge_count as usize);
@@ -1010,6 +1022,11 @@ impl Function {
 
     pub fn add_values(&mut self, values: &[Value]) -> Span<Value> {
         self.value_lists.add(values.iter().copied())
+    }
+
+    #[inline]
+    pub fn values_in(&self, span: Span<Value>) -> &[Value] {
+        &self.value_lists[span]
     }
 
     // States. Instructions share them, so they change only by what holds for the whole function.

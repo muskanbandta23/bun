@@ -496,7 +496,7 @@ impl JsObject {
         Ok(())
     }
 
-    pub(crate) fn convert_to_sparse(&self, vm: &Vm) -> Result<Gc<SparseElements>, AllocError> {
+    pub fn convert_to_sparse(&self, vm: &Vm) -> Result<Gc<SparseElements>, AllocError> {
         if let Some(sparse) = self.sparse_elements() {
             return Ok(sparse);
         }

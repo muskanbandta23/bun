@@ -12,7 +12,7 @@ use bun_engine_codegen::ir::{
 use super::datum::{self, Datum, Kind, Open, Partial};
 use super::memory::{FRAME_POINTER, Fault, Input, Layout, Memory, Place, Segment, slot_address};
 use super::random::{Random, mix};
-use super::vocabulary::{NOT_CELL_MASK, NUMBER_TAG, registers};
+use super::vocabulary::{NOT_CELL_MASK, NUMBER_TAG, registers, result_types};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Mode {
@@ -330,7 +330,9 @@ impl<'a> Interpreter<'a> {
             self.first_element.push(elements);
             elements += match *function.op(value) {
                 Op::Wide(..) | Op::MulWide(..) => 2,
-                Op::Patchpoint(patchpoint) => function.outputs(patchpoint).len() as u32,
+                Op::Patchpoint(_) | Op::Node { .. } | Op::WideNode { .. } => {
+                    result_types(function, value).count() as u32
+                }
                 _ => 0,
             };
             self.values.push(match *function.op(value) {
@@ -489,7 +491,9 @@ impl<'a> Interpreter<'a> {
                 return Err(Stop::With(Outcome::Return(results)));
             }
             Op::Unreachable => return Err(Stop::Undefined("reached what cannot be")),
-            Op::Patchpoint(_) => self.invoke(function, last)?,
+            Op::Patchpoint(_) | Op::Node { .. } | Op::WideNode { .. } => {
+                self.invoke(function, last)?
+            }
             ref op => unreachable!("{op:?} does not end a block"),
         })
     }
@@ -728,7 +732,7 @@ impl<'a> Interpreter<'a> {
                 Some(result) => result,
                 None => return Err(self.exit(function, value)),
             },
-            Op::Patchpoint(_) => {
+            Op::Patchpoint(_) | Op::Node { .. } | Op::WideNode { .. } => {
                 self.invoke(function, value)?;
                 self.values[value.index()]
             }

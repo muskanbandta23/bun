@@ -2,7 +2,9 @@
 
 #![allow(dead_code, unreachable_pub)]
 
-use bun_engine_wasm_format::{Error, Features, Module};
+use std::convert::Infallible;
+
+use bun_engine_wasm_format::*;
 
 pub const TYPE: u8 = 1;
 pub const IMPORT: u8 = 2;
@@ -157,3 +159,20 @@ impl Random {
         (self.0 % limit as u64) as usize
     }
 }
+
+pub struct Ignore;
+
+impl Visit for Ignore {
+    type Error = Infallible;
+
+    fn unhandled(&mut self) -> Result<(), Infallible> {
+        Ok(())
+    }
+}
+
+impl VisitControl for Ignore {}
+impl VisitVariable for Ignore {}
+impl VisitNumeric for Ignore {}
+impl VisitMemory for Ignore {}
+impl VisitReference for Ignore {}
+impl VisitVector for Ignore {}

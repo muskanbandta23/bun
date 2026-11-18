@@ -8,6 +8,8 @@ mod graph;
 mod integers;
 mod patterns;
 mod sites;
+mod templates;
+mod themes;
 mod vectors;
 
 use bun_engine_asm::{
@@ -20,18 +22,22 @@ use bun_engine_codegen::ir::{
 };
 
 use self::accesses::{Pointer, Spot};
+use self::constants::Temper;
 use self::control::Loop;
 use super::datum::canonical_nan;
 use super::memory::{
     ARGUMENTS_SIZE, ARGUMENTS_START, CALLEE_TABLE, CONSTANTS, DATA_SIZE, Input, Layout,
     OBJECT_COUNT, OBJECT_SIZE, OBJECT_TABLE, READ_ONLY_SIZE, Region, position,
 };
+use super::nodes;
 use super::random::{Random, mix};
 use super::vocabulary::{Registers, bank_of, registers};
 
 /// How often each kind of statement is chosen, relative to the others.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Weights {
+    pub(crate) themes: u32,
+    pub(crate) templates: u32,
     pub(crate) integers: u32,
     pub(crate) floats: u32,
     pub(crate) vectors: u32,
@@ -41,6 +47,8 @@ pub(crate) struct Weights {
     pub(crate) checks: u32,
     pub(crate) patchpoints: u32,
     pub(crate) calls: u32,
+    /// Machine code cannot be generated for them.
+    pub(crate) nodes: u32,
     pub(crate) variables: u32,
     pub(crate) branches: u32,
     pub(crate) loops: u32,
@@ -73,7 +81,10 @@ pub(crate) struct Shape {
     pub(crate) withheld_percent: u32,
 }
 
-pub(crate) const PROFILES: [&str; 11] = [
+pub(crate) const PROFILES: [&str; 16] = [
+    "templates",
+    "themes",
+    "integer themes",
     "integers",
     "floats",
     "vectors",
@@ -83,13 +94,17 @@ pub(crate) const PROFILES: [&str; 11] = [
     "graphs",
     "variables",
     "sites",
+    "nodes",
     "shapes",
+    "tangles",
     "everything",
 ];
 
 impl Shape {
     pub(crate) fn of_profile(profile: &str, random: &mut Random) -> Self {
         let none = Weights {
+            themes: 0,
+            templates: 0,
             integers: 0,
             floats: 0,
             vectors: 0,
@@ -99,6 +114,7 @@ impl Shape {
             checks: 0,
             patchpoints: 0,
             calls: 0,
+            nodes: 0,
             variables: 0,
             branches: 0,
             loops: 0,
@@ -108,12 +124,15 @@ impl Shape {
             shapes: 0,
         };
         let basic = Weights {
+            themes: 4,
+            templates: 6,
             integers: 30,
             floats: 4,
             accesses: 10,
             checks: 5,
             patchpoints: 2,
             calls: 1,
+            nodes: 3,
             branches: 8,
             ..none
         };
@@ -133,6 +152,35 @@ impl Shape {
             ..basic
         };
         let weights = match profile {
+            "templates" => Weights {
+                templates: 200,
+                integers: 3,
+                floats: 2,
+                vectors: 1,
+                accesses: 2,
+                trapping_accesses: 1,
+                checks: 1,
+                branches: 3,
+                ..none
+            },
+            "themes" => Weights {
+                themes: 200,
+                integers: 2,
+                floats: 3,
+                vectors: 2,
+                accesses: 2,
+                trapping_accesses: 1,
+                checks: 1,
+                ..none
+            },
+            "integer themes" => Weights {
+                themes: 200,
+                integers: 2,
+                accesses: 2,
+                checks: 2,
+                branches: 5,
+                ..none
+            },
             "integers" => Weights {
                 integers: 40,
                 accesses: 3,
@@ -197,6 +245,14 @@ impl Shape {
                 loops: 4,
                 ..basic
             },
+            "nodes" => Weights {
+                nodes: 50,
+                loops: 6,
+                switches: 3,
+                graphs: 1,
+                shapes: 3,
+                ..basic
+            },
             "shapes" => Weights {
                 shapes: 40,
                 trapping_accesses: 3,
@@ -204,10 +260,16 @@ impl Shape {
                 graphs: 2,
                 ..basic
             },
+            "tangles" => Weights {
+                integers: 5,
+                accesses: 40,
+                graphs: 15,
+                ..none
+            },
             "everything" => everything,
             _ => panic!("the profiles are {PROFILES:?}"),
         };
-        let has_entries = matches!(profile, "graphs" | "variables" | "everything");
+        let has_entries = matches!(profile, "graphs" | "variables" | "tangles" | "everything");
         Self {
             size: random.pick(&[3, 6, 10, 16, 24, 40]),
             weights,
@@ -317,6 +379,7 @@ struct Scope {
     states: Vec<KnownState>,
     spots: Vec<Spot>,
     conditions: Vec<Value>,
+    nodes: Vec<Value>,
 }
 
 #[derive(Clone, Copy)]
@@ -325,6 +388,7 @@ struct Mark {
     states: usize,
     spots: usize,
     conditions: usize,
+    nodes: usize,
     sum: Value,
 }
 
@@ -334,6 +398,8 @@ pub(crate) struct Program {
     pub(crate) target: Target,
     /// For each entry.
     pub(crate) params: Vec<Vec<Class>>,
+    /// Numbers that occur in the program, near which inputs make a difference.
+    pub(crate) remarkable: Vec<i64>,
 }
 
 struct Generator<'a> {
@@ -357,6 +423,7 @@ struct Generator<'a> {
     params: Vec<Vec<Class>>,
     loops: Vec<Loop>,
     favourite_constants: Vec<i64>,
+    remarkable: Vec<i64>,
     depth: u32,
     nesting: u32,
     trips: u32,
@@ -403,6 +470,7 @@ pub(crate) fn generate(seed: u64, shape: &Shape, target: Target, layout: &Layout
         params: Vec::new(),
         loops: Vec::new(),
         favourite_constants: Vec::new(),
+        remarkable: vec![0],
         depth: 0,
         nesting: 0,
         trips: 1,
@@ -421,13 +489,17 @@ pub(crate) fn generate(seed: u64, shape: &Shape, target: Target, layout: &Layout
         function: generator.function,
         target,
         params: generator.params,
+        remarkable: generator.remarkable,
     }
 }
 
 impl Program {
     pub(crate) fn input(&self, layout: &Layout, random: &mut Random) -> Input {
         let entry = random.below(self.params.len());
-        let temper = random.below(4);
+        let temper = Temper {
+            level: random.below(5),
+            remarkable: &self.remarkable,
+        };
         let argument = |&class: &Class| constants::argument(class, temper, layout, random);
         let args = self.params[entry].iter().map(argument).collect();
         let mut bytes = |count: u32| -> Vec<u8> {
@@ -487,6 +559,7 @@ impl Generator<'_> {
             self.heaps.push((range, self.function.add_heap(range)));
         }
         self.heaps.push((HeapRange::ALL, Heap::EVERYTHING));
+        self.function.set_node_kinds(nodes::kinds());
         self.function.quiets_nans = self.random.flip();
         self.function.params_are_extended = self.random.flip();
         for _ in 0..self.shape.slots {
@@ -645,6 +718,12 @@ impl Generator<'_> {
         value
     }
 
+    /// Of the value that was kept last, which is about to be an operand.
+    fn count_as_used(&mut self) {
+        let is_used = !self.random.one_in(8);
+        self.scope.values.last_mut().unwrap().is_used = is_used;
+    }
+
     /// For what has been learnt of a value that is in scope already.
     fn learn(&mut self, value: Value, class: Class) {
         self.scope.values.push(Known {
@@ -660,6 +739,7 @@ impl Generator<'_> {
             states: self.scope.states.len(),
             spots: self.scope.spots.len(),
             conditions: self.scope.conditions.len(),
+            nodes: self.scope.nodes.len(),
             sum: self.sum,
         }
     }
@@ -676,25 +756,28 @@ impl Generator<'_> {
         self.scope.states.truncate(mark.states);
         self.scope.spots.truncate(mark.spots);
         self.scope.conditions.truncate(mark.conditions);
+        self.scope.nodes.truncate(mark.nodes);
         self.sum = mark.sum;
     }
 
     /// Prefers recent values.
-    fn find(&mut self, wanted: impl Fn(Class) -> bool) -> Option<(Value, Class)> {
+    fn find_position(&mut self, wanted: impl Fn(Class) -> bool) -> Option<usize> {
         let count = self.scope.values.len();
         let skipped = match self.random.below(4) {
             0 => 0,
             1 | 2 => self.random.below(count.min(6) + 1),
             _ => self.random.below(count + 1),
         };
-        let (older, newer) = self.scope.values.split_at_mut(count - skipped);
-        let found = older
-            .iter_mut()
-            .rev()
-            .chain(newer)
-            .find(|known| wanted(known.class))?;
-        found.is_used = true;
-        Some((found.value, found.class))
+        let mut positions = (0..count - skipped).rev().chain(count - skipped..count);
+        let found = positions.find(|&position| wanted(self.scope.values[position].class))?;
+        self.scope.values[found].is_used = true;
+        Some(found)
+    }
+
+    fn find(&mut self, wanted: impl Fn(Class) -> bool) -> Option<(Value, Class)> {
+        let found = self.find_position(wanted)?;
+        let Known { value, class, .. } = self.scope.values[found];
+        Some((value, class))
     }
 
     fn leaks(&mut self) -> bool {
@@ -747,7 +830,7 @@ impl Generator<'_> {
     /// Replaces NaNs by the canonical one, unless they are determined.
     fn settle(&mut self, value: Value, class: Class) -> Value {
         let ty = class.ty();
-        if class.has_determined_bits() {
+        if class.has_determined_bits() || ty.is_int() {
             return value;
         }
         let settled = if let Class::LooseLanes(width) = class {

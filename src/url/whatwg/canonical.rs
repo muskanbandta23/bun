@@ -2,7 +2,8 @@
 
 use crate::authority::leading_port;
 use crate::class::{
-    self, BACKSLASH, DIGIT_OR_X, FRAGMENT, HOST_SCAN, PATH, SPECIAL_QUERY, TAIL_SCAN,
+    self, BACKSLASH, DIGIT_OR_X, FRAGMENT, HOST_SCAN, PATH, SPECIAL_QUERY, TAB_OR_NEWLINE,
+    TAIL_SCAN,
 };
 use crate::components::{Components, State};
 use crate::parser::Step;
@@ -17,10 +18,10 @@ pub(crate) enum Outcome {
     Unfinished(Components, Step),
 }
 
-/// And where the host starts.
+/// And where the host starts. Input of up to 16 bytes is left to the parser: the scans make a detour for it.
 #[inline(always)]
 fn scheme(input: &[u8]) -> Option<(Scheme, usize)> {
-    let start = u64::from_le_bytes(*input.first_chunk()?);
+    let start = u64::from_le_bytes(*input.first_chunk::<17>()?.first_chunk()?);
     if start as u32 != u32::from_le_bytes(*b"http") {
         return (start == u64::from_le_bytes(*b"file:///")).then_some((Scheme::File, 7));
     }
@@ -38,9 +39,15 @@ fn scheme(input: &[u8]) -> Option<(Scheme, usize)> {
 /// For a domain of which a label starts with a digit or an `x`.
 #[inline(never)]
 fn stays_as_it_is(domain: &[u8], punycode: Punycode) -> bool {
-    ipv4::is_serialized(domain)
-        || (!ipv4::ends_in_number(domain)
-            && (punycode == Punycode::Unchecked || domain::has_valid_ace_labels(domain)))
+    !ipv4::ends_in_number(domain)
+        && (punycode == Punycode::Unchecked || domain::has_valid_ace_labels(domain))
+}
+
+/// The length of the IPv4 address that the authority starts with, if that is all of the host.
+#[inline(never)]
+fn address_length(authority: &[u8]) -> Option<usize> {
+    ipv4::serialized_length(authority)
+        .filter(|&length| matches!(authority.get(length), None | Some(b'/' | b':')))
 }
 
 /// Where the host ends, the port, and where the path starts.
@@ -59,6 +66,11 @@ fn host_and_port(
         };
         if class::host_traits(input[at]) & DIGIT_OR_X == 0 {
             break (at, input[at]);
+        }
+        if at == host_start
+            && let Some(length) = address_length(&input[at..])
+        {
+            break (at + length, input.get(at + length).copied().unwrap_or(b'/'));
         }
         is_plain = false;
     };
@@ -117,8 +129,8 @@ pub(crate) fn recognize(input: &[u8], punycode: Punycode) -> Outcome {
     let Some((host_end, port, path_start)) =
         host_and_port(input, (scheme, host_start), host_stops, punycode)
     else {
-        let step = match input.get(host_start) {
-            Some(b'/' | b'\\') => Step::Start,
+        let step = match input[host_start] {
+            b'/' | b'\\' => Step::Start,
             _ => Step::Authority(host_start as u32),
         };
         return Outcome::Unfinished(parts, step);
@@ -135,16 +147,16 @@ pub(crate) fn recognize(input: &[u8], punycode: Punycode) -> Outcome {
     }
 
     let (mut path_end, mut query_end) = (length, length);
-    let mut changes = PATH | BACKSLASH;
+    let mut changes = PATH | BACKSLASH | TAB_OR_NEWLINE;
     for at in TAIL_SCAN.resume_scan(input, host_start + 64, tail_stops) {
         let byte = input[at];
         if byte == b'?' && path_end == length {
             path_end = at;
-            changes = SPECIAL_QUERY;
+            changes = SPECIAL_QUERY | TAB_OR_NEWLINE;
         } else if byte == b'#' && query_end == length {
             path_end = path_end.min(at);
             query_end = at;
-            changes = FRAGMENT;
+            changes = FRAGMENT | TAB_OR_NEWLINE;
         } else if at > path_start
             && (class::is_in(changes, byte)
                 || (path_end == length

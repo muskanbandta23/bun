@@ -9,6 +9,8 @@ namespace Engine {
 ALWAYS_INLINE WTF::StringImpl* implOrEmpty(const WTF::String& string) { return string.impl() ? string.impl() : WTF::StringImpl::empty(); }
 ALWAYS_INLINE WTF::StringImpl* leak(WTF::String&& string) { return string.releaseImpl().leakRef(); }
 ALWAYS_INLINE WTF::StringImpl* leakOrEmpty(WTF::String&& string) { return string.impl() ? leak(WTF::move(string)) : WTF::StringImpl::empty(); }
+ALWAYS_INLINE WTF::UniquedStringImpl* const* addressOrNull(const JSC::Identifier& name) { return name.isNull() ? nullptr : reinterpret_cast<WTF::UniquedStringImpl* const*>(&name); }
+ALWAYS_INLINE WTF::UniquedStringImpl* const* addressOrEmpty(const JSC::Identifier& name) { return addressOrNull(name.isNull() ? CommonNamesPointer()->emptyIdentifier : name); }
 
 // Around a call that may leave an exception, which the caller has to look for.
 class MayThrow {

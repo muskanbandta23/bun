@@ -76,6 +76,19 @@ fn main() {
         native.flag("-march=nehalem");
     }
 
+    // With `-Clinker-plugin-lto` the Rust code reaches the linker as bitcode; the kernels have to as well, or a
+    // call into one stays a call. The archiver then has to be the one that reads bitcode.
+    if env::var("CARGO_ENCODED_RUSTFLAGS")
+        .or_else(|_| env::var("RUSTFLAGS"))
+        .is_ok_and(|flags| flags.contains("linker-plugin-lto"))
+    {
+        native.flag("-flto=thin").flag("-fno-split-lto-unit");
+        if env::var_os("AR").is_none() {
+            native.archiver("llvm-ar");
+        }
+    }
+    println!("cargo:rerun-if-env-changed=CARGO_ENCODED_RUSTFLAGS");
+
     // A kernel includes "root.h", which is looked for beside the source first: the copy finds this crate's.
     for name in KERNELS.iter().chain(&HEADERS) {
         let source = bindings.join(name);

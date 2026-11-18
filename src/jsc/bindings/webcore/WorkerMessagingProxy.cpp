@@ -40,7 +40,6 @@
 #include "Worker.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSPromise.h>
-#include <JavaScriptCore/OwedOutOfMemoryError.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {

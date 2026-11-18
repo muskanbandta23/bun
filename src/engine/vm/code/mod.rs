@@ -38,6 +38,8 @@ pub use source::{
 };
 pub use speculation::SpeculatedType;
 
+use core::cell::RefCell;
+
 use crate::Vm;
 use crate::heap::Scope;
 
@@ -45,6 +47,7 @@ use crate::heap::Scope;
 pub(crate) struct State {
     compilation: compile::Compilation,
     builtins: builtin::Builtins,
+    last_function: RefCell<Option<dynamic_function::LastFunction>>,
 }
 
 impl crate::services::Service for State {

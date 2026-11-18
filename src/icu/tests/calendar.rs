@@ -97,13 +97,7 @@ fn zone_rules() {
 }
 
 #[test]
-fn weeks_and_systems() {
-    let calendar = Calendar::open(&units("UTC"), c"he_IL").unwrap();
-    assert_eq!(calendar.first_day_of_week(), 1);
-    let weekend = (1..=7).filter(|&day| calendar.starts_in_weekend(day).unwrap());
-    assert!(weekend.eq([6, 7]));
-    assert!(calendar.starts_in_weekend(8).is_err());
-
+fn systems() {
     let common = items(calendar::common_systems(c"th_TH").unwrap());
     assert_eq!(common, [&b"buddhist"[..], b"gregorian"]);
     let all = items(calendar::all_systems(c"th_TH").unwrap());

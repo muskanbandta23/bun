@@ -2,7 +2,9 @@
 
 mod bounds;
 mod construct_ssa;
+mod eliminate_dead_code;
 mod lower_switches;
+mod lower_total_division;
 mod merges;
 mod reaching;
 
@@ -80,8 +82,13 @@ macro_rules! passes {
     };
 }
 
-const QUICK: &[Pass] = passes![construct_ssa, lower_switches];
-const FULL: &[Pass] = passes![construct_ssa, lower_switches];
+const QUICK: &[Pass] = passes![construct_ssa, lower_switches, lower_total_division];
+const FULL: &[Pass] = passes![
+    construct_ssa,
+    eliminate_dead_code,
+    lower_switches,
+    lower_total_division,
+];
 
 impl Pass {
     pub fn pipeline(level: Level) -> &'static [Pass] {

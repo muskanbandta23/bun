@@ -7,7 +7,11 @@ use bun_engine_codegen::ir::{
 };
 
 use super::{Class, Generator, KnownState};
-use crate::support::vocabulary::{Behaviour, SIGNATURE_COUNT, bank_of, signature, token};
+use crate::support::vocabulary::{
+    Behaviour, SIGNATURE_COUNT, SIGNATURES_FOR_HANDLERS, bank_of, signature, token,
+};
+
+pub(super) type Site = (Value, Behaviour);
 
 /// Hands out registers, so that the constraints of a patchpoint can be met.
 struct Witness {
@@ -253,17 +257,17 @@ impl Generator<'_> {
         }
     }
 
-    fn output(&mut self, ty: Type, witness: &mut Witness) -> Output {
-        let kind = self.random.below(8);
+    fn output(&mut self, ty: Type, witness: &mut Witness, may_use_stack: bool) -> Output {
+        let kind = self.random.between(i64::from(!may_use_stack), 7);
         let reusable = witness
             .read_early
             .iter()
             .position(|reg| reg.bank() == bank_of(ty));
-        if let (0, Some(index)) = (kind, reusable) {
+        if let (1, Some(index)) = (kind, reusable) {
             return Output::Fixed(witness.read_early.swap_remove(index));
         }
         match (kind, witness.take(bank_of(ty))) {
-            (1, _) | (_, None) => Output::Outgoing(witness.take_outgoing(ty)),
+            (0, _) | (_, None) => Output::Outgoing(witness.take_outgoing(ty)),
             (2, Some(reg)) => Output::Fixed(reg),
             (3 | 4, _) => Output::EarlyRegister,
             _ => Output::Register,
@@ -303,9 +307,10 @@ impl Generator<'_> {
         if self.random.flip() {
             witness.outgoing_end = 0;
         }
+        let ends_block = data.effects.has(EffectFlags::ENDS_BLOCK);
         let outputs: Vec<_> = results
             .iter()
-            .map(|&ty| (ty, self.output(ty, &mut witness)))
+            .map(|&ty| (ty, self.output(ty, &mut witness, !ends_block)))
             .collect();
         for (count, bank) in [
             (&mut data.scratch_gprs, Bank::Gpr),
@@ -334,11 +339,18 @@ impl Generator<'_> {
         data.flags
             .set(PatchpointFlags::UNEXTENDED_RESULTS, self.random.one_in(4));
         data.flags
+            .set(PatchpointFlags::UNEXTENDED_OPERANDS, self.random.one_in(4));
+        data.flags
             .set(PatchpointFlags::MOVES_STACK_POINTER, self.random.one_in(10));
         (inputs, outputs)
     }
 
-    fn keep_results(&mut self, site: Value, results: &[(Type, Output)], behaviour: Behaviour) {
+    /// Below the site.
+    pub(super) fn keep_results(&mut self, (site, behaviour): Site) {
+        let Op::Patchpoint(patchpoint) = *self.function.op(site) else {
+            unreachable!()
+        };
+        let results = self.function.outputs(patchpoint).to_vec();
         let class_of = |ty: Type| match ty {
             Type::I32 | Type::I64 if behaviour.contains(Behaviour::SMALL_RESULTS) => Class::Index {
                 ty,
@@ -428,7 +440,7 @@ impl Generator<'_> {
         }
         let (inputs, outputs) = self.constrain(&mut data, &operands, &results);
         let site = self.builder().patchpoint(&data, &inputs, &outputs);
-        self.keep_results(site, &outputs, behaviour);
+        self.keep_results((site, behaviour));
     }
 
     pub(super) fn object_from_patchpoint(&mut self) -> Value {
@@ -453,14 +465,25 @@ impl Generator<'_> {
         self.builder().patchpoint(&data, &inputs, &[]);
     }
 
-    pub(super) fn terminal_patchpoint(&mut self, successors: &[Successor<'_>], chooser: Value) {
+    pub(super) fn terminal_patchpoint(
+        &mut self,
+        successors: &[Successor<'_>],
+        chooser: Value,
+    ) -> Site {
         let mut behaviour = Behaviour::empty();
+        behaviour.set(Behaviour::SMALL_RESULTS, self.random.flip());
         behaviour.set(Behaviour::GOES_BY_OPERAND, self.random.flip());
         let mut effects = self
             .random
             .pick(&[Effects::NONE, Effects::NONE, Effects::CALL]);
+        effects.flags |= EffectFlags::ENDS_BLOCK;
+        let mut results = Vec::new();
         if successors.is_empty() {
             effects.flags |= EffectFlags::EXITS;
+        } else {
+            for _ in 0..self.random.pick(&[0, 1, 1, 1, 2, 3]) {
+                results.push(self.data_type());
+            }
         }
         let mut operands = vec![chooser];
         for _ in 0..self.random.below(3) {
@@ -470,9 +493,10 @@ impl Generator<'_> {
         if effects.has(EffectFlags::EXITS) {
             data.state = self.state(true, &[]);
         }
-        let (inputs, _) = self.constrain(&mut data, &operands, &[]);
-        self.builder()
-            .terminal_patchpoint(&data, &inputs, &[], successors);
+        let (inputs, outputs) = self.constrain(&mut data, &operands, &results);
+        let mut builder = self.builder();
+        let site = builder.terminal_patchpoint(&data, &inputs, &outputs, successors);
+        (site, behaviour)
     }
 
     pub(super) fn signature_index(&mut self) -> usize {
@@ -483,6 +507,16 @@ impl Generator<'_> {
 
     pub(super) fn call_statement(&mut self) {
         let index = self.signature_index();
+        let site = self.call(index, None);
+        self.keep_results(site);
+    }
+
+    pub(super) fn terminal_call(&mut self, successors: &[Successor<'_>]) -> Site {
+        let index = self.random.pick(&SIGNATURES_FOR_HANDLERS);
+        self.call(index, Some(successors))
+    }
+
+    fn call(&mut self, index: usize, successors: Option<&[Successor<'_>]>) -> Site {
         let signature = signature(self.target, index);
         let callee = 2 * index + self.random.below(2);
         let mut operands = Vec::new();
@@ -523,8 +557,8 @@ impl Generator<'_> {
         let mut behaviour = Behaviour::empty();
         behaviour.set(Behaviour::SMALL_RESULTS, self.random.flip());
         let effects = match self.random.below(6) {
-            0 => Effects::NONE,
-            1 => Effects {
+            0 if successors.is_none() => Effects::NONE,
+            1 if successors.is_none() => Effects {
                 reads: self.some_heap(),
                 writes: self.some_heap(),
                 flags: EffectFlags::empty(),
@@ -541,9 +575,11 @@ impl Generator<'_> {
         if effects.has(EffectFlags::EXITS) {
             data.state = self.state(true, &[]);
         }
-        let site = self
-            .builder()
-            .patchpoint(&data, &operands, &signature.results);
-        self.keep_results(site, &signature.results, behaviour);
+        let (mut builder, results) = (self.builder(), &signature.results);
+        let site = match successors {
+            Some(successors) => builder.terminal_patchpoint(&data, &operands, results, successors),
+            None => builder.patchpoint(&data, &operands, results),
+        };
+        (site, behaviour)
     }
 }

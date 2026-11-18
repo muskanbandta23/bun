@@ -453,8 +453,15 @@ impl<'a> Interpreter<'a> {
             function.operands(site),
             function.state(function.state_of(site)),
         ]);
-        self.machine
-            .invoke(function, site, &self.uses, &mut self.results)
+        let successor = self
+            .machine
+            .invoke(function, site, &self.uses, &mut self.results)?;
+        let first = self.first_element[site.index()] as usize;
+        self.elements[first..first + self.results.len()].copy_from_slice(&self.results);
+        if let [result] = self.results[..] {
+            self.values[site.index()] = self.decide(result);
+        }
+        Ok(successor)
     }
 
     fn choose_successor(&mut self, function: &Function, last: Value) -> Result<usize, Stop> {
@@ -723,9 +730,7 @@ impl<'a> Interpreter<'a> {
             },
             Op::Patchpoint(_) => {
                 self.invoke(function, value)?;
-                let first = self.first_element[value.index()] as usize;
-                self.elements[first..first + self.results.len()].copy_from_slice(&self.results);
-                self.results.first().copied().unwrap_or(NOTHING)
+                self.values[value.index()]
             }
             Op::VectorUnary(op, a) => datum::vector_unary(op, relaxed, self.get(a)),
             Op::VectorBinary(op, [a, b]) => {

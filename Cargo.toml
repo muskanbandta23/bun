@@ -152,6 +152,7 @@ members = [
   "src/engine/bytecode",
   "src/engine/asm",
   "src/engine/exec_memory",
+  "src/engine/platform",
   "src/engine/codegen",
   "src/engine/vm",
   "src/engine/interpreter",
@@ -438,6 +439,7 @@ bun_engine_syntax = { path = "src/engine/syntax" }
 bun_engine_bytecode = { path = "src/engine/bytecode" }
 bun_engine_asm = { path = "src/engine/asm" }
 bun_engine_exec_memory = { path = "src/engine/exec_memory" }
+bun_engine_platform = { path = "src/engine/platform" }
 bun_engine_codegen = { path = "src/engine/codegen" }
 bun_engine_vm = { path = "src/engine/vm" }
 bun_engine_interpreter = { path = "src/engine/interpreter" }
@@ -629,6 +631,8 @@ opt-level = 2
 [profile.dev.package.bun_engine_embed]
 opt-level = 2
 [profile.dev.package.bun_engine_exec_memory]
+opt-level = 2
+[profile.dev.package.bun_engine_platform]
 opt-level = 2
 [profile.dev.package.bun_engine_inspector]
 opt-level = 2

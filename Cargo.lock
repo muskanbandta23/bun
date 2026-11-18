@@ -804,6 +804,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_engine_platform"
+version = "0.0.0"
+dependencies = [
+ "bun_alloc",
+ "bun_core",
+ "bun_engine_standalone",
+ "bun_sys",
+ "bun_threading",
+ "bun_windows_sys",
+ "libc",
+]
+
+[[package]]
 name = "bun_engine_regexp"
 version = "0.0.0"
 dependencies = [
@@ -845,6 +858,7 @@ name = "bun_engine_standalone"
 version = "0.0.0"
 dependencies = [
  "bun_alloc",
+ "bun_core",
  "cc",
 ]
 

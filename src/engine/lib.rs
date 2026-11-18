@@ -11,7 +11,8 @@ fn initialize_realm_slot(cx: &Cx, slot: RealmSlot) {
     let _ = bun_engine_vm::initialize_module_slot(cx, slot)
         || bun_engine_builtins::initialize_slot(cx, slot)
         || bun_engine_intl::initialize_slot(cx, slot)
-        || bun_engine_temporal::initialize_slot(cx, slot);
+        || bun_engine_temporal::initialize_slot(cx, slot)
+        || bun_engine_wasm::initialize_slot(cx, slot);
 }
 
 fn hooks() -> Hooks {

@@ -9,9 +9,11 @@ mod stringify;
 mod syntax_error;
 mod token;
 
-use bun_engine_text::{CodeUnit, Text};
+use bun_engine_text::Text;
 
-use crate::{Cx, JsResult, Thrown, Value};
+use crate::heap::Survivors;
+use crate::services::Service;
+use crate::{Cx, JsResult, Thrown, Value, Visitor, Vm};
 use parser::Parser;
 use syntax_error::SyntaxError;
 
@@ -19,6 +21,21 @@ pub use lines::{LinesEnd, ParsedLines, parse_lines};
 pub use raw::RawJson;
 pub use reviver::parse_with_reviver;
 pub use stringify::stringify;
+
+#[derive(Default)]
+pub(super) struct State {
+    parser: parser::State,
+}
+
+impl Service for State {
+    fn visit(&self, visitor: &mut Visitor) {
+        self.parser.visit(visitor);
+    }
+
+    fn reconcile_weak_references(&self, vm: &Vm, survivors: &Survivors) {
+        self.parser.reconcile_weak_references(vm, survivors);
+    }
+}
 
 #[derive(Clone, Copy)]
 pub enum Source<'a> {
@@ -34,40 +51,34 @@ impl<'a> From<Text<'a>> for Source<'a> {
     }
 }
 
-trait Encoding {
-    type Unit: CodeUnit;
-    const IS_UTF8: bool = false;
+impl Source<'_> {
+    #[inline(always)]
+    fn len(self) -> usize {
+        with_units!(self, |units, _| units.len())
+    }
 }
 
-struct Latin1;
-struct Utf16;
-struct Utf8;
-
-impl Encoding for Latin1 {
-    type Unit = u8;
-}
-
-impl Encoding for Utf16 {
-    type Unit = u16;
-}
-
-impl Encoding for Utf8 {
-    type Unit = u8;
-    const IS_UTF8: bool = true;
-}
-
-/// Calls a function that is generic over the `Encoding` with the units of a `Source` as its second argument.
-macro_rules! with_source {
-    ($source:expr, $function:ident($cx:expr, _ $(, $argument:expr)*)) => {
+/// Runs an expression over the units of a `Source` as a slice, and whether they are UTF-8, once for each encoding.
+macro_rules! with_units {
+    ($source:expr, |$units:ident, $is_utf8:pat_param| $body:expr) => {
         match $source {
-            Source::Text(Text::Latin1(units)) => $function::<Latin1>($cx, units $(, $argument)*),
-            Source::Text(Text::Utf16(units)) => $function::<Utf16>($cx, units $(, $argument)*),
-            Source::Utf8(units) => $function::<Utf8>($cx, units $(, $argument)*),
+            Source::Text(Text::Latin1($units)) => {
+                let $is_utf8 = false;
+                $body
+            }
+            Source::Text(Text::Utf16($units)) => {
+                let $is_utf8 = false;
+                $body
+            }
+            Source::Utf8($units) => {
+                let $is_utf8 = true;
+                $body
+            }
         }
     };
 }
 
-use with_source;
+use with_units;
 
 enum Failure {
     Syntax(SyntaxError),
@@ -90,18 +101,20 @@ impl Failure {
     }
 }
 
-fn parse_units<E: Encoding>(cx: &Cx, units: &[E::Unit]) -> Result<Value, Failure> {
-    Parser::<E, ()>::run(cx, units, (), |parser| parser.text())
+fn parse_text(cx: &Cx, source: Source<'_>) -> Result<Value, Failure> {
+    Parser::run(cx, source, (), |parser, tables, cursor| {
+        parser.text(tables, cursor)
+    })
 }
 
 /// `JSON.parse` without a reviver.
 pub fn parse(cx: &Cx, source: Source<'_>) -> JsResult<Value> {
-    with_source!(source, parse_units(cx, _)).map_err(|failure| failure.throw(cx, source))
+    parse_text(cx, source).map_err(|failure| failure.throw(cx, source))
 }
 
 /// `None` if it is not JSON text.
 pub fn try_parse(cx: &Cx, source: Source<'_>) -> JsResult<Option<Value>> {
-    match with_source!(source, parse_units(cx, _)) {
+    match parse_text(cx, source) {
         Ok(value) => Ok(Some(value)),
         Err(Failure::Syntax(_)) => Ok(None),
         Err(Failure::Thrown(thrown)) => Err(thrown),

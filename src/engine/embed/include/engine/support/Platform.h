@@ -8,7 +8,6 @@
 #define ENABLE(name) (defined ENABLE_##name && ENABLE_##name)
 #define USE(name) (defined USE_##name && USE_##name)
 #define HAVE(name) (defined HAVE_##name && HAVE_##name)
-#define BENABLE(name) (defined BENABLE_##name && BENABLE_##name)
 
 #include "engine/support/Compiler.h"
 

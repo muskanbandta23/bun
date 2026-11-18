@@ -9,7 +9,7 @@ import type { Config } from "./config.ts";
 import { writeIfChanged } from "./fs.ts";
 
 /** Any quoted name, not `#include` lines alone: the code generators and the schemas keep some in string literals. */
-const headerName = /[<"]((?:JavaScriptCore|wtf|bmalloc)\/[\w/-]+\.h)[>"]/g;
+const headerName = /[<"]((?:JavaScriptCore|wtf)\/[\w/-]+\.h)[>"]/g;
 
 function targetOf(name: string): string {
   if (name === "wtf/SIMDUTF.h") return "<simdutf.h>";

@@ -292,8 +292,12 @@ impl ShapeSpec {
         self
     }
 
+    pub(super) const fn instance_header(self) -> u32 {
+        instance_header(self.indexing_mode, self.cell_type, self.flags)
+    }
+
     pub(super) fn identity(self) -> (&'static Class, u32) {
-        let header = instance_header(self.indexing_mode, self.cell_type, self.flags);
+        let header = self.instance_header();
         let capacity = u32::from(self.inline_capacity);
         (self.class, header & 0x00ff_ffff | capacity << 24)
     }
@@ -950,6 +954,16 @@ impl Shape {
         self.did_add_property(name, attributes);
         self.change_table(|table| table.set_attributes(name, attributes))
             .unwrap_or(PropertyOffset::INVALID)
+    }
+
+    /// The shape has neither properties nor instances yet, and nothing has been removed from the table.
+    pub(super) fn adopt_table(&self, table: PropertyTable) {
+        for (name, offset, attributes) in table.iter() {
+            self.did_add_property(name, attributes);
+            self.set_max_offset(offset);
+        }
+        self.table.set(Some(Rc::new(table)));
+        self.set_flags(ShapeFlags::IS_PINNED);
     }
 
     /// The caller makes room in the only instance and then raises `max_offset`.

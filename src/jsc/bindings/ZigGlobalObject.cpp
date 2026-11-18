@@ -3447,7 +3447,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0 });
     for (auto& entry : privateFunctions)
         staticGlobals.append(GlobalPropertyInfo(builtinNames.privateName(entry.name), JSFunction::create(vm, this, entry.length, String(), entry.function, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
-    staticGlobals.append(GlobalPropertyInfo(vm.propertyNames->builtinNames().ArrayBufferPrivateName(), arrayBufferConstructor(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
     staticGlobals.append(GlobalPropertyInfo(builtinNames.internalModuleRegistryPrivateName(), this->internalModuleRegistry(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
     staticGlobals.append(GlobalPropertyInfo(builtinNames.processBindingConstantsPrivateName(), this->processBindingConstants(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
     staticGlobals.append(GlobalPropertyInfo(builtinNames.requireMapPrivateName(), this->requireMap(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0));

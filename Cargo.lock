@@ -955,6 +955,7 @@ dependencies = [
  "bun_engine_text",
  "bun_engine_unicode",
  "bun_highway",
+ "bun_pod",
  "bun_simdutf_sys",
  "bun_threading",
  "getrandom",

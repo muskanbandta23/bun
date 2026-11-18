@@ -96,7 +96,7 @@ impl InternalFunction {
 
     pub fn name(&self) -> StringRef {
         self.original_name()
-            .map_or_default(|name| name.to_string_without_resolving())
+            .map_or_default(|name| name.to_string_without_collecting())
     }
 }
 

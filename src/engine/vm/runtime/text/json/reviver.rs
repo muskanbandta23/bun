@@ -2,30 +2,24 @@
 
 use core::ops::Range;
 
-use bun_engine_text::{Identifier, PropertyName, Text, names};
+use bun_engine_text::{Identifier, PropertyName, names};
 
+use super::Failure;
 use super::parser::Parser;
 use super::records::{RecordBuilder, Records};
-use super::{Encoding, Failure, Latin1, Utf16};
 use crate::{
     Attributes, Cx, DontEnumMode, FastHashMap, Gc, JsFinalObject, JsObject, JsResult, JsString,
     PropertyNameMode, Shape, StringView, Value, is_array, root_vec,
 };
 
-fn parse_with_records<E: Encoding>(cx: &Cx, units: &[E::Unit]) -> Result<Records, Failure> {
-    Parser::<E, _>::run(cx, units, RecordBuilder::default(), |parser| {
-        parser.text()?;
-        Ok(parser.recorder.finish(cx)?)
-    })
-}
-
 /// `JSON.parse` with a reviver that can be called.
 pub fn parse_with_reviver(cx: &mut Cx, source: &StringView, reviver: Value) -> JsResult<Value> {
-    let records = match source.text() {
-        Text::Latin1(units) => parse_with_records::<Latin1>(cx, units),
-        Text::Utf16(units) => parse_with_records::<Utf16>(cx, units),
-    };
-    let records = records.map_err(|failure| failure.throw(cx, source.text().into()))?;
+    let (text, builder) = (source.text().into(), RecordBuilder::default());
+    let records = Parser::run(cx, text, builder, |parser, tables, cursor| {
+        parser.text(tables, cursor)?;
+        Ok(parser.recorder.finish(cx)?)
+    });
+    let records = records.map_err(|failure: Failure| failure.throw(cx, text))?;
     let empty = cx.object_shape();
     let (context_shape, _) = empty.add_property_transition(cx, names::source, Attributes::NONE);
     let walk = Walk {

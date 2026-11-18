@@ -5,7 +5,7 @@ use core::cell::Cell;
 use bun_engine_platform::{clock, machine};
 
 use super::collector::log;
-use super::{BLOCK_SIZE, CellState, Heap, JsCell, MutatorState, Scope};
+use super::{BLOCK_SIZE, CellState, DeferCollection, Heap, JsCell, MutatorState, Scope};
 use crate::options;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -157,6 +157,13 @@ impl Policy {
                 || self.last_oversized.get() <= allocated / 3)
     }
 
+    /// Whether a collection would become due before so much more is allocated, and has something to find now.
+    fn is_due_ahead_of(&self, bytes: usize) -> bool {
+        let (allocated, allowed) = (self.allocated.get(), self.allowed());
+        allocated.saturating_add(bytes) > allowed
+            && allocated.saturating_sub(self.last_oversized.get()) >= allowed / 8
+    }
+
     pub(super) fn choose_scope(&self, requested: Option<Scope>) -> Scope {
         if !options().use_generational_gc || options().force_mini_vm_mode {
             return Scope::Full;
@@ -263,6 +270,20 @@ impl Heap {
         } else {
             self.schedule_eden_collection();
         }
+    }
+
+    /// For making about so many bytes of cells that are all alive in the end, which a collection in the middle of it
+    /// could only waste time on. May collect now.
+    #[inline]
+    pub(crate) fn defer_collection_for(&self, bytes: usize) -> DeferCollection<'_> {
+        #[cfg(debug_assertions)]
+        self.collect_if_stressed();
+        if (self.did_defer_collection.get() || bytes >= BLOCK_SIZE)
+            && (self.policy.is_due() || self.policy.is_due_ahead_of(bytes))
+        {
+            self.collect(None);
+        }
+        self.defer_collection()
     }
 
     pub(super) fn will_allocate_slowly(&self) {

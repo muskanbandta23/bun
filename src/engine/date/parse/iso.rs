@@ -19,6 +19,13 @@ pub(super) enum Attempt {
 
 #[inline(always)]
 pub(super) fn parse<T: CodeUnit>(cursor: &mut Cursor<'_, T>) -> Attempt {
+    if let Some(time) = cursor.peek_chunk().and_then(usual_date_and_time) {
+        cursor.advance(USUAL_LENGTH);
+        return fraction(cursor, i32::MAX)
+            .and_then(|millisecond| zone(cursor, time + i64::from(millisecond)))
+            .map_or(Attempt::Invalid, Attempt::Complete);
+    }
+
     let mut numbers = [1; 3];
     let unfinished = |numbers, count| Attempt::Unfinished { numbers, count };
 
@@ -51,25 +58,68 @@ pub(super) fn parse<T: CodeUnit>(cursor: &mut Cursor<'_, T>) -> Attempt {
     if !cursor.skip_letter(b't') {
         return unfinished(numbers, count);
     }
-    time_and_zone(cursor, midnight).map_or(Attempt::Invalid, Attempt::Complete)
+    time_of_day(cursor)
+        .and_then(|time| zone(cursor, midnight + i64::from(time)))
+        .map_or(Attempt::Invalid, Attempt::Complete)
 }
 
+const USUAL_LENGTH: usize = "2022-02-01T13:05:09".len();
+
+/// Eight characters at a time.
 #[inline(always)]
-fn time_and_zone<T: CodeUnit>(cursor: &mut Cursor<'_, T>, midnight: i64) -> Option<Parsed> {
+fn usual_date_and_time<T: CodeUnit>(units: &[T; USUAL_LENGTH]) -> Option<i64> {
+    // In the place of each digit, ten times its value and that of the next character.
+    let pairs = |start: usize, least: &[u8; 8], most: &[u8; 8]| {
+        let bytes = core::array::from_fn(|index| units[start + index].to_u16().min(0xff) as u8);
+        let [bytes, least, most] = [bytes, *least, *most].map(u64::from_le_bytes);
+        let digits = bytes ^ least;
+        let room = 0x7f7f_7f7f_7f7f_7f7f - (most ^ least);
+        let is_match = (digits.wrapping_add(room) | digits) & 0x8080_8080_8080_8080 == 0;
+        is_match.then(|| (digits * 10 + (digits >> 8)).to_le_bytes())
+    };
+    let [century, _, year, _, _, month @ 1..=12, ..] = pairs(0, b"0000-00-", b"9999-19-")? else {
+        return None;
+    };
+    let [day @ 1..=31, ..] = pairs(8, b"00T00:00", b"39T29:59")? else {
+        return None;
+    };
+    let [hour @ 0..=23, _, _, minute, _, _, second, _] = pairs(11, b"00:00:00", b"29:59:59")?
+    else {
+        return None;
+    };
+    let days = days_from_civil(i32::from(century) * 100 + i32::from(year), month, day);
+    let seconds = (i64::from(hour) * 60 + i64::from(minute)) * 60 + i64::from(second);
+    Some((days * 86_400 + seconds) * 1000)
+}
+
+/// In milliseconds.
+#[inline(always)]
+fn time_of_day<T: CodeUnit>(cursor: &mut Cursor<'_, T>) -> Option<i32> {
     let hour = cursor.fixed::<2>(0, 24)?;
-    let max = if hour == 24 { 0 } else { 59 };
+    let (max, max_fraction) = if hour == 24 { (0, 0) } else { (59, i32::MAX) };
     cursor.skip(b':').then_some(())?;
     let minute = cursor.fixed::<2>(0, max)?;
     let (mut second, mut millisecond) = (0, 0);
     if cursor.skip(b':') {
         second = cursor.fixed::<2>(0, max)?;
-        if cursor.skip(b'.') {
-            let fraction = cursor.number().filter(|it| hour < 24 || it.value == 0)?;
-            millisecond = fraction.milliseconds();
-        }
+        millisecond = fraction(cursor, max_fraction)?;
     }
-    let time = midnight + i64::from(((hour * 60 + minute) * 60 + second) * 1000 + millisecond);
+    Some(((hour * 60 + minute) * 60 + second) * 1000 + millisecond)
+}
 
+/// In milliseconds. Zero if there is none.
+#[inline(always)]
+fn fraction<T: CodeUnit>(cursor: &mut Cursor<'_, T>, max_digits: i32) -> Option<i32> {
+    if !cursor.skip(b'.') {
+        return Some(0);
+    }
+    let digits = cursor.number().filter(|it| it.value <= max_digits)?;
+    Some(digits.milliseconds())
+}
+
+/// Through the end of the text.
+#[inline(always)]
+fn zone<T: CodeUnit>(cursor: &mut Cursor<'_, T>, time: i64) -> Option<Parsed> {
     let parsed = if cursor.skip_letter(b'z') {
         Parsed::Utc(time)
     } else if let Some(sign) = cursor.sign() {

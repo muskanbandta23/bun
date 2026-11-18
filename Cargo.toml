@@ -1,3 +1,5 @@
+cargo-features = ["profile-rustflags"]
+
 [workspace]
 resolver = "2"
 members = [
@@ -20,9 +22,7 @@ members = [
   "src/paths",
   "src/resolver",
   "src/safety",
-  "src/aot",
   "src/aot/absent",
-  "src/aot/builtins",
   "src/aot/interface",
   "src/sema",
   "src/sema/baselines",
@@ -140,7 +140,6 @@ members = [
   "src/spawn",
   "src/spawn_sys",
   "src/bunfig",
-  "src/builtin_sources",
   "src/icu",
   "src/engine/text",
   "src/engine/unicode",
@@ -154,7 +153,6 @@ members = [
   "src/engine/asm",
   "src/engine/exec_memory",
   "src/engine/codegen",
-  "src/engine/heap",
   "src/engine/vm",
   "src/engine/interpreter",
   "src/engine/builtins",
@@ -168,6 +166,7 @@ members = [
   "src/engine/wasm",
   "src/engine/inspector",
   "src/engine",
+  "src/engine/embed",
   "src/engine/macros",
   "src/engine/standalone",
   "src/engine/shell",
@@ -197,15 +196,20 @@ edition = "2024"
 # so `catch_unwind` is unreachable for Rust panics regardless, and no landing
 # pads means smaller `.pdata`/`.xdata`.
 #
+# Frame pointers, as the C++ keeps them: `bun_core::return_address()`, profilers and crash reports walk them. In the
+# profiles and not in RUSTFLAGS, because rustc takes the strongest setting it is given in any order, and only a
+# profile's flags can be replaced for one package (`bun_engine_interpreter` below).
 [profile.release]
 lto = "off"
 codegen-units = 1
 debug = "line-tables-only"
 strip = "none"
 panic = "abort"
+rustflags = ["-Cforce-frame-pointers=yes"]
 
 [profile.dev]
 panic = "abort"
+rustflags = ["-Cforce-frame-pointers=yes"]
 # Split DWARF: debuginfo goes into `.dwo` files alongside each `.o` instead of
 # being packed into the rlibs. Per-crate codegen writes less to disk, and `gdb`/`lldb` still resolve full debuginfo via
 # the skeleton CUs (`DW_AT_dwo_name`) pointing into `<target>/deps/*.dwo`.
@@ -246,6 +250,7 @@ strip = "symbols"
 # here the env overrides on `release` would be inherited.
 debug-assertions = false
 overflow-checks = false
+rustflags = []
 
 [workspace.lints.rust]
 # Every rustc warning is an error. Individual lints below can override this
@@ -434,7 +439,6 @@ bun_engine_bytecode = { path = "src/engine/bytecode" }
 bun_engine_asm = { path = "src/engine/asm" }
 bun_engine_exec_memory = { path = "src/engine/exec_memory" }
 bun_engine_codegen = { path = "src/engine/codegen" }
-bun_engine_heap = { path = "src/engine/heap" }
 bun_engine_vm = { path = "src/engine/vm" }
 bun_engine_interpreter = { path = "src/engine/interpreter" }
 bun_engine_builtins = { path = "src/engine/builtins" }
@@ -448,6 +452,7 @@ bun_engine_wasm_runtime = { path = "src/engine/wasm_runtime" }
 bun_engine_wasm = { path = "src/engine/wasm" }
 bun_engine_inspector = { path = "src/engine/inspector" }
 bun_engine = { path = "src/engine" }
+bun_engine_embed = { path = "src/engine/embed" }
 bun_engine_macros = { path = "src/engine/macros" }
 bun_engine_standalone = { path = "src/engine/standalone" }
 bun_errno = { path = "src/errno" }
@@ -461,11 +466,8 @@ bun_md = { path = "src/md" }
 bun_paths = { path = "src/paths" }
 bun_resolver = { path = "src/resolver" }
 bun_safety = { path = "src/safety" }
-bun_aot = { path = "src/aot" }
 bun_aot_absent = { path = "src/aot/absent" }
-bun_aot_builtins = { path = "src/aot/builtins" }
 bun_aot_interface = { path = "src/aot/interface" }
-bun_builtin_sources = { path = "src/builtin_sources" }
 bun_sema = { path = "src/sema" }
 bun_sema_baselines = { path = "src/sema/baselines" }
 bun_sema_driver = { path = "src/sema/driver" }
@@ -604,6 +606,63 @@ opt-level = 3
 # It stands in for vector code that every test program runs over each byte it parses.
 [profile.dev.package.bun_sema_standalone]
 opt-level = 3
+
+# The engine runs every line of JavaScript. Assertions and overflow checks stay on.
+[profile.dev.package.bun_icu]
+opt-level = 2
+[profile.dev.package.bun_engine]
+opt-level = 2
+[profile.dev.package.bun_engine_asm]
+opt-level = 2
+[profile.dev.package.bun_engine_baseline]
+opt-level = 2
+[profile.dev.package.bun_engine_bigint]
+opt-level = 2
+[profile.dev.package.bun_engine_builtins]
+opt-level = 2
+[profile.dev.package.bun_engine_bytecode]
+opt-level = 2
+[profile.dev.package.bun_engine_codegen]
+opt-level = 2
+[profile.dev.package.bun_engine_date]
+opt-level = 2
+[profile.dev.package.bun_engine_embed]
+opt-level = 2
+[profile.dev.package.bun_engine_exec_memory]
+opt-level = 2
+[profile.dev.package.bun_engine_inspector]
+opt-level = 2
+[profile.dev.package.bun_engine_intl]
+opt-level = 2
+[profile.dev.package.bun_engine_number]
+opt-level = 2
+[profile.dev.package.bun_engine_optimizer]
+opt-level = 2
+[profile.dev.package.bun_engine_regexp]
+opt-level = 2
+[profile.dev.package.bun_engine_regexp_jit]
+opt-level = 2
+[profile.dev.package.bun_engine_standalone]
+opt-level = 2
+[profile.dev.package.bun_engine_syntax]
+opt-level = 2
+[profile.dev.package.bun_engine_temporal]
+opt-level = 2
+[profile.dev.package.bun_engine_text]
+opt-level = 2
+[profile.dev.package.bun_engine_unicode]
+opt-level = 2
+[profile.dev.package.bun_engine_vm]
+opt-level = 2
+[profile.dev.package.bun_engine_wasm]
+opt-level = 2
+
+# A bytecode handler that calls nothing runs on the frame of the JavaScript function.
+[profile.dev.package.bun_engine_interpreter]
+opt-level = 2
+rustflags = ["-Zunstable-options", "-Cforce-frame-pointers=non-leaf"]
+[profile.release.package.bun_engine_interpreter]
+rustflags = ["-Zunstable-options", "-Cforce-frame-pointers=non-leaf"]
 
 [profile.release.package.bun_react_compiler]
 opt-level = "s"

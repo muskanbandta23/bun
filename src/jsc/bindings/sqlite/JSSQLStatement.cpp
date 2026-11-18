@@ -1997,10 +1997,7 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
     JSC::JSObject* result;
 
     if (auto* structure = castedThis->_structure.get()) [[likely]] {
-        if (unsigned outOfLineCapacity = structure->outOfLineCapacity()) [[unlikely]]
-            result = JSC::JSFinalObject::createWithButterfly(vm, structure, JSC::Butterfly::create(vm, nullptr, 0, outOfLineCapacity, false, JSC::IndexingHeader(), 0));
-        else
-            result = JSC::constructEmptyObject(vm, structure);
+        result = JSC::constructEmptyObject(vm, structure);
 
         int i = 0;
         for (auto slot : castedThis->columnSlots) {

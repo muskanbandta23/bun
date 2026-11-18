@@ -15,7 +15,6 @@ class WebAssemblyCompileOptions;
 enum class ArrayBufferSharingMode : bool;
 enum class CodeGenerationMode : uint8_t;
 enum class QueuedTaskResult : uint8_t;
-enum class ScriptFetchParametersType : uint8_t;
 enum TypedArrayType : uint8_t;
 class ScriptFetchParameters;
 
@@ -198,8 +197,6 @@ public:
     ENGINE_LAZY_SLOT(Structure, setIteratorStructure, set_iterator_shape)
     ENGINE_LAZY_SLOT(Structure, weakMapStructure, weak_map_shape)
     ENGINE_LAZY_SLOT(Structure, weakSetStructure, weak_set_shape)
-    ENGINE_LAZY_SLOT(Structure, moduleRecordStructure, module_record_shape)
-    ENGINE_LAZY_SLOT(Structure, syntheticModuleRecordStructure, synthetic_module_record_shape)
     ENGINE_LAZY_SLOT(Structure, promiseStructure, promise_shape)
     ENGINE_LAZY_SLOT(Structure, regExpStructure, regexp_shape)
 #undef ENGINE_EAGER_SLOT
@@ -292,6 +289,8 @@ private:
     Engine::Opaque<(Engine::RealmSlot::COUNT - namedSlotCount) * sizeof(JSCell*) + Engine::Layout::globalObjectSizeAfterSlots> m_rest;
 
     // From here on, what only C++ has.
+    // For a class that wants another than the default.
+    LazyProperty<JSGlobalObject, Structure> m_moduleNamespaceObjectStructure;
     std::unique_ptr<Inspector::JSGlobalObjectInspectorController> m_inspectorController;
     bool m_isInspectable { false };
 };

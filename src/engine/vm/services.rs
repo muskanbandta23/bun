@@ -66,6 +66,7 @@ services! {
     caches: caches::State,
     prototype_lookups: crate::ic::PrototypeLookups,
     code: code::State,
+    debugger: crate::debugger::State,
     errors: error::State,
     buffers: runtime::buffers::State,
     collections: runtime::collections::State,

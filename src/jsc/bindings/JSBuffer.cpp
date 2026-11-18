@@ -3672,18 +3672,12 @@ static const HashTableValue JSBufferPrototypeTableValues[]
         this->putDirect(vm, alias_ident, original, PropertyAttribute::Builtin | 0);              \
     } while (false);
 
-// The accessor descriptor JSC's DFG needs, derived from the same template arguments the host
+// The accessor descriptor the JIT needs, derived from the same template arguments the host
 // function is instantiated with so the two cannot disagree.
 template<typename T, bool isLittleEndian, bool isWrite>
 static void registerBufferAccessor(JSC::NativeFunction function)
 {
-    JSC::DFG::DataViewData data {};
-    data.byteSize = sizeof(T);
-    data.isSigned = std::is_signed_v<T> && !std::is_floating_point_v<T>;
-    data.isFloatingPoint = std::is_floating_point_v<T>;
-    data.isResizable = false;
-    data.isLittleEndian = triState(isLittleEndian);
-    JSC::registerBufferAccessor(JSC::toTagged(function), { data, isWrite });
+    JSC::registerBufferAccessor(function, { sizeof(T), std::is_signed_v<T> && !std::is_floating_point_v<T>, std::is_floating_point_v<T>, isLittleEndian, isWrite });
 }
 
 // read(U)Int{LE,BE} / write(U)Int{LE,BE}: the width comes from the byteLength argument, so the JIT
@@ -3691,13 +3685,7 @@ static void registerBufferAccessor(JSC::NativeFunction function)
 template<bool isSigned, bool isLittleEndian, bool isWrite>
 static void registerBufferVarWidthAccessor(JSC::NativeFunction function)
 {
-    JSC::DFG::DataViewData data {};
-    data.byteSize = 0;
-    data.isSigned = isSigned;
-    data.isFloatingPoint = false;
-    data.isResizable = false;
-    data.isLittleEndian = triState(isLittleEndian);
-    JSC::registerBufferAccessor(JSC::toTagged(function), { data, isWrite, /* byteLengthFromArgument */ true });
+    JSC::registerBufferAccessor(function, { 0, isSigned, false, isLittleEndian, isWrite });
 }
 
 // Process-global (the descriptor belongs to the function pointer): once, before the functions are

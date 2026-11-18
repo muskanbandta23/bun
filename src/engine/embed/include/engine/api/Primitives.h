@@ -301,11 +301,13 @@ public:
 };
 ENGINE_CLASS_HAS_TYPE(NumberObject, NumberObjectType);
 
+inline NumberObject* constructNumber(JSGlobalObject* globalObject, JSValue number) { return static_cast<NumberObject*>(number.toObject(globalObject)); }
+
 class BooleanObject : public JSWrapperObject {
 public:
     ENGINE_DECLARE_CLASS(BooleanObject)
 
-    static BooleanObject* create(VM&, Structure*);
+    static BooleanObject* create(VM& vm, Structure* structure) { return Engine::boolean_object_create(vm, structure); }
 };
 ENGINE_CLASS_HAS_TYPE(BooleanObject, BooleanObjectType);
 

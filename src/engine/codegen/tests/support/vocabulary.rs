@@ -14,10 +14,11 @@
 //! 5. Keeping all registers, call a function that clears what the types of these values do not cover, replaces
 //!    addresses in the frame by their counterparts from `memory`, copies the data, the reserved bytes and the slots to
 //!    `Machine::memory`, calls `invoke` with the instruction that [`sites`] has for the token, and copies them back.
-//! 6. Exit, go to the successor, or load the results. With `UNEXTENDED_RESULTS`, fill their upper halves.
+//! 6. Exit, or load the results and go on or to the successor. With `UNEXTENDED_RESULTS`, fill their upper halves.
 //!
 //! Callee `n` has signature `n / 2` of [`signature`]. A direct call names it as `Symbol(n)` or by its address in
-//! `Layout::callees`. The stub finds token and state through its return address.
+//! `Layout::callees`. The stub finds token and state through its return address. A call that ends its block goes to a
+//! handler one time in four, and then has no results.
 
 use std::collections::HashMap;
 
@@ -229,7 +230,14 @@ impl Machine<'_> {
             Some(count) if behaviour.contains(Behaviour::GOES_BY_OPERAND) => {
                 u64::from(uses[0].known()? as u32) % count
             }
-            Some(count) => seed.ok_or(Open)? % count,
+            Some(count) if callee == CALLEE_COUNT => seed.ok_or(Open)? % count,
+            Some(count) if count > 1 && seed.ok_or(Open)? >> 30 & 3 == 0 => {
+                let outputs = function.outputs(patchpoint).iter();
+                results.clear();
+                results.extend(outputs.map(|&(ty, _)| Datum::anything(ty)));
+                1 + seed.ok_or(Open)? % (count - 1)
+            }
+            Some(_) => 0,
         } as usize)
     }
 }
@@ -281,7 +289,9 @@ pub(crate) fn registers(target: Target) -> &'static Registers {
     }
 }
 
-pub(crate) const SIGNATURE_COUNT: usize = 8;
+pub(crate) const SIGNATURE_COUNT: usize = 9;
+/// Keep no register and have no results in memory.
+pub(crate) const SIGNATURES_FOR_HANDLERS: [usize; 2] = [6, 7];
 pub(crate) const CALLEE_COUNT: usize = 2 * SIGNATURE_COUNT;
 
 pub(crate) struct Signature {
@@ -358,6 +368,11 @@ fn describe_signature(registers: &Registers, index: usize) -> Signature {
             (0..4).map(|n| (I64, Input::Outgoing(8 * n))).collect(),
             vec![(I64, first)],
             PatchpointFlags::MOVES_STACK_POINTER,
+        ),
+        7 => keeping_nothing(
+            params(&[I32, I64, F64]),
+            vec![(I32, second), (F64, float), (I64, first)],
+            PatchpointFlags::UNEXTENDED_OPERANDS,
         ),
         _ => {
             let results = [[I32, F32, V128, I64].repeat(4), vec![F64, I64, V128]].concat();

@@ -453,6 +453,7 @@ impl Generator<'_> {
         }
         self.heaps.push((HeapRange::ALL, Heap::EVERYTHING));
         self.function.quiets_nans = self.random.flip();
+        self.function.params_are_extended = self.random.flip();
         for _ in 0..self.shape.slots {
             let size = self.random.pick(&[4, 8, 8, 12, 16, 24, 32]);
             let alignment = self.random.pick(&[4, 8, 16]);

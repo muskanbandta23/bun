@@ -2,27 +2,27 @@ use bun_engine_text::{CodeUnit, MAX_LENGTH};
 
 use super::{Cursor, Parser, Quantifier, Sink, Token, token};
 use crate::Error;
-use crate::tree::{Groups, UNBOUNDED};
+use crate::tree::UNBOUNDED;
 
-/// What a quantifier can follow, and what the sink has yet to be told of it.
-pub(super) enum Atom<Outer> {
+/// What a quantifier can follow.
+#[derive(Clone, Copy)]
+#[repr(u32)]
+pub(super) enum Atom {
     Complete,
-    Class {
-        negated: bool,
-    },
-    Group {
-        outer: Outer,
-        captures: Groups,
-        repeated: Repeated,
-    },
+    /// The sink has yet to be told of its end, as for the following.
+    Class,
+    NegatedClass,
+    Group,
 }
 
-/// What a group is to a quantifier.
-#[derive(Clone, Copy)]
-pub(super) enum Repeated {
-    Atom,
-    Lookbehind,
-    Nothing,
+impl Atom {
+    #[inline(always)]
+    pub(super) fn class(negated: bool) -> Atom {
+        match negated {
+            true => Atom::NegatedClass,
+            false => Atom::Class,
+        }
+    }
 }
 
 impl<S: Sink> Parser<'_, S> {
@@ -30,7 +30,7 @@ impl<S: Sink> Parser<'_, S> {
     pub(super) fn quantify<C: CodeUnit>(
         &mut self,
         cursor: &mut Cursor<C>,
-        atom: Atom<S::Outer>,
+        atom: Atom,
     ) -> Result<(), Error> {
         let quantifier = cursor.quantifier()?;
         if let Some(quantifier) = quantifier {
@@ -38,16 +38,10 @@ impl<S: Sink> Parser<'_, S> {
         }
         match atom {
             Atom::Complete => quantifier.map_or(Ok(()), |it| self.sink.quantify(it)),
-            Atom::Class { negated } => self.sink.close_class(negated, quantifier),
-            Atom::Group {
-                outer,
-                captures,
-                repeated,
-            } => match (repeated, quantifier) {
-                (Repeated::Lookbehind, Some(_)) => Err(Error::QuantifiedLookbehind),
-                (Repeated::Nothing, Some(_)) => Err(Error::NothingToRepeat),
-                _ => self.sink.close(outer, captures, quantifier),
-            },
+            Atom::Class | Atom::NegatedClass => self
+                .sink
+                .close_class(matches!(atom, Atom::NegatedClass), quantifier),
+            Atom::Group => self.close_group(quantifier),
         }
     }
 }

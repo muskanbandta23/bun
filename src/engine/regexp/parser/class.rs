@@ -2,62 +2,76 @@
 
 use bun_engine_text::CodeUnit;
 
-use super::escape::{ClassAtom, Context};
+use super::escape::Context;
 use super::quantifier::Atom;
 use super::{Cursor, Parser, Sink};
 use crate::Error;
 
+const HYPHEN: u32 = b'-' as u32;
+
+/// What is before the hyphen before the cursor.
+#[derive(Clone, Copy)]
+enum RangeStart {
+    Character(u32),
+    Class,
+}
+
 impl<C: CodeUnit> Cursor<'_, C> {
-    /// `unit` is before the cursor.
     #[inline(always)]
-    fn class_atom(&mut self, unit: u32) -> Result<ClassAtom, Error> {
-        match unit == u32::from(b'\\') {
-            true => self.escape(Context::Class),
-            false => Ok(ClassAtom::Character(self.complete_character(unit))),
-        }
+    fn eat_range_hyphen(&mut self) -> bool {
+        let is_range = self.peek() == b'-' && self.peek_at(1) != b']';
+        self.at += usize::from(is_range);
+        is_range
     }
 }
 
 impl<S: Sink> Parser<'_, S> {
     /// After the left bracket.
     #[inline(always)]
-    pub(super) fn class<C: CodeUnit>(
-        &mut self,
-        cursor: &mut Cursor<C>,
-    ) -> Result<Atom<S::Outer>, Error> {
+    pub(super) fn class<C: CodeUnit>(&mut self, cursor: &mut Cursor<C>) -> Result<Atom, Error> {
         let negated = cursor.eat(b'^');
-        let mut before_hyphen = None;
+        let mut range_start = None;
         loop {
             let unit = cursor.next_unit().ok_or(Error::UnterminatedClass)?;
-            if unit == u32::from(b']') {
-                return Ok(Atom::Class { negated });
-            }
-            let atom = cursor.class_atom(unit)?;
-            match (before_hyphen.take(), atom) {
-                (None, _) if cursor.peek() == b'-' && cursor.peek_at(1) != b']' => {
-                    cursor.at += 1;
-                    before_hyphen = Some(atom);
+            let c = if unit == u32::from(b']') {
+                return Ok(Atom::class(negated));
+            } else if unit != u32::from(b'\\') {
+                cursor.complete_character(unit)
+            } else if let Some(c) = cursor.plain_escape() {
+                c
+            } else if let Some(escape) = cursor.class_escape()? {
+                self.sink.class_member(escape)?;
+                match range_start.take() {
+                    None if cursor.eat_range_hyphen() => range_start = Some(RangeStart::Class),
+                    None => {}
+                    Some(start) => self.no_range(start, cursor.is_unicode)?,
                 }
-                (None, _) => self.add_to_class(atom)?,
-                (Some(ClassAtom::Character(first)), ClassAtom::Character(last)) => {
-                    self.class_range(first, last)?;
-                }
-                _ if cursor.is_unicode => return Err(Error::InvalidRange),
-                (Some(first), last) => {
-                    self.add_to_class(first)?;
-                    self.sink.class_character(u32::from(b'-'))?;
-                    self.add_to_class(last)?;
+                continue;
+            } else {
+                cursor.other_escape(Context::Class)?
+            };
+            match range_start.take() {
+                None if cursor.eat_range_hyphen() => range_start = Some(RangeStart::Character(c)),
+                None => self.sink.class_character(c)?,
+                Some(RangeStart::Character(first)) => self.class_range(first, c)?,
+                Some(start) => {
+                    self.no_range(start, cursor.is_unicode)?;
+                    self.sink.class_character(c)?;
                 }
             }
         }
     }
 
-    #[inline(always)]
-    pub(super) fn add_to_class(&mut self, atom: ClassAtom) -> Result<(), Error> {
-        match atom {
-            ClassAtom::Character(c) => self.sink.class_character(c),
-            ClassAtom::Class(escape) => self.sink.class_member(escape),
+    /// CharacterRangeOrUnion of B.1.2 where an end is a class.
+    #[cold]
+    fn no_range(&mut self, start: RangeStart, is_unicode: bool) -> Result<(), Error> {
+        if is_unicode {
+            return Err(Error::InvalidRange);
         }
+        if let RangeStart::Character(c) = start {
+            self.sink.class_character(c)?;
+        }
+        self.sink.class_character(HYPHEN)
     }
 
     #[inline(always)]

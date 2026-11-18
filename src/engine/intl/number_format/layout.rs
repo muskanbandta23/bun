@@ -188,10 +188,15 @@ impl Layout {
         fraction: &[u8],
     ) -> Result<StringRef> {
         let groups = (self.groups.as_ref()).filter(|it| integer.len() >= it.minimum_digits);
-        let (leading, last_group) =
-            integer.split_at(integer.len() - groups.map_or(integer.len(), |it| it.primary_size));
-        let leading = leading.rchunks(groups.map_or(1, |it| it.secondary_size));
-        let separators = leading.len() + usize::from(!fraction.is_empty());
+        let (mut group_size, mut group_separators) = (integer.len(), 0);
+        if let Some(groups) = groups {
+            (group_size, group_separators) = (group_size - groups.primary_size, 1);
+            while group_size > groups.secondary_size {
+                group_size -= groups.secondary_size;
+                group_separators += 1;
+            }
+        }
+        let separators = group_separators + usize::from(!fraction.is_empty());
         let mut out = StringWriter::<T>::try_new(
             affixes.prefix.len()
                 + integer.len()
@@ -201,13 +206,18 @@ impl Layout {
         )?;
 
         let digit = |ascii: u8| T::from_u16_truncating(self.digits[usize::from(ascii & 0xf)]);
-        let group_separator = T::from_u16_truncating(groups.map_or(0, |it| it.separator));
         out.push_mapped(&affixes.prefix, T::from_u16_truncating);
-        for group in leading.rev() {
-            out.push_mapped(group, digit);
-            out.push(group_separator);
+        let mut rest = integer;
+        if let Some(groups) = groups {
+            for _ in 0..group_separators {
+                let group;
+                (group, rest) = rest.split_at(group_size);
+                out.push_mapped(group, digit);
+                out.push(T::from_u16_truncating(groups.separator));
+                group_size = groups.secondary_size;
+            }
         }
-        out.push_mapped(last_group, digit);
+        out.push_mapped(rest, digit);
         if !fraction.is_empty() {
             out.push(T::from_u16_truncating(self.decimal_separator));
             out.push_mapped(fraction, digit);
@@ -243,7 +253,7 @@ impl Groups {
             separator: long.group_separator?,
             primary_size,
             secondary_size,
-            minimum_digits: first_with_groups.group_sizes.iter().sum(),
+            minimum_digits: (primary_size + 1).max(first_with_groups.group_sizes.iter().sum()),
         })
     }
 }

@@ -460,8 +460,7 @@ JSC_DEFINE_HOST_FUNCTION(functionNeverInlineFunction,
     (JSGlobalObject * globalObject,
         CallFrame* callFrame))
 {
-    setNeverInline(callFrame->argument(0));
-    return JSValue::encode(jsUndefined());
+    return JSValue::encode(setNeverInline(globalObject, callFrame));
 }
 
 extern "C" bool Bun__mkdirp(JSC::JSGlobalObject*, const char*);
@@ -575,7 +574,11 @@ JSC_DECLARE_HOST_FUNCTION(functionNoFTL);
 JSC_DEFINE_HOST_FUNCTION(functionNoFTL,
     (JSGlobalObject*, CallFrame* callFrame))
 {
-    setNeverFTLOptimize(callFrame->argument(0));
+    if (callFrame->argumentCount()) {
+        FunctionExecutable* executable = getExecutableForFunction(callFrame->argument(0));
+        if (executable)
+            executable->setNeverFTLOptimize(true);
+    }
     return JSValue::encode(jsUndefined());
 }
 
@@ -592,8 +595,7 @@ JSC_DEFINE_HOST_FUNCTION(functionOptimizeNextInvocation,
     (JSGlobalObject * globalObject,
         CallFrame* callFrame))
 {
-    optimizeNextInvocation(callFrame->argument(0));
-    return JSValue::encode(jsUndefined());
+    return JSValue::encode(optimizeNextInvocation(globalObject, callFrame));
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionNumberOfDFGCompiles);
@@ -601,10 +603,7 @@ JSC_DEFINE_HOST_FUNCTION(functionNumberOfDFGCompiles,
     (JSGlobalObject * globalObject,
         CallFrame* callFrame))
 {
-    if (callFrame->argumentCount() < 1)
-        return JSValue::encode(jsUndefined());
-
-    return JSValue::encode(jsNumber(numberOfDFGCompiles(callFrame->argument(0))));
+    return JSValue::encode(numberOfDFGCompiles(globalObject, callFrame));
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionReleaseWeakRefs);
@@ -654,7 +653,11 @@ JSC_DEFINE_HOST_FUNCTION(functionReoptimizationRetryCount,
     if (callFrame->argumentCount() < 1)
         return JSValue::encode(jsUndefined());
 
-    return JSValue::encode(jsNumber(reoptimizationRetryCount(callFrame->argument(0))));
+    CodeBlock* block = getSomeBaselineCodeBlockForFunction(callFrame->argument(0));
+    if (!block)
+        return JSValue::encode(jsNumber(0));
+
+    return JSValue::encode(jsNumber(block->reoptimizationRetryCounter()));
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionDrainMicrotasks);

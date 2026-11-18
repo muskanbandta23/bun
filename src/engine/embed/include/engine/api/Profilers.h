@@ -110,7 +110,11 @@ private:
 class SamplingProfiler : public VMProfiler {
 public:
     struct StackFrame {
-        SourceProvider* sourceProvider() const { return executable ? Engine::executable_source_provider(executable) : nullptr; }
+        SourceProvider* sourceProvider() const
+        {
+            auto* script = dynamicDowncast<ScriptExecutable>(executable);
+            return script ? script->sourceProvider() : nullptr;
+        }
 
         String displayName;
         // Null for what is not a function or a script.
@@ -144,12 +148,5 @@ inline SamplingProfiler& VM::ensureSamplingProfiler()
     return *reinterpret_cast<SamplingProfiler*>(this);
 }
 inline SamplingProfiler* VM::samplingProfiler() { return Engine::sampling_profiler_exists(*this) ? reinterpret_cast<SamplingProfiler*>(this) : nullptr; }
-
-// For tests of the compilers. What is not a function with bytecode is ignored.
-inline void setNeverInline(JSValue function) { Engine::function_set_never_inline(function); }
-inline void setNeverFTLOptimize(JSValue function) { Engine::function_set_never_fully_optimize(function); }
-inline void optimizeNextInvocation(JSValue function) { Engine::function_optimize_next_invocation(function); }
-inline unsigned numberOfDFGCompiles(JSValue function) { return Engine::function_optimization_count(function); }
-inline unsigned reoptimizationRetryCount(JSValue function) { return Engine::function_reoptimization_count(function); }
 
 } // namespace JSC

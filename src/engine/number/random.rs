@@ -2,6 +2,7 @@ use core::mem::offset_of;
 
 /// The generator behind Math.random: xorshift128+ of Vigna, "Further scramblings of Marsaglia's xorshift generators",
 /// with the shifts 23, 17 and 26. Compiled code steps it in line.
+#[derive(Clone, Copy)]
 #[repr(C)]
 pub struct Random {
     low: u64,

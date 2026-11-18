@@ -187,7 +187,7 @@ pub mod helper {
         }
 
         /// Not zero if the characters are equal when case is ignored.
-        fn equal_ignoring_case(_: &mut Context, a: u32, b: u32, unicode_aware: u32) -> usize {
+        fn equal_ignoring_case(a: u32, b: u32, unicode_aware: u32) -> usize {
             let equivalence = match unicode_aware {
                 0 => IgnoreCase::CodeUnits,
                 _ => IgnoreCase::CodePoints,

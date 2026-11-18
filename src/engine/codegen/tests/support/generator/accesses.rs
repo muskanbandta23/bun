@@ -1,5 +1,8 @@
 //! Pointers, and the instructions that go through them.
 
+#[path = "memory_shapes.rs"]
+mod shapes;
+
 use bun_engine_asm::{AtomicOp, Cond, Sign, Size};
 use bun_engine_codegen::ir::{
     Access, AccessFlags, Binary, Entity, Heap, HeapRange, Load, Op, Slot, Store, Type, Unary, Value,

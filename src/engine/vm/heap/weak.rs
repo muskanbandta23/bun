@@ -3,6 +3,8 @@ use core::ffi::c_void;
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 
+use bun_engine_macros::FieldOffsets;
+
 use super::{Gc, GcFree, Scope, Survivors, Visitor, container};
 use crate::{AsciiLiteral, CellKind, Vm};
 
@@ -33,6 +35,7 @@ enum State {
 
 const STATE_MASK: usize = 3;
 
+#[derive(FieldOffsets)]
 #[repr(C)]
 pub struct WeakImpl {
     cell: Cell<usize>,

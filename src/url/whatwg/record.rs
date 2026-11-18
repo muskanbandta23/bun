@@ -16,7 +16,7 @@ pub trait Storage: sealed::Sealed {
 }
 
 pub(crate) trait OwnedStorage: Storage + Sized {
-    fn concat(pieces: &[&[u8]]) -> Result<Self, AllocError>;
+    fn concat<const N: usize>(pieces: [&[u8]; N]) -> Result<Self, AllocError>;
 }
 
 impl sealed::Sealed for Option<StringRef> {}
@@ -46,24 +46,26 @@ impl Storage for &[u8] {
     }
 }
 
-#[inline]
-pub(crate) fn concat(pieces: &[&[u8]]) -> Result<StringRef, AllocError> {
+#[inline(always)]
+pub(crate) fn concat<const N: usize>(pieces: [&[u8]; N]) -> Result<StringRef, AllocError> {
     let mut writer = StringWriter::try_new(pieces.iter().map(|piece| piece.len()).sum())?;
-    for piece in pieces.iter().filter(|piece| !piece.is_empty()) {
-        writer.push_slice(piece);
+    for piece in pieces {
+        if !piece.is_empty() {
+            writer.push_slice(piece);
+        }
     }
     Ok(writer.finish())
 }
 
 impl OwnedStorage for Option<StringRef> {
-    #[inline]
-    fn concat(pieces: &[&[u8]]) -> Result<Self, AllocError> {
+    #[inline(always)]
+    fn concat<const N: usize>(pieces: [&[u8]; N]) -> Result<Self, AllocError> {
         concat(pieces).map(Some)
     }
 }
 
 impl OwnedStorage for Cow<'_, [u8]> {
-    fn concat(pieces: &[&[u8]]) -> Result<Self, AllocError> {
+    fn concat<const N: usize>(pieces: [&[u8]; N]) -> Result<Self, AllocError> {
         let length = pieces.iter().map(|piece| piece.len()).sum();
         let mut bytes = Vec::new();
         if length > MAX_LENGTH || bytes.try_reserve_exact(length).is_err() {

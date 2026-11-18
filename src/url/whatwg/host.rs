@@ -53,20 +53,21 @@ impl Parser<'_> {
 
     fn domain(&mut self, start: usize, end: usize, traits: HostTraits) -> Result<()> {
         let mut host = &self.source.bytes[start..end];
-        let mut storage = Buffer::new();
+        let (mut storage, mut encoded) = (Buffer::new(), Buffer::new());
         let mut punycode = self.punycode;
         if traits & PERCENT_OR_NOT_ASCII != 0 {
             percent::decode(self.source.with_bytes(host), &mut storage)?;
-            if !storage.is_ascii() {
-                domain::encode_in_place(&mut storage)?;
+            storage.make_ascii_lowercase();
+            host = &storage;
+            if !host.is_ascii() {
+                domain::encode(host, &mut encoded)?;
+                host = &encoded;
                 punycode = Punycode::Unchecked;
             }
             let is_forbidden = |&byte| class::host_traits(byte) & FORBIDDEN_IN_DOMAIN != 0;
-            if storage.is_empty() || storage.iter().any(is_forbidden) {
+            if host.is_empty() || host.iter().any(is_forbidden) {
                 return Err(Error::Invalid);
             }
-            storage.make_ascii_lowercase();
-            host = &storage;
         } else if traits & FORBIDDEN_IN_DOMAIN != 0 {
             return Err(Error::Invalid);
         } else if traits & UPPERCASE != 0 {

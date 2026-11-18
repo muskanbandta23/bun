@@ -3,6 +3,8 @@
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+use bun_engine_macros::FieldOffsets;
+
 use crate::{CellKind, Field, Gc, GcFree, JsCell, JsObject, Shape, Trace, Visitor, Vm};
 
 #[repr(C)]
@@ -58,6 +60,7 @@ unsafe impl<T> Trace for LazyField<T> {
     }
 }
 
+#[derive(FieldOffsets)]
 #[repr(C)]
 pub struct LazyClass {
     shape: LazyField<Shape>,

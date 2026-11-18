@@ -1,17 +1,22 @@
 //! From the creation of a `Vm` to the exit code.
 
+use core::time::Duration;
 use std::io::{BufRead, Write};
 
-use bun_engine_text::names;
+use bun_engine_text::{StringBuilder, names};
 use bun_engine_vm::heap::{HeapKind, Scope};
-use bun_engine_vm::{RunLoop, SourceType, evaluate_script};
+use bun_engine_vm::{
+    JsFunctionWithFields, RunLoop, SourceType, errors, evaluate_module_source, evaluate_script,
+    load_and_evaluate_module,
+};
 
 use crate::command_line::{CommandLine, Script};
-use crate::functions::{to_console_text, to_utf8};
+use crate::functions::{drain_microtasks, to_console_text, to_utf8};
 use crate::prelude::*;
 use crate::{files, global};
 
 pub(crate) const EXIT_EXCEPTION: i32 = 3;
+const COMMAND_LINE: &str = "[Command Line]";
 
 pub(crate) fn exit(code: i32) -> ! {
     let _ = std::io::stdout().flush();
@@ -27,7 +32,14 @@ fn print_line(parts: &[&[u8]]) {
 }
 
 fn try_dump_exception(cx: &mut Cx, exception: Value) -> JsResult<()> {
-    print_line(&[b"Exception: ", &to_utf8(cx, exception)?]);
+    let text = to_utf8(cx, exception).or_else(|thrown| {
+        cx.catch(thrown)?;
+        let mut description = StringBuilder::new();
+        errors::describe_value(cx, exception, &mut description);
+        let description = cx.finish_string(description)?;
+        to_utf8(cx, description.into())
+    })?;
+    print_line(&[b"Exception: ", &text]);
     let name = exception.get(cx, names::name)?;
     let url = exception.get(cx, names::sourceURL)?;
     let line = exception.get(cx, names::line)?;
@@ -113,11 +125,47 @@ pub(crate) fn take_exception<T>(cx: &Cx, result: JsResult<T>) -> Option<Value> {
     exception.flatten().map(|exception| exception.value())
 }
 
+#[native_abi]
+fn did_evaluate_module<const THREW: bool>(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let [is_last, _] = JsFunctionWithFields::fields_of_callee(frame);
+    check_exception(cx, THREW.then(|| frame.argument(0)), is_last.is_true());
+    Ok(Value::UNDEFINED)
+}
+
+fn run_module(cx: &mut Cx, script: &Script, is_last: bool) -> JsResult<()> {
+    let promise = match script {
+        Script::Text(text) => {
+            let source = files::source_at(COMMAND_LINE, text.as_bytes(), SourceType::Module);
+            evaluate_module_source(cx, source)?
+        }
+        Script::File { path, .. } => {
+            let name = StringRef::from_str(&files::absolute_url(path));
+            load_and_evaluate_module(cx, &Identifier::new(name.text()), None)?
+        }
+    };
+    let handler = |function| {
+        JsFunctionWithFields::new(cx, 1, function, [is_last.into(), Value::UNDEFINED]).into()
+    };
+    let on_fulfilled = handler(did_evaluate_module::<false>);
+    let on_rejected = handler(did_evaluate_module::<true>);
+    promise.perform_then(cx, on_fulfilled, on_rejected, Value::UNDEFINED);
+    drain_microtasks(cx)
+}
+
 pub(crate) fn run_scripts(cx: &mut Cx, command_line: &CommandLine) {
     for (index, script) in command_line.scripts.iter().enumerate() {
         let is_last = index + 1 == command_line.scripts.len();
+        if command_line.runs_modules || script.is_module() {
+            let result = run_module(cx, script, is_last);
+            if let Some(exception) = take_exception(cx, result) {
+                check_exception(cx, Some(exception), is_last);
+            }
+            continue;
+        }
         let source = match script {
-            Script::Text(text) => files::script(text.as_bytes(), "[Command Line]"),
+            Script::Text(text) => {
+                files::source_at(COMMAND_LINE, text.as_bytes(), SourceType::Program)
+            }
             Script::File {
                 path, is_strict, ..
             } => {
@@ -127,7 +175,7 @@ pub(crate) fn run_scripts(cx: &mut Cx, command_line: &CommandLine) {
                 if *is_strict {
                     bytes.splice(..0, *b"\"use strict\";\n");
                 }
-                files::script(&bytes, path)
+                files::source_at(path, &bytes, SourceType::Program)
             }
         };
         let result = evaluate_script(cx, &source, Value::UNDEFINED);
@@ -160,6 +208,9 @@ fn run_interactively(cx: &mut Cx) {
                 print_line(&[b"Exception: ", &text]);
             }
         }
+        if drain_microtasks(cx).is_err() {
+            return;
+        }
     }
 }
 
@@ -183,9 +234,14 @@ pub(crate) fn run(command_line: &CommandLine, body: impl FnOnce(&mut Cx)) -> i32
         global::define_hidden(cx, "arguments", arguments.into());
     }
 
+    (cx.embedder().must_not_block).set(command_line.cannot_block);
+    if let Some(milliseconds) = command_line.watchdog_milliseconds {
+        cx.add_termination_deadline(Duration::from_millis(milliseconds));
+    }
+
     body(cx);
     if !cx.is_execution_forbidden().get() {
-        let result = cx.drain_microtasks().and_then(|()| run_loop.run(cx));
+        let result = drain_microtasks(cx).and_then(|()| run_loop.run(cx));
         if let Some(termination) = take_exception(cx, result) {
             check_exception(cx, Some(termination), false);
         }

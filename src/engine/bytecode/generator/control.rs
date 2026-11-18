@@ -29,6 +29,12 @@ pub(super) enum Control {
         try_depth: u32,
         range: (u32, u32, u32),
     },
+    /// The same, of an object.
+    IteratorObject {
+        iterator: Operand,
+        try_depth: u32,
+        range: (u32, u32, u32),
+    },
     /// An index into `finallys`.
     Finally(usize),
 }
@@ -115,8 +121,12 @@ impl Generator<'_> {
         let Exit::Jump { target, depth } = exit else {
             return None;
         };
-        let needs_work =
-            |it: &Control| matches!(it, Control::Iterator { .. } | Control::Finally(_));
+        let needs_work = |it: &Control| {
+            matches!(
+                it,
+                Control::Iterator { .. } | Control::IteratorObject { .. } | Control::Finally(_)
+            )
+        };
         (!self.b.controls[depth..].iter().any(needs_work)).then_some(target)
     }
 
@@ -143,6 +153,14 @@ impl Generator<'_> {
                     suspended.push(self.asm().suspend_tries(try_depth));
                     self.position(range.0, range.1, range.2);
                     self.asm().iterator_close(state, CloseMode::Normal);
+                }
+                Control::IteratorObject {
+                    iterator,
+                    try_depth,
+                    range,
+                } => {
+                    suspended.push(self.asm().suspend_tries(try_depth));
+                    self.close_generic_iterator(iterator, range, false);
                 }
                 Control::Finally(index) => {
                     finally = Some(index);

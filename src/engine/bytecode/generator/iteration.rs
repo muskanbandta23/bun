@@ -284,10 +284,14 @@ impl Generator<'_> {
         let variable = self.loop_register(it.target);
         let value = variable.unwrap_or_else(|| self.temp());
         let mark = self.top;
-        let iterable = self.expr(it.subject, Dest::Any);
+        let known = self.iterable_with_method(it.subject);
+        let iterable = self.expr(known.map_or(it.subject, |it| it.0), Dest::Any);
         let (method, next) = (self.temp(), self.asm().label());
         self.position(divot, start, end);
-        self.get_symbol_method(method, iterable, false);
+        match known {
+            Some((_, known)) => _ = self.expr(known, Dest::Temp(method)),
+            None => self.get_symbol_method(method, iterable, false),
+        }
         self.debug_hook(DebugHook::WillExecuteExpression, start);
         self.position(divot, start, end);
         let opened = self.asm().label();

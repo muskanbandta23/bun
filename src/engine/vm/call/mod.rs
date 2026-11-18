@@ -124,15 +124,12 @@ impl CallData {
                 .native_function(specialization)
                 .map_or(CallData::NONE, CallData::native);
         }
-        if !object
-            .inline_flags()
-            .contains(TypeFlags::OVERRIDES_CALL_DATA)
-        {
-            CallData::NONE
-        } else if is_call {
+        if !is_call {
+            object.construct_data_of_class()
+        } else if (object.inline_flags()).contains(TypeFlags::OVERRIDES_CALL_DATA) {
             object.call_data_of_class()
         } else {
-            object.construct_data_of_class()
+            CallData::NONE
         }
     }
 

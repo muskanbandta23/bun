@@ -81,7 +81,7 @@ fn format_to_parts(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 fn resolved_options(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let this: Gc<JsListFormat> = this!(cx, frame.this_value(), "ListFormat", "resolvedOptions")?;
     let (kind, style) = (this.format.kind(), this.format.style());
-    let options = Record::with_locale(cx, this.format.locale());
+    let options = Record::with_locale(cx, this.format.locale().string().clone());
     options.put_named(names::r#type, kind);
     options.put_named(names::style, style);
     Ok(options.finish())

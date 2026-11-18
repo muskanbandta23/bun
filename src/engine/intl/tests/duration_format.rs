@@ -109,7 +109,7 @@ fn fractions_are_exact_and_truncated() {
         .set(Unit::Microsecond, 4503599627370494951424.0)
         .unwrap();
     let format = make("en", "style=digital").unwrap();
-    let formatted = format.format(&Duration::new(&fields).unwrap());
+    let formatted = format.format(fields.finish().unwrap());
     assert_eq!(
         formatted.unwrap().to_string(),
         "0:00:9007199254740991.975424"

@@ -733,7 +733,7 @@ impl Allocator<'_> {
             match operand.role {
                 Role::Def => {
                     self.out.statuses[operand.vreg].next = self.out.next_uses[next_index];
-                    let reg = self.register_for_result(operand, operands.start, &taken, results);
+                    let reg = self.register_for_result(operand, &operands, &taken, results);
                     self.code.operands[index].assign(reg);
                     self.occupy(reg, operand.vreg, false);
                     results |= bit(reg);
@@ -1043,7 +1043,7 @@ impl Allocator<'_> {
     fn register_for_result(
         &mut self,
         operand: Operand,
-        first_operand: usize,
+        operands: &core::ops::Range<usize>,
         taken: &Taken,
         results: Mask,
     ) -> u8 {
@@ -1055,8 +1055,8 @@ impl Allocator<'_> {
             & !taken.upper_halves
             & !taken.held
             & !results;
-        for tie in operand.ties() {
-            let reg = self.code.operands[first_operand + tie].assigned();
+        for tie in operand.ties().filter(|&tie| tie < operands.len()) {
+            let reg = self.code.operands[operands.start + tie].assigned();
             if usize::from(reg) < Reg::COUNT && allowed & !self.occupied & bit(reg) != 0 {
                 if self.out.claims.is_empty() || self.contested(operand.vreg).0 & bit(reg) == 0 {
                     self.settle_preference(operand.vreg, reg);

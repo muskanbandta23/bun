@@ -5,6 +5,7 @@ mod builtin_values;
 mod cache;
 mod code_block;
 mod compile;
+mod discard;
 mod dynamic_function;
 mod eval;
 mod executable;
@@ -16,7 +17,7 @@ mod source;
 mod speculation;
 
 pub use builtin::{BuiltinOutline, describe_builtin};
-pub use code_block::{CodeBlock, CodeOrigin, CompiledCode, InlineFrame, Tier};
+pub use code_block::{CodeBlock, CodeOrigin, CompiledCode, CoverageCount, InlineFrame, Tier};
 pub use compile::{
     CompileError, CompileErrorKind, CompileErrorRecovery, create_compile_error,
     create_compile_error_in, throw_compile_error,
@@ -50,7 +51,7 @@ pub(crate) struct State {
 impl crate::services::Service for State {
     fn did_collect(&self, vm: &Vm, scope: Scope) {
         if scope == Scope::Full {
-            vm.clear_source_caches();
+            vm.prune_compilation_caches();
         }
     }
 }

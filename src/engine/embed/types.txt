@@ -119,11 +119,69 @@ value   SourceType JSC::SourceProviderSourceType
 cell    JsPromise class JSC::JSPromise
 
 # Errors, stack and code
+mirror  ErrorFlags vm/error/error_instance.rs
+opaque  StackFrame class JSC::StackFrame
+opaque  StackTrace WTF::Vector<JSC::StackFrame>
+opaque  TerminationDeadline class JSC::TerminationDeadline
 
 # Buffers, WebAssembly and FFI
+mirror  ViewMode vm/runtime/buffers/view.rs
+mirror  CopyOrder vm/runtime/buffers/copy.rs
+cell    JsArrayBuffer class JSC::JSArrayBuffer
+cell    JsArrayBufferView class JSC::JSArrayBufferView
+cell    JsTypedArray class JSC::JSArrayBufferView
+opaque  ArrayBuffer class JSC::ArrayBuffer
+opaque  ArrayBufferContents class JSC::ArrayBufferContents
+counted ArrayBufferRef JSC::ArrayBuffer
+value   CopyOrder uint8_t
+value   FreeBytes std::add_pointer_t<void(void*, void*)>
+opaque  WasmModule class JSC::Wasm::Module
+opaque  WasmSharedMemory class JSC::Wasm::SharedMemory
+opaque  WasmStreamingCompiler class JSC::Wasm::StreamingCompiler
+counted WasmModuleRef JSC::Wasm::Module
+counted WasmSharedMemoryRef JSC::Wasm::SharedMemory
+counted WasmStreamingCompilerRef JSC::Wasm::StreamingCompiler
+mirror  FfiType embed/api/missing.rs
+opaque  FfiInvocation class JSC::FFI::ThreadsafeInvocation
 
 # Promises, collections, text and time
+mirror  PromiseStatus vm/runtime/control/promise.rs
+mirror  InternalMicrotask vm/runtime/control/microtask.rs
+mirror  WorkKind vm/runtime/deferred/ticket.rs
+opaque  QueuedTask class JSC::QueuedTask
+opaque  MicrotaskQueue class JSC::MicrotaskQueue
+counted MicrotaskQueueRef JSC::MicrotaskQueue
+opaque  Ticket class JSC::DeferredWorkTicket
+opaque  DeferredTask class Engine::DeferredTask
+value   InternalMicrotask JSC::InternalMicrotask
+value   WorkKind uint8_t
 
 # Modules, scopes and cached bytecode
+mirror  ModuleType vm/runtime/modules/request.rs
+mirror  ModuleStatus vm/runtime/modules/cyclic.rs
+mirror  RegistryStatus vm/runtime/modules/registry.rs
+mirror  ImportKind vm/runtime/modules/entries.rs
+cell    ModuleLoader class JSC::JSModuleLoader
+cell    ModuleRegistryEntry class JSC::ModuleRegistryEntry
+cell    AbstractModuleRecord class JSC::AbstractModuleRecord
+cell    CyclicModuleRecord class JSC::CyclicModuleRecord
+cell    SourceTextModuleRecord class JSC::JSModuleRecord
+cell    SyntheticModuleRecord class JSC::SyntheticModuleRecord
+cell    ModuleNamespace class JSC::JSModuleNamespaceObject
+cell    ModuleExecutable class JSC::ModuleProgramExecutable
+cell    JsSourceCode class JSC::JSSourceCode
+cell    Environment class JSC::JSLexicalEnvironment
+cell    ModuleEnvironment class JSC::JSModuleEnvironment
+cell    ScopeTemplate class JSC::ScopeTemplate
+opaque  FetchParameters class JSC::ScriptFetchParameters
+opaque  SyntheticExports class Engine::SyntheticExports
+opaque  CompiledScript class JSC::UnlinkedProgramCodeBlock
+counted FetchParametersRef JSC::ScriptFetchParameters
+counted CompiledScriptRef JSC::UnlinkedProgramCodeBlock
+value   ModuleType JSC::ScriptFetchParametersType
+value   ModuleStatus uint8_t
+value   RegistryStatus uint8_t
+value   ImportKind uint8_t
 
 # Inspector, profilers and options
+opaque  Options struct Engine::Options

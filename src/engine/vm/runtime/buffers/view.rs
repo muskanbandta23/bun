@@ -185,7 +185,7 @@ impl JsArrayBufferView {
         if buffer.is_detached() {
             return Err(Self::throw_out_of_bounds(cx));
         }
-        let limit = buffer.max_byte_length().unwrap_or(buffer.byte_length());
+        let limit = (buffer.max_byte_length()).unwrap_or_else(|| buffer.byte_length());
         Self::check_range(cx, &shape, limit, byte_offset, length)?;
         Ok(Self::create_checked(cx, shape, buffer, byte_offset, length))
     }
@@ -230,7 +230,8 @@ impl JsArrayBufferView {
             mode.set(ViewMode::AUTO_LENGTH, length.is_none());
             length.unwrap_or(0)
         } else {
-            length.unwrap_or((buffer.byte_length() - byte_offset) >> size_shift_of(cell_type))
+            length
+                .unwrap_or_else(|| (buffer.byte_length() - byte_offset) >> size_shift_of(cell_type))
         };
         let vector = buffer.data().wrapping_add(byte_offset);
         let address = core::ptr::from_ref(buffer).expose_provenance();
@@ -355,6 +356,14 @@ impl JsArrayBufferView {
         // SAFETY: allocated as one for that mode.
         let view = unsafe { Gc::from(self).cast_unchecked::<ResizableView>() };
         (!self.is_auto_length()).then_some(view.declared_length)
+    }
+
+    /// What the length will never exceed.
+    pub fn max_length(&self) -> usize {
+        self.declared_length().unwrap_or_else(|| {
+            let max = self.existing_buffer().and_then(|it| it.max_byte_length());
+            max.unwrap_or(0) >> self.size_shift()
+        })
     }
 
     /// IsValidIntegerIndex
@@ -507,7 +516,7 @@ impl JsArrayBufferView {
     }
 
     /// `None` if the index is out of bounds, the element is a BigInt or this is a `DataView`.
-    #[inline(always)]
+    #[inline(never)]
     pub fn try_get_number(&self, index: usize) -> Option<Value> {
         self.downcast::<JsTypedArray>()?.try_get_number(index)
     }

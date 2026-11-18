@@ -1,5 +1,5 @@
 // Writes what C++ needs to know of the engine's Rust sources:
-//   EngineConstants.h  the enums, flags, static names and realm slots that src/engine/embed/types.txt lists
+//   EngineConstants.h  the enums, flags, static names and realm slots that src/engine/embed/types.txt lists, and the options
 //   EngineExports.h    a declaration and a typed wrapper for each `#[export]` function of src/engine/embed/api, and a
 //                      declaration for each function that Rust expects of C++
 import { readdirSync, readFileSync } from "node:fs";
@@ -112,9 +112,16 @@ function staticNames(): string {
   ].join("\n");
 }
 
+/** The fields have the names by which the options are set. */
+function options(): string {
+  const list = [...read("vm/options.rs").matchAll(/^ +\w+ \/ (\w+): (\w+) =/gm)];
+  const fields = list.map(([, name, type]) => `    ${integers[type] ?? { bool: "bool", f64: "double" }[type]} ${name};\n`);
+  return `struct Options {\n${fields.join("")}    bool wereSet[${list.length}];\n};\n`;
+}
+
 writeIfNotChanged(
   join(outDir, "EngineConstants.h"),
-  `${header("src/engine")}\nnamespace Engine {\n\n${[...mirrors.map(it => mirror(...it)), staticNames()].join("\n")}\n}\n`,
+  `${header("src/engine")}\n#include <cstddef>\n#include <cstdint>\n\nnamespace Engine {\n\n${[...mirrors.map(it => mirror(...it)), staticNames(), options()].join("\n")}\n}\n`,
 );
 
 // ─── Functions ───
@@ -182,6 +189,14 @@ interface Parameter {
 function parameter(type: string, name: string): Parameter {
   const one = (cpp: string, pass: string) => ({ raw: [raw(type, true)], cpp, pass });
   const slice = /^&(mut )?\[(.*)\]$/.exec(type);
+  if (slice && strings[slice[2]]) {
+    const element = `${strings[slice[2]].raw}* const*`;
+    return {
+      raw: [element, "size_t"],
+      cpp: `std::span<const ${strings[slice[2]].cpp}>`,
+      pass: `reinterpret_cast<${element}>(${name}.data()), ${name}.size()`,
+    };
+  }
   if (slice) {
     const isOpaque = types.get(slice[2])?.kind === "opaque";
     const element = `${isOpaque ? named(slice[2]) : raw(slice[2], false)}${slice[1] ? "" : " const"}`;
@@ -202,6 +217,10 @@ function parameter(type: string, name: string): Parameter {
   if (bare === "PropertyName") return one("JSC::PropertyName", `${name}.uid()`);
   if (bare === "&StringImpl") return one("const WTF::String&", isOptional ? `${name}.impl()` : `implOrEmpty(${name})`);
   if (bare === "StringRef") return one("WTF::String&&", `${isOptional ? "leak" : "leakOrEmpty"}(WTF::move(${name}))`);
+  if (bare === "&Identifier") {
+    const address = `reinterpret_cast<WTF::UniquedStringImpl* const*>(&${name})`;
+    return one("const JSC::Identifier&", isOptional ? `${name}.isNull() ? nullptr : ${address}` : address);
+  }
   const known = types.get(bare);
   if (known?.kind === "counted")
     return isOptional

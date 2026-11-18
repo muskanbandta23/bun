@@ -6,8 +6,7 @@ use bun_engine_text::{PropertyName, private_names};
 
 use crate::{
     Cx, Gc, GetterSetter, GlobalObject, GlobalProxy, InternalFieldTuple, JsCell, JsFunction,
-    JsObject, JsSymbol,
-    ModuleLoader, Shape, Vm,
+    JsObject, JsSymbol, ModuleLoader, Shape, Vm,
 };
 
 macro_rules! realm_slots {
@@ -143,6 +142,8 @@ realm_slots! {
         string_constructor: JsObject = @String,
         string_object_shape: Shape,
         string_prototype_iterator: JsFunction,
+        string_prototype_trim_start: JsFunction,
+        string_prototype_trim_end: JsFunction,
         string_iterator_prototype: JsObject,
         string_iterator_shape: Shape,
         number_prototype: JsObject,
@@ -376,6 +377,14 @@ realm_slots! {
         word_segment_data_shape: Shape,
 
         // Only for built-ins
+        private_proxy_get: JsFunction = @proxyGet,
+        private_proxy_handler: JsFunction = @proxyHandler,
+        private_proxy_has: JsFunction = @proxyHas,
+        private_proxy_set: JsFunction = @proxySet,
+        private_validate_proxy_get: JsFunction = @handleProxyGetTrapResult,
+        private_validate_proxy_has: JsFunction = @handleNegativeProxyHasTrapResult,
+        private_validate_proxy_set: JsFunction = @handlePositiveProxySetTrapResult,
+        private_throw_falsy_proxy_set: JsFunction = @throwFalsyProxySetTrapResult,
         private_is_array: JsFunction = @isArray,
         private_array_from_fast: JsFunction = @arrayFromFastWithoutMapFn,
         private_array_from_async_iterator: JsFunction = @arrayFromAsyncIterator,

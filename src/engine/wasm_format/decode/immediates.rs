@@ -244,32 +244,22 @@ impl<M: Mode> Decoder<'_, '_, M> {
 
     #[inline(always)]
     pub(super) fn i32_immediate(&mut self) -> Result<i32, M::Error> {
-        match self.reader.i32() {
-            Some(value) => Ok(value),
-            None if self.is_dead() => {
-                fail!(
-                    self,
-                    parse,
-                    "can't get immediate for I32Const in unreachable context"
-                )
-            }
-            None => fail!(self, parse, "can't parse 32-bit constant"),
-        }
+        Ok(read!(
+            self,
+            self.reader.i32(),
+            live: "can't parse 32-bit constant",
+            dead: "can't get immediate for I32Const"
+        ))
     }
 
     #[inline(always)]
     pub(super) fn i64_immediate(&mut self) -> Result<i64, M::Error> {
-        match self.reader.i64() {
-            Some(value) => Ok(value),
-            None if self.is_dead() => {
-                fail!(
-                    self,
-                    parse,
-                    "can't get immediate for I64Const in unreachable context"
-                )
-            }
-            None => fail!(self, parse, "can't parse 64-bit constant"),
-        }
+        Ok(read!(
+            self,
+            self.reader.i64(),
+            live: "can't parse 64-bit constant",
+            dead: "can't get immediate for I64Const"
+        ))
     }
 
     #[inline(always)]
@@ -299,21 +289,12 @@ impl<M: Mode> Decoder<'_, '_, M> {
 
     #[inline(never)]
     pub(super) fn null_type(&mut self) -> Result<HeapType, M::Error> {
-        match self.heap_type() {
-            Some(ty) => Ok(ty),
-            None if self.is_dead() => {
-                fail!(
-                    self,
-                    parse,
-                    "can't get heap type for RefNull in unreachable context"
-                )
-            }
-            None => fail!(
-                self,
-                parse,
-                "ref.null heaptype must be funcref, externref or type_idx"
-            ),
-        }
+        Ok(read!(
+            self,
+            self.heap_type(),
+            live: "ref.null heaptype must be funcref, externref or type_idx",
+            dead: "can't get heap type for RefNull"
+        ))
     }
 
     /// The validator checks that it is declared.

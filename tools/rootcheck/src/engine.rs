@@ -4,6 +4,7 @@ use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::def::Res;
 use rustc_hir::def_id::{CRATE_DEF_INDEX, CrateNum, DefId, LOCAL_CRATE};
 use rustc_middle::ty::TyCtxt;
+use rustc_span::Symbol;
 
 pub struct Engine {
     pub gc_free: DefId,
@@ -11,8 +12,11 @@ pub struct Engine {
     pub cell_kind: DefId,
     pub service: DefId,
     pub root_alloc: DefId,
+    pub defer_collection: DefId,
     /// Whoever has one of these can allocate.
     pub capabilities: [DefId; 3],
+    /// What `format_args!` makes, and `fmt::Formatter`.
+    pub formatting: [Option<DefId>; 3],
     /// Every collection goes through it.
     pub collect: DefId,
     /// `bun_engine_vm` and the crates that may depend on it.
@@ -30,12 +34,9 @@ impl Engine {
 
     /// `None` in a crate that does not depend on `bun_engine_vm`.
     pub fn find(tcx: TyCtxt<'_>) -> Option<Engine> {
-        let crates: Vec<CrateNum> = (tcx.postorder_cnums(()).iter().copied())
-            .chain([LOCAL_CRATE])
-            .collect();
-        let position = crates
-            .iter()
-            .position(|&it| tcx.crate_name(it).as_str() == VM)?;
+        let crates: Vec<CrateNum> =
+            (tcx.postorder_cnums(()).iter().copied()).chain([LOCAL_CRATE]).collect();
+        let position = crates.iter().position(|&it| tcx.crate_name(it).as_str() == VM)?;
         let vm = crates[position];
         let in_workspace = |krate: &CrateNum| {
             *krate == LOCAL_CRATE || tcx.crate_name(*krate).as_str().starts_with("bun_")
@@ -46,17 +47,11 @@ impl Engine {
             ))
         };
         let find_trait = |name: &str| {
-            let found = tcx
-                .traits(vm)
-                .iter()
-                .find(|&&it| tcx.item_name(it).as_str() == name);
+            let found = tcx.traits(vm).iter().find(|&&it| tcx.item_name(it).as_str() == name);
             found.copied().unwrap_or_else(|| missing(name))
         };
         let find_item = |path: &[&str]| {
-            let root = DefId {
-                krate: vm,
-                index: CRATE_DEF_INDEX,
-            };
+            let root = DefId { krate: vm, index: CRATE_DEF_INDEX };
             path.iter().fold(root, |module, name| {
                 child(tcx, module, name).unwrap_or_else(|| missing(name))
             })
@@ -71,13 +66,15 @@ impl Engine {
             cell_kind: find_trait("CellKind"),
             service: find_trait("Service"),
             root_alloc: find_item(&["heap", "RootAlloc"]),
+            defer_collection: find_item(&["heap", "DeferCollection"]),
             capabilities: [find_item(&["Vm"]), find_item(&["Cx"]), heap],
+            formatting: [
+                tcx.lang_items().format_argument(),
+                tcx.lang_items().format_arguments(),
+                tcx.get_diagnostic_item(Symbol::intern("Formatter")),
+            ],
             collect: collect.copied().unwrap_or_else(|| missing("Heap::collect")),
-            upper_crates: crates[position..]
-                .iter()
-                .copied()
-                .filter(in_workspace)
-                .collect(),
+            upper_crates: crates[position..].iter().copied().filter(in_workspace).collect(),
             workspace_crates: crates.iter().copied().filter(in_workspace).collect(),
         })
     }
@@ -89,6 +86,12 @@ impl Engine {
     pub fn is_in_workspace(&self, def_id: DefId) -> bool {
         self.workspace_crates.contains(&def_id.krate)
     }
+}
+
+/// The `Init` of an `impl CellKind`.
+pub fn init_of(tcx: TyCtxt<'_>, impl_id: DefId) -> DefId {
+    let mut items = tcx.associated_item_def_ids(impl_id).iter().copied();
+    items.find(|&it| tcx.item_name(it).as_str() == "Init").expect("a cell has an `Init`")
 }
 
 fn child(tcx: TyCtxt<'_>, module: DefId, name: &str) -> Option<DefId> {

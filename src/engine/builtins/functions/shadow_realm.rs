@@ -1,9 +1,11 @@
 //! https://tc39.es/proposal-shadowrealm/
 
+use bun_engine_bytecode::ImportPhase;
 use bun_engine_text::StringRef;
 use bun_engine_vm::{
-    Attributes, ErrorInstance, ErrorType, GlobalObject, JsObjectInit, JsRemoteFunction, Thrown, errors,
-    execute_indirect_eval, origin_of_caller, prepare_indirect_eval,
+    Attributes, ErrorInstance, ErrorType, GlobalObject, JsNativeClosure, JsObjectInit, JsPromise,
+    JsRemoteFunction, Thrown, errors, execute_indirect_eval, origin_of_caller,
+    prepare_indirect_eval,
 };
 
 use crate::prelude::*;
@@ -120,6 +122,55 @@ fn evaluate(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 
 #[native_abi]
 fn import_value(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
-    this_realm(cx, frame, "importValue")?;
-    Err(cx.throw_type_error(errors::TYPE_ERROR))
+    let realm = this_realm(cx, frame, "importValue")?;
+    let specifier = frame.argument(0).to_string(cx)?;
+    let export_name = frame.argument(1);
+    if !export_name.is_string() {
+        return Err(cx.throw_type_error(
+            "`%ShadowRealm%.importValue requires that the |exportName| argument be a string",
+        ));
+    }
+    let origin = origin_of_caller(cx);
+    let imported = {
+        let (cx, phase) = (cx.in_realm(realm), ImportPhase::Evaluation);
+        let loader = cx.module_loader();
+        match loader.import(cx, specifier, Value::UNDEFINED, origin.as_deref(), phase) {
+            Ok(imported) => imported,
+            Err(thrown) => JsPromise::rejected_with_caught(cx, thrown)?,
+        }
+    };
+    let name = StringRef::empty();
+    let on_fulfilled = JsNativeClosure::create(cx, 1, &name, &[export_name], get_export);
+    let on_rejected = JsNativeClosure::create(cx, 1, &name, &[realm.into()], describe_failure);
+    let result = JsPromise::new(cx);
+    imported.perform_then(cx, on_fulfilled.into(), on_rejected.into(), result.into());
+    Ok(result.into())
+}
+
+/// ExportGetter
+fn get_export(cx: &mut Cx, frame: &CallFrame, export_name: &[Value]) -> JsResult<Value> {
+    let exports = frame.argument(0).to_object(cx)?;
+    let key = export_name[0].to_property_key(cx)?;
+    if !exports.has_own_property(cx, key.name())? {
+        return Err(cx.throw_type_error(
+            "%ShadowRealm%.importValue requires |exportName| to exist in the |specifier|",
+        ));
+    }
+    let value = exports.get(cx, key.name())?;
+    JsRemoteFunction::wrap(cx, cx.global(), value)
+}
+
+fn describe_failure(cx: &mut Cx, frame: &CallFrame, realm: &[Value]) -> JsResult<Value> {
+    let error = frame.argument(0);
+    let message = match error.downcast::<ErrorInstance>() {
+        Some(error) => error.sanitized_to_string(cx),
+        None => error.to_string_ref(cx.in_realm(realm[0].cast())),
+    };
+    match message {
+        Ok(message) => Err(cx.throw_type_error(message)),
+        Err(thrown) => {
+            cx.catch(thrown)?;
+            Err(cx.throw_type_error(errors::TYPE_ERROR))
+        }
+    }
 }

@@ -19,7 +19,12 @@ static_table!(static PROTOTYPE_PROPERTIES = [
     StaticProperty::realm_slot(names::constructor, RealmSlot::error_constructor),
 ]);
 
-define_object!(ErrorPrototype, "Object", PROTOTYPE_PROPERTIES);
+define_object!(
+    ErrorPrototype,
+    "Object",
+    PROTOTYPE_PROPERTIES,
+    export = "engine_class_ErrorPrototype"
+);
 
 static_table!(static CONSTRUCTOR_PROPERTIES = [
     StaticProperty::position_of(names::length),

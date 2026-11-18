@@ -97,7 +97,7 @@ macro_rules! entries {
 }
 
 entries! {
-    LoadEntry in loads, secondary_loads { holder byte_offset accessor_kind is_present }
+    LoadEntry in loads, secondary_loads { holder byte_offset accessor_kind is_present is_enumerable }
     StoreEntry in stores, secondary_stores { new_shape byte_offset needs_more_slots }
 }
 
@@ -111,6 +111,7 @@ pub struct LoadEntry {
     /// The bits of `Attributes::ANY_ACCESSOR`. Without any, the slot has the value.
     accessor_kind: Cell<u8>,
     is_present: Cell<bool>,
+    is_enumerable: Cell<bool>,
 }
 
 static HOLDER_OF_UNDEFINED: [u64; 2] = [0, Value::UNDEFINED.to_bits()];
@@ -147,6 +148,7 @@ impl LoadEntry {
     fn record(vm: &Vm, first: &JsObject, name: PropertyName<'_>, slot: &PropertySlot) {
         let entry = Self::claim(vm, first.shape_id(), name);
         entry.is_present.set(!slot.is_unset());
+        (entry.is_enumerable).set(slot.is_enumerable());
         let Some(holder) = slot.base() else {
             entry
                 .holder
@@ -267,6 +269,23 @@ fn has_slow(cx: &mut Cx, base: Gc<JsObject>, name: PropertyName<'_>) -> JsResult
     }
     let mut slot = PropertySlot::new(base.into(), InternalMethod::HasProperty);
     look_up_and_record(cx, base, name, &mut slot)
+}
+
+/// `JsObject::has_enumerable_property`
+#[inline]
+pub(crate) fn has_enumerable_megamorphic(
+    cx: &mut Cx,
+    base: Gc<JsObject>,
+    name: PropertyName<'_>,
+) -> JsResult<bool> {
+    if let Some(entry) = LoadEntry::find(cx, base.shape_id(), name) {
+        return Ok(entry.is_enumerable.get());
+    }
+    if name.as_index().is_some() {
+        return base.has_enumerable_property(cx, name);
+    }
+    let mut slot = PropertySlot::new(base.into(), InternalMethod::GetOwnProperty);
+    Ok(look_up_and_record(cx, base, name, &mut slot)? && slot.is_enumerable())
 }
 
 /// Neither the object nor its prototypes have the property. False if the cache has nothing to say.

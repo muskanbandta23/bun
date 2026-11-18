@@ -122,6 +122,11 @@ impl FunctionInfo {
         self.scope.is_none()
     }
 
+    /// What lies between the function and the global scope.
+    pub fn outer_scope(&self) -> Option<&Rc<StaticScope>> {
+        self.scope.as_ref()
+    }
+
     pub fn origin(&self) -> Origin {
         self.origin
     }
@@ -211,6 +216,11 @@ impl FunctionRef {
     pub fn new(table: Rc<[FunctionInfo]>, index: u32) -> FunctionRef {
         assert!((index as usize) < table.len());
         FunctionRef { table, index }
+    }
+
+    /// It and the other functions of the code that has it.
+    pub fn table(&self) -> &Rc<[FunctionInfo]> {
+        &self.table
     }
 }
 

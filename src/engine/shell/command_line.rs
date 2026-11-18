@@ -112,10 +112,10 @@ impl CommandLine {
     pub(crate) fn for_worker(&self) -> CommandLine {
         CommandLine {
             destroys_vm: true,
+            exposes_vm: self.exposes_vm,
             accepts_termination: self.accepts_termination,
             ignores_uncaught_exceptions: self.ignores_uncaught_exceptions,
             watchdog_milliseconds: self.watchdog_milliseconds,
-            exposes_vm: self.exposes_vm,
             ..CommandLine::default()
         }
     }

@@ -109,6 +109,7 @@ pub(super) enum Goal {
 impl From<LoadGoal> for Goal {
     fn from(goal: LoadGoal) -> Goal {
         match goal {
+            LoadGoal::Load => Goal::Load,
             LoadGoal::Evaluate => Goal::Evaluate,
             LoadGoal::Import {
                 phase,

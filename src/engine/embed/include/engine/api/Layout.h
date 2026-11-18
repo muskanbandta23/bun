@@ -281,6 +281,21 @@ ENGINE_OFFSET(GlobalProxy, target, 16)
 // Promises, collections, text and time
 
 // Modules, scopes and cached bytecode
+ENGINE_OFFSET(ModuleLoader, module_scope, 8)
+ENGINE_OFFSET(ModuleLoader, async_context, 16)
+ENGINE_OFFSET(ModuleRegistryEntry, key, 8)
+ENGINE_OFFSET(ModuleKey, name, 0)
+ENGINE_OFFSET(ModuleRegistryEntry, status, 32)
+ENGINE_OFFSET(ModuleRegistryEntry, module, 40)
+ENGINE_OFFSET(ModuleRegistryEntry, promise_of_load, 64)
+ENGINE_OFFSET(AbstractModuleRecord, key, 24)
+ENGINE_OFFSET(AbstractModuleRecord, is_typescript, 41)
+ENGINE_OFFSET(AbstractModuleRecord, has_live_exports, 42)
+ENGINE_OFFSET(ModuleNamespace, module, 24)
+ENGINE_OFFSET(ModuleNamespace, has_es_module_marker, 33)
+ENGINE_OFFSET(JsSourceCode, source, 8)
+ENGINE_CONSTANT(Environment_parent, 8, Environment::OFFSET_OF_PARENT)
+ENGINE_CONSTANT(Environment_template, 16, Environment::OFFSET_OF_TEMPLATE)
 
 // Inspector, profilers and options
 

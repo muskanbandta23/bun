@@ -8,17 +8,14 @@ namespace JSC {
 
 class CodeCache;
 class ControlFlowProfiler;
-class DecoderStringTable;
 class DeferredWorkTimer;
 class EntryFrame;
 class FunctionHasExecutedCache;
 class HeapProfiler;
 class JSONCache;
 class MicrotaskQueue;
-class PersistentBytecodePayloads;
 class QueuedTask;
 class SamplingProfiler;
-class SourceProviderCache;
 class TerminationDeadline;
 class TypedArrayController;
 class UnlinkedProgramCodeBlock;
@@ -134,7 +131,6 @@ public:
     struct ClientData {
         virtual ~ClientData() = default;
         virtual bool isWebCoreJSClientData() const { return false; }
-        virtual DecoderStringTable* decoderStringTable() { return nullptr; }
         virtual void reconcileWeakReferencesAtGCEnd(VM&, CollectionScope) {}
     };
 
@@ -160,8 +156,21 @@ public:
         KeepCodeInUse = 1 << 1,
     };
 
-    struct SynchronousModuleQueue;
-    class SynchronousModuleQueueScope;
+    // While it lives, the steps of the module loader wait for JSModuleLoader::drainSynchronousModuleQueue() only.
+    class SynchronousModuleQueueScope {
+        WTF_MAKE_NONCOPYABLE(SynchronousModuleQueueScope);
+
+    public:
+        explicit SynchronousModuleQueueScope(VM& vm)
+            : m_vm(vm)
+        {
+            Engine::vm_open_synchronous_module_queue(vm);
+        }
+        ~SynchronousModuleQueueScope() { Engine::vm_close_synchronous_module_queue(m_vm); }
+
+    private:
+        VM& m_vm;
+    };
 
     static RefPtr<VM> tryCreate(HeapType = HeapType::Small, RunLoop* = nullptr);
     void ref() const { m_refCount.fetch_add(1, std::memory_order_relaxed); }
@@ -248,7 +257,7 @@ public:
     void drainMicrotasks();
     void setOnEachMicrotaskTick(Function<void(VM&)>&&);
     bool isAsyncContextTrackingEnabled() const { return m_isAsyncContextTracked; }
-    SynchronousModuleQueue* synchronousModuleQueue() const { return m_synchronousModuleQueue; }
+    bool hasSynchronousModuleQueue() const { return Engine::vm_has_synchronous_module_queue(*this); }
 
     Function<void(VM&, SourceProvider*, LineColumn&, String&)>& computeLineColumnWithSourcemap() { return m_computeLineColumnWithSourcemap; }
     void setComputeLineColumnWithSourcemap(Function<void(VM&, SourceProvider*, LineColumn&, String&)>&& function) { m_computeLineColumnWithSourcemap = WTF::move(function); }
@@ -261,10 +270,7 @@ public:
     bool shrinkFootprintNow(OptionSet<ShrinkFootprint> = {});
     void shrinkFootprintWhenIdle(OptionSet<ShrinkFootprint> = {});
     void setStartupJITDeferralScale(double);
-    CodeCache* codeCache();
-    SourceProviderCache* addSourceProviderCache(SourceProvider*);
-    PersistentBytecodePayloads& persistentBytecodePayloads();
-    PersistentBytecodePayloads* persistentBytecodePayloadsIfExists();
+    CodeCache* codeCache() { return reinterpret_cast<CodeCache*>(this); }
     JSONCache& jsonCache();
 
     bool enableControlFlowProfiler();
@@ -319,7 +325,6 @@ public:
     // From here to the heap, what only C++ has.
     const Ref<DeferredWorkTimer> deferredWorkTimer;
     RefPtr<TypedArrayController> m_typedArrayController;
-    SynchronousModuleQueue* m_synchronousModuleQueue { nullptr };
     DateCache dateCache;
     Interpreter interpreter;
 
@@ -337,7 +342,7 @@ private:
     ExceptionScope* m_topExceptionScope { nullptr };
     ExceptionEventLocation m_simulatedThrowLocation;
     IsoSubspace* m_nativeStdFunctionSpace { nullptr };
-    Engine::Opaque<120> m_unused;
+    Engine::Opaque<128> m_unused;
 
 public:
     Heap heap;

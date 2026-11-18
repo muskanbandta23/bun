@@ -255,6 +255,16 @@ enum class SourceProviderSourceType : uint8_t {
     BunTranspiledModule = Engine::SourceType::AnalyzedModule,
 };
 
+enum class ScriptFetchParametersType : uint8_t {
+    None = Engine::ModuleType::None,
+    JavaScript = Engine::ModuleType::JavaScript,
+    WebAssembly = Engine::ModuleType::WebAssembly,
+    JSON = Engine::ModuleType::Json,
+    Text = Engine::ModuleType::Text,
+    HostDefined = Engine::ModuleType::HostDefined,
+    CSS = Engine::ModuleType::Css,
+};
+
 enum class SubspaceAccess { OnMainThread,
     Concurrently };
 

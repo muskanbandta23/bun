@@ -182,6 +182,14 @@ interface Parameter {
 function parameter(type: string, name: string): Parameter {
   const one = (cpp: string, pass: string) => ({ raw: [raw(type, true)], cpp, pass });
   const slice = /^&(mut )?\[(.*)\]$/.exec(type);
+  if (slice && strings[slice[2]]) {
+    const element = `${strings[slice[2]].raw}* const*`;
+    return {
+      raw: [element, "size_t"],
+      cpp: `std::span<const ${strings[slice[2]].cpp}>`,
+      pass: `reinterpret_cast<${element}>(${name}.data()), ${name}.size()`,
+    };
+  }
   if (slice) {
     const isOpaque = types.get(slice[2])?.kind === "opaque";
     const element = `${isOpaque ? named(slice[2]) : raw(slice[2], false)}${slice[1] ? "" : " const"}`;
@@ -202,6 +210,10 @@ function parameter(type: string, name: string): Parameter {
   if (bare === "PropertyName") return one("JSC::PropertyName", `${name}.uid()`);
   if (bare === "&StringImpl") return one("const WTF::String&", isOptional ? `${name}.impl()` : `implOrEmpty(${name})`);
   if (bare === "StringRef") return one("WTF::String&&", `${isOptional ? "leak" : "leakOrEmpty"}(WTF::move(${name}))`);
+  if (bare === "&Identifier") {
+    const address = `reinterpret_cast<WTF::UniquedStringImpl* const*>(&${name})`;
+    return one("const JSC::Identifier&", isOptional ? `${name}.isNull() ? nullptr : ${address}` : address);
+  }
   const known = types.get(bare);
   if (known?.kind === "counted")
     return isOptional

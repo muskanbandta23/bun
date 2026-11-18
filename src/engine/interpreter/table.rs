@@ -49,7 +49,7 @@ macro_rules! define_slow_tables {
 bun_engine_bytecode::instruction_table!(define_slow_tables);
 
 macro_rules! fast_handlers {
-    ($($Op:ident $handler:ident,)* fixed: $($Fixed:ident)*, varargs: $($Varargs:ident)*) => {
+    ($($Op:ident $handler:ident,)* @fixed $($Fixed:ident)* @varargs $($Varargs:ident)*) => {
         const fn handlers<W: Width>() -> [Handler; 256] {
             let mut table = slow_handlers::<W>();
             $(table[Opcode::$Op as usize] = $handler::<W>;)*
@@ -216,8 +216,8 @@ fast_handlers! {
     RethrowIfAny rethrow_if_any,
     ThrowIfNotObject throw_if_not_object,
     ThrowIfNullish throw_if_nullish,
-    fixed: Call Call1 Call2 TailCall Construct SuperConstruct,
-    varargs: CallVarargs TailCallVarargs ConstructVarargs SuperConstructVarargs CallWithSpread
+    @fixed Call Call1 Call2 TailCall Construct SuperConstruct
+    @varargs CallVarargs TailCallVarargs ConstructVarargs SuperConstructVarargs CallWithSpread
 }
 
 pub(crate) static NARROW: [Handler; 256] = handlers::<Narrow>();

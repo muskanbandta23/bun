@@ -94,4 +94,3 @@ prefixes! {
     wide16_prefix, WIDE16;
     wide32_prefix, WIDE32;
 }
-

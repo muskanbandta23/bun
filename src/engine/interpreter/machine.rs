@@ -131,17 +131,46 @@ macro_rules! go {
         $crate::machine::go!($m, $handler, $m.pc)
     };
     ($m:ident, $handler:expr, $pc:expr) => {
-        become $handler($pc, $m.vm, $m.number_tag, $m.not_cell_mask, $m.fp, $m.metadata, $m.constants,
-            $crate::machine::UNUSED, $crate::machine::UNUSED, $crate::machine::UNUSED)
+        become $handler(
+            $pc,
+            $m.vm,
+            $m.number_tag,
+            $m.not_cell_mask,
+            $m.fp,
+            $m.metadata,
+            $m.constants,
+            $crate::machine::UNUSED,
+            $crate::machine::UNUSED,
+            $crate::machine::UNUSED,
+        )
     };
     ($m:ident, $handler:expr; $a:expr) => {
-        become $handler($m.pc, $m.vm, $m.number_tag, $m.not_cell_mask, $m.fp, $m.metadata, $m.constants,
-            $crate::machine::Extra::new($a as u64), $crate::machine::UNUSED, $crate::machine::UNUSED)
+        become $handler(
+            $m.pc,
+            $m.vm,
+            $m.number_tag,
+            $m.not_cell_mask,
+            $m.fp,
+            $m.metadata,
+            $m.constants,
+            $crate::machine::Extra::new($a as u64),
+            $crate::machine::UNUSED,
+            $crate::machine::UNUSED,
+        )
     };
     ($m:ident, $handler:expr; $a:expr, $b:expr, $c:expr) => {
-        become $handler($m.pc, $m.vm, $m.number_tag, $m.not_cell_mask, $m.fp, $m.metadata, $m.constants,
-            $crate::machine::Extra::new($a as u64), $crate::machine::Extra::new($b as u64),
-            $crate::machine::Extra::new($c as u64))
+        become $handler(
+            $m.pc,
+            $m.vm,
+            $m.number_tag,
+            $m.not_cell_mask,
+            $m.fp,
+            $m.metadata,
+            $m.constants,
+            $crate::machine::Extra::new($a as u64),
+            $crate::machine::Extra::new($b as u64),
+            $crate::machine::Extra::new($c as u64),
+        )
     };
 }
 
@@ -319,6 +348,16 @@ impl<W: Width> Machine<W> {
     pub(crate) unsafe fn has_type(&self, bits: u64, cell_type: CellType) -> bool {
         // SAFETY: the caller's.
         unsafe { self.as_cell(bits) }.is_some_and(|cell| cell.cell_type() == cell_type)
+    }
+
+    /// Between initializing a cell and letting go of it.
+    #[inline(always)]
+    pub(crate) fn publish(&self) {
+        #[cfg(not(target_arch = "x86_64"))]
+        if self.vm.heap.mutator_should_be_fenced.get() {
+            core::sync::atomic::fence(core::sync::atomic::Ordering::Release);
+        }
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::Release);
     }
 
     /// After storing `bits` in `owner`. False if the slow path of the barrier has to run.

@@ -6,15 +6,25 @@ use bun_engine_bytecode::{Narrow, Width};
 use bun_engine_vm::{CallFrame, CodeBlock, Value, Vm, call};
 
 use crate::fast::calls::{after_call, fill_varargs_frame, prologue, prologue_with_traps};
-use crate::slow::calls::{Returns, VarargsCall};
 use crate::machine::{CONSTANT_BIAS, Extra, Pc};
+use crate::slow::calls::{Returns, VarargsCall};
 
 #[cfg(target_vendor = "apple")]
 macro_rules! address_of {
     ($target:literal, $symbol:literal) => {
         concat!(
-            "adrp ", $target, ", ", $symbol, "@PAGE\n",
-            "add ", $target, ", ", $target, ", ", $symbol, "@PAGEOFF\n",
+            "adrp ",
+            $target,
+            ", ",
+            $symbol,
+            "@PAGE\n",
+            "add ",
+            $target,
+            ", ",
+            $target,
+            ", ",
+            $symbol,
+            "@PAGEOFF\n",
         )
     };
 }
@@ -23,8 +33,8 @@ macro_rules! address_of {
 macro_rules! address_of {
     ($target:literal, $symbol:literal) => {
         concat!(
-            "adrp ", $target, ", ", $symbol, "\n",
-            "add ", $target, ", ", $target, ", :lo12:", $symbol, "\n",
+            "adrp ", $target, ", ", $symbol, "\n", "add ", $target, ", ", $target, ", :lo12:",
+            $symbol, "\n",
         )
     };
 }

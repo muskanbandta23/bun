@@ -126,7 +126,7 @@ macro_rules! list_calls {
             fn argument_count(self, f: Frame<'_>) -> usize {
                 let $op = self;
                 match f.get_or_empty(self.arguments) {
-                    Some(list) => crate::pending::argument_list_length(list, $skip),
+                    Some(list) => bun_engine_vm::argument_list_length(list, $skip),
                     None => f.header.rest($skip as usize).len(),
                 }
             }
@@ -136,7 +136,7 @@ macro_rules! list_calls {
             fn load_arguments(self, cx: &mut Cx, f: Frame<'_>, target: &mut [MaybeUninit<Value>]) {
                 let $op = self;
                 match f.get_or_empty(self.arguments) {
-                    Some(list) => crate::pending::load_argument_list(&cx.no_gc(), list, $skip, target),
+                    Some(list) => bun_engine_vm::load_argument_list(&cx.no_gc(), list, $skip, target),
                     None => {
                         target.write_copy_of_slice(f.header.rest($skip as usize));
                     }
@@ -155,11 +155,11 @@ list_calls! {
 
 impl VarargsCall for op::CallWithSpread {
     fn argument_count(self, f: Frame<'_>) -> usize {
-        crate::pending::spread_length(f.run(self.first, self.count))
+        bun_engine_vm::spread_length(f.run(self.first, self.count))
     }
 
     fn load_arguments(self, _: &mut Cx, f: Frame<'_>, target: &mut [MaybeUninit<Value>]) {
-        crate::pending::load_spread_arguments(f.run(self.first, self.count), target);
+        bun_engine_vm::load_spread_arguments(f.run(self.first, self.count), target);
     }
 }
 
@@ -185,7 +185,13 @@ pub(crate) const fn frame_words(count_including_this: usize) -> usize {
 /// # Safety
 /// `new_frame` has room for a header.
 #[inline(always)]
-pub(crate) unsafe fn write_header(new_frame: *mut u64, code_block: usize, callee: u64, count: u64, this: u64) {
+pub(crate) unsafe fn write_header(
+    new_frame: *mut u64,
+    code_block: usize,
+    callee: u64,
+    count: u64,
+    this: u64,
+) {
     let header = [code_block as u64, callee, count, this];
     // SAFETY: the caller's.
     unsafe {
@@ -198,7 +204,10 @@ pub(crate) unsafe fn write_header(new_frame: *mut u64, code_block: usize, callee
 
 #[inline(always)]
 fn find_target<O: AnyCall>(op: O, cx: &mut Cx, f: Frame<'_>) -> JsResult<CallTarget> {
-    let (callee, profile) = (f.get(op.callee()), &f.entry::<metadata::Call>(op.metadata()).profile);
+    let (callee, profile) = (
+        f.get(op.callee()),
+        &f.entry::<metadata::Call>(op.metadata()).profile,
+    );
     let Some(target) = CallTarget::find(callee, O::SPECIALIZATION) else {
         return Err(match O::SPECIALIZATION {
             Specialization::Call => errors::throw_not_a_function(cx, callee),
@@ -223,8 +232,7 @@ fn find_target<O: AnyCall>(op: O, cx: &mut Cx, f: Frame<'_>) -> JsResult<CallTar
 
 /// Fills the frame that the instruction names.
 #[native_abi]
-pub type PrepareFixedCall =
-    unsafe fn(vm: &Vm, frame: &CallFrame, start: *const u8) -> PreparedCall;
+pub type PrepareFixedCall = unsafe fn(vm: &Vm, frame: &CallFrame, start: *const u8) -> PreparedCall;
 
 #[native_abi]
 #[inline(never)]
@@ -245,7 +253,13 @@ pub(crate) unsafe fn prepare_fixed_call<O: FixedCall>(
             f.set(Register::outgoing_argument(op.frame(), index), argument);
         }
         let new_frame = frame.slot(-(op.frame() as isize)).as_ptr();
-        write_header(new_frame, target.code_block, callee, op.count().into(), this);
+        write_header(
+            new_frame,
+            target.code_block,
+            callee,
+            op.count().into(),
+            this,
+        );
         PreparedCall {
             entry: target.entry,
             executable: target.executable,

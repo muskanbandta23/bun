@@ -37,7 +37,15 @@ pub(super) fn get_by_val(
     if let Some(index) = key.name().as_index() {
         return base.get_index(cx, index);
     }
-    ic::get_by_key(cx, f.code_block, cases, base, base, key.name(), Key::Variable)
+    ic::get_by_key(
+        cx,
+        f.code_block,
+        cases,
+        base,
+        base,
+        key.name(),
+        Key::Variable,
+    )
 }
 
 pub(super) fn put_by_val(
@@ -67,7 +75,15 @@ pub(super) fn put_by_val(
     if let Some(index) = key.name().as_index() {
         return put_index(cx, index).map(|_| ());
     }
-    ic::put_by_key(cx, f.code_block, &entry.cases, base, key.name(), value, mode)
+    ic::put_by_key(
+        cx,
+        f.code_block,
+        &entry.cases,
+        base,
+        key.name(),
+        value,
+        mode,
+    )
 }
 
 pub(super) fn right_side_of_in(cx: &Cx, base: Value) -> JsResult<Gc<JsObject>> {
@@ -91,7 +107,14 @@ pub(super) fn in_by_val(
     if let Some(index) = key.name().as_index() {
         return object.has_index(cx, index.into());
     }
-    ic::has_by_key(cx, f.code_block, &entry.cases, object, key.name(), Key::Variable)
+    ic::has_by_key(
+        cx,
+        f.code_block,
+        &entry.cases,
+        object,
+        key.name(),
+        Key::Variable,
+    )
 }
 
 /// # Safety

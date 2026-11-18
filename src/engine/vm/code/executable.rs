@@ -3,7 +3,7 @@ use core::mem::offset_of;
 use std::rc::Rc;
 
 use bun_engine_bytecode::{
-    Code, Eval, FunctionKind, FunctionRef, Module, Origin, Script, Specialization, Visibility,
+    Code, Eval, FunctionInfo, FunctionKind, FunctionRef, Module, Origin, Script, Specialization, Visibility,
 };
 use bun_engine_macros::{Trace, cell};
 use bun_engine_text::{StringRef, Text};
@@ -12,7 +12,7 @@ use super::eval::EvalKey;
 use crate::heap::{OnceBox, Owned};
 use crate::{
     CellType, CodeBlock, Cx, Field, Gc, InlineWatchpointSet, Intrinsic, JsArray, JsCell,
-    JsFunction, JsResult, JsString, NativeFunction, Shape, SourceCode, SourceProviderRef,
+    JsFunction, JsResult, JsString, NativeFunction, RealmSlot, Shape, SourceCode, SourceProviderRef,
     TracedMap, TypeFlags, Vm, WatchpointState, WeakField, call,
 };
 
@@ -355,6 +355,7 @@ top_level_executables! {
 pub struct FunctionExecutable {
     base: ScriptExecutable,
     info: FunctionRef,
+    shape_slot: RealmSlot,
     /// Valid while at most one function has been made from this.
     singleton_watchpoints: InlineWatchpointSet,
     pub(self) first_function: WeakField<Option<Gc<JsFunction>>>,
@@ -374,12 +375,32 @@ impl FunctionExecutable {
     ) -> Gc<FunctionExecutable> {
         vm.allocate::<FunctionExecutable>(FunctionExecutableInit {
             base: ScriptExecutable::init(vm.shapes.function_executable(), provider, top_level),
+            shape_slot: Self::shape_slot_for(&info),
             info,
             singleton_watchpoints: InlineWatchpointSet::new(WatchpointState::Clear),
             first_function: None,
             cached_source_text: None,
             intrinsic: Cell::new(Intrinsic::None),
         })
+    }
+
+    fn shape_slot_for(info: &FunctionInfo) -> RealmSlot {
+        match (info.is_async(), info.is_generator()) {
+            (true, true) => RealmSlot::async_generator_function_shape,
+            (true, false) => RealmSlot::async_function_shape,
+            (false, true) => RealmSlot::generator_function_shape,
+            _ if info.origin().contains(Origin::BUILTIN) => RealmSlot::builtin_function_shape,
+            _ if info.kind() == FunctionKind::Normal || info.kind().is_class_constructor() => {
+                RealmSlot::function_shape
+            }
+            _ => RealmSlot::method_shape,
+        }
+    }
+
+    /// Where a realm has the shape of the functions that are made from this.
+    #[inline(always)]
+    pub fn shape_slot(&self) -> RealmSlot {
+        self.shape_slot
     }
 
     #[inline(always)]
@@ -424,6 +445,7 @@ impl FunctionExecutable {
         self.first_function()
     }
 
+    #[inline(always)]
     pub fn singleton_watchpoints(&self) -> &InlineWatchpointSet {
         &self.singleton_watchpoints
     }

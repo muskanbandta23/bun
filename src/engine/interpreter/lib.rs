@@ -1,6 +1,6 @@
 //! The bytecode interpreter.
 
-#![feature(explicit_tail_calls, never_type, rust_preserve_none_cc)]
+#![feature(explicit_tail_calls, naked_functions_rustic_abi, rust_preserve_none_cc)]
 #![allow(incomplete_features, improper_ctypes_definitions)]
 
 mod fast;

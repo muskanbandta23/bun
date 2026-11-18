@@ -263,13 +263,17 @@ pub(crate) unsafe fn decode<O: Op>(start: *const u8) -> O {
     }
 }
 
-/// `start` is that of the instruction, with its prefix. 
+/// `start` is that of the instruction, with its prefix.
 #[native_abi]
 pub type SlowPath = unsafe fn(vm: &Vm, frame: &CallFrame, start: *const u8) -> Outcome;
 
 #[native_abi]
 #[inline(never)]
-pub(crate) unsafe fn slow_path<O: Execute>(vm: &Vm, frame: &CallFrame, start: *const u8) -> Outcome {
+pub(crate) unsafe fn slow_path<O: Execute>(
+    vm: &Vm,
+    frame: &CallFrame,
+    start: *const u8,
+) -> Outcome {
     // SAFETY: the caller's.
     let (op, (cx, frame)) = unsafe { (decode::<O>(start), Frame::enter(vm, frame, start)) };
     Next::encode(op.execute(cx, frame))

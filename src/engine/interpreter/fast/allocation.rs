@@ -13,7 +13,11 @@ impl<W: Width> Machine<W> {
     unsafe fn allocate_object(&self, allocator: &Allocator, shape: Gc<Shape>) -> Option<*mut u64> {
         let object = core::ptr::with_exposed_provenance_mut::<u64>(allocator.try_bump()?);
         // SAFETY: a new cell.
-        unsafe { object.cast::<[u64; 2]>().write([JsCell::header_for(&shape), 0]) };
+        unsafe {
+            object
+                .cast::<[u64; 2]>()
+                .write([JsCell::header_for(&shape), 0])
+        };
         Some(object)
     }
 }

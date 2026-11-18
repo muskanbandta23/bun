@@ -19,7 +19,7 @@ handler! {
     /// Ends an instruction that has stored into the cell.
     #[cold]
     #[inline(never)]
-    fn barrier_and_next<O: Op>(m, op: O, owner) {
+    fn remember_and_next<O: Op>(m, op: O, owner) {
         barrier::slow_path(&cell(owner));
         next!(m, op)
     }
@@ -30,7 +30,7 @@ macro_rules! barrier_and_next {
     ($m:ident, $op:ident: $Op:ty, $owner:expr) => {{
         let owner = $owner;
         if !$m.needs_no_barrier(&owner) {
-            $crate::machine::go!($m, $crate::fast::barrier_and_next::<$Op, W>; owner.address())
+            $crate::machine::go!($m, $crate::fast::remember_and_next::<$Op, W>; owner.address())
         }
         $crate::machine::next!($m, $op)
     }};

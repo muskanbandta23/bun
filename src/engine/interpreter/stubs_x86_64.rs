@@ -6,16 +6,22 @@ use bun_engine_bytecode::{Narrow, Width};
 use bun_engine_vm::{CallFrame, CodeBlock, Value, Vm, call};
 
 use crate::fast::calls::{after_call, fill_varargs_frame, prologue, prologue_with_traps};
-use crate::slow::calls::{Returns, VarargsCall};
 use crate::machine::{CONSTANT_BIAS, Extra, Pc};
+use crate::slow::calls::{Returns, VarargsCall};
 
 /// With the code block in `$code_block`: the first instruction in r12, and the other registers but the stack pointer.
 macro_rules! load_registers {
     ($code_block:literal) => {
         concat!(
-            "mov r12, [", $code_block, " + {instructions}]\n",
-            "mov rdx, [", $code_block, " + {constants}]\n",
-            "mov rsi, [", $code_block, " + {metadata}]\n",
+            "mov r12, [",
+            $code_block,
+            " + {instructions}]\n",
+            "mov rdx, [",
+            $code_block,
+            " + {constants}]\n",
+            "mov rsi, [",
+            $code_block,
+            " + {metadata}]\n",
             "add rdx, -{bias}\n",
             "mov rdi, rbp\n",
         )
@@ -28,7 +34,9 @@ macro_rules! frame_bottom {
         concat!(
             "mov r9d, [r8 + {locals}]\n",
             "neg r9\n",
-            "lea ", $target, ", [rbp + r9 * 8 - 8]\n",
+            "lea ",
+            $target,
+            ", [rbp + r9 * 8 - 8]\n",
         )
     };
 }

@@ -341,7 +341,6 @@ mod tests {
             output(b"logo.svg", OutputKind::Asset, None, NO_OUTPUT_FILE),
             output(
                 b"graph",
-                OutputKind::PrelinkedModuleGraph,
                 None,
                 NO_OUTPUT_FILE,
             ),

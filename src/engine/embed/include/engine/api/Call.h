@@ -80,6 +80,9 @@ public:
     EntryFrame* prevTopEntryFrame() const { return m_previousTopEntryFrame; }
     CallFrame* prevTopCallFrame() const { return m_previousTopCallFrame; }
 
+    // The async function or async generator that the call resumes.
+    JSCell* m_context;
+
 private:
     EntryFrame* m_previousTopEntryFrame;
     CallFrame* m_previousTopCallFrame;

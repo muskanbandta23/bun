@@ -1,3 +1,5 @@
+use core::ffi::c_void;
+
 use bun_core::strings;
 use bun_engine_macros::export;
 use bun_engine_vm::{Options, options, parse_flag, parse_number, set_options};
@@ -76,4 +78,20 @@ fn options_dump(options: &Options, only_set: bool) {
 fn options_freeze(values: &mut Options) {
     set_options(values.clone());
     values.clone_from(options());
+}
+
+#[export]
+fn executable_memory_start() -> usize {
+    bun_engine_exec_memory::address_range().start
+}
+
+/// Only Windows has them.
+#[export]
+fn executable_memory_set_exception_handler(
+    handler: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void, *mut c_void) -> i32,
+) {
+    #[cfg(windows)]
+    bun_engine_exec_memory::describe_frames(handler);
+    #[cfg(not(windows))]
+    let _ = handler;
 }

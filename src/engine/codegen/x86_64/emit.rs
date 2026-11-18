@@ -56,6 +56,7 @@ fn fpr_or_memory(asm: &mut Assembler, operands: &mut Operands<'_>) -> FprMem {
     }
 }
 
+#[derive(Clone, Copy)]
 enum Operand {
     Rm(GprMem),
     Imm(i32),

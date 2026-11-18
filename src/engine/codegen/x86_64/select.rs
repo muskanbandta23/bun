@@ -262,7 +262,7 @@ impl Lowering<'_, Inst> {
         self.def_tied(
             value,
             1,
-            Some(2).filter(|_| parts.index.is_some() && !matches!(parts.base, Base::None)),
+            (parts.index.is_some() && !matches!(parts.base, Base::None)).then_some(2),
         );
         let address = self.use_parts(parts, Role::Use);
         self.finish(Inst::Lea(self.type_of(value).width(), address));
@@ -420,7 +420,7 @@ impl Lowering<'_, Inst> {
                 };
                 let Some((inner, other)) = complemented(lhs)
                     .zip(Some(rhs))
-                    .or(complemented(rhs).zip(Some(lhs)))
+                    .or_else(|| complemented(rhs).zip(Some(lhs)))
                 else {
                     return false;
                 };

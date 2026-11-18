@@ -77,7 +77,8 @@ impl Lowering<'_, Inst> {
             }
             _ => return None,
         };
-        Some((index, Scale::from_log2(log2 as u8)?)).filter(|_| self.dissolves(value))
+        let scale = Scale::from_log2(log2 as u8)?;
+        self.dissolves(value).then_some((index, scale))
     }
 
     fn base(&mut self, value: Value, offset: &mut i32) -> Base {

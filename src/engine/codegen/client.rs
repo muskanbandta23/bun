@@ -52,6 +52,8 @@ pub struct CallSite<'a> {
     pub origin: Origin,
     pub return_address: Label,
     pub state: &'a [Location],
+    /// Where an unwinder resumes, once it has restored the frame pointer, the stack pointer and what is pinned.
+    pub handlers: &'a [Label],
 }
 
 /// The scratch registers of the macro assembler are set to those that the code may overwrite: what is never

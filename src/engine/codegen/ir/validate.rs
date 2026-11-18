@@ -65,6 +65,13 @@ pub fn validate(function: &Function) -> Checked {
                 value
             );
             let mut result = Ok(());
+            require!(!function.operands(value).contains(&value), value);
+            require!(
+                !function.state(function.state_of(value)).contains(&value),
+                value
+            );
+            // The edges that leave a patchpoint may pass on its result.
+            require!(defined.insert(value.index()), value);
             function.for_each_use(value, |used| {
                 if result.is_ok() {
                     result = check_use(function, &dominators, &defined, block, value, used);
@@ -72,7 +79,6 @@ pub fn validate(function: &Function) -> Checked {
             });
             result?;
             check_types(function, value)?;
-            require!(defined.insert(value.index()), value);
             previous = value;
         }
         check_edges(function, block)?;
@@ -353,8 +359,11 @@ fn check_patchpoint(function: &Function, value: Value, patchpoint: Patchpoint) -
         _ => Type::Tuple,
     };
     require!(function.type_of(value) == expected, value);
+    let has_results_in_memory = outputs
+        .iter()
+        .any(|(_, output)| matches!(output, Output::Outgoing(_)));
     require!(
-        outputs.is_empty() || !data.effects.has(EffectFlags::ENDS_BLOCK),
+        !has_results_in_memory || !data.effects.has(EffectFlags::ENDS_BLOCK),
         value
     );
     require!(

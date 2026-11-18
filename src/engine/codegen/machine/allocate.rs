@@ -416,7 +416,9 @@ impl Allocator<'_> {
     /// Returns false if the value has to be stored at a place that is run with the given frequency.
     pub(super) fn try_to_store_at_definition(&mut self, vreg: VReg, frequency: f32) -> bool {
         self.out.slots.note_use(vreg);
-        let is_cheaper = self.frequencies.of_block(self.code.vregs[vreg].block) <= frequency;
+        let data = &self.code.vregs[vreg];
+        let ends_block = data.start == self.code.blocks[data.block].exit();
+        let is_cheaper = !ends_block && self.frequencies.of_block(data.block) <= frequency;
         if is_cheaper {
             self.out.statuses[vreg].stored = Stored::AtDefinition;
         }
@@ -573,7 +575,7 @@ impl Allocator<'_> {
         let root = self.code.affinity_root(vreg);
         self.code.vregs[root]
             .preferred
-            .get_or_insert(Reg::from_index(reg.into()));
+            .get_or_insert_with(|| Reg::from_index(reg.into()));
     }
 
     /// Frees one of `allowed` if none is free.

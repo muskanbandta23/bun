@@ -603,11 +603,13 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
             self.tables.locations.push(location);
         }
         self.push_state(site);
-        let successors = if site_data.value == self.last_value() {
-            self.successor_labels()
-        } else {
-            SmallVec::new()
-        };
+        let ends_block = site_data.value == self.last_value();
+        let returns_to_first = ends_block && data.action != Action::Custom;
+        let edges = function
+            .successors(self.block)
+            .filter(|_| ends_block)
+            .skip(returns_to_first.into());
+        let successors: SmallVec<[Label; 4]> = edges.map(|edge| self.label_of_edge(edge)).collect();
         let next_label = self.next_block.expand().map(|next| self.label(next));
         let (results, rest) = self.tables.locations.split_at(outputs.len());
         let (operands, state) = rest.split_at(inputs.len());
@@ -659,9 +661,13 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
                 origin,
                 return_address,
                 state,
+                handlers: &successors,
             };
             self.client.after_call(self.masm, &site);
         }
         self.masm.set_scratch(own_scratch);
+        if returns_to_first && function.successors(self.block).len() != 0 {
+            self.jump();
+        }
     }
 }

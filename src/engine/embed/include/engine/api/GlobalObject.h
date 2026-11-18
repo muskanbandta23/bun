@@ -141,8 +141,6 @@ public:
 
     JSObject* globalThis() const { return m_globalThis.get(); }
     JSScope* globalScope() { return this; }
-    JSScope* globalScopeExtension() const { return m_scopeExtension.get(); }
-    void setGlobalScopeExtension(JSScope* scope) { m_scopeExtension.setMayBeNull(vm(), this, scope); }
     void addStaticGlobals(std::span<GlobalPropertyInfo> globals)
     {
         for (auto& global : globals)

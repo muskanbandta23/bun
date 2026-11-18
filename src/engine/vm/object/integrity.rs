@@ -1,6 +1,7 @@
 use crate::{
-    Attributes, CellType, Cx, DontEnumMode, JsObject, JsResult, PropertyDescriptor,
-    PropertyNameMode, ShapeFlags, TransitionKind, Vm,
+    Attributes, CellKind, CellType, Cx, DontEnumMode, JsArray, JsObject, JsResult,
+    PropertyDescriptor, PropertyNameList, PropertyNameMode, ShapeFlags, TransitionKind, TypeFlags,
+    Vm,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -16,11 +17,25 @@ impl JsObject {
         }
     }
 
-    fn has_only_ordinary_properties(&self) -> bool {
-        matches!(
-            self.cell_type(),
-            CellType::FinalObject | CellType::Array | CellType::DerivedArray
-        )
+    /// Whether one transition can do what defining each property again would.
+    fn can_restrict_at_once(&self, cx: &mut Cx) -> JsResult<bool> {
+        if matches!(self.cell_type(), CellType::FinalObject | CellType::Array) {
+            return Ok(true);
+        }
+        let exotic = TypeFlags::OVERRIDES_GET_OWN_PROPERTY_SLOT
+            | TypeFlags::OVERRIDES_OWN_PROPERTY_NAMES
+            | TypeFlags::OVERRIDES_OWN_SPECIAL_PROPERTY_NAMES;
+        let class = self.class();
+        if !class.is_subclass_of(JsArray::CLASS)
+            && (self.shape().type_flags().intersects(exotic)
+                || !class.has_ordinary_define_own_property()
+                || !class.has_ordinary_prevent_extensions())
+        {
+            return Ok(false);
+        }
+        self.reify_all_static_properties(cx)?;
+        let properties = self.shape().properties();
+        Ok(!(properties.iter()).any(|(_, _, it)| it.intersects(Attributes::CUSTOM)))
     }
 
     /// For an object whose own properties are all in its shape and its elements.
@@ -51,7 +66,7 @@ impl JsObject {
 
     /// SetIntegrityLevel
     pub fn set_integrity_level(&self, cx: &mut Cx, level: IntegrityLevel) -> JsResult<bool> {
-        if self.has_only_ordinary_properties() {
+        if self.can_restrict_at_once(cx)? {
             self.restrict_ordinary(cx, level);
             return Ok(true);
         }
@@ -59,7 +74,9 @@ impl JsObject {
             return Ok(false);
         }
         let kinds = PropertyNameMode::StringsAndSymbols;
-        for name in self.own_keys(cx, kinds, DontEnumMode::Include)?.iter() {
+        let mut names = PropertyNameList::new(kinds).including_private_names();
+        self.own_property_names(cx, &mut names, DontEnumMode::Include)?;
+        for name in names.iter().filter(|it| !it.name().is_private_element()) {
             let mut descriptor = PropertyDescriptor::default();
             descriptor.set_configurable(false);
             if level == IntegrityLevel::Frozen {
@@ -74,16 +91,58 @@ impl JsObject {
         Ok(true)
     }
 
+    /// `Object.seal`
+    pub fn seal_or_throw(&self, cx: &mut Cx) -> JsResult<()> {
+        if self.set_integrity_level(cx, IntegrityLevel::Sealed)? {
+            return Ok(());
+        }
+        Err(cx.throw_type_error("Unable to prevent extension in Object.seal"))
+    }
+
+    /// `Object.freeze`
+    pub fn freeze_or_throw(&self, cx: &mut Cx) -> JsResult<()> {
+        if self.set_integrity_level(cx, IntegrityLevel::Frozen)? {
+            return Ok(());
+        }
+        Err(cx.throw_type_error("Unable to prevent extension in Object.freeze"))
+    }
+
+    /// For an ordinary object or an array that is not extensible.
+    fn is_restricted(&self, level: IntegrityLevel) -> bool {
+        let shape = self.shape();
+        let (is_frozen, elements) = match level {
+            IntegrityLevel::Sealed => (false, ShapeFlags::ELEMENTS_ARE_SEALED),
+            IntegrityLevel::Frozen => (true, ShapeFlags::ELEMENTS_ARE_FROZEN),
+        };
+        if is_frozen
+            && self.indexing_mode().is_array()
+            && !shape.has(ShapeFlags::LENGTH_IS_READ_ONLY)
+        {
+            return false;
+        }
+        let writable = |it: Attributes| !it.intersects(Attributes::REJECTS_PLAIN_STORE);
+        let are_elements_restricted = match self.sparse_elements() {
+            Some(sparse) => (sparse.entries().iter())
+                .map(|entry| entry.1.attributes)
+                .all(|it| !it.is_configurable() && !(is_frozen && writable(it))),
+            None => shape.has(elements) || self.count_dense_elements() == 0,
+        };
+        are_elements_restricted
+            && (shape.transition_kind() == TransitionKind::Freeze
+                || if is_frozen {
+                    shape.is_frozen()
+                } else {
+                    shape.is_sealed()
+                })
+    }
+
     /// TestIntegrityLevel
     pub fn test_integrity_level(&self, cx: &mut Cx, level: IntegrityLevel) -> JsResult<bool> {
         if self.is_extensible(cx)? {
             return Ok(false);
         }
-        if self.cell_type() == CellType::FinalObject && !self.indexing_mode().has_elements() {
-            return Ok(match level {
-                IntegrityLevel::Sealed => self.shape().is_sealed(),
-                IntegrityLevel::Frozen => self.shape().is_frozen(),
-            });
+        if matches!(self.cell_type(), CellType::FinalObject | CellType::Array) {
+            return Ok(self.is_restricted(level));
         }
         let kinds = PropertyNameMode::StringsAndSymbols;
         for name in self.own_keys(cx, kinds, DontEnumMode::Include)?.iter() {

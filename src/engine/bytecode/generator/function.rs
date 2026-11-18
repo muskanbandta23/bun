@@ -459,6 +459,7 @@ impl<'a> Generator<'a> {
     pub(super) fn end_suspending_code(&mut self, handler: Label) {
         self.asm().pop_try();
         let (exception, value) = (self.temp(), self.temp());
+        self.show_scope(Register::SCOPE);
         self.asm().bind(handler);
         self.asm().catch(exception, value);
         let generator = self.generator;
@@ -508,6 +509,7 @@ impl<'a> Generator<'a> {
 
         let captures = |it: ScopeId| ast[it].flags.contains(ScopeFlags::HAS_CAPTURED);
         let needs_scope = captures(id)
+            || self.debugs
             || self.arguments == Arguments::Scoped
             || (body.is_none() && is_extensible(id))
             || (!is_body_apart && body.is_some_and(captures));
@@ -598,6 +600,9 @@ impl<'a> Generator<'a> {
         if body.is_none() && is_extensible(id) {
             layout.make_extensible();
         }
+        if self.debugs && !is_body_apart {
+            layout.prepare_for_debugger(self.body_start());
+        }
         if needs_scope {
             self.create_scope(layout, register);
         }
@@ -618,6 +623,15 @@ impl<'a> Generator<'a> {
             first_variable,
             first_lexical,
         })
+    }
+
+    /// See `StaticScope::body_start`.
+    fn body_start(&self) -> Option<u32> {
+        let root = &self.ast.root;
+        match self.ast.get(root.body, 0) {
+            Some(body) if self.suspends() => Some(self.ast[body].start),
+            _ => (!self.uses(Features::SIMPLE_PARAMETERS)).then_some(root.start),
+        }
     }
 
     /// For a variable that may get a value before the body runs.
@@ -880,6 +894,9 @@ impl<'a> Generator<'a> {
             }
             if is_extensible {
                 layout.make_extensible();
+            }
+            if self.debugs {
+                layout.prepare_for_debugger(self.body_start());
             }
             if !layout.is_empty() {
                 self.create_scope(layout, register);

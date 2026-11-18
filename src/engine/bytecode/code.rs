@@ -4,6 +4,7 @@ use core::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use bun_engine_syntax::EvalContext;
 use bun_engine_text::{Atom, Identifier, StringRef};
 
 use crate::constant::Constant;
@@ -121,6 +122,8 @@ pub(crate) struct Tables {
     pub(crate) suspend_points: Box<[SuspendPoint]>,
     pub(crate) saved_registers: Box<[Register]>,
     pub(crate) coverage_blocks: Box<[CoverageBlock]>,
+    /// From each offset on, where the innermost scope is. Only code with debug hooks has them.
+    pub(crate) scope_registers: Box<[(u32, Register)]>,
 }
 
 /// The part of code that any thread may read.
@@ -210,6 +213,14 @@ impl Body {
             .find(|handler| handler.range.contains(&offset))
     }
 
+    /// Where a frame that is at the instruction has its innermost scope. `None` if only that of the callee is known.
+    pub fn scope_register_at(&self, offset: u32) -> Option<Register> {
+        let registers = &self.tables.as_ref()?.scope_registers;
+        let begun = registers.partition_point(|&(start, _)| start <= offset);
+        let &(_, register) = registers[..begun].last()?;
+        (register != Register::SCOPE).then_some(register)
+    }
+
     pub fn is_spread(&self, mask: SpreadMaskIndex, element: u32) -> bool {
         self.spread_masks()[mask.index()]
             .get(element as usize / 32)
@@ -295,6 +306,7 @@ pub struct Eval {
     pub directives: Directives,
     /// Not if it has a tagged template, whose object is new for each evaluation of the text.
     pub is_reusable: bool,
+    pub context: EvalContext,
 }
 
 pub struct ModuleRequest {

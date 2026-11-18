@@ -523,13 +523,7 @@ impl<'a> Generator<'a> {
             return;
         }
         self.position_at(position);
-        let scope = self.scope;
-        match (hook, self.generator.as_register()) {
-            (DebugHook::WillAwait | DebugHook::DidAwait, Some(generator)) => {
-                self.asm().debug_await(hook, scope, generator);
-            }
-            _ => self.asm().debug(hook, scope),
-        }
+        self.asm().debug(hook);
     }
 
     /// For what does not always run. The block that it is in goes on after it.

@@ -465,6 +465,15 @@ impl Generator<'_> {
         let Some(generator) = self.generator.as_register() else {
             return;
         };
+        let hooks = match kind {
+            _ if !self.debugs => None,
+            SuspendKind::Start => None,
+            SuspendKind::Await => Some((DebugHook::WillAwait, DebugHook::DidAwait)),
+            _ => Some((DebugHook::WillYield, DebugHook::DidYield)),
+        };
+        if let Some((will_suspend, _)) = hooks {
+            self.asm().debug_await(will_suspend, generator);
+        }
         let point = self.asm().add_suspend_point(kind);
         if self.suspension == Suspension::AsyncFunction {
             self.asm().r#await(generator, value, point);
@@ -472,15 +481,19 @@ impl Generator<'_> {
             self.asm().suspend(generator, value, kind, point);
         }
         self.asm().resume(generator, point);
+        if self.debugs {
+            self.keep_scopes();
+        }
+        if let Some((_, did_resume)) = hooks {
+            self.asm().debug_await(did_resume, generator);
+        }
     }
 
     #[inline(never)]
     pub(super) fn await_value(&mut self, dst: Register, value: Operand, position: u32) {
-        self.debug_hook(DebugHook::WillAwait, position);
         self.position_at(position);
         self.suspend(value, SuspendKind::Await);
         self.asm().resume_after_await(dst);
-        self.debug_hook(DebugHook::DidAwait, position);
     }
 
     pub(super) fn resume_or_return(&mut self, received: Register) {

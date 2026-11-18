@@ -247,6 +247,7 @@ impl Generator<'_> {
         }
         self.create_scope(layout, register);
         self.scope = scope;
+        self.show_scope(scope);
         Home {
             scope: core::mem::replace(&mut self.chain, chain),
             register,

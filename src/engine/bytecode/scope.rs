@@ -1,5 +1,7 @@
 //! What is known at generation of the scopes that exist at run time.
 
+use core::cell::Cell;
+use core::num::NonZeroU32;
 use std::rc::Rc;
 
 use bun_engine_syntax::Name;
@@ -15,8 +17,12 @@ pub enum ScopeKind {
     /// The name of a function expression that `eval` may shadow.
     FunctionName,
     Block,
+    /// The lexical bindings at the top level of a script or of `eval` code.
+    Program,
     /// `catch (e)`, which lets `var e` through.
     SimpleCatch,
+    /// `catch` with a pattern.
+    Catch,
     Class,
     Module,
     /// The bindings are the properties of an object.
@@ -51,9 +57,9 @@ pub enum SlotKind {
 bitflags::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     pub struct SlotFlags: u8 {
-        /// No code changes it once it is initialized.
+        /// See [`StaticScope::is_immutable`].
         const IMMUTABLE = 1 << 0;
-        /// No code changes it once it is anything but undefined.
+        /// See [`StaticScope::is_written_once`].
         const WRITTEN_ONCE = 1 << 1;
         /// Clashes with a `var` of `eval` code.
         const LEXICAL = 1 << 2;
@@ -61,6 +67,8 @@ bitflags::bitflags! {
         const STATIC = 1 << 4;
         const HAS_GETTER = 1 << 5;
         const HAS_SETTER = 1 << 6;
+        /// `arguments` too.
+        const PARAMETER = 1 << 7;
     }
 }
 
@@ -95,6 +103,10 @@ pub struct StaticScope {
     pub(crate) parent: Option<Rc<StaticScope>>,
     pub(crate) kind: ScopeKind,
     pub(crate) eval_variables_slot: Option<u32>,
+    /// Only what a debugger evaluates adds variables, and only that sees them.
+    pub(crate) is_extensible_by_debugger_only: bool,
+    pub(crate) is_open_to_debugger: Cell<bool>,
+    pub(crate) body_start: Option<NonZeroU32>,
     /// Of the outermost scope of a function: where that function was created.
     pub(crate) entered_at: Option<u32>,
     pub(crate) slot_count: u32,
@@ -110,6 +122,10 @@ pub struct StaticScope {
 
 const LINEAR_SEARCH_LIMIT: usize = 8;
 
+fn known_text(name: Name) -> Text<'static> {
+    Text::from_ascii(Name::known_text(name.index()).unwrap_or_default())
+}
+
 impl StaticScope {
     /// For an object that the embedder puts on the scope chain.
     pub fn with(parent: Option<Rc<StaticScope>>) -> Rc<StaticScope> {
@@ -122,6 +138,21 @@ impl StaticScope {
         parent: Option<Rc<StaticScope>>,
         names: Box<[Identifier]>,
     ) -> Rc<StaticScope> {
+        Self::of_slots(kind, SlotKind::Variable, parent, names)
+    }
+
+    /// Its one slot has the `this` of the code inside.
+    pub fn for_this(parent: Option<Rc<StaticScope>>) -> Rc<StaticScope> {
+        let name = Identifier::new(known_text(Name::THIS_VALUE));
+        Self::of_slots(ScopeKind::Block, SlotKind::Internal, parent, [name].into())
+    }
+
+    fn of_slots(
+        kind: ScopeKind,
+        slot_kind: SlotKind,
+        parent: Option<Rc<StaticScope>>,
+        names: Box<[Identifier]>,
+    ) -> Rc<StaticScope> {
         let slots: Box<[Slot]> = (0..)
             .zip(&names)
             .map(|(index, name)| Slot {
@@ -130,7 +161,7 @@ impl StaticScope {
                 name_length: Slot::OWNED,
                 index,
                 detail: 0,
-                kind: SlotKind::Variable,
+                kind: slot_kind,
                 flags: SlotFlags::empty(),
             })
             .collect();
@@ -138,6 +169,9 @@ impl StaticScope {
             parent,
             kind,
             eval_variables_slot: None,
+            is_extensible_by_debugger_only: false,
+            is_open_to_debugger: Cell::new(false),
+            body_start: None,
             entered_at: None,
             slot_count: slots.len() as u32,
             undefined_slots: slots.len() as u32,
@@ -176,6 +210,54 @@ impl StaticScope {
     /// Where the object with the variables that `eval` code adds goes, if it may add any. Starts empty.
     pub fn eval_variables_slot(&self) -> Option<u32> {
         self.eval_variables_slot
+    }
+
+    /// Whether no code changes the slot once it is initialized.
+    pub fn is_immutable(&self, slot: &Slot) -> bool {
+        slot.flags.contains(SlotFlags::IMMUTABLE) && self.keeps_promises_of(slot)
+    }
+
+    /// Whether no code changes the slot once it is anything but undefined.
+    pub fn is_written_once(&self, slot: &Slot) -> bool {
+        slot.flags.contains(SlotFlags::WRITTEN_ONCE) && self.keeps_promises_of(slot)
+    }
+
+    fn keeps_promises_of(&self, slot: &Slot) -> bool {
+        !self.is_open_to_debugger.get()
+            || !matches!(
+                slot.kind,
+                SlotKind::Variable | SlotKind::Let | SlotKind::LazyFunction
+            )
+    }
+
+    /// Code that the source does not have may assign to the variables from now on. False if that is no news.
+    pub fn open_to_debugger(&self) -> bool {
+        !self.is_open_to_debugger.replace(true)
+    }
+
+    /// Of the scope of a function with debug hooks: where its variables count as declared, if that is apart from
+    /// its parameters.
+    pub fn body_start(&self) -> Option<u32> {
+        self.body_start.map(NonZeroU32::get)
+    }
+
+    fn internal_slot(&self, name: Name) -> Option<u32> {
+        let text = known_text(name);
+        Some(self.find_text(text, text.hash(), true)?.index)
+    }
+
+    pub fn this_slot(&self) -> Option<u32> {
+        self.internal_slot(Name::THIS_VALUE)
+    }
+
+    /// Of a class: the private symbol that marks the objects which have its private methods.
+    pub fn brand_slot(&self) -> Option<u32> {
+        self.internal_slot(Name::CLASS_BRAND)
+    }
+
+    /// Of a class: the constructor, which has the private methods that are static.
+    pub fn static_brand_slot(&self) -> Option<u32> {
+        self.internal_slot(Name::CLASS_STATIC_HOME)
     }
 
     pub fn slot_count(&self) -> u32 {

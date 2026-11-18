@@ -120,6 +120,8 @@ pub(crate) struct Validator<'a> {
     frames: Vec<Frame>,
     locals: Locals,
     br_tables: u32,
+    catch_depth: u32,
+    max_catch_depth: u32,
     uses_simd: bool,
 }
 
@@ -146,6 +148,8 @@ impl<'a> Validator<'a> {
             frames,
             locals,
             br_tables: 0,
+            catch_depth: 0,
+            max_catch_depth: 0,
             uses_simd: false,
         };
         let result = work(&mut validator);
@@ -201,6 +205,7 @@ impl<'a> Validator<'a> {
             code_offset,
             local_count: self.locals.count(),
             max_stack_height: 0,
+            max_catch_depth: self.max_catch_depth,
             call_count: cx.calls,
             loop_count: cx.loops,
             flags,
@@ -305,6 +310,8 @@ impl<'a> Validator<'a> {
         self.frames.clear();
         self.locals.forget_initializations(0);
         self.br_tables = 0;
+        self.catch_depth = 0;
+        self.max_catch_depth = 0;
         max_height
     }
 

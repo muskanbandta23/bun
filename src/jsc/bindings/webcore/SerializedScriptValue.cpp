@@ -1028,6 +1028,10 @@ private:
         }
 
         RefPtr<ArrayBufferView> arrayBufferView = toPossiblySharedArrayBufferView(vm, obj);
+        if (!arrayBufferView) [[unlikely]] {
+            code = SerializationReturnCode::DataCloneError;
+            return true;
+        }
         if (arrayBufferView->isResizableOrGrowableShared()) {
             uint64_t byteOffset = arrayBufferView->byteOffsetRaw();
             write(byteOffset);
@@ -2000,6 +2004,8 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
                 lengthStack.removeLast();
 
                 propertyStack.append(PropertyNameArrayBuilder(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
+                if (index > NonIndexPropertiesTag)
+                    propertyStack.last().add(Identifier::from(vm, NonIndexPropertiesTag));
                 array->getOwnNonIndexPropertyNames(m_lexicalGlobalObject, propertyStack.last(), DontEnumPropertiesMode::Exclude);
                 RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
                 if (propertyStack.last().size()) {
@@ -2013,7 +2019,8 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
                 inputObjectStack.removeLast();
                 break;
             }
-            inValue = array->getDirectIndex(m_lexicalGlobalObject, index);
+            // The element whose index is a tag goes by its name.
+            inValue = index != NonIndexPropertiesTag ? array->getDirectIndex(m_lexicalGlobalObject, index) : JSValue();
             RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
             if (!inValue) {
                 indexStack.last()++;
@@ -2357,6 +2364,7 @@ private:
     DeserializationResult deserialize();
 
     bool isValid() const { return m_version <= CurrentVersion; }
+    size_t remaining() const { return m_end - m_ptr; }
 
     template<typename T> bool readLittleEndian(T& value)
     {
@@ -2369,15 +2377,11 @@ private:
 #if ASSUME_LITTLE_ENDIAN
     template<typename T> static bool readLittleEndian(const uint8_t*& ptr, const uint8_t* end, T& value)
     {
-        if (ptr > end - sizeof(value))
+        if (static_cast<size_t>(end - ptr) < sizeof(value))
             return false;
 
-        if (sizeof(T) == 1)
-            value = *ptr++;
-        else {
-            value = *reinterpret_cast<const T*>(ptr);
-            ptr += sizeof(T);
-        }
+        value = WTF::unalignedLoad<T>(ptr);
+        ptr += sizeof(T);
         return true;
     }
 #else
@@ -2500,12 +2504,13 @@ private:
         if ((end - ptr) < static_cast<int>(size))
             return false;
 
-#if ASSUME_LITTLE_ENDIAN
-        str = String({ reinterpret_cast<const char16_t*>(ptr), length });
-        ptr += length * sizeof(char16_t);
-#else
+        // The characters are at any address.
         std::span<char16_t> characters;
         str = String::createUninitialized(length, characters);
+#if ASSUME_LITTLE_ENDIAN
+        memcpy(characters.data(), ptr, size);
+        ptr += size;
+#else
         for (unsigned i = 0; i < length; ++i) {
             uint16_t c;
             readLittleEndian(ptr, end, c);
@@ -2542,22 +2547,10 @@ private:
             return true;
         }
 
-        unsigned size = length * sizeof(char16_t);
-        if ((end - ptr) < static_cast<int>(size))
+        String string;
+        if (!readString(ptr, end, string, length, is8Bit))
             return false;
-
-#if ASSUME_LITTLE_ENDIAN
-        str = Identifier::fromString(vm, { reinterpret_cast<const char16_t*>(ptr), length });
-        ptr += length * sizeof(char16_t);
-#else
-        std::span<char16_t> characters;
-        str = String::createUninitialized(length, characters);
-        for (unsigned i = 0; i < length; ++i) {
-            uint16_t c;
-            readLittleEndian(ptr, end, c);
-            characters[i] = c;
-        }
-#endif
+        str = Identifier::fromString(vm, string);
         return true;
     }
 
@@ -2662,7 +2655,7 @@ private:
         LengthType length;
         if (!read(length))
             return false;
-        if (m_ptr + length > m_end)
+        if (length > remaining())
             return false;
         arrayBuffer = ArrayBuffer::tryCreate({ m_ptr, length });
         if (!arrayBuffer)
@@ -2686,7 +2679,7 @@ private:
         uint64_t maxByteLength;
         if (!read(maxByteLength))
             return false;
-        if (m_ptr + byteLength > m_end)
+        if (byteLength > remaining())
             return false;
         arrayBuffer = ArrayBuffer::tryCreate(byteLength, 1, maxByteLength);
         if (!arrayBuffer)
@@ -2738,10 +2731,6 @@ private:
             return false;
 
         RefPtr<ArrayBuffer> arrayBuffer = toPossiblySharedArrayBuffer(vm, arrayBufferObj);
-        if (!arrayBuffer) {
-            arrayBufferView = jsNull();
-            return true;
-        }
 
         std::optional<size_t> length;
         if (byteLength != autoLengthMarker) {
@@ -2754,62 +2743,25 @@ private:
                 return false;
         }
 
+        RefPtr<ArrayBufferView> view;
         switch (arrayBufferViewSubtag) {
         case DataViewTag:
-            arrayBufferView = toJS(m_lexicalGlobalObject, m_globalObject, DataView::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length).get());
-            RETURN_IF_EXCEPTION(scope, false);
-            return true;
-        case Int8ArrayTag:
-            arrayBufferView = toJS(m_lexicalGlobalObject, m_globalObject, Int8Array::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length).get());
-            RETURN_IF_EXCEPTION(scope, false);
-            return true;
-        case Uint8ArrayTag:
-            arrayBufferView = toJS(m_lexicalGlobalObject, m_globalObject, Uint8Array::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length).get());
-            RETURN_IF_EXCEPTION(scope, false);
-            return true;
-        case Uint8ClampedArrayTag:
-            arrayBufferView = toJS(m_lexicalGlobalObject, m_globalObject, Uint8ClampedArray::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length).get());
-            RETURN_IF_EXCEPTION(scope, false);
-            return true;
-        case Int16ArrayTag:
-            arrayBufferView = toJS(m_lexicalGlobalObject, m_globalObject, Int16Array::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length).get());
-            RETURN_IF_EXCEPTION(scope, false);
-            return true;
-        case Uint16ArrayTag:
-            arrayBufferView = toJS(m_lexicalGlobalObject, m_globalObject, Uint16Array::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length).get());
-            RETURN_IF_EXCEPTION(scope, false);
-            return true;
-        case Int32ArrayTag:
-            arrayBufferView = toJS(m_lexicalGlobalObject, m_globalObject, Int32Array::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length).get());
-            RETURN_IF_EXCEPTION(scope, false);
-            return true;
-        case Uint32ArrayTag:
-            arrayBufferView = toJS(m_lexicalGlobalObject, m_globalObject, Uint32Array::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length).get());
-            RETURN_IF_EXCEPTION(scope, false);
-            return true;
-        case Float16ArrayTag:
-            arrayBufferView = toJS(m_lexicalGlobalObject, m_globalObject, Float16Array::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length).get());
-            RETURN_IF_EXCEPTION(scope, false);
-            return true;
-        case Float32ArrayTag:
-            arrayBufferView = toJS(m_lexicalGlobalObject, m_globalObject, Float32Array::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length).get());
-            RETURN_IF_EXCEPTION(scope, false);
-            return true;
-        case Float64ArrayTag:
-            arrayBufferView = toJS(m_lexicalGlobalObject, m_globalObject, Float64Array::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length).get());
-            RETURN_IF_EXCEPTION(scope, false);
-            return true;
-        case BigInt64ArrayTag:
-            arrayBufferView = toJS(m_lexicalGlobalObject, m_globalObject, BigInt64Array::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length).get());
-            RETURN_IF_EXCEPTION(scope, false);
-            return true;
-        case BigUint64ArrayTag:
-            arrayBufferView = toJS(m_lexicalGlobalObject, m_globalObject, BigUint64Array::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length).get());
-            RETURN_IF_EXCEPTION(scope, false);
-            return true;
+            view = DataView::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length);
+            break;
+#define READ_TYPED_ARRAY(name)                                                           \
+    case name##ArrayTag:                                                                 \
+        view = name##Array::wrappedAs(arrayBuffer.releaseNonNull(), byteOffset, length); \
+        break;
+            FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(READ_TYPED_ARRAY)
+#undef READ_TYPED_ARRAY
         default:
             return false;
         }
+        if (!view)
+            return false;
+        arrayBufferView = view->wrap(m_lexicalGlobalObject, m_globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        return true;
     }
 
     bool readArrayBufferView(VM& vm, JSValue& arrayBufferView)
@@ -2825,7 +2777,7 @@ private:
         uint32_t size;
         if (!read(size))
             return false;
-        if (m_ptr + size > m_end)
+        if (size > remaining())
             return false;
         result.append(std::span { m_ptr, size });
         m_ptr += size;
@@ -3005,7 +2957,7 @@ private:
 
     bool read(ncrypto::BIOPointer& bio, uint64_t length)
     {
-        if (static_cast<uint64_t>(m_end - m_ptr) < length)
+        if (length > remaining())
             return false;
         bio.reset(BIO_new_mem_buf(m_ptr, length));
         if (!bio)
@@ -3095,7 +3047,7 @@ private:
         // Each additional prime is encoded as three length-prefixed byte vectors, so it
         // requires at least 3 * sizeof(uint32_t) bytes of remaining input. Reject counts
         // that could not possibly be satisfied to avoid a huge up-front allocation.
-        if (static_cast<uint64_t>(primeCount - 2) > static_cast<uint64_t>(m_end - m_ptr) / (3 * sizeof(uint32_t)))
+        if (static_cast<uint64_t>(primeCount - 2) > remaining() / (3 * sizeof(uint32_t)))
             return false;
 
         CryptoKeyRSAComponents::PrimeInfo firstPrimeInfo;
@@ -3512,7 +3464,7 @@ private:
             return bigInt;
         }
 
-        if (lengthInUint64 > static_cast<uint64_t>(m_end - m_ptr) / sizeof(uint64_t)) {
+        if (lengthInUint64 > remaining() / sizeof(uint64_t)) {
             fail();
             return JSValue();
         }
@@ -3999,6 +3951,9 @@ DeserializationResult CloneDeserializer::deserialize()
                 outputObjectStack.removeLast();
                 break;
             }
+            // Comes with the ArrayTag.
+            if (isJSArray(outputObjectStack.last()) && cachedString->identifier(vm) == vm.propertyNames->length)
+                goto error;
 
             JSValue terminal = readTerminal();
             if (scope.exception()) [[unlikely]]

@@ -44,7 +44,8 @@ bool crashes(const ScopedLambda<void()>& code)
 
 extern "C" const char* __asan_default_options()
 {
-    return "allocator_may_return_null=1:abort_on_error=0";
+    // The collector looks for cells on the real stack.
+    return "allocator_may_return_null=1:abort_on_error=0:detect_stack_use_after_return=0";
 }
 
 int main(int argumentCount, char** arguments)

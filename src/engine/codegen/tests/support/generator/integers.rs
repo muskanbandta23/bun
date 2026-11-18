@@ -22,6 +22,7 @@ impl Generator<'_> {
             6 => !favourite,
             _ => constants::integer(ty, &mut self.random),
         };
+        self.remarkable.push(number);
         if self.random.one_in(4) {
             let replaced = self.random.below(self.favourite_constants.len());
             self.favourite_constants[replaced] = number;
@@ -45,7 +46,20 @@ impl Generator<'_> {
     pub(super) fn int(&mut self, ty: Type) -> Value {
         match self.random.below(100) {
             0..15 => self.int_constant(ty),
-            15..45 if self.may_nest() => self.fresh_int(ty),
+            15..45 if self.may_nest() => {
+                let fresh = self.fresh_int(ty);
+                if self
+                    .scope
+                    .values
+                    .last()
+                    .unwrap()
+                    .class
+                    .has_determined_bits()
+                {
+                    self.count_as_used();
+                }
+                fresh
+            }
             _ => self.known_int(ty),
         }
     }
@@ -221,6 +235,10 @@ impl Generator<'_> {
             self.emit(Op::MulWide(sign, [a, b]), Type::Tuple)
         };
         let position = self.random.below(2) as u32;
+        self.extract_half(tuple, position)
+    }
+
+    pub(super) fn extract_half(&mut self, tuple: Value, position: u32) -> Value {
         if self.random.flip() {
             let other = self.builder().extract(tuple, 1 - position);
             self.keep(other, Class::Data(Type::I64));

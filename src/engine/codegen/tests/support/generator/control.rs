@@ -59,6 +59,8 @@ impl Way {
 
 #[derive(Clone, Copy)]
 enum Statement {
+    Theme,
+    Template,
     Integer,
     Float,
     Vector,
@@ -112,6 +114,8 @@ impl Generator<'_> {
             }
         };
         let statement = self.random.weighted(&[
+            (weights.themes, Statement::Theme),
+            (weights.templates, Statement::Template),
             (weights.integers, Statement::Integer),
             (weights.floats, Statement::Float),
             (weights.vectors, Statement::Vector),
@@ -133,6 +137,12 @@ impl Generator<'_> {
             (if_nests(weights.pressure), Statement::Pressure),
         ]);
         match statement {
+            Statement::Theme => {
+                let ty = self.data_type();
+                let (value, class) = self.themed(ty);
+                self.keep(value, class);
+            }
+            Statement::Template => self.template_statement(),
             Statement::Integer => {
                 let ty = self.int_type();
                 self.fresh_int(ty);

@@ -7,6 +7,7 @@ mod lower_switches;
 mod lower_total_division;
 mod merges;
 mod reaching;
+mod simplify;
 
 use crate::analysis::{Cfg, Dominators, Frequencies};
 use crate::ir::{Function, validate};
@@ -28,6 +29,7 @@ pub struct Analyses {
     has_cfg: bool,
     has_dominators: bool,
     has_frequencies: bool,
+    simplify: simplify::Tables,
 }
 
 impl Analyses {
@@ -71,6 +73,14 @@ impl Analyses {
     }
 }
 
+#[cfg(debug_assertions)]
+impl Analyses {
+    /// The places in the source of the rules that the last run of `simplify` applied.
+    pub fn fired_rules(&self) -> &[&'static core::panic::Location<'static>] {
+        &self.simplify.fired_rules
+    }
+}
+
 pub struct Pass {
     pub name: &'static str,
     run: fn(&mut Function, &mut Analyses, Target),
@@ -85,6 +95,7 @@ macro_rules! passes {
 const QUICK: &[Pass] = passes![construct_ssa, lower_switches, lower_total_division];
 const FULL: &[Pass] = passes![
     construct_ssa,
+    simplify,
     eliminate_dead_code,
     lower_switches,
     lower_total_division,

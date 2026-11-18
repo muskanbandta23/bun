@@ -632,6 +632,24 @@ impl Generator<'_> {
         self.load_from(spot, kind, ty)
     }
 
+    pub(super) fn load_as(&mut self, kind: Load, ty: Type) -> Value {
+        let size = match kind {
+            Load::Narrow(size, _) | Load::VectorZero(size) | Load::VectorSplat(size) => {
+                size.bytes().into()
+            }
+            Load::VectorExtend(..) => 8,
+            Load::Full => ty.bytes(),
+        };
+        let spot = self.spot(size, Purpose::Read);
+        self.load_from(spot, kind, ty)
+    }
+
+    pub(super) fn store_somewhere(&mut self, value: Value) {
+        let size = self.store_size(self.type_of(value));
+        let spot = self.spot(size, Purpose::Write);
+        self.store_to(spot, value, Purpose::Write);
+    }
+
     pub(super) fn load_narrow(&mut self, size: Size, sign: Sign) -> Value {
         let spot = self.spot(size.bytes().into(), Purpose::Read);
         self.load_from(spot, Load::Narrow(size, sign), Type::I32)
@@ -839,6 +857,14 @@ impl Generator<'_> {
         }
     }
 
+    fn atomic_operand(&mut self, ty: Type, size: Size) -> Value {
+        if size < ty.width().size() && self.random.flip() {
+            self.with_irrelevant_upper_bits(ty, size.bits().into())
+        } else {
+            self.int(ty)
+        }
+    }
+
     pub(super) fn atomic_statement(&mut self) {
         let ty = self.int_type();
         let size = self.random.pick(&SIZES).min(ty.width().size());
@@ -887,7 +913,7 @@ impl Generator<'_> {
                 } else {
                     self.int(ty)
                 };
-                let replacement = self.int(ty);
+                let replacement = self.atomic_operand(ty, size);
                 let old = self.builder().atomic_compare_exchange(
                     size,
                     expected,
@@ -901,7 +927,7 @@ impl Generator<'_> {
                 use AtomicOp::*;
                 let op = self.random.pick(&[Add, Sub, And, Or, Xor, Exchange]);
                 let address = self.add_distance(spot.base, spot.offset.into());
-                let operand = self.int(ty);
+                let operand = self.atomic_operand(ty, size);
                 (
                     self.builder()
                         .atomic_update(op, size, operand, address, access),

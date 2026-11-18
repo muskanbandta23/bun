@@ -62,7 +62,6 @@ flag dumpGraphAtEachPhase
 flag dumpHeapOnLowMemory
 flag dumpHeapStatisticsAtVMDestruction
 flag dumpIonGraph
-flag dumpModuleLoadingState
 flag dumpModuleRecord
 flag dumpOMGDisassembly
 flag dumpOptimizationTracing

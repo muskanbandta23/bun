@@ -118,6 +118,7 @@ options! {
     use_tail_calls / useTailCalls: bool = true,
     use_code_cache / useCodeCache: bool = true,
     log_bytecode_cache / verboseDiskCache: bool = false,
+    log_module_loading / dumpModuleLoadingState: bool = false,
     runs_only_static_code / disallowNonStaticCode: bool = false,
     eval_mode / evalMode: bool = false,
     show_private_scripts_in_stack_traces / showPrivateScriptsInStackTraces: bool = false,

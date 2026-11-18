@@ -1,4 +1,4 @@
-use bun_engine_temporal::{Duration, ErrorKind, InputError, PartialDuration, Unit};
+use bun_engine_temporal::{Duration, Unit, to_temporal_duration};
 
 use super::prelude::*;
 use crate::duration_format::{
@@ -59,26 +59,6 @@ fn construct(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let base = JsObjectInit::new(cx, shape);
     let object = cx.allocate::<JsDurationFormat>(JsDurationFormatInit { base, format });
     Ok(object.into())
-}
-
-fn to_temporal_duration(cx: &mut Cx, value: Value) -> JsResult<Duration> {
-    let throw = |cx: &Cx, error: InputError<'_>| match error.kind() {
-        ErrorKind::Range => cx.throw_range_error(error.message()),
-        ErrorKind::Type => cx.throw_type_error(error.message()),
-    };
-    let Some(object) = value.as_object() else {
-        let string = value.to_string_view(cx)?;
-        return Duration::parse(string.text()).map_err(|error| throw(cx, error));
-    };
-    let mut partial = PartialDuration::default();
-    for unit in Unit::ALPHABETICAL {
-        let field = object.get(cx, properties(unit)[0])?;
-        if !field.is_undefined() {
-            let number = field.to_number(cx)?;
-            (partial.set(unit, number)).map_err(|error| throw(cx, error.into()))?;
-        }
-    }
-    Duration::from_partial(&partial).map_err(|error| throw(cx, error.into()))
 }
 
 fn to_duration(cx: &mut Cx, value: Value, wrong_type: &'static str) -> JsResult<Duration> {

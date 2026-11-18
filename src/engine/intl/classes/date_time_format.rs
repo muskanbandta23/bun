@@ -32,10 +32,14 @@ define_class!(
     init_date_time_format_constructor, init_date_time_format_shape
 );
 
+fn system_time_zone(cx: &Cx) -> TimeZone {
+    TimeZone::Named(cx.date_cache().time_zone())
+}
+
 fn read_time_zone(cx: &mut Cx, bag: OptionBag, fixed: Option<TimeZone>) -> JsResult<TimeZone> {
     let Some(fixed) = fixed else {
         let requested = bag.parse(cx, names::timeZone, parse_time_zone)?;
-        return Ok(requested.unwrap_or_else(|| TimeZone::Named(cx.date_cache().time_zone())));
+        return Ok(requested.unwrap_or_else(|| system_time_zone(cx)));
     };
     if bag.get(cx, names::timeZone)?.is_some() {
         return Err(cx.throw_type_error(
@@ -45,16 +49,11 @@ fn read_time_zone(cx: &mut Cx, bag: OptionBag, fixed: Option<TimeZone>) -> JsRes
     Ok(fixed)
 }
 
-/// CreateDateTimeFormat. `fixed_time_zone` is `toLocaleStringTimeZone`.
-pub(super) fn new_date_time_format(
+fn read_options(
     cx: &mut Cx,
-    locales: Value,
-    options: Value,
-    purpose: Purpose,
+    bag: OptionBag,
     fixed_time_zone: Option<TimeZone>,
-) -> JsResult<DateTimeFormat> {
-    let requested = canonicalize_locale_list(cx, locales)?;
-    let bag = OptionBag::coerce(cx, options)?;
+) -> JsResult<(Options, TimeZone)> {
     bag.check_locale_matcher(cx)?;
     let mut options = Options {
         calendar: bag.parse(cx, names::calendar, KeywordValue::calendar)?,
@@ -75,13 +74,31 @@ pub(super) fn new_date_time_format(
     bag.value::<FormatMatcher>(cx, names::formatMatcher)?;
     options.date_style = bag.parse(cx, names::dateStyle, Style::parse_date_style)?;
     options.time_style = bag.parse(cx, names::timeStyle, Style::parse_time_style)?;
+    Ok((options, time_zone))
+}
+
+/// CreateDateTimeFormat. `fixed_time_zone` is `toLocaleStringTimeZone`.
+pub(super) fn new_date_time_format(
+    cx: &mut Cx,
+    locales: Value,
+    options: Value,
+    purpose: Purpose,
+    fixed_time_zone: Option<TimeZone>,
+) -> JsResult<DateTimeFormat> {
+    let requested = canonicalize_locale_list(cx, locales)?;
+    let (options, time_zone) = if options.is_undefined() {
+        let time_zone = fixed_time_zone.unwrap_or_else(|| system_time_zone(cx));
+        (Options::default(), time_zone)
+    } else {
+        read_options(cx, OptionBag::coerce(cx, options)?, fixed_time_zone)?
+    };
     with_cache(cx, |cache| {
         DateTimeFormat::new(cache, &requested, &options, time_zone, purpose)
     })
 }
 
 /// ToDateTimeFormattable
-#[inline]
+#[inline(always)]
 fn to_date_time_value(cx: &mut Cx, value: Value) -> JsResult<DateTimeValue> {
     let temporal = value.as_object().and_then(|it| TemporalValue::of(&it));
     match temporal.as_ref().and_then(DateTimeValue::from_temporal) {
@@ -90,6 +107,7 @@ fn to_date_time_value(cx: &mut Cx, value: Value) -> JsResult<DateTimeValue> {
     }
 }
 
+#[inline(always)]
 fn to_date_time_value_or_now(cx: &mut Cx, value: Value) -> JsResult<DateTimeValue> {
     if value.is_undefined() {
         return Ok(DateTimeValue::Number(cx.global().date_now()));

@@ -278,6 +278,17 @@ impl PropertySlot {
         self.kind = SlotKind::Custom;
     }
 
+    /// Every object with the shape of the base has the property.
+    pub fn set_cacheable_custom(
+        &mut self,
+        base: &JsObject,
+        attributes: Attributes,
+        getter: CustomGetter,
+    ) {
+        self.set_custom(base, attributes, Some(getter), None);
+        self.allow_caching(PropertyOffset::INVALID);
+    }
+
     pub(crate) fn set_required_class(&mut self, class: Option<&'static Class>) {
         if class.is_some() {
             self.additional_data = AdditionalData::RequiredClass;

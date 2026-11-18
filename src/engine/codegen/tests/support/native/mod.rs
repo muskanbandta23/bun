@@ -25,7 +25,8 @@ use bun_engine_codegen::{Arm64Compiler, Frame, Options, Target, TooComplex, X64C
 
 use self::recorder::{Recorder, Stop};
 use super::disassembly::listing;
-use super::harness::{Case, Subject, World, catching, setting};
+use super::generator::Shape;
+use super::harness::{Case, Subject, World, catching, setting, shape_for};
 use super::memory::{GRANULE, Layout};
 use super::random::{Random, mix};
 
@@ -266,6 +267,12 @@ impl Subject for Native {
             },
             other_threads: false,
         }
+    }
+
+    fn shape(&mut self, seed: u64) -> Shape {
+        let mut shape = shape_for(seed);
+        shape.weights.nodes = 0;
+        shape
     }
 
     fn test(&mut self, case: &Case) -> Result<(), String> {

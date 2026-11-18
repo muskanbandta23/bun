@@ -1,4 +1,5 @@
-//! Removes loads of what is at hand, stores of what is there already, and stores that are overwritten unseen.
+//! Removes loads of what is at hand, stores of what is there already, stores that are overwritten unseen, and nodes
+//! that would find what they found before.
 
 use core::hash::{Hash, Hasher};
 use core::ops::Range;
@@ -9,12 +10,14 @@ use super::Analyses;
 use super::dead_stores::remove_dead_stores;
 use super::merges::Merges;
 use super::places::{Address, Place};
+use super::preheaders::entering_edges;
 use super::readability::withdraw_promises;
 use super::writes::Writes;
 use crate::analysis::{Cfg, Dominators, Loop};
 use crate::hash::FastHasher;
 use crate::ir::{
-    AccessFlags, Block, Builder, Function, Load, Op, Store, Table, Type, Unary, Value, entities,
+    AccessFlags, Block, Builder, EffectFlags, Effects, Function, Load, Op, Store, Table, Type,
+    Unary, Value, entities,
 };
 use crate::target::Target;
 
@@ -52,23 +55,35 @@ struct SightingData {
     outer: Sighting,
 }
 
+#[derive(Clone, Copy)]
+enum Key {
+    /// Loads that rearrange the bytes match only their like.
+    Memory(Address, Option<Load>),
+    /// The first of its like.
+    Node(Value),
+}
+
 struct LocationData {
-    address: Address,
-    /// For loads that rearrange the bytes, and so match only their like.
-    special: Option<Load>,
+    key: Key,
     latest: Sighting,
     /// The one that dominates the current point last is this or further out.
     innermost: Sighting,
 }
 
-/// What a load wants.
+/// What a load wants. A node counts as a full load of no bytes.
 #[derive(Clone, Copy)]
 struct Wanted {
     load: Value,
     kind: Load,
-    place: Place,
+    place: Option<Place>,
     location: Location,
     groups: u64,
+}
+
+impl Wanted {
+    fn size(&self) -> u32 {
+        self.place.map_or(0, |place| place.size)
+    }
 }
 
 /// To bring the value to the load through parameters.
@@ -95,7 +110,7 @@ struct Waiting {
 
 #[derive(Clone, Copy)]
 struct LoopState {
-    returns_seen: u32,
+    returns_unseen: u32,
     waiting: u32,
     last_waiting: u32,
 }
@@ -106,7 +121,7 @@ struct Elimination<'a> {
     writes: Writes,
     merges: Merges<'a>,
     /// An open hash table.
-    by_address: Vec<Location>,
+    by_key: Vec<Location>,
     locations: Table<Location, LocationData>,
     sightings: Table<Sighting, SightingData>,
     loops: Table<Loop, LoopState>,
@@ -121,15 +136,20 @@ pub(super) fn run(function: &mut Function, analyses: &mut Analyses, _: Target) {
     let mut accesses = Vec::new();
     let mut accesses_in = function.block_table(0..0);
     let mut stores = function.block_table(0);
-    let note = |value, time| {
-        if let Op::Load { access, .. } | Op::Store { access, .. } = *function.op(value)
-            && !access.has(AccessFlags::ATOMIC)
-        {
+    let note = |value, effects: Effects, time| {
+        let op = function.op(value);
+        let is_store = matches!(op, Op::Store { .. });
+        let is_wanted = match op {
+            Op::Load { .. } | Op::Store { .. } => !effects.has(EffectFlags::FENCE),
+            Op::Node { .. } | Op::WideNode { .. } => effects.at_most_exits(),
+            _ => false,
+        };
+        if is_wanted {
             let (block, number) = (function.block_of(value), accesses.len());
             let range: &mut Range<usize> = &mut accesses_in[block];
             *range = if range.end == 0 { number } else { range.start }..number + 1;
             accesses.push((value, time));
-            stores[block] += u32::from(function.type_of(value) == Type::Void);
+            stores[block] += u32::from(is_store);
         }
     };
     let writes = Writes::collect(function, cfg, |_| true, note);
@@ -143,20 +163,24 @@ pub(super) fn run(function: &mut Function, analyses: &mut Analyses, _: Target) {
         merges.add_changes(rank, groups);
     }
     merges.compute(function, merges.all_ranks());
-    let unseen = LoopState {
-        returns_seen: 0,
-        waiting: 0,
-        last_waiting: u32::MAX,
-    };
+    let mut loops = Table::default();
+    for id in cfg.loops().keys() {
+        let ways = cfg.predecessors(cfg.loops()[id].header).len();
+        loops.push(LoopState {
+            returns_unseen: (ways - entering_edges(function, cfg, id).len()) as u32,
+            waiting: 0,
+            last_waiting: u32::MAX,
+        });
+    }
     let mut elimination = Elimination {
         cfg,
         dominators,
         writes,
         merges,
-        by_address: vec![Location::NONE; (2 * accesses.len()).next_power_of_two()],
+        by_key: vec![Location::NONE; (2 * accesses.len()).next_power_of_two()],
         locations: Table::default(),
         sightings: Table::default(),
-        loops: Table::filled(cfg.loops().len(), unseen),
+        loops,
         waiting: Vec::new(),
         made_aliases: false,
         replaced: Vec::new(),
@@ -178,7 +202,7 @@ impl SightingData {
     fn supplies(&self, function: &Function, wanted: &Wanted) -> bool {
         let (has, wants) = (function.type_of(self.value), function.type_of(wanted.load));
         self.exact == Some(wanted.kind) && has == wants
-            || has != Type::V128 && wants != Type::V128 && self.size >= wanted.place.size
+            || has != Type::V128 && wants != Type::V128 && self.size >= wanted.size()
     }
 
     fn convert(&self, function: &mut Function, wanted: &Wanted, before: Value) -> Value {
@@ -216,32 +240,36 @@ impl SightingData {
 
 impl Elimination<'_> {
     fn visit(&mut self, function: &mut Function, value: Value, at: Point) {
-        let place = Place::of(function, value).expect("a plain access");
-        match *function.op(value) {
-            Op::Load { kind, access, .. } => {
+        let place = Place::of(function, value);
+        match (*function.op(value), place) {
+            (Op::Load { kind, access, .. }, Some(Place { address, .. })) => {
                 let is_plain = matches!(kind, Load::Full | Load::Narrow(..));
+                let key = Key::Memory(address, (!is_plain).then_some(kind));
                 let wanted = Wanted {
                     load: value,
                     kind,
                     place,
-                    location: self.location(place.address, (!is_plain).then_some(kind)),
+                    location: self.location(function, key),
                     groups: self.writes.groups_overlapping(function, access.heap()),
                 };
                 self.visit_load(function, &wanted, at);
             }
-            Op::Store {
-                kind,
-                args: [stored, _],
-                access,
-                ..
-            } => {
-                let (stored, location) =
-                    (function.resolve(stored), self.location(place.address, None));
+            (
+                Op::Store {
+                    kind,
+                    args: [stored, _],
+                    access,
+                    ..
+                },
+                Some(place),
+            ) => {
+                let stored = function.resolve(stored);
+                let location = self.location(function, Key::Memory(place.address, None));
                 let groups = self.writes.groups_overlapping(function, access.heap());
                 if let Some(known) = self.dominating(location, at.block)
                     && known.has_low_bytes_of(function, stored, place.size)
                     && (known.was_stored || !access.has(AccessFlags::TRAPS))
-                    && let Change::None = self.change(function, known.at, at, &place, groups)
+                    && let Change::None = self.change(function, known.at, at, Some(&place), groups)
                 {
                     return function.remove(value);
                 }
@@ -260,7 +288,18 @@ impl Elimination<'_> {
                 };
                 self.add_sighting(location, sighting);
             }
-            _ => unreachable!("neither a load nor a store"),
+            _ => {
+                function.resolve_operands(value);
+                let reads = function.effects(value).reads;
+                let wanted = Wanted {
+                    load: value,
+                    kind: Load::Full,
+                    place,
+                    location: self.location(function, Key::Node(value)),
+                    groups: self.writes.groups_overlapping(function, reads),
+                };
+                self.visit_load(function, &wanted, at);
+            }
         }
     }
 
@@ -269,7 +308,7 @@ impl Elimination<'_> {
         let mut sighting = SightingData {
             at,
             value: wanted.load,
-            size: wanted.place.size,
+            size: wanted.size(),
             exact: Some(wanted.kind),
             was_stored: false,
             is_immutable: access.is_some_and(|access| access.has(AccessFlags::IMMUTABLE)),
@@ -284,7 +323,7 @@ impl Elimination<'_> {
                 Change::None => {
                     sighting.value = known.convert(function, wanted, wanted.load);
                     sighting.was_stored = known.was_stored;
-                    self.replace(function, wanted.load, &sighting);
+                    self.replace(function, wanted.load, sighting.value, !known.was_stored);
                     let is_fresher = known.at != at && known.size == sighting.size;
                     if !known.is_immutable && (sighting.is_immutable || is_fresher) {
                         self.add_sighting(wanted.location, sighting);
@@ -296,46 +335,59 @@ impl Elimination<'_> {
             }
         }
         if let Some(join) = join.or_else(|| self.join_after_sighting(function, wanted, at)) {
-            if let Some(headed) = self.cfg.loop_headed_by(join) {
-                self.wait_for_turns(function, wanted, headed);
-            } else if let Some(param) = self.try_to_join_values(function, wanted, join) {
-                sighting.value = param;
+            match self.cfg.loop_headed_by(join) {
+                Some(headed) if self.loops[headed].returns_unseen != 0 => {
+                    self.wait_for_turns(wanted, headed);
+                }
+                _ => self.try_to_join_values(function, wanted, join),
             }
         }
         self.add_sighting(wanted.location, sighting);
     }
 
-    fn replace(&mut self, function: &mut Function, load: Value, known: &SightingData) {
-        let access = function.op(load).access();
-        let could_move = access.is_some_and(|access| access.has(AccessFlags::ALWAYS_READABLE));
-        if !could_move || known.was_stored {
+    fn replace(&mut self, function: &mut Function, load: Value, value: Value, is_like: bool) {
+        if function.type_of(load) == Type::Void {
+            return function.remove(load);
+        }
+        let could_move = !function.effects(load).has(EffectFlags::CONTROL_DEPENDENT);
+        if !could_move || !is_like {
             self.replaced.push(load);
         }
-        function.replace(load, known.value);
+        function.replace(load, value);
         self.made_aliases = true;
     }
 
     // Locations and sightings
 
-    fn location(&mut self, address: Address, special: Option<Load>) -> Location {
+    fn location(&mut self, function: &Function, key: Key) -> Location {
+        let of_node = |node| {
+            let (op, ty) = (function.op(node), function.type_of(node));
+            (op.node(), ty, function.operands(node))
+        };
         let mut hasher = FastHasher::default();
-        (address, special).hash(&mut hasher);
-        let mask = self.by_address.len() - 1;
+        match key {
+            Key::Memory(address, special) => (address, special).hash(&mut hasher),
+            Key::Node(node) => of_node(node).hash(&mut hasher),
+        }
+        let mask = self.by_key.len() - 1;
         let mut slot = hasher.finish() as usize & mask;
-        while let Some(known) = self.by_address[slot].expand() {
-            let data = &self.locations[known];
-            if (data.address, data.special) == (address, special) {
+        while let Some(known) = self.by_key[slot].expand() {
+            let is_same = match (self.locations[known].key, key) {
+                (Key::Memory(a, b), Key::Memory(c, d)) => (a, b) == (c, d),
+                (Key::Node(a), Key::Node(b)) => of_node(a) == of_node(b),
+                _ => false,
+            };
+            if is_same {
                 return known;
             }
             slot = (slot + 1) & mask;
         }
-        self.by_address[slot] = self.locations.push(LocationData {
-            address,
-            special,
+        self.by_key[slot] = self.locations.push(LocationData {
+            key,
             latest: Sighting::NONE,
             innermost: Sighting::NONE,
         });
-        self.by_address[slot]
+        self.by_key[slot]
     }
 
     /// For the current block.
@@ -398,7 +450,7 @@ impl Elimination<'_> {
         if known.is_immutable {
             return Change::None;
         }
-        self.change(function, known.at, to, &wanted.place, wanted.groups)
+        self.change(function, known.at, to, wanted.place.as_ref(), wanted.groups)
     }
 
     /// The last that may come between the points, of which the first dominates the second.
@@ -407,13 +459,13 @@ impl Elimination<'_> {
         function: &Function,
         from: Point,
         mut to: Point,
-        place: &Place,
+        place: Option<&Place>,
         groups: u64,
     ) -> Change {
         let mut patience = MOST_WRITES_COMPARED;
         let mut may_change = |numbers| {
             self.writes
-                .may_change(function, numbers, Some(place), groups, &mut patience)
+                .may_change(function, numbers, place, groups, &mut patience)
         };
         let first = self.merges.rank(from.block);
         while to.block != from.block {
@@ -468,44 +520,34 @@ impl Elimination<'_> {
         let top = fork.map_or(0, |fork| self.merges.rank(fork));
         let block = self
             .merges
-            .block(self.merges.child_toward(top, position + 1));
+            .block(self.merges.first_dominator_after(top, position + 1));
         let start = Point {
             block,
             time: self.writes_in(block).start,
         };
-        let change = self.change(function, start, at, &wanted.place, wanted.groups);
+        let change = self.change(function, start, at, wanted.place.as_ref(), wanted.groups);
         matches!(change, Change::None).then_some(block)
     }
 
-    fn can_join_at(&self, function: &Function, wanted: &Wanted, join: Block) -> bool {
-        let comes_before = |value| {
-            let home = function.block_of(value).expand();
-            home.is_none_or(|home| self.dominators.strictly_dominates(home, join))
-        };
-        (2..=MOST_WAYS_JOINED).contains(&self.cfg.predecessors(join).len())
-            && wanted.place.address.values().all(comes_before)
-    }
-
-    /// Replaces the load with a new parameter of the block.
-    fn try_to_join_values(
-        &mut self,
-        function: &mut Function,
-        wanted: &Wanted,
-        join: Block,
-    ) -> Option<Value> {
+    /// Replaces the load with a new parameter of the block. What it is computed from comes before that, since it comes
+    /// before an earlier sighting.
+    fn try_to_join_values(&mut self, function: &mut Function, wanted: &Wanted, join: Block) {
+        let ty = function.type_of(wanted.load);
         let mut attempt = Attempt {
             wanted,
             outermost: join,
             acts: false,
         };
-        self.join_values(function, attempt, join, 0)?;
-        attempt.acts = true;
-        let param = self.join_values(function, attempt, join, 0);
-        let param = param.expect("it was found to be possible");
-        self.replaced.push(wanted.load);
-        function.replace(wanted.load, param);
-        self.made_aliases = true;
-        Some(param)
+        if ty == Type::Tuple || self.join_values(function, attempt, join, 0).is_none() {
+            return;
+        }
+        let mut param = Value::NONE;
+        if ty != Type::Void {
+            attempt.acts = true;
+            let joined = self.join_values(function, attempt, join, 0);
+            param = joined.expect("it was found to be possible");
+        }
+        self.replace(function, wanted.load, param, false);
     }
 
     fn join_values(
@@ -515,10 +557,11 @@ impl Elimination<'_> {
         join: Block,
         depth: u32,
     ) -> Option<Value> {
-        if !self.can_join_at(function, attempt.wanted, join) {
+        let ways = self.cfg.predecessors(join);
+        if !(2..=MOST_WAYS_JOINED).contains(&ways.len()) {
             return None;
         }
-        for &edge in self.cfg.predecessors(join) {
+        for &edge in ways {
             let arg = self.value_at_end(function, attempt, function.source(edge), depth)?;
             if attempt.acts {
                 function.push_arg(edge, arg);
@@ -562,18 +605,14 @@ impl Elimination<'_> {
         self.join_values(function, attempt, join, depth + 1)
     }
 
-    fn wait_for_turns(&mut self, function: &Function, wanted: &Wanted, headed: Loop) {
-        let (data, state) = (self.cfg.loops()[headed], self.loops[headed]);
-        if data.is_natural
-            && state.returns_seen == 0
-            && state.waiting < MOST_LOADS_WAITING_PER_LOOP
-            && self.can_join_at(function, wanted, data.header)
-        {
-            self.loops[headed].waiting += 1;
-            self.loops[headed].last_waiting = self.waiting.len() as u32;
+    fn wait_for_turns(&mut self, wanted: &Wanted, headed: Loop) {
+        let state = &mut self.loops[headed];
+        if state.waiting < MOST_LOADS_WAITING_PER_LOOP {
+            state.waiting += 1;
+            let earlier = core::mem::replace(&mut state.last_waiting, self.waiting.len() as u32);
             self.waiting.push(Waiting {
                 wanted: *wanted,
-                earlier: state.last_waiting,
+                earlier,
             });
         }
     }
@@ -583,22 +622,19 @@ impl Elimination<'_> {
             return;
         }
         for edge in function.successors(block) {
-            let header = function.target(edge);
             if !self.cfg.is_backward(function, edge) {
                 continue;
             }
+            let header = function.target(edge);
             let state = &mut self.loops[self.cfg.loop_of(header)];
-            state.returns_seen += 1;
-            let ways = self.cfg.predecessors(header);
-            let last_unseen = ways[ways.len() - state.returns_seen as usize - 1];
-            if self.cfg.is_backward(function, last_unseen) {
+            state.returns_unseen -= 1;
+            if state.returns_unseen != 0 {
                 continue;
             }
             let mut next = state.last_waiting;
-            while let Some(waiting) = self.waiting.get(next as usize) {
-                let wanted = waiting.wanted;
-                next = waiting.earlier;
+            while let Some(&Waiting { wanted, earlier }) = self.waiting.get(next as usize) {
                 self.try_to_join_values(function, &wanted, header);
+                next = earlier;
             }
         }
     }

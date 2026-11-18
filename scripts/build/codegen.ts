@@ -672,7 +672,9 @@ function emitEngineHeaders({ n, cfg, sources, o, dirStamp }: Ctx): void {
     outputs,
     rule: "codegen",
     inputs: [script],
-    implicitInputs: [...new Set([types, resolve(engine, "text", "names.txt"), ...mirrored, ...exports])],
+    implicitInputs: [
+      ...new Set([types, resolve(engine, "text", "names.txt"), resolve(engine, "vm", "options.rs"), ...mirrored, ...exports]),
+    ],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,

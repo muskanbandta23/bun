@@ -48,16 +48,16 @@ functions! {
         with_label(cx, frame, |cx, label| (console.time_log)(cx, label, frame.rest(1)))
     },
     timeEnd: |cx, frame, console| with_label(cx, frame, console.time_end),
-    timeStamp: |cx, frame, console| (console.time_stamp)(cx, frame.arguments()),
+    timeStamp: |cx, _frame, _console| Ok(()),
     takeHeapSnapshot: |cx, frame, console| with_title(cx, frame, console.take_heap_snapshot),
     group: |cx, frame, console| message(cx, console, MessageType::StartGroup, frame.arguments()),
     groupCollapsed: |cx, frame, console| {
         message(cx, console, MessageType::StartGroupCollapsed, frame.arguments())
     },
     groupEnd: |cx, frame, console| message(cx, console, MessageType::EndGroup, frame.arguments()),
-    record: |cx, frame, console| (console.record)(cx, frame.arguments()),
-    recordEnd: |cx, frame, console| (console.record_end)(cx, frame.arguments()),
-    screenshot: |cx, frame, console| (console.screenshot)(cx, frame.arguments()),
+    record: |cx, _frame, _console| Ok(()),
+    recordEnd: |cx, _frame, _console| Ok(()),
+    screenshot: |cx, _frame, _console| Ok(()),
 }
 
 define_object!(ConsoleObject, "console", PROPERTIES);

@@ -1,0 +1,22 @@
+{
+  "src/engine/interpreter/slow/exotic.rs": 1,
+  "src/engine/intl/classes/date_time_format.rs": 1,
+  "src/engine/intl/classes/display_names.rs": 1,
+  "src/engine/intl/classes/duration_format.rs": 1,
+  "src/engine/intl/classes/legacy.rs": 2,
+  "src/engine/intl/classes/list_format.rs": 1,
+  "src/engine/intl/classes/number_format.rs": 1,
+  "src/engine/intl/classes/plural_rules.rs": 2,
+  "src/engine/intl/classes/relative_time_format.rs": 1,
+  "src/engine/intl/classes/segmenter.rs": 1,
+  "src/engine/intl/classes/state.rs": 1,
+  "src/engine/optimizer/builder/scopes.rs": 1,
+  "src/engine/vm/runtime/collections/ordered_collection.rs": 1,
+  "src/engine/vm/runtime/collections/ordered_table.rs": 2,
+  "src/engine/vm/runtime/collections/set.rs": 4,
+  "src/engine/vm/runtime/collections/weak_collection.rs": 1,
+  "src/engine/vm/runtime/modules/failure.rs": 1,
+  "src/engine/vm/runtime/modules/jobs.rs": 2,
+  "src/engine/vm/runtime/modules/namespace.rs": 2,
+  "src/engine/vm/runtime/modules/source_text.rs": 9
+}

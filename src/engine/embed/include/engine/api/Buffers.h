@@ -102,7 +102,7 @@ private:
     size_t m_byteLength;
     size_t m_maxByteLength;
     uint8_t m_backing;
-    Engine::Opaque<8> m_owner;
+    [[maybe_unused]] Engine::Opaque<8> m_owner;
     const std::atomic<size_t>* m_sharedByteLength;
     bool m_isResizable;
 };
@@ -261,7 +261,7 @@ public:
     // Zero if it does not.
     size_t byteOffset() const { return currentByteLength() ? m_byteOffset : 0; }
     size_t byteLength() const { return currentByteLength().value_or(0); }
-    void* baseAddress() const { return m_buffer->isDetached() ? nullptr : static_cast<uint8_t*>(m_buffer->data()) + m_byteOffset; }
+    void* data() const { return m_buffer->isDetached() ? nullptr : static_cast<uint8_t*>(m_buffer->data()) + m_byteOffset; }
 
     // A new object.
     JSArrayBufferView* wrap(JSGlobalObject* lexicalGlobalObject, JSGlobalObject* globalObject);
@@ -321,7 +321,7 @@ public:
         return buffer ? wrappedAs(buffer.releaseNonNull(), 0, length) : nullptr;
     }
 
-    ElementType* data() const { return static_cast<ElementType*>(baseAddress()); }
+    ElementType* data() const { return static_cast<ElementType*>(ArrayBufferView::data()); }
 
 private:
     using ArrayBufferView::ArrayBufferView;
@@ -447,8 +447,6 @@ inline RefPtr<ArrayBufferView> JSArrayBufferView::toWrappedAllowShared(VM&, JSVa
     return view && !view->isResizableOrGrowableShared() ? view->possiblySharedImpl() : nullptr;
 }
 
-inline JSArrayBufferView* validateTypedArray(JSGlobalObject* globalObject, JSArrayBufferView* view) { return Engine::typed_array_validate(globalObject, view); }
-
 template<typename Adaptor> class JSGenericTypedArrayView final : public JSArrayBufferView {
 public:
     using ElementType = typename Adaptor::Type;
@@ -459,6 +457,12 @@ public:
 
     static JSGenericTypedArrayView* create(JSGlobalObject* globalObject, Structure* structure, size_t length) { return cast(Engine::typed_array_create(globalObject, structure, length)); }
     static JSGenericTypedArrayView* createUninitialized(JSGlobalObject* globalObject, Structure* structure, size_t length) { return cast(Engine::typed_array_create_uninitialized(globalObject, structure, length)); }
+    // As that of ArrayBuffer, without making one.
+    static JSGenericTypedArrayView* createAdopted(VM& vm, Structure* structure, std::span<const uint8_t> bytes)
+        requires(TypedArrayStorageType == TypeUint8)
+    {
+        return cast(Engine::uint8_array_adopt(vm, structure, bytes.data(), bytes.size()));
+    }
     // Without a length it reaches to the end of the buffer.
     static JSGenericTypedArrayView* create(JSGlobalObject* globalObject, Structure* structure, RefPtr<ArrayBuffer>&& buffer, size_t byteOffset, std::optional<size_t> length) { return cast(JSArrayBufferView::create(globalObject, structure, *buffer, byteOffset, length)); }
 
@@ -527,6 +531,23 @@ inline RefPtr<DataView> JSDataView::toWrapped(VM&, JSValue value)
     auto* view = dynamicDowncast<JSDataView>(value);
     return view && !view->isShared() && !view->isResizableOrGrowableShared() ? view->wrappedAs<DataView>() : nullptr;
 }
+
+// What a function with BufferAccessorIntrinsic reads or writes.
+struct BufferAccessorDescriptor {
+    // Zero if an argument says.
+    uint8_t byteSize;
+    bool isSigned;
+    bool isFloatingPoint;
+    bool isLittleEndian;
+    bool isWrite;
+};
+ENGINE_CHECK_SIZE(BufferAccessorDescriptor, sizeOfBufferAccessor);
+ENGINE_CHECK_OFFSET(BufferAccessorDescriptor, isSigned, BufferAccessor_is_signed);
+ENGINE_CHECK_OFFSET(BufferAccessorDescriptor, isFloatingPoint, BufferAccessor_is_float);
+ENGINE_CHECK_OFFSET(BufferAccessorDescriptor, isLittleEndian, BufferAccessor_is_little_endian);
+ENGINE_CHECK_OFFSET(BufferAccessorDescriptor, isWrite, BufferAccessor_is_write);
+
+inline void registerBufferAccessor(NativeFunction function, const BufferAccessorDescriptor& descriptor) { Engine::buffer_accessor_register(descriptor, function); }
 
 } // namespace JSC
 

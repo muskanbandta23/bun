@@ -143,6 +143,21 @@ impl ImmutableArray {
         unsafe { Self::try_build(vm, ElementKind::Contiguous, length, fill) }
     }
 
+    /// No collection runs meanwhile. Panics unless there are `length` values.
+    #[inline]
+    pub fn try_from_iter(
+        vm: &Vm,
+        length: usize,
+        values: impl Iterator<Item = Value>,
+    ) -> Result<Gc<ImmutableArray>, AllocError> {
+        let fill = |writer: &mut ElementWriter<'_>| {
+            let _defer = vm.heap.defer_collection();
+            values.for_each(|value| writer.push(value));
+        };
+        // SAFETY: values, with collection deferred.
+        unsafe { Self::try_build(vm, ElementKind::Contiguous, length, fill) }
+    }
+
     pub fn try_from_int32s(vm: &Vm, values: &[i32]) -> Result<Gc<ImmutableArray>, AllocError> {
         let fill = |writer: &mut ElementWriter<'_>| {
             values.iter().for_each(|&it| writer.push(Value::int32(it)));
@@ -212,6 +227,7 @@ impl ImmutableArray {
 
     /// Unless the elements are raw doubles.
     #[inline]
+    #[cfg_attr(rootcheck, rootcheck::stays("points into the cell"))]
     pub fn values(&self) -> Option<&[Value]> {
         let elements = self.storage().elements_ptr().cast();
         // SAFETY: none is empty, none changes, and the slice is inside the cell.
@@ -220,6 +236,7 @@ impl ImmutableArray {
     }
 
     #[inline(always)]
+    #[cfg_attr(rootcheck, rootcheck::stays("points into the cell"))]
     pub fn elements(&self) -> Elements<'_> {
         use core::slice::from_raw_parts;
         let (first, length) = (self.storage().elements_ptr(), self.len() as usize);

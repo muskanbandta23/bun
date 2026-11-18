@@ -3,6 +3,7 @@
 use std::rc::Rc;
 
 use bun_engine_bytecode::ImportPhase;
+use bun_engine_macros::FieldOffsets;
 use bun_engine_text::{Identifier, PropertyName, StringBuilder, StringRef, Text, names};
 
 use crate::{Cx, DontEnumMode, JsResult, Message, PropertyNameMode, Value};
@@ -169,7 +170,7 @@ impl ModuleRequest {
 }
 
 /// What ModuleRequestsEqual compares. The name is a specifier or what the host has resolved one to.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash, FieldOffsets)]
 #[repr(C)]
 pub struct ModuleKey {
     pub name: Identifier,

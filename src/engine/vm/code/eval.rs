@@ -101,6 +101,21 @@ pub fn direct_eval(
     execute(cx, executable, scope)
 }
 
+/// For text that is not the argument of a call.
+pub(crate) fn evaluate_in_scope(
+    cx: &mut Cx,
+    text: StringRef,
+    origin: &SourceProvider,
+    scope: Gc<JsCell>,
+    context: EvalContext,
+) -> JsResult<Value> {
+    let source = generated_source(text, Some(origin));
+    let eval = cx.compile_direct_eval(&source.provider, context, static_scope_of(scope));
+    let eval = eval.map_err(|error| cx.throw(create_compile_error(cx, &error).into()))?;
+    let executable = EvalExecutable::create(cx, &source, eval);
+    execute(cx, executable, scope)
+}
+
 /// What `eval` does when it is called as any function is.
 pub fn indirect_eval(cx: &mut Cx, program: Value) -> JsResult<Value> {
     let Some(program) = program.as_string() else {

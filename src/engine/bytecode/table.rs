@@ -385,9 +385,13 @@ macro_rules! instruction_table {
 
         // Tools
 
-        Debug debug Throws { hook: DebugHook, scope: Reg };
-        /// Creates `generator` as `await` would.
-        DebugAwait debug_await Throws { hook: DebugHook, scope: Reg, generator: Mut };
+        /// Does nothing unless a debugger steps, has a request for the code block, or it is a `debugger` statement.
+        Debug debug Throws { hook: DebugHook };
+        /// Around a suspension. Does nothing unless a debugger steps. Then it creates `generator` as `await` would.
+        DebugAwait debug_await Throws { hook: DebugHook, generator: Mut };
+        /// Before a tail call. Jumps to where it is made as an ordinary call, followed by `DidReturnFromTailCall`,
+        /// unless many frames in a row have been kept that way.
+        JumpIfFrameIsKept jump_if_frame_is_kept Pure { target: Target };
         Cover cover Pure { block: CoverageBlock } => Coverage;
     } };
 }

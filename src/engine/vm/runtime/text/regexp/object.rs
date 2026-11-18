@@ -59,7 +59,13 @@ impl RegExpObject {
 
     #[inline]
     pub fn create(cx: &Cx, regexp: Gc<RegExp>) -> Gc<RegExpObject> {
-        Self::allocate(cx, cx.regexp_shape(), regexp, 0)
+        Self::create_with_shape(cx, cx.regexp_shape(), regexp)
+    }
+
+    /// `shape` is the `regexp_shape` of some realm.
+    #[inline]
+    pub fn create_with_shape(vm: &Vm, shape: Gc<Shape>, regexp: Gc<RegExp>) -> Gc<RegExpObject> {
+        Self::allocate(vm, shape, regexp, 0)
     }
 
     /// For a `new.target` other than `RegExp`. `shape` is what `shape_from_new_target` makes of `regexp_shape`.

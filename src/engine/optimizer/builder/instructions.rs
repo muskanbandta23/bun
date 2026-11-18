@@ -162,7 +162,7 @@ impl Builder<'_> {
             | I::CreateUnmappedArguments(_)
             | I::EnsureArguments(_)
             | I::GetArgumentsLength(_)
-            | I::GetArgumentByVal(_) => self.interpret_with_arguments(),
+            | I::GetArgumentByVal(_) => self.interpret(),
 
             I::CreateScope(op) => self.create_scope(op),
             I::GetScoped(op) => {
@@ -480,7 +480,7 @@ impl Builder<'_> {
             | I::Resume(_)
             | I::ResumeAfterYield(_)
             | I::ResumeAfterAwait(_)
-            | I::ResumeAfterDelegate(_) => self.interpret_resumption(),
+            | I::ResumeAfterDelegate(_) => self.interpret(),
             _ => self.interpret(),
         }
         Ok(())

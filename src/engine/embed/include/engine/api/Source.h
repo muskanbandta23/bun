@@ -88,7 +88,7 @@ protected:
         : m_provenance(provenance)
         , m_origin(origin)
     {
-        Engine::source_provider_construct(this, source, WTF::move(url), type, start.m_line.zeroBasedInt(), start.m_column.zeroBasedInt());
+        Engine::source_provider_construct(this, source, WTF::move(url), type, start.m_line.zeroBasedInt(), start.m_column.zeroBasedInt(), origin.fetcher());
     }
 
     // Instead of what would be computed from the text.

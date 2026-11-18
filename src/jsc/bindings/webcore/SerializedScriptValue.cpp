@@ -69,13 +69,11 @@
 #include <JavaScriptCore/JSSetInlines.h>
 #include <JavaScriptCore/JSSetIterator.h>
 #include <JavaScriptCore/JSTypedArrays.h>
-#include <JavaScriptCore/AOTHost.h>
 #include <JavaScriptCore/JSWebAssemblyMemory.h>
 #include <JavaScriptCore/JSWebAssemblyModule.h>
 #include <JavaScriptCore/NumberObject.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/ObjectPrototype.h>
-#include <JavaScriptCore/OwedOutOfMemoryError.h>
 #include <JavaScriptCore/PropertyNameArray.h>
 #include <JavaScriptCore/RegExp.h>
 #include <JavaScriptCore/RegExpObject.h>
@@ -144,10 +142,7 @@ enum WalkerState { StateUnknown,
     MapDataEndVisitKey,
     MapDataEndVisitValue,
     SetDataStartVisitEntry,
-    SetDataEndVisitKey,
-    CompactMapDataStartVisitEntry,
-    CompactMapDataEndVisitKey,
-    CompactSetDataStartVisitEntry };
+    SetDataEndVisitKey };
 
 // These can't be reordered, and any new types must be added to the end of the list
 // When making changes to these lists please cover your new type(s) in the API test "IndexedDB.StructuredCloneBackwardCompatibility"
@@ -619,30 +614,6 @@ static constexpr unsigned StringDataIs8BitFlag = 0x80000000;
 
 using DeserializationResult = std::pair<JSC::JSValue, SerializationReturnCode>;
 
-static bool isCompiledObject(JSC::JSObject* object)
-{
-#if ENABLE(AOT)
-    return JSC::AOT::PropertyWalk::isCompiledObject(object);
-#else
-    UNUSED_PARAM(object);
-    return false;
-#endif
-}
-
-static bool tryMaterializeAsFinalObject(JSC::VM& vm, JSC::JSObject* object)
-{
-#if ENABLE(AOT)
-    if (!vm.hasCompiledCode()) [[likely]]
-        return false;
-    JSC::AOT::PropertyWalk::materializeLazyProperties(vm, object);
-    return object->classInfo() == JSC::JSFinalObject::info();
-#else
-    UNUSED_PARAM(vm);
-    UNUSED_PARAM(object);
-    return false;
-#endif
-}
-
 class CloneBase {
     WTF_FORBID_HEAP_ALLOCATION;
 
@@ -835,6 +806,13 @@ private:
         return object->inherits<JSSet>();
     }
 
+    // Of any realm.
+    static bool isObjectPrototype(JSObject* object)
+    {
+        auto* realm = object->realmMayBeNull();
+        return realm && object == realm->objectPrototype();
+    }
+
     bool checkForDuplicate(JSObject* object)
     {
         // Record object for graph reconstruction
@@ -1011,19 +989,6 @@ private:
         }
     }
 
-    JSC::JSValue toJSArrayBuffer(ArrayBuffer& arrayBuffer)
-    {
-        auto& vm = m_lexicalGlobalObject->vm();
-        auto* globalObject = m_lexicalGlobalObject;
-        if (globalObject->inherits<JSDOMGlobalObject>())
-            return toJS(globalObject, uncheckedDowncast<JSDOMGlobalObject>(globalObject), &arrayBuffer);
-
-        if (auto* buffer = arrayBuffer.m_wrapper.get())
-            return buffer;
-
-        return JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(arrayBuffer.sharingMode()), &arrayBuffer);
-    }
-
     bool dumpArrayBufferView(JSObject* obj, SerializationReturnCode& code)
     {
         VM& vm = m_lexicalGlobalObject->vm();
@@ -1082,7 +1047,7 @@ private:
             return true;
         }
 
-        return dumpIfTerminal(toJSArrayBuffer(*arrayBuffer), code);
+        return dumpIfTerminal(JSArrayBuffer::wrap(m_lexicalGlobalObject, *arrayBuffer), code);
     }
 
     void dumpDOMException(JSObject* obj, SerializationReturnCode& code)
@@ -1189,7 +1154,7 @@ private:
                     return true;
                 write(RegExpTag);
                 write(regExp->regExp()->pattern());
-                write(String(JSC::Yarr::flagsString(regExp->regExp()->flags()).span()));
+                write(JSC::Yarr::flagsString(regExp->regExp()->flags()));
                 return true;
             }
             if (auto* errorInstance = dynamicDowncast<ErrorInstance>(obj)) {
@@ -1377,23 +1342,20 @@ private:
                     return false;
 
                 uint32_t index = m_wasmModules.size();
-                m_wasmModules.append(&module->module());
+                m_wasmModules.append(module->module());
                 write(WasmModuleTag);
                 write(agentClusterIDFromGlobalObject(*m_lexicalGlobalObject));
                 write(index);
                 return true;
             }
             if (JSWebAssemblyMemory* memory = dynamicDowncast<JSWebAssemblyMemory>(obj)) {
-                if (!JSC::Options::alwaysUseSharedArrayBuffer() || memory->memory().sharingMode() != JSC::MemorySharingMode::Shared) {
-                    code = SerializationReturnCode::DataCloneError;
-                    return true;
-                }
-                if (m_context != SerializationContext::WorkerPostMessage) {
+                auto shared = memory->share();
+                if (!JSC::Options::alwaysUseSharedArrayBuffer() || !shared || m_context != SerializationContext::WorkerPostMessage) {
                     code = SerializationReturnCode::DataCloneError;
                     return true;
                 }
                 uint32_t index = m_wasmMemoryHandles.size();
-                m_wasmMemoryHandles.append(memory->memory().shared());
+                m_wasmMemoryHandles.append(shared.releaseNonNull());
                 write(WasmMemoryTag);
                 write(agentClusterIDFromGlobalObject(*m_lexicalGlobalObject));
                 write(index);
@@ -2086,7 +2048,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             // All supported objects other than plain Object have been handled; throw
             // DataCloneError otherwise. NapiPrototype, ObjectPrototype, and process.env
             // are allowed (Node supports structuredClone(process.env) as a plain object).
-            if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Zig::NapiPrototype::info() && inObject->classInfo() != JSC::ObjectPrototype::info() && !Bun::isProcessEnvClassInfo(inObject->classInfo()) && !isCompiledObject(inObject) && !tryMaterializeAsFinalObject(vm, inObject))
+            if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Zig::NapiPrototype::info() && !isObjectPrototype(inObject) && !Bun::isProcessEnvClassInfo(inObject->classInfo()))
                 return SerializationReturnCode::DataCloneError;
             inputObjectStack.append(inObject);
             indexStack.append(0);
@@ -2150,15 +2112,13 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
                 m_gcBuffer.appendWithCrashOnOverflow(iterator);
                 mapIteratorStack.append(iterator);
                 inputObjectStack.append(inMap);
-                if (vm.hasCompiledCode()) [[unlikely]]
-                    goto compactMapDataStartVisitEntry;
                 goto mapDataStartVisitEntry;
             }
         mapDataStartVisitEntry:
         case MapDataStartVisitEntry: {
             JSMapIterator* iterator = mapIteratorStack.last();
             JSValue key, value;
-            if (!iterator->nextKeyValue<JSMap::Storage>(m_lexicalGlobalObject, key, value)) {
+            if (!iterator->nextKeyValue(m_lexicalGlobalObject, key, value)) {
                 mapIteratorStack.removeLast();
                 JSObject* object = inputObjectStack.last();
                 ASSERT(dynamicDowncast<JSMap>(object));
@@ -2199,15 +2159,13 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
                 m_gcBuffer.appendWithCrashOnOverflow(iterator);
                 setIteratorStack.append(iterator);
                 inputObjectStack.append(inSet);
-                if (vm.hasCompiledCode()) [[unlikely]]
-                    goto compactSetDataStartVisitEntry;
                 goto setDataStartVisitEntry;
             }
         setDataStartVisitEntry:
         case SetDataStartVisitEntry: {
             JSSetIterator* iterator = setIteratorStack.last();
             JSValue key;
-            bool hasNext = iterator->next<JSSet::Storage>(m_lexicalGlobalObject, key);
+            bool hasNext = iterator->next(m_lexicalGlobalObject, key);
             RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
             if (!hasNext) {
                 setIteratorStack.removeLast();
@@ -2226,37 +2184,6 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
         }
         case SetDataEndVisitKey: {
             goto setDataStartVisitEntry;
-        }
-
-        compactMapDataStartVisitEntry:
-        case CompactMapDataStartVisitEntry: {
-            JSValue key, value;
-            // A closed iterator stays closed, so MapDataStartVisitEntry only ends the map.
-            if (!mapIteratorStack.last()->nextKeyValue(m_lexicalGlobalObject, key, value))
-                goto mapDataStartVisitEntry;
-            inValue = key;
-            m_gcBuffer.appendWithCrashOnOverflow(value);
-            mapIteratorValueStack.append(value);
-            stateStack.append(CompactMapDataEndVisitKey);
-            goto stateUnknown;
-        }
-        case CompactMapDataEndVisitKey: {
-            inValue = mapIteratorValueStack.last();
-            mapIteratorValueStack.removeLast();
-            stateStack.append(CompactMapDataStartVisitEntry);
-            goto stateUnknown;
-        }
-
-        compactSetDataStartVisitEntry:
-        case CompactSetDataStartVisitEntry: {
-            JSValue key;
-            bool hasNext = setIteratorStack.last()->next(m_lexicalGlobalObject, key);
-            RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
-            if (!hasNext)
-                goto setDataStartVisitEntry;
-            inValue = key;
-            stateStack.append(CompactSetDataStartVisitEntry);
-            goto stateUnknown;
         }
 
         stateUnknown:
@@ -2290,38 +2217,6 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
 
     return SerializationReturnCode::SuccessfullyCompleted;
 }
-
-#if ENABLE(AOT)
-class ObjectFinisher {
-public:
-    NEVER_INLINE JSObject* finish(JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, JSObject* object)
-    {
-        if (object->type() != FinalObjectType || m_referencedObjects.contains(object))
-            return object;
-        JSObject* finished = JSC::AOT::withAllPropertiesInline(globalObject, object);
-        if (finished != object) {
-            gcBuffer.appendWithCrashOnOverflow(finished);
-            m_finishedObjects.set(object, finished);
-        }
-        return finished;
-    }
-
-    NEVER_INLINE JSValue resolveReference(JSValue value)
-    {
-        JSObject* object = value.getObject();
-        if (!object || object->type() != FinalObjectType)
-            return value;
-        if (JSObject* finished = m_finishedObjects.get(object))
-            return finished;
-        m_referencedObjects.add(object);
-        return value;
-    }
-
-private:
-    HashSet<JSObject*> m_referencedObjects;
-    HashMap<JSObject*, JSObject*> m_finishedObjects;
-};
-#endif
 
 class CloneDeserializer : public CloneBase {
     WTF_FORBID_HEAP_ALLOCATION;
@@ -3759,8 +3654,8 @@ private:
                 return JSValue();
             }
             VM& vm = m_lexicalGlobalObject->vm();
-            RegExp* regExp = RegExp::create(vm, pattern->string(), reFlags.value());
-            if (!regExp->isValid()) [[unlikely]] {
+            RegExp* regExp = RegExp::tryCreate(vm, pattern->string(), reFlags.value());
+            if (!regExp) [[unlikely]] {
                 fail();
                 return JSValue();
             }
@@ -3809,10 +3704,6 @@ private:
                 fail();
                 return JSValue();
             }
-#if ENABLE(AOT)
-            if (m_objectFinisher) [[unlikely]]
-                return m_objectFinisher->resolveReference(m_objectPool.at(*index));
-#endif
             return m_objectPool.at(*index);
         }
         case MessagePortReferenceTag: {
@@ -3841,7 +3732,7 @@ private:
                 fail();
                 return JSValue();
             }
-            return JSC::JSWebAssemblyModule::create(m_lexicalGlobalObject->vm(), m_globalObject->webAssemblyModuleStructure(), Ref { *m_wasmModules->at(index) });
+            return JSC::JSWebAssemblyModule::create(m_globalObject, m_wasmModules->at(index));
         }
         case WasmMemoryTag: {
             if (m_version >= 12) {
@@ -3859,33 +3750,7 @@ private:
                 return JSValue();
             }
 
-            auto& vm = m_lexicalGlobalObject->vm();
-            auto scope = DECLARE_THROW_SCOPE(vm);
-            JSWebAssemblyMemory* result = JSC::JSWebAssemblyMemory::create(vm, m_globalObject->webAssemblyMemoryStructure());
-            // Since we are cloning a JSWebAssemblyMemory, it's impossible for that
-            // module to not have been a valid module. Therefore, createStub should
-            // not throw.
-            scope.releaseAssertNoException();
-
-            RefPtr<Wasm::Memory> memory;
-            auto handler = [&vm, result](Wasm::Memory::GrowSuccess, PageCount oldPageCount, PageCount newPageCount) { result->growSuccessCallback(vm, oldPageCount, newPageCount); };
-            // Memory64 is not yet serialized in WasmMemoryTag, so we only
-            // support I32 address type for structured clone. Upstream WebKit
-            // has the same limitation (it calls result->memory().addressType()
-            // on an uninitialized stub here, which happens to return I32).
-            constexpr auto addressType = Wasm::AddressType::I32;
-            if (RefPtr<SharedArrayBufferContents> contents = m_wasmMemoryHandles->at(index)) {
-                if (!contents->memoryHandle()) {
-                    fail();
-                    return JSValue();
-                }
-                memory = Wasm::Memory::create(contents.releaseNonNull(), addressType, WTF::move(handler));
-            } else {
-                // zero size & max-size.
-                memory = Wasm::Memory::createZeroSized(JSC::MemorySharingMode::Shared, addressType, WTF::move(handler));
-            }
-
-            result->adopt(memory.releaseNonNull());
+            auto* result = JSC::JSWebAssemblyMemory::create(m_globalObject, m_wasmMemoryHandles->at(index));
             m_gcBuffer.appendWithCrashOnOverflow(result);
             return result;
         }
@@ -4026,9 +3891,6 @@ private:
     // Only values the serializer passed to recordObject() may be appended here (via
     // addToObjectPool), in the same order, or every later back-reference is wrong.
     MarkedArgumentBuffer m_objectPool;
-#if ENABLE(AOT)
-    std::optional<ObjectFinisher> m_objectFinisher { m_globalObject->aotInstance() ? std::make_optional<ObjectFinisher>() : std::nullopt };
-#endif
     const Vector<RefPtr<MessagePort>>& m_messagePorts;
     ArrayBufferContentsArray* m_arrayBufferContents;
     Vector<RefPtr<JSC::ArrayBuffer>> m_arrayBuffers;
@@ -4066,8 +3928,6 @@ DeserializationResult CloneDeserializer::deserialize()
             if (!read(length)) {
                 goto error;
             }
-            if (throwOutOfMemoryErrorIfOwed(vm, m_lexicalGlobalObject, scope)) [[unlikely]]
-                goto error;
             JSArray* outArray = constructEmptyArray(m_globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), length);
             if (scope.exception()) [[unlikely]]
                 goto error;
@@ -4121,8 +3981,6 @@ DeserializationResult CloneDeserializer::deserialize()
         case ObjectStartState: {
             if (outputObjectStack.size() > maximumFilterRecursion)
                 return std::make_pair(JSValue(), SerializationReturnCode::StackOverflowError);
-            if (throwOutOfMemoryErrorIfOwed(vm, m_lexicalGlobalObject, scope)) [[unlikely]]
-                goto error;
             JSObject* outObject = constructEmptyObject(m_lexicalGlobalObject, m_globalObject->objectPrototype());
             addToObjectPool(outObject);
             outputObjectStack.append(outObject);
@@ -4137,10 +3995,6 @@ DeserializationResult CloneDeserializer::deserialize()
                     goto error;
 
                 JSObject* outObject = outputObjectStack.last();
-#if ENABLE(AOT)
-                if (m_objectFinisher) [[unlikely]]
-                    outObject = m_objectFinisher->finish(m_globalObject, m_gcBuffer, outObject);
-#endif
                 outValue = outObject;
                 outputObjectStack.removeLast();
                 break;
@@ -4230,11 +4084,6 @@ DeserializationResult CloneDeserializer::deserialize()
             }
             goto setDataStartVisitEntry;
         }
-
-        case CompactMapDataStartVisitEntry:
-        case CompactMapDataEndVisitKey:
-        case CompactSetDataStartVisitEntry:
-            RELEASE_ASSERT_NOT_REACHED();
 
         stateUnknown:
         case StateUnknown:
@@ -4357,11 +4206,8 @@ size_t SerializedScriptValue::computeMemoryCost() const
 #if ENABLE(WEBASSEMBLY)
     // We are not supporting WebAssembly Module memory estimation yet.
     if (m_wasmMemoryHandlesArray) {
-        // A shared memory with a maximum of zero has null contents.
-        for (auto& content : *m_wasmMemoryHandlesArray) {
-            if (content)
-                cost += content->sizeInBytes(std::memory_order_relaxed);
-        }
+        for (auto& memory : *m_wasmMemoryHandlesArray)
+            cost += memory->size();
     }
 #endif
 
@@ -4570,32 +4416,6 @@ static bool isObjectFastPathCandidate(Structure* structure)
     return true;
 }
 
-#if ENABLE(AOT)
-static bool collectCompiledObjectFields(JSGlobalObject& lexicalGlobalObject, JSObject* object, WTF::Vector<SimpleInMemoryPropertyTableEntry>& fields)
-{
-    ASSERT(isCompiledObject(object));
-    VM& vm = lexicalGlobalObject.vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (object->getDirect(vm, builtinNames(vm).isUncloneablePrivateName()))
-        return false;
-    auto result = JSC::AOT::PropertyWalk::forEachOwnProperty(vm, object, JSC::AOT::PropertyWalk::Filter::EnumerableStrings, [&](const JSC::AOT::PropertyWalk::OwnProperty& property) -> IterationStatus {
-        if (!property.value.isCell()) {
-            fields.append({ Bun::threadShareableCopy(*property.name), property.value });
-            return IterationStatus::Continue;
-        }
-        if (!property.value.isString())
-            return IterationStatus::Done;
-        String stringValue = asString(property.value)->value(&lexicalGlobalObject);
-        if (scope.exception())
-            return IterationStatus::Done;
-        fields.append({ Bun::threadShareableCopy(*property.name), Bun::toCrossThreadShareable(stringValue) });
-        return IterationStatus::Continue;
-    });
-    return result == JSC::AOT::PropertyWalk::Result::Completed;
-}
-#endif
-
 RefPtr<SerializedScriptValue> SerializedScriptValue::create(JSC::JSGlobalObject& globalObject, JSC::JSValue value, SerializationForStorage forStorage, SerializationErrorMode throwExceptions, SerializationContext serializationContext, SerializationForCrossProcessTransfer forTransfer)
 {
     Vector<RefPtr<MessagePort>> dummyPorts;
@@ -4643,15 +4463,6 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
                 } else if (isObjectFastPathCandidate(structure)) {
                     canUseObjectFastPath = true;
                 }
-#if ENABLE(AOT)
-                else if (isCompiledObject(object)) {
-                    WTF::Vector<SimpleInMemoryPropertyTableEntry> fields;
-                    bool hasOnlySimpleFields = collectCompiledObjectFields(lexicalGlobalObject, object, fields);
-                    RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
-                    if (hasOnlySimpleFields)
-                        return SerializedScriptValue::createObjectFastPath(WTF::FixedVector<SimpleInMemoryPropertyTableEntry>(WTF::move(fields)));
-                }
-#endif
             }
         }
 
@@ -4735,20 +4546,6 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
                         }
                         auto* objStructure = obj->structure();
                         if (!isObjectFastPathCandidate(objStructure)) {
-#if ENABLE(AOT)
-                            if (isCompiledObject(obj)) {
-                                WTF::Vector<SimpleInMemoryPropertyTableEntry> fields;
-                                bool hasOnlySimpleFields = collectCompiledObjectFields(lexicalGlobalObject, obj, fields);
-                                RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
-                                if (hasOnlySimpleFields) {
-                                    SimpleCloneableObject clonedObj;
-                                    clonedObj.properties = WTF::FixedVector<SimpleInMemoryPropertyTableEntry>(WTF::move(fields));
-                                    elements.append(WTF::move(clonedObj));
-                                    hasObjects = true;
-                                    continue;
-                                }
-                            }
-#endif
                             ok = false;
                             break;
                         }
@@ -4887,13 +4684,11 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
             if (arrayBuffer->isDetached() || arrayBuffer->isShared())
                 return Exception { DataCloneError };
             if (arrayBuffer->isWasmMemory()) {
-                throwVMTypeError(&lexicalGlobalObject, scope, errorMessageForTransfer(arrayBuffer));
+                throwVMTypeError(&lexicalGlobalObject, scope, "Cannot transfer a WebAssembly.Memory"_s);
                 RELEASE_AND_RETURN(scope, Exception { ExistingExceptionError });
             }
-            // No generic isDetachable() gate: Bun's native borrows call
-            // ArrayBuffer::pin(), which clears isDetachable() without setting
-            // the lock flag. A pinned buffer falls through so transferTo()
-            // takes its copyTo() fallback (see bindings.cpp
+            // No generic isDetachable() gate: a buffer that a native borrow has
+            // pinned falls through so transferTo() copies it (see bindings.cpp
             // JSC__JSValue__pinArrayBuffer). WebAssembly.Memory stays rejected
             // above per the spec's [[ArrayBufferDetachKey]] requirement.
             arrayBuffers.append(WTF::move(arrayBuffer));
@@ -4993,7 +4788,6 @@ Ref<JSC::ArrayBuffer> SerializedScriptValue::toArrayBuffer()
     auto arrayBuffer = ArrayBuffer::createFromBytes(
         { this->m_data.begin(), this->m_data.size() }, createSharedTask<void(void*)>([protectedThis = Ref { *this }](void*) {}));
 
-    // Note: using the SharedArrayBufferContents::create function directly didn't work.
     arrayBuffer->makeShared();
 
     return arrayBuffer;
@@ -5140,11 +4934,6 @@ NEVER_INLINE JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalG
         Vector<JSC::Identifier> cachedIdentifiers;
 
         for (unsigned i = 0; i < length; i++) {
-            if (throwOutOfMemoryErrorIfOwed(vm, &lexicalGlobalObject, scope)) [[unlikely]] {
-                if (didFail)
-                    *didFail = true;
-                return {};
-            }
             JSValue elemValue = std::visit(WTF::makeVisitor(
                                                [](JSC::JSValue v) -> JSValue { return v; },
                                                [&](const WTF::String& s) -> JSValue { return jsString(vm, s); },
@@ -5227,36 +5016,17 @@ NEVER_INLINE JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalG
     case FastPath::DoubleArray: {
         IndexingType arrayType = (m_fastPath == FastPath::Int32Array) ? ArrayWithInt32 : ArrayWithDouble;
         Structure* resultStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(arrayType);
+        ObjectInitializationScope initScope(vm);
+        JSArray* resultArray = JSArray::tryCreateUninitializedRestricted(initScope, resultStructure, m_arrayLength);
 
-        if (hasAnyArrayStorage(resultStructure->indexingType())) [[unlikely]]
-            break; // isHavingABadTime → fall through to normal deserialization
-
-        unsigned outOfLineStorage = resultStructure->outOfLineCapacity();
-        unsigned vectorLength = Butterfly::optimalContiguousVectorLength(resultStructure, m_arrayLength);
-        void* memory = vm.auxiliarySpace().allocate(
-            vm,
-            Butterfly::totalSize(0, outOfLineStorage, true, vectorLength * sizeof(EncodedJSValue)),
-            nullptr, AllocationFailureMode::ReturnNull);
-
-        if (!memory) [[unlikely]] {
+        if (!resultArray) [[unlikely]] {
             if (didFail)
                 *didFail = true;
             return {};
         }
 
-        Butterfly* butterfly = Butterfly::fromBase(memory, 0, outOfLineStorage);
-        butterfly->setVectorLength(vectorLength);
-        butterfly->setPublicLength(m_arrayLength);
+        memcpy(static_cast<void*>(resultArray->butterfly()->contiguous().data()), m_arrayButterflyData.span().data(), m_arrayButterflyData.size());
 
-        if (m_fastPath == FastPath::DoubleArray)
-            memcpy(butterfly->contiguousDouble().data(), m_arrayButterflyData.span().data(), m_arrayButterflyData.size());
-        else
-            memcpy(butterfly->contiguous().data(), m_arrayButterflyData.span().data(), m_arrayButterflyData.size());
-
-        // Clear unused tail slots with hole values
-        Butterfly::clearRange(arrayType, butterfly, m_arrayLength, vectorLength);
-
-        JSArray* resultArray = JSArray::createWithButterfly(vm, nullptr, resultStructure, butterfly);
         if (didFail)
             *didFail = false;
         return resultArray;

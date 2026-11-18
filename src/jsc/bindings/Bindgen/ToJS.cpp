@@ -75,7 +75,7 @@ EncodedJSValue createBoundFunctionReplacement(JSGlobalObject* globalObject, unsi
     auto& cached = uncheckedDowncast<Zig::GlobalObject>(globalObject)->m_bindgenAdditions.m_boundFunctionReplacementStructure;
     if (!cached)
         cached.set(vm, globalObject, BoundFunctionReplacement::createStructure(vm, globalObject));
-    NativeExecutable* executable = vm.getHostFunction(function, ImplementationVisibility::Public, NoIntrinsic, callHostFunctionAsConstructor, nullptr, length, name);
+    NativeExecutable* executable = vm.getHostFunction(function, ImplementationVisibility::Public, NoIntrinsic, callHostFunctionAsConstructor, length, name);
     return JSValue::encode(BoundFunctionReplacement::create(vm, globalObject, cached.get(), executable));
 }
 

@@ -10,6 +10,7 @@ use crate::source::Source;
 use crate::token::{Token, TokenKind};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
 pub enum ErrorKind {
     Syntax,
     StackOverflow,
@@ -18,6 +19,7 @@ pub enum ErrorKind {
 
 /// What more source text could do about a syntax error.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
 pub enum Recovery {
     Irrecoverable,
     UnterminatedLiteral,

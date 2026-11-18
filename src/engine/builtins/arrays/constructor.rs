@@ -1,11 +1,7 @@
-use bun_engine_bytecode::Visibility;
-use bun_engine_text::{PropertyName, StringRef, private_names};
-use bun_engine_vm::call::native_not_a_constructor;
-use bun_engine_vm::{
-    ElementKind, IteratorRecord, JsArray, JsFunction, NativeFunction, RealmSlot, errors,
-};
+use bun_engine_text::private_names;
+use bun_engine_vm::{ElementKind, IteratorRecord, JsArray, RealmSlot, errors};
 
-use super::set_length;
+use super::{hidden_function, set_length};
 use crate::define::species_getter;
 use crate::js::array_constructor as js;
 use crate::prelude::*;
@@ -23,17 +19,6 @@ static_table!(static PROPERTIES = [
 
 define_constructor!(ArrayConstructor, PROPERTIES, call, construct);
 
-pub(super) fn private_function(
-    cx: &Cx,
-    name: PropertyName<'_>,
-    function: NativeFunction,
-    intrinsic: Intrinsic,
-) -> Gc<JsFunction> {
-    let (name, constructor) = (StringRef::from_text(name.text()), native_not_a_constructor);
-    let visibility = Visibility::Private;
-    JsFunction::native_with(cx, 0, &name, function, constructor, intrinsic, visibility)
-}
-
 pub(super) fn initialize_slot(cx: &Cx, slot: RealmSlot) -> bool {
     let global = cx.global();
     match slot {
@@ -43,17 +28,12 @@ pub(super) fn initialize_slot(cx: &Cx, slot: RealmSlot) -> bool {
             global.init_array_constructor(constructor);
         }
         RealmSlot::private_is_array => {
-            let function = private_function(cx, names::isArray, is_array, Intrinsic::ArrayIsArray);
+            let function = hidden_function(cx, names::isArray, is_array, 1, Intrinsic::ArrayIsArray);
             global.init_private_is_array(function);
         }
         RealmSlot::private_array_from_fast => {
             let name = private_names::arrayFromFastWithoutMapFn;
-            global.init_private_array_from_fast(private_function(
-                cx,
-                name,
-                from_fast,
-                Intrinsic::None,
-            ));
+            global.init_private_array_from_fast(hidden_function(cx, name, from_fast, 2, Intrinsic::None));
         }
         _ => return false,
     }

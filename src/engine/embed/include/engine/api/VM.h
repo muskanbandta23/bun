@@ -8,17 +8,12 @@ namespace JSC {
 
 class CodeCache;
 class ControlFlowProfiler;
-class DecoderStringTable;
 class DeferredWorkTimer;
 class EntryFrame;
-class FunctionHasExecutedCache;
 class HeapProfiler;
-class JSONCache;
 class MicrotaskQueue;
-class PersistentBytecodePayloads;
 class QueuedTask;
 class SamplingProfiler;
-class SourceProviderCache;
 class TerminationDeadline;
 class UnlinkedProgramCodeBlock;
 
@@ -99,7 +94,7 @@ public:
 class DateCache {
 public:
     void clearForTimeZoneChange();
-    double gregorianDateTimeToMS(int32_t year, int32_t month, int32_t day, int32_t hour, int32_t minute, int32_t second, double milliseconds, TimeType);
+    double gregorianDateTimeToMS(int32_t year, int32_t month, int32_t day, int32_t hour, int32_t minute, int32_t second, int32_t millisecond, TimeType);
     PlainGregorianDateTime msToGregorianDateTime(double milliseconds, TimeType);
     double parseDate(JSGlobalObject*, VM&, const String&);
 
@@ -109,10 +104,15 @@ private:
 
 class Interpreter {
 public:
-    using StackFrameFilter = ScopedLambda<bool(StackFrame&)>;
+    // It is not asked about functions that wait, and allocates no cell.
+    using StackFrameFilter = ScopedLambda<bool(const StackFrame&)>;
 
-    void getStackTrace(JSCell* owner, Vector<StackFrame>& results, size_t framesToSkip = 0, size_t maxStackSize = std::numeric_limits<size_t>::max(), JSCell* caller = nullptr, JSCell* ownerOfCallLinkInfo = nullptr, CallLinkInfo* = nullptr, const StackFrameFilter* = nullptr);
-    JSValue executeProgram(const SourceCode&, JSGlobalObject*, JSObject* thisObject, UnlinkedProgramCodeBlock* = nullptr);
+    // The functions that wait for the one that is running come on top, up to as many again.
+    void getStackTrace(Vector<StackFrame>& results, size_t framesToSkip = 0, size_t maxStackSize = std::numeric_limits<size_t>::max(), const StackFrameFilter* = nullptr);
+    // The async functions that wait for the promise, one for the other.
+    void getStackTraceOfAwaiters(JSPromise*, Vector<StackFrame>& results, size_t maxStackSize);
+    bool isInsideSeveralResumedAsyncFunctions();
+    JSValue executeProgram(const SourceCode&, JSGlobalObject*, JSObject* thisObject);
 
 private:
     VM& vm();
@@ -133,7 +133,6 @@ public:
     struct ClientData {
         virtual ~ClientData() = default;
         virtual bool isWebCoreJSClientData() const { return false; }
-        virtual DecoderStringTable* decoderStringTable() { return nullptr; }
         virtual void reportErrorOfMicrotask(JSGlobalObject*, Exception*) {}
     };
 
@@ -164,6 +163,7 @@ public:
     static RefPtr<VM> tryCreate(HeapType = HeapType::Small);
     void ref() const { m_refCount.fetch_add(1, std::memory_order_relaxed); }
     void deref() const { Engine::vm_release(this); }
+    unsigned refCount() const { return m_refCount.load(std::memory_order_relaxed); }
     void refSuppressingSaferCPPChecking() const { ref(); }
     void derefSuppressingSaferCPPChecking() const { deref(); }
 
@@ -233,8 +233,8 @@ public:
     IsoSubspace& ropeStringSpace() { return heap.ropeStringSpace(); }
     CompleteSubspace& destructibleObjectSpace() { return heap.destructibleObjectSpace(); }
 
-    NativeExecutable* getHostFunction(NativeFunction function, ImplementationVisibility visibility, NativeFunction constructor, unsigned length, const String& name) { return getHostFunction(function, visibility, NoIntrinsic, constructor, nullptr, length, name); }
-    NativeExecutable* getHostFunction(NativeFunction function, ImplementationVisibility visibility, Intrinsic intrinsic, NativeFunction constructor, const DOMJIT::Signature*, unsigned length, const String& name) { return Engine::native_executable_shared(*this, length, name, function, constructor, intrinsic, visibility); }
+    NativeExecutable* getHostFunction(NativeFunction function, ImplementationVisibility visibility, NativeFunction constructor, unsigned length, const String& name) { return getHostFunction(function, visibility, NoIntrinsic, constructor, length, name); }
+    NativeExecutable* getHostFunction(NativeFunction function, ImplementationVisibility visibility, Intrinsic intrinsic, NativeFunction constructor, unsigned length, const String& name) { return Engine::native_executable_shared(*this, length, name, function, constructor, intrinsic, visibility); }
     ExecutableBase* internalFunctionExecutable() const { return m_internalFunctionExecutable; }
     // Makes `@name` in the source of a built-in stand for the symbol.
     void registerPrivateName(const Identifier& name, const Identifier& symbol) { Engine::vm_register_private_name(*this, name, symbol); }
@@ -254,7 +254,7 @@ public:
     bool synchronousModuleQueue() const;
 
     Function<void(VM&, SourceProvider*, LineColumn&, String&)>& computeLineColumnWithSourcemap() { return m_computeLineColumnWithSourcemap; }
-    void setComputeLineColumnWithSourcemap(Function<void(VM&, SourceProvider*, LineColumn&, String&)>&& function) { m_computeLineColumnWithSourcemap = WTF::move(function); }
+    void setComputeLineColumnWithSourcemap(Function<void(VM&, SourceProvider*, LineColumn&, String&)>&&);
     const ErrorInfoFunction& onComputeErrorInfo() const { return m_onComputeErrorInfo; }
     void setOnComputeErrorInfo(ErrorInfoFunction&&);
     const ErrorInfoFunctionJSValue& onComputeErrorInfoJSValue() const { return m_onComputeErrorInfoJSValue; }
@@ -264,18 +264,13 @@ public:
     bool shrinkFootprintNow(OptionSet<ShrinkFootprint> = {});
     void shrinkFootprintWhenIdle(OptionSet<ShrinkFootprint> = {});
     void setStartupJITDeferralScale(double);
-    CodeCache* codeCache();
-    SourceProviderCache* addSourceProviderCache(SourceProvider*);
-    PersistentBytecodePayloads& persistentBytecodePayloads();
-    PersistentBytecodePayloads* persistentBytecodePayloadsIfExists();
-    JSONCache& jsonCache();
+    CodeCache* codeCache() { return reinterpret_cast<CodeCache*>(this); }
 
-    bool enableControlFlowProfiler();
+    void enableControlFlowProfiler();
     ControlFlowProfiler* controlFlowProfiler();
-    FunctionHasExecutedCache* functionHasExecutedCache();
     HeapProfiler& ensureHeapProfiler();
     HeapProfiler* heapProfiler();
-    SamplingProfiler& ensureSamplingProfiler(Ref<Stopwatch>&&);
+    SamplingProfiler& ensureSamplingProfiler();
     SamplingProfiler* samplingProfiler();
 
     static constexpr Engine::CommonNamesPointer propertyNames {};

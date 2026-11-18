@@ -8,7 +8,8 @@ use bun_engine_text::{StringBuilder, StringRef, names};
 use super::bound_function_stubs as stubs;
 use crate::{
     CallFrame, CellType, Cx, Field, Gc, ImmutableArray, Intrinsic, JsFunction, JsObject, JsResult,
-    JsString, NativeExecutable, Shape, ShapeSpec, TypeFlags, Value, ValueVec, Vm, errors,
+    JsString, NativeExecutable, Shape, ShapeFlags, ShapeSpec, TypeFlags, Value, ValueVec, Vm,
+    errors,
 };
 
 #[cell(name = "Function", ops, export = "engine_class_BoundFunction",
@@ -265,6 +266,14 @@ fn prefixed(times: usize, name: StringRef) -> StringRef {
 
 /// As a function that wraps `target` reads them. The length is an integer or infinite.
 pub(super) fn length_and_name_of(cx: &mut Cx, target: &JsObject) -> JsResult<(f64, Gc<JsString>)> {
+    if target.is::<JsFunction>()
+        && !target.shape().has(ShapeFlags::HAS_ANY_ACCESSOR)
+        && target.class().has_builtin_define_own_property()
+        && let Some(length) = target.get_direct(names::length).and_then(Value::as_int32)
+        && let Some(name) = target.get_direct(names::name).and_then(Value::as_string)
+    {
+        return Ok((length.into(), name));
+    }
     let mut length = 0.0;
     if target.has_own_property(cx, names::length)? {
         let value = target.get(cx, names::length)?;

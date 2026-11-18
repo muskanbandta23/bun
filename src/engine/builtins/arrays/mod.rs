@@ -12,7 +12,10 @@ mod search;
 pub(crate) mod sort;
 mod string_sort;
 
-use bun_engine_vm::{JsArray, RealmSlot, RealmWatchpoint, errors};
+use bun_engine_bytecode::Visibility;
+use bun_engine_text::{PropertyName, StringRef};
+use bun_engine_vm::call::native_not_a_constructor;
+use bun_engine_vm::{JsFunction, NativeFunction, RealmSlot, RealmWatchpoint, errors};
 
 use crate::prelude::*;
 use crate::watchpoints::Conditions;
@@ -42,12 +45,25 @@ use this_object;
 /// Set(object, "length", length, true)
 #[inline]
 fn set_length(cx: &mut Cx, object: &JsObject, length: u64) -> JsResult<()> {
-    match (object.downcast::<JsArray>(), u32::try_from(length)) {
+    match (object.as_exact_array(), u32::try_from(length)) {
         (Some(array), Ok(length)) => array.set_length(cx, length, true),
         (Some(_), Err(_)) => Err(cx.throw_range_error(errors::INVALID_ARRAY_LENGTH)),
         (None, _) => object.set(cx, names::length, length.into(), true),
     }
     .map(|_| ())
+}
+
+/// One that stack traces do not show.
+fn hidden_function(
+    cx: &Cx,
+    name: PropertyName<'_>,
+    function: NativeFunction,
+    length: u32,
+    intrinsic: Intrinsic,
+) -> Gc<JsFunction> {
+    let (name, constructor) = (StringRef::from_text(name.text()), native_not_a_constructor);
+    let visibility = Visibility::Private;
+    JsFunction::native_with(cx, length, &name, function, constructor, intrinsic, visibility)
 }
 
 pub(crate) fn initialize_slot(cx: &Cx, slot: RealmSlot) -> bool {

@@ -161,6 +161,6 @@ impl JsObject {
             }
         }
         joined.push(cx, separator.repeat(cx, separators)?)?;
-        joined.finish(cx)
+        Ok(joined.finish(cx))
     }
 }

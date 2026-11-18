@@ -4,9 +4,9 @@ use core::ptr::NonNull;
 use bun_alloc::AllocError;
 use bun_engine_macros::export;
 use bun_engine_vm::{
-    ArrayBuffer, ArrayBufferContents, ArrayBufferRef, CopyOrder, Cx, FreeBytes, Gc, JsArrayBuffer,
-    JsArrayBufferView, JsObject, JsResult, JsTypedArray, Shape, Value, Vm,
-    is_shape_of_resizable_view,
+    ArrayBuffer, ArrayBufferContents, ArrayBufferRef, BufferAccessor, CopyOrder, Cx, FreeBytes, Gc,
+    JsArrayBuffer, JsArrayBufferView, JsObject, JsResult, JsTypedArray, JsUint8Array,
+    NativeFunction, Shape, Vm, is_shape_of_resizable_view,
 };
 
 use crate::abi::returned_as_pointer;
@@ -78,6 +78,7 @@ unsafe fn array_buffer_external(
     free: Option<FreeBytes>,
     context: *mut c_void,
 ) -> ArrayBufferRef {
+    let byte_length = if data.is_null() { 0 } else { byte_length };
     // SAFETY: C++ vouches for them.
     ArrayBufferRef::new(unsafe {
         ArrayBufferContents::external(data.cast_mut(), byte_length, free, context)
@@ -239,8 +240,14 @@ unsafe fn typed_array_create_uninitialized(
 }
 
 #[export]
-fn typed_array_validate(cx: &Cx, value: Value) -> JsResult<Gc<JsTypedArray>> {
-    JsTypedArray::validate_value(cx, value).map(|(array, _)| array)
+unsafe fn uint8_array_adopt(
+    vm: &Vm,
+    shape: Gc<Shape>,
+    data: *const u8,
+    length: usize,
+) -> Gc<JsTypedArray> {
+    // SAFETY: C++ gives the allocation up.
+    unsafe { JsUint8Array::adopt(vm, shape, data.cast_mut(), length) }.upcast()
 }
 
 #[export]
@@ -271,4 +278,9 @@ fn typed_array_set_from_object(
 ) -> JsResult<bool> {
     let range = source_offset..source_offset.saturating_add(length);
     (array.set_from_object(cx, offset, source, range)).map(|()| true)
+}
+
+#[export]
+fn buffer_accessor_register(accessor: &BufferAccessor, function: NativeFunction) {
+    accessor.register(function);
 }

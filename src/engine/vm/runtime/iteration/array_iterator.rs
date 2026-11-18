@@ -1,7 +1,7 @@
 use bun_engine_macros::cell;
 
 use crate::{
-    Cx, FieldArray, Gc, JsArray, JsObject, JsObjectInit, JsResult, JsTypedArray, Shape, Value, Vm,
+    Cx, FieldArray, Gc, JsObject, JsObjectInit, JsResult, JsTypedArray, Shape, Value, Vm,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -97,7 +97,7 @@ impl JsArrayIterator {
             return Ok(None);
         };
         let object = self.iterated_object();
-        let length = match object.downcast::<JsArray>() {
+        let length = match object.as_exact_array() {
             Some(array) => array.length().into(),
             None => length_of_other(cx, object)?,
         };

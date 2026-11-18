@@ -1,10 +1,13 @@
 use core::cell::Cell;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
+use bun_alloc::page_size;
 use bun_threading::Mutex;
 
 use super::directory::Directory;
-use super::{CellAttributes, Heap};
+use super::stack::prefetch;
+use super::{CellAttributes, Destruction, Heap, JsCell, virtual_memory};
+use crate::{JsString, options};
 
 pub const BLOCK_SIZE: usize = 16 * 1024;
 pub const ATOM_SIZE: usize = 16;
@@ -19,73 +22,88 @@ const RECIPROCAL_SHIFT: u32 = 20;
 /// Bits stamped with another version than the heap's are stale, so nothing has to visit every block to clear them.
 pub(super) type Version = u32;
 pub(super) const NULL_VERSION: Version = 0;
+/// That of no block.
+pub(super) const UNUSED_VERSION: Version = 1;
 pub(super) const FIRST_VERSION: Version = 2;
 
 pub(super) fn next_version(version: Version) -> Version {
     version.checked_add(1).unwrap_or(FIRST_VERSION)
 }
 
+type Bits = [u64; BITMAP_WORDS];
+
 /// One bit for each atom. Only that of the first atom of a cell is used.
+#[repr(C, align(64))]
 struct Bitmap([AtomicU64; BITMAP_WORDS]);
 
 impl Bitmap {
     #[inline(always)]
+    fn word(&self, atom: usize) -> &AtomicU64 {
+        &self.0[atom / 64 % BITMAP_WORDS]
+    }
+
+    #[inline(always)]
     fn get(&self, atom: usize) -> bool {
-        self.0[atom / 64 % BITMAP_WORDS].load(Ordering::Relaxed) >> (atom % 64) & 1 != 0
+        self.word(atom).load(Ordering::Relaxed) >> (atom % 64) & 1 != 0
     }
 
     /// Whether it was set.
     #[inline(always)]
     fn test_and_set(&self, atom: usize) -> bool {
         let bit = 1 << (atom % 64);
-        self.0[atom / 64 % BITMAP_WORDS].fetch_or(bit, Ordering::Relaxed) & bit != 0
+        self.word(atom).fetch_or(bit, Ordering::Relaxed) & bit != 0
     }
 
     #[inline(always)]
-    fn assign_exclusively(&self, atom: usize, value: bool) {
-        let word = &self.0[atom / 64 % BITMAP_WORDS];
-        let cleared = word.load(Ordering::Relaxed) & !(1 << (atom % 64));
-        word.store(cleared | u64::from(value) << (atom % 64), Ordering::Relaxed);
+    fn set_exclusively(&self, atom: usize) {
+        let word = self.word(atom);
+        word.store(
+            word.load(Ordering::Relaxed) | 1 << (atom % 64),
+            Ordering::Relaxed,
+        );
     }
 
-    fn clear(&self) {
-        for word in &self.0 {
-            word.store(0, Ordering::Relaxed);
-        }
-    }
-
-    fn snapshot(&self) -> [u64; BITMAP_WORDS] {
+    fn snapshot(&self) -> Bits {
         self.0.each_ref().map(|word| word.load(Ordering::Relaxed))
     }
 
-    fn assign(&self, words: &[u64; BITMAP_WORDS]) {
+    fn assign(&self, words: &Bits) {
         for (word, &value) in self.0.iter().zip(words) {
             word.store(value, Ordering::Relaxed);
         }
     }
 
-    fn count(&self) -> usize {
-        self.snapshot()
-            .iter()
-            .map(|word| word.count_ones() as usize)
-            .sum()
+    fn count(&self) -> u32 {
+        self.snapshot().iter().map(|word| word.count_ones()).sum()
     }
 }
 
-/// The header of an aligned run of memory that is cut into cells of one size.
+#[inline(always)]
+fn for_each_set_bit(bits: &Bits, mut visit: impl FnMut(usize)) {
+    for (index, &word) in bits.iter().enumerate() {
+        let mut rest = word;
+        while rest != 0 {
+            visit(index * 64 + rest.trailing_zeros() as usize);
+            rest &= rest - 1;
+        }
+    }
+}
+
+/// The header of an aligned run of memory that is cut into cells of one size. Markers write nothing to the cache line
+/// that they all read the version from.
 #[repr(C)]
 pub struct Block {
     heap: *const Heap,
     marking_version: AtomicU32,
-    mark_count: AtomicU32,
-    marks: Bitmap,
+    atoms_per_cell: u32,
     directory: *const Directory,
     pub(super) attributes: CellAttributes,
-    atoms_per_cell: u32,
     first_atom: u32,
     reciprocal: u32,
-    retire_count: u32,
     pub(super) index: Cell<u32>,
+    marks: Bitmap,
+    /// How many of the marks earlier collections have counted.
+    counted_marks: AtomicU32,
     /// The cells from this offset on have never been allocated, and their memory has not been touched.
     virgin_offset: Cell<u32>,
     /// Current: every cell has been allocated or has survived since the last collection.
@@ -93,6 +111,10 @@ pub struct Block {
     /// Current: `newly_allocated` says which cells are live.
     newly_allocated_version: AtomicU32,
     is_free_listed: Cell<bool>,
+    /// For `Destruction::OnRequest`.
+    is_destruction_requested: Cell<bool>,
+    /// A bit for each page that has been given back to the system. No live cell is in it.
+    discarded_pages: Cell<u8>,
     lock: Mutex,
     newly_allocated: Bitmap,
 }
@@ -134,11 +156,11 @@ impl FreeInterval {
     }
 }
 
-pub(super) struct SweepResult {
-    /// Zero if no cell is free, or if no list was asked for.
+#[derive(Default)]
+pub(super) struct FreeList {
+    /// Zero if no cell is free.
     pub(super) first_interval: usize,
-    pub(super) free_bytes: usize,
-    pub(super) is_empty: bool,
+    pub(super) bytes: usize,
 }
 
 impl Block {
@@ -157,19 +179,20 @@ impl Block {
             block.write(Block {
                 heap: directory.heap(),
                 marking_version: AtomicU32::new(NULL_VERSION),
-                mark_count: AtomicU32::new(0),
-                marks: empty(),
+                atoms_per_cell: atoms_per_cell as u32,
                 directory,
                 attributes: directory.attributes(),
-                atoms_per_cell: atoms_per_cell as u32,
                 first_atom: first_atom as u32,
                 reciprocal: (1u32 << RECIPROCAL_SHIFT).div_ceil(atoms_per_cell as u32),
-                retire_count: (cells * 9).div_ceil(10) as u32,
                 index: Cell::new(0),
+                marks: empty(),
+                counted_marks: AtomicU32::new(0),
                 virgin_offset: Cell::new((first_atom * ATOM_SIZE) as u32),
                 allocated_version: AtomicU32::new(NULL_VERSION),
                 newly_allocated_version: AtomicU32::new(NULL_VERSION),
                 is_free_listed: Cell::new(false),
+                is_destruction_requested: Cell::new(false),
+                discarded_pages: Cell::new(0),
                 lock: Mutex::new(),
                 newly_allocated: empty(),
             });
@@ -212,8 +235,12 @@ impl Block {
         address % BLOCK_SIZE / ATOM_SIZE
     }
 
-    pub(super) fn first_cell(&self) -> usize {
+    fn first_cell(&self) -> usize {
         self.address() + self.first_atom as usize * ATOM_SIZE
+    }
+
+    fn end(&self) -> usize {
+        self.address() + BLOCK_SIZE
     }
 
     /// The start of the cell that an address of this block is in.
@@ -225,42 +252,40 @@ impl Block {
         Some(self.address() + first_atom as usize * ATOM_SIZE)
     }
 
-    pub(super) fn cells(&self) -> impl DoubleEndedIterator<Item = usize> + use<> {
-        (self.first_cell()..self.address() + BLOCK_SIZE).step_by(self.cell_size())
+    #[inline(always)]
+    pub(super) fn has_marks_of(&self, version: Version) -> bool {
+        self.marking_version.load(Ordering::Acquire) == version
     }
 
     #[inline(always)]
     pub(super) fn is_marked(&self, version: Version, cell: usize) -> bool {
-        self.marking_version.load(Ordering::Acquire) == version
-            && self.marks.get(Self::atom_of(cell))
+        self.has_marks_of(version) && self.has_mark(cell)
     }
 
-    /// Whether the cell was marked already.
+    /// Whichever version the marks are of.
     #[inline(always)]
-    pub(super) fn test_and_set_marked(&self, version: Version, cell: usize) -> bool {
-        if self.marking_version.load(Ordering::Acquire) != version {
-            self.prepare_for_marking(version);
-        }
-        let atom = Self::atom_of(cell);
-        if self.marks.get(atom) || self.marks.test_and_set(atom) {
-            return true;
-        }
-        // Markers may lose each other's increments: the count only decides whether sweeping is worthwhile.
-        let count = self.mark_count.load(Ordering::Relaxed) + 1;
-        self.mark_count.store(count, Ordering::Relaxed);
-        if count == self.retire_count {
-            self.directory().did_retire(self);
-        }
-        false
+    pub(super) fn has_mark(&self, cell: usize) -> bool {
+        self.marks.get(Self::atom_of(cell))
     }
 
-    #[cold]
-    #[inline(never)]
-    fn prepare_for_marking(&self, version: Version) {
+    /// Whether the cell was marked already. The marks are current.
+    #[inline(always)]
+    pub(super) fn test_and_set_mark(&self, cell: usize) -> bool {
+        self.marks.test_and_set(Self::atom_of(cell))
+    }
+
+    /// The marks are current, and no other marker is running.
+    #[inline(always)]
+    pub(super) fn set_mark_exclusively(&self, cell: usize) {
+        self.marks.set_exclusively(Self::atom_of(cell));
+    }
+
+    /// Makes the marks current. False if they were.
+    pub(super) fn prepare_for_marking(&self, version: Version) -> bool {
         let _lock = self.lock.lock_guard();
         let old_version = self.marking_version.load(Ordering::Relaxed);
         if old_version == version {
-            return;
+            return false;
         }
         let allocation_version = self.heap().allocation_version();
         if next_version(old_version) == version
@@ -272,10 +297,23 @@ impl Block {
             self.newly_allocated_version
                 .store(allocation_version, Ordering::Release);
         }
-        self.marks.clear();
-        self.mark_count.store(0, Ordering::Relaxed);
+        self.marks.assign(&Bits::default());
+        self.counted_marks.store(0, Ordering::Relaxed);
         self.marking_version.store(version, Ordering::Release);
-        self.directory().did_start_marking(self);
+        true
+    }
+
+    /// How many cells are marked, and how many of them since the last call. The marks are current.
+    pub(super) fn count_marks(&self) -> (u32, u32) {
+        let count = self.marks.count();
+        let counted = self.counted_marks.load(Ordering::Relaxed);
+        self.counted_marks.store(count, Ordering::Relaxed);
+        (count, count - counted)
+    }
+
+    /// As of the end of the last collection. The marks are current.
+    pub(super) fn counted_marks(&self) -> usize {
+        self.counted_marks.load(Ordering::Relaxed) as usize
     }
 
     fn marks_convey_liveness(&self) -> bool {
@@ -295,26 +333,15 @@ impl Block {
         if self.newly_allocated_version.load(Ordering::Relaxed) == version {
             return self.newly_allocated.get(Self::atom_of(cell));
         }
-        self.marks_convey_liveness() && self.marks.get(Self::atom_of(cell))
+        self.marks_convey_liveness() && self.has_mark(cell)
     }
 
     pub(super) fn is_free_listed(&self) -> bool {
         self.is_free_listed.get()
     }
 
-    pub(super) fn marked_cell_count(&self) -> usize {
-        if self.marking_version.load(Ordering::Relaxed) == self.heap().marking_version() {
-            self.marks.count()
-        } else {
-            0
-        }
-    }
-
-    pub(super) fn has_touched_cells(&self) -> bool {
-        self.address() + self.virgin_offset.get() as usize != self.first_cell()
-    }
-
-    fn live_bits(&self) -> [u64; BITMAP_WORDS] {
+    /// The block does not consist of live cells only.
+    fn live_bits(&self) -> Bits {
         let _lock = self.lock.lock_guard();
         let version = self.heap().allocation_version();
         debug_assert!(self.allocated_version.load(Ordering::Relaxed) != version);
@@ -323,79 +350,192 @@ impl Block {
         } else if self.marks_convey_liveness() {
             self.marks.snapshot()
         } else {
-            [0; BITMAP_WORDS]
+            Bits::default()
         }
     }
 
-    /// Destroys the dead cells and, given a secret, chains the free ones in the order of their addresses.
-    ///
+    /// As for `is_live`.
+    pub(super) fn for_each_live_cell(&self, mut visit: impl FnMut(usize)) {
+        debug_assert!(!self.is_free_listed.get());
+        if self.allocated_version.load(Ordering::Relaxed) == self.heap().allocation_version() {
+            let cells = (self.first_cell()..self.end()).step_by(self.cell_size());
+            return cells.for_each(visit);
+        }
+        for_each_set_bit(&self.live_bits(), |atom| {
+            visit(self.address() + atom * ATOM_SIZE);
+        });
+    }
+
+    /// Those that are marked when it starts. The marks are current.
+    pub(super) fn for_each_marked_cell(&self, mut visit: impl FnMut(usize)) {
+        for_each_set_bit(&self.marks.snapshot(), |atom| {
+            visit(self.address() + atom * ATOM_SIZE);
+        });
+    }
+
+    /// In the order of their addresses.
+    #[inline(always)]
+    fn for_each_dead_run(&self, live: &Bits, mut visit: impl FnMut(usize, usize)) {
+        let (mut start, cell_size) = (self.first_cell(), self.cell_size());
+        for_each_set_bit(live, |atom| {
+            let cell = self.address() + atom * ATOM_SIZE;
+            if cell != start {
+                visit(start, cell);
+            }
+            start = cell + cell_size;
+        });
+        if start != self.end() {
+            visit(start, self.end());
+        }
+    }
+
+    /// Whether this is the first request since the block was last empty.
+    #[inline(always)]
+    pub(super) fn request_destruction(&self) -> bool {
+        !self.is_destruction_requested.replace(true)
+    }
+
+    pub(super) fn is_destruction_requested(&self) -> bool {
+        self.is_destruction_requested.get()
+    }
+
     /// # Safety
     /// On the thread of the heap, which is in the sweeping state.
-    pub(super) unsafe fn sweep(&self, secret: Option<u64>) -> SweepResult {
+    pub(super) unsafe fn destroy_dead_cells(&self) {
         debug_assert!(!self.is_free_listed.get());
         let live = self.live_bits();
-        let is_empty = live.iter().all(|&word| word == 0);
-        let is_live = |cell: usize| {
-            let atom = Self::atom_of(cell);
-            live[atom / 64 % BITMAP_WORDS] >> (atom % 64) & 1 != 0
-        };
-        let (start, end) = (self.first_cell(), self.address() + BLOCK_SIZE);
+        // SAFETY: the caller's. Each is how the cells of such a block are destroyed.
+        unsafe {
+            match (self.attributes.destruction, self.attributes.destroy) {
+                (_, None) => {}
+                (Destruction::ByFunction, Some(destroy)) => {
+                    self.destroy_with(&live, |cell| destroy(cell), |_| {});
+                }
+                (Destruction::OfStrings | Destruction::OnRequest, _) => self.destroy_with(
+                    &live,
+                    |cell| cell.cast::<JsString>().drop_in_place(),
+                    |cell| {
+                        prefetch(
+                            cell.byte_add(JsString::OFFSET_OF_FIBER)
+                                .cast::<usize>()
+                                .read(),
+                        )
+                    },
+                ),
+            }
+        }
+        if live == Bits::default() {
+            self.virgin_offset.set(self.first_atom * ATOM_SIZE as u32);
+            self.is_destruction_requested.set(false);
+        }
+    }
 
-        if let Some(destroy) = self.attributes.destroy {
-            let touched_end = self.address() + self.virgin_offset.get() as usize;
-            for cell in (start..touched_end).step_by(self.cell_size()) {
+    /// `prepare` gets a cell, which may be alive or destroyed, some time before its turn comes.
+    ///
+    /// # Safety
+    /// As for `destroy_dead_cells`.
+    #[inline(always)]
+    unsafe fn destroy_with(
+        &self,
+        live: &Bits,
+        destroy: impl Fn(*mut JsCell),
+        prepare: impl Fn(*const JsCell),
+    ) {
+        const LOOKAHEAD: usize = 8;
+        let touched_end = self.address() + self.virgin_offset.get() as usize;
+        let (cell_size, discarded) = (self.cell_size(), self.discarded_pages.get());
+        self.for_each_dead_run(live, |from, to| {
+            for cell in (from..to.min(touched_end)).step_by(cell_size) {
+                if discarded != 0 && discarded >> (cell % BLOCK_SIZE / page_size()) & 1 != 0 {
+                    continue;
+                }
+                let ahead = cell + LOOKAHEAD * cell_size;
+                if ahead < touched_end && discarded == 0 {
+                    prepare(core::ptr::with_exposed_provenance(ahead));
+                }
                 let header = core::ptr::with_exposed_provenance_mut::<u32>(cell);
                 // SAFETY: a dead cell whose header is not zapped has not been destroyed.
                 unsafe {
-                    if !is_live(cell) && *header != 0 {
+                    if *header != 0 {
                         destroy(header.cast());
                         *header = 0;
                     }
                 }
             }
-        }
-        if is_empty {
-            self.virgin_offset.set((start - self.address()) as u32);
-        }
-        let Some(secret) = secret else {
-            return SweepResult {
-                first_interval: 0,
-                free_bytes: 0,
-                is_empty,
-            };
-        };
+        });
+    }
 
-        let (mut next, mut free_bytes) = (0, 0);
-        let mut add_interval = |from: usize, to: usize| {
-            if from != to {
-                #[cfg(debug_assertions)]
-                // SAFETY: free cells. Their headers stay zapped.
-                unsafe {
+    /// Chains the dead cells in the order of their addresses.
+    ///
+    /// # Safety
+    /// On the thread of the heap, and those that need it have been destroyed.
+    pub(super) unsafe fn build_free_list(&self, secret: u64) -> FreeList {
+        debug_assert!(!self.is_free_listed.get());
+        self.reuse_discarded_pages();
+        let (mut list, mut last) = (FreeList::default(), None);
+        let scribbles = options().scribble_free_cells;
+        self.for_each_dead_run(&self.live_bits(), |from, to| {
+            // SAFETY: free cells.
+            unsafe {
+                if scribbles {
                     scribble(from, to, self.cell_size());
                 }
-                // SAFETY: a free cell.
-                unsafe { FreeInterval::write(from, to - from, next, secret) };
-                next = from;
-                free_bytes += to - from;
-            }
-        };
-        if is_empty {
-            add_interval(start, end);
-        } else {
-            let mut interval_end = end;
-            for cell in self.cells().rev() {
-                if is_live(cell) {
-                    add_interval(cell + self.cell_size(), interval_end);
-                    interval_end = cell;
+                match last.replace((from, to - from)) {
+                    Some((start, length)) => FreeInterval::write(start, length, from, secret),
+                    None => list.first_interval = from,
                 }
             }
-            add_interval(start, interval_end);
+            list.bytes += to - from;
+        });
+        if let Some((start, length)) = last {
+            // SAFETY: as above.
+            unsafe { FreeInterval::write(start, length, 0, secret) };
+            self.is_free_listed.set(true);
         }
-        self.is_free_listed.set(next != 0);
-        SweepResult {
-            first_interval: next,
-            free_bytes,
-            is_empty,
+        list
+    }
+
+    /// # Safety
+    /// As for `build_free_list`.
+    pub(super) unsafe fn scribble_on_dead_cells(&self) {
+        self.reuse_discarded_pages();
+        self.for_each_dead_run(&self.live_bits(), |from, to| {
+            // SAFETY: the caller's.
+            unsafe { scribble(from, to, self.cell_size()) };
+        });
+    }
+
+    /// Gives the pages that have no live cell back to the system.
+    ///
+    /// # Safety
+    /// As for `build_free_list`.
+    pub(super) unsafe fn discard_unused_pages(&self) {
+        let page = page_size();
+        self.for_each_dead_run(&self.live_bits(), |from, to| {
+            let (first, end) = (from.next_multiple_of(page), to / page * page);
+            if first >= end {
+                return;
+            }
+            let (count, shift) = ((end - first) / page, first % BLOCK_SIZE / page);
+            let pages = ((1 << count) - 1) << shift;
+            if self.discarded_pages.get() & pages != pages {
+                // SAFETY: whole pages of dead cells.
+                unsafe { virtual_memory::discard(first, end - first) };
+                self.discarded_pages.update(|discarded| discarded | pages);
+            }
+        });
+    }
+
+    #[inline]
+    pub(super) fn reuse_discarded_pages(&self) {
+        let discarded = self.discarded_pages.take();
+        if discarded == 0 {
+            return;
+        }
+        let page = page_size();
+        for index in (0..BLOCK_SIZE / page).filter(|index| discarded >> index & 1 != 0) {
+            // SAFETY: discarded above.
+            unsafe { virtual_memory::reuse(self.address() + index * page, page) };
         }
     }
 
@@ -417,27 +557,34 @@ impl Block {
         self.is_free_listed.set(false);
         let offset = (position - self.address()) as u32;
         self.virgin_offset.set(self.virgin_offset.get().max(offset));
-        self.newly_allocated.clear();
-        let mut cell = self.first_cell();
-        let end = self.address() + BLOCK_SIZE;
-        for (free_start, free_end) in free.chain([(end, end)]) {
-            while cell < free_start {
-                self.newly_allocated
-                    .assign_exclusively(Self::atom_of(cell), true);
-                cell += self.cell_size();
+        let (mut live, mut atom) = (Bits::default(), self.first_atom as usize);
+        let atom_of = |address: usize| (address - self.address()) / ATOM_SIZE;
+        for (free_start, free_end) in free.chain([(self.end(), self.end())]) {
+            while atom < atom_of(free_start) {
+                live[atom / 64 % BITMAP_WORDS] |= 1 << (atom % 64);
+                atom += self.atoms_per_cell as usize;
             }
-            cell = free_end;
+            atom = atom_of(free_end);
         }
+        self.newly_allocated.assign(&live);
         self.newly_allocated_version
             .store(self.heap().allocation_version(), Ordering::Relaxed);
     }
 
-    /// Makes the next sweep destroy every cell.
+    /// From now on every cell is dead.
     pub(super) fn forget_liveness(&self) {
         self.marking_version.store(NULL_VERSION, Ordering::Relaxed);
         self.forget_allocation_versions();
     }
 
+    /// Before the versions start over.
+    pub(super) fn forget_marks_unless_of(&self, version: Version) {
+        if !self.has_marks_of(version) {
+            self.marking_version.store(NULL_VERSION, Ordering::Relaxed);
+        }
+    }
+
+    /// As above.
     pub(super) fn forget_allocation_versions(&self) {
         self.allocated_version
             .store(NULL_VERSION, Ordering::Relaxed);
@@ -446,9 +593,11 @@ impl Block {
     }
 }
 
+/// The headers stay zapped.
+///
 /// # Safety
 /// The range consists of free cells of that size.
-#[cfg(debug_assertions)]
+#[cold]
 unsafe fn scribble(from: usize, to: usize, cell_size: usize) {
     const POISON: u64 = 0xbadb_eef0;
     for cell in (from..to).step_by(cell_size) {

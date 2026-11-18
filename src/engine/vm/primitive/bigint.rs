@@ -323,6 +323,7 @@ impl JsBigInt {
     }
 
     #[inline(always)]
+    #[cfg_attr(rootcheck, rootcheck::stays("points into the cell"))]
     pub fn value(&self) -> BigIntRef<'_> {
         let digits = core::ptr::with_exposed_provenance(self.address() + Self::OFFSET_OF_DIGITS);
         // SAFETY: inside the cell, initialized, and never changed.

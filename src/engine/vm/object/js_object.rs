@@ -70,6 +70,10 @@ impl JsObjectInit {
         JsObjectInit { shape, storage }
     }
 
+    pub fn storage(&self) -> Storage {
+        self.storage
+    }
+
     /// # Safety
     /// The storage is initialized, is what the shape describes, and refers to no cell that nothing else keeps alive
     /// until the object exists.

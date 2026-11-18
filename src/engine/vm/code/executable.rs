@@ -18,7 +18,7 @@ use crate::{
 };
 
 /// What a call goes through: it stores the code block in the new frame and calls the entry.
-#[cell(flags = TypeFlags::SHAPE_IS_IMMORTAL)]
+#[cell(flags = TypeFlags::SHAPE_IS_IMMORTAL, export = "engine_class_Executable")]
 pub struct Executable {
     base: JsCell,
     entries: [Cell<usize>; 2],
@@ -219,7 +219,7 @@ impl NativeExecutable {
     }
 }
 
-#[cell(cell_type = ProgramExecutable..=FunctionExecutable)]
+#[cell(cell_type = ProgramExecutable..=FunctionExecutable, export = "engine_class_ScriptExecutable")]
 pub struct ScriptExecutable {
     base: Executable,
     provider: SourceProviderRef,
@@ -265,6 +265,28 @@ impl ScriptExecutable {
 
     pub fn provider(&self) -> &SourceProviderRef {
         &self.provider
+    }
+
+    /// The text that the positions in the code refer to, which lives no shorter than this.
+    pub fn code_provider(&self) -> SourceProviderRef {
+        match self.downcast::<FunctionExecutable>() {
+            Some(function) if function.is_default_constructor() => {
+                (self.heap().vm()).default_constructor_provider(&function.info)
+            }
+            _ => self.provider.clone(),
+        }
+    }
+
+    /// In that text. Of a function, from the parameters on.
+    pub fn code_range(&self) -> core::ops::Range<u32> {
+        match self.downcast::<FunctionExecutable>() {
+            Some(function) if function.is_default_constructor() => {
+                let length = function.info.default_constructor_source().len() - ")".len();
+                function.parameters_start()..length as u32
+            }
+            Some(function) => function.parameters_start()..function.info.range().end,
+            None => 0..self.provider.text().len() as u32,
+        }
     }
 
     /// The script, module or `eval` code that this is a part of.
@@ -569,15 +591,7 @@ impl FunctionExecutable {
         self.info.origin().contains(Origin::DEFAULT_CONSTRUCTOR)
     }
 
-    /// The text that the positions in the code refer to.
-    pub fn code_provider(&self) -> SourceProviderRef {
-        if self.is_default_constructor() {
-            return self.heap().vm().default_constructor_provider(&self.info);
-        }
-        self.provider().clone()
-    }
-
-    /// In that text.
+    /// In the text of `code_provider`.
     pub fn parameters_start(&self) -> u32 {
         if self.is_default_constructor() {
             return "(function ".len() as u32;
@@ -613,7 +627,7 @@ impl FunctionExecutable {
             return Ok(text);
         }
         let text = if self.is_private_builtin() && !self.info.kind().is_class_constructor() {
-            native_source_text(cx, self.name_text())?
+            native_source_text(cx, crate::anchor!(self).name_text())?
         } else {
             let range = self.info.text_range();
             let range = range.start as usize..range.end as usize;

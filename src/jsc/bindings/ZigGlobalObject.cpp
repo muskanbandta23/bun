@@ -229,10 +229,6 @@
 #include "JSBunRequest.h"
 #include "ServerRouteList.h"
 
-#if ENABLE(REMOTE_INSPECTOR)
-#include "JavaScriptCore/RemoteInspectorServer.h"
-#endif
-
 #include "NodeFSStatBinding.h"
 #include "NodeFSStatFSBinding.h"
 #include "NodeDirent.h"
@@ -1940,9 +1936,7 @@ extern "C" JSC::EncodedJSValue Bun__makeArrayBufferWithBytesNoCopy(JSC::JSGlobal
     if (Bun::rejectBytesNoCopyAboveArrayBufferLimit(globalObject, scope, ptr, len, deallocator, deallocatorContext)) [[unlikely]]
         return {};
 
-    auto buffer = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), len }, createSharedTask<void(void*)>([=](void* p) {
-        if (deallocator) deallocator(p, deallocatorContext);
-    }));
+    auto buffer = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), len }, deallocator, deallocatorContext);
 
     JSArrayBuffer* jsBuffer = JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Default), WTF::move(buffer));
     RETURN_IF_EXCEPTION(scope, {});
@@ -1957,14 +1951,7 @@ extern "C" JSC::EncodedJSValue Bun__makeTypedArrayWithBytesNoCopy(JSC::JSGlobalO
     if (Bun::rejectBytesNoCopyAboveArrayBufferLimit(globalObject, scope, ptr, len, deallocator, deallocatorContext)) [[unlikely]]
         return {};
 
-    auto buffer_ = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), len }, createSharedTask<void(void*)>([=](void* p) {
-        if (deallocator) deallocator(p, deallocatorContext);
-    }));
-    RefPtr<ArrayBuffer>&& buffer = WTF::move(buffer_);
-    if (!buffer) {
-        throwOutOfMemoryError(globalObject, scope);
-        return {};
-    }
+    RefPtr<ArrayBuffer> buffer = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), len }, deallocator, deallocatorContext);
 
     unsigned elementByteSize = elementSize(ty);
     size_t offset = 0;
@@ -2497,7 +2484,7 @@ void GlobalObject::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
-    setConsoleClient(WebCore::clientData(vm)->consoleClient());
+    setConsoleClient(&WebCore::clientData(vm)->consoleClient());
 
     if (Bun::codeGenerationFromStrings() != Bun::CodeGenerationFromStrings::Allowed) [[unlikely]]
         setEvalEnabled(false, Bun::codeGenerationFromStringsDisallowedMessage());
@@ -3148,10 +3135,6 @@ void GlobalObject::finishCreation(VM& vm)
     // Initialize LazyProperties for stdin/stderr/stdout
 
     configureNodeVM(vm, this);
-
-#if ENABLE(REMOTE_INSPECTOR)
-    setInspectable(false);
-#endif
 
     addBuiltinGlobals(vm);
     // hostDidCreateRealm() runs lazy property builders, which ask for the thread's default global object. The first one of a thread is recorded by its creator only after this returns.
@@ -3847,7 +3830,7 @@ extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, c
     auto& vm = JSC::getVM(globalObject);
 
     if (WTF::setTimeZoneOverride(Zig::toString(*timeZone))) {
-        Bun::resetDateCachesAfterTimeZoneChange(vm);
+        vm.dateCache.clearForTimeZoneChange();
         return true;
     }
 

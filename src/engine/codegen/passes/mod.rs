@@ -1,7 +1,12 @@
 //! Transformations of functions. Each leaves a valid function without aliases.
 
+mod bounds;
+mod construct_ssa;
 mod eliminate_dead_code;
+mod lower_switches;
 mod lower_total_division;
+mod merges;
+mod reaching;
 
 use crate::analysis::{Cfg, Dominators, Frequencies};
 use crate::ir::{Function, validate};
@@ -58,6 +63,12 @@ impl Analyses {
         }
         (&self.cfg, &self.frequencies)
     }
+
+    pub fn all(&mut self, function: &mut Function) -> (&Cfg, &Dominators, &Frequencies) {
+        self.dominators(function);
+        self.frequencies(function);
+        (&self.cfg, &self.dominators, &self.frequencies)
+    }
 }
 
 pub struct Pass {
@@ -71,8 +82,13 @@ macro_rules! passes {
     };
 }
 
-const QUICK: &[Pass] = passes![lower_total_division];
-const FULL: &[Pass] = passes![eliminate_dead_code, lower_total_division];
+const QUICK: &[Pass] = passes![construct_ssa, lower_switches, lower_total_division];
+const FULL: &[Pass] = passes![
+    construct_ssa,
+    eliminate_dead_code,
+    lower_switches,
+    lower_total_division,
+];
 
 impl Pass {
     pub fn pipeline(level: Level) -> &'static [Pass] {

@@ -18,6 +18,14 @@ pub struct LoopData {
     end: u32,
 }
 
+impl LoopData {
+    /// Those of its blocks in the order.
+    #[inline]
+    pub fn positions(&self) -> core::ops::Range<u32> {
+        self.first..self.end
+    }
+}
+
 #[derive(Clone, Copy)]
 struct Search {
     /// The depth on the path from the entry, from one. Zero once the block is left.

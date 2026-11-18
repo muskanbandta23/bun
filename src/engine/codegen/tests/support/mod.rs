@@ -14,4 +14,5 @@ pub(crate) mod interpreter;
 pub(crate) mod memory;
 pub(crate) mod random;
 pub(crate) mod reducer;
+pub(crate) mod sketch;
 pub(crate) mod vocabulary;

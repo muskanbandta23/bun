@@ -5,7 +5,7 @@ The engine's collector finds references to cells on the native stack, in memory 
 ```sh
 rustup component add rustc-dev llvm-tools     # once for each toolchain
 bun run rust:rootcheck                        # bun_engine_vm and the crates that name it as a dependency, tests included
-bun run rust:rootcheck -p bun_engine_builtins # other arguments go to `cargo check`
+bun run rust:rootcheck -p bun_engine_vm --lib # other arguments go to `cargo check`
 bun run rust:rootcheck --lenders              # lists the functions that lend what a cell owns
 bun run rust:rootcheck --all                  # also the borrows that baseline.json holds back
 bun run rust:rootcheck --baseline             # writes baseline.json
@@ -17,7 +17,7 @@ It works in `target/rootcheck` and is incremental like `cargo check`.
 ## Terms
 
 - A type **refers** to cells if it is not `GcFree`. A type parameter is judged where it is instantiated, and a trait object where it is made.
-- A type **hides** references if it owns memory, from an allocator other than `RootAlloc`, that holds a type which refers. There is no list of containers. A type owns what it has a raw pointer and a `PhantomData<T>` for, or a raw pointer, a destructor and no lifetime. The memory of `RootAlloc` is looked into: `RootVec<Vec<Value>>` hides.
+- A type **hides** references if it owns memory, from an allocator other than `RootAlloc`, that holds a type which refers. There is no list of containers. A type owns what it has a raw pointer and a `PhantomData<T>` for, or a raw pointer and a destructor, unless its lifetimes say that it borrows. The memory of `RootAlloc` is looked into: `RootVec<Vec<Value>>` hides.
 
 ## Rules
 
@@ -30,6 +30,8 @@ It works in `target/rootcheck` and is incremental like `cargo check`.
 | `borrow`    | a loose borrow (below) that is alive while something may collect, or that leaves a function whose callers cannot tell            |
 | `no_gc`     | a call that may collect while a `NoGc` or `GcRefMut`, or what is borrowed under one, is alive                                    |
 | `signature` | a safe function that other crates can call with a cell but no `Vm`, `Cx` or `Heap`, and that may collect or returns one          |
+| `hidden`    | a `repr(packed)` type that refers                                                                                                |
+| `unvisited` | a field that refers, in a type that is traced or visited by hand, which nothing touches that is given a `Visitor` or `Survivors` |
 | `static`    | a static or thread-local whose type refers                                                                                       |
 | `erased`    | `&Cell` made `&dyn Trait`                                                                                                        |
 | `guard`     | `ManuallyDrop` around a guard such as `StringView`                                                                               |

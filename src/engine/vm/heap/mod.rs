@@ -32,6 +32,7 @@ use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+use bun_engine_macros::FieldOffsets;
 use bun_threading::Guarded;
 
 pub use allocator::Allocator;
@@ -109,6 +110,7 @@ impl CellAttributes {
     }
 }
 
+#[derive(FieldOffsets)]
 #[repr(C)]
 pub struct Heap {
     /// A store into a cell whose state is at most this takes the slow path of the write barrier.
@@ -184,6 +186,9 @@ impl Drop for DeferCollection<'_> {
 }
 
 impl Heap {
+    /// What a `Vm` sets aside for it.
+    pub const SIZE_LIMIT: usize = 10240;
+
     pub(crate) fn new(kind: HeapKind, seed: u64) -> Heap {
         block_memory::initialize();
         let iso = |size, destroy, source| {

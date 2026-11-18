@@ -1,6 +1,8 @@
 //! Procedural macros of the engine. What they expand to is documented beside the traits of `bun_engine_vm`.
 
 mod cell;
+mod export;
+mod field_offsets;
 mod native_abi;
 mod object_ops;
 mod trace;
@@ -17,10 +19,11 @@ pub fn cell(arguments: TokenStream, item: TokenStream) -> TokenStream {
     expand(cell::expand(arguments.into(), item.into()))
 }
 
-/// The internal methods that a type of object overrides. See `bun_engine_vm::ClassOps`.
+/// The internal methods that a type of object overrides. See `bun_engine_vm::ClassOps`. With `export = "prefix"` the
+/// entry for `put` is the symbol `prefix_put`, for classes that extend the type in C++.
 #[proc_macro_attribute]
-pub fn object_ops(_: TokenStream, item: TokenStream) -> TokenStream {
-    expand(object_ops::expand(item.into()))
+pub fn object_ops(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    expand(object_ops::expand(arguments.into(), item.into()))
 }
 
 /// Traces every field that can refer to a cell.
@@ -33,4 +36,16 @@ pub fn derive_trace(item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn native_abi(_: TokenStream, item: TokenStream) -> TokenStream {
     expand(native_abi::expand(item.into()))
+}
+
+/// Makes a function of `bun_engine_embed` the C function `engine_<name>`. See `abi.rs` there.
+#[proc_macro_attribute]
+pub fn export(_: TokenStream, item: TokenStream) -> TokenStream {
+    expand(export::expand(item.into()))
+}
+
+/// Gives a `repr(C)` struct `offset_of_field`. A cell that exports its class has it too.
+#[proc_macro_derive(FieldOffsets)]
+pub fn derive_field_offsets(item: TokenStream) -> TokenStream {
+    expand(field_offsets::expand(item.into()))
 }

@@ -2,7 +2,8 @@ use core::fmt::Write;
 
 use bun_engine_bytecode::{CodeFlags, CodeKind};
 use bun_engine_macros::{FieldOffsets, Trace};
-use bun_engine_text::{CodeUnit, StringBuilder, StringRef, Text};
+use bun_engine_number::NumberText;
+use bun_engine_text::{CodeUnit, PropertyName, StringBuilder, StringRef, Text, names};
 
 use crate::heap::Survivors;
 use crate::{
@@ -76,23 +77,21 @@ impl StackFrame {
             return match self.wasm_names(vm) {
                 None => StringRef::from_literal("wasm-stub"),
                 Some(names) => names.function.unwrap_or_else(|| {
-                    let index =
-                        bun_engine_number::NumberText::from(f64::from(self.bytecode_offset));
-                    StringRef::from_text(index.text())
+                    StringRef::from_text(NumberText::from(self.bytecode_offset).text())
                 }),
             };
         }
         match self.code_block.map(|it| it.body().kind()) {
-            Some(CodeKind::Eval) => return StringRef::from_literal("eval code"),
-            Some(CodeKind::Module) => return StringRef::from_literal("module code"),
-            Some(CodeKind::Script) => return StringRef::from_literal("global code"),
+            Some(CodeKind::Eval) => return static_text(names::evalCode),
+            Some(CodeKind::Module) => return static_text(names::moduleCode),
+            Some(CodeKind::Script) => return static_text(names::globalCode),
             _ => {}
         }
         let name = match self.callee.and_then(|callee| callee.as_object()) {
             Some(callee) => display_name(&callee),
             None => (self.code_block)
                 .and_then(|it| it.executable().downcast::<FunctionExecutable>())
-                .map_or_default(|it| it.display_name()),
+                .map_or_default(|it| it.name().clone()),
         };
         if !self.is_async || name.is_empty() {
             return name;
@@ -122,7 +121,7 @@ impl StackFrame {
         }
         match self.source_provider() {
             Some(provider) => provider.url().cloned().unwrap_or_default(),
-            None => StringRef::from_literal("[native code]"),
+            None => static_text(names::nativeCode),
         }
     }
 
@@ -139,7 +138,10 @@ impl StackFrame {
         if !url.is_empty()
             && let Some(LineColumn { line, column }) = self.line_column()
         {
-            let _ = write!(out, ":{line}:{column}");
+            for number in [line, column] {
+                out.push_latin1(b':');
+                out.push_text(NumberText::from(number).text());
+            }
         }
     }
 
@@ -147,6 +149,10 @@ impl StackFrame {
         self.callee.is_none_or(|it| survivors.contains(it))
             && self.code_block.is_none_or(|it| survivors.contains(it))
     }
+}
+
+fn static_text(name: PropertyName<'static>) -> StringRef {
+    StringRef::retain(name.string())
 }
 
 /// With the colon. `None` for a path.

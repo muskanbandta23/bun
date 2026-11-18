@@ -1,4 +1,4 @@
-use core::cell::{Cell, RefCell};
+use core::cell::{Cell, OnceCell, RefCell};
 use core::mem::offset_of;
 use std::rc::Rc;
 
@@ -7,7 +7,7 @@ use bun_engine_bytecode::{
     Specialization, Visibility,
 };
 use bun_engine_macros::{Trace, cell};
-use bun_engine_text::{StringRef, Text};
+use bun_engine_text::{StringRef, Text, names};
 
 use super::eval::EvalKey;
 use crate::heap::{OnceBox, Owned};
@@ -103,6 +103,7 @@ pub struct NativeExecutable {
     function: NativeFunction,
     constructor: NativeFunction,
     name: StringRef,
+    pub(self) cached_source_text: Field<Option<Gc<JsString>>>,
     length: u32,
     intrinsic: Intrinsic,
     visibility: Visibility,
@@ -141,6 +142,7 @@ impl NativeExecutable {
             function,
             constructor,
             name,
+            cached_source_text: None,
             length,
             intrinsic,
             visibility,
@@ -200,6 +202,15 @@ impl NativeExecutable {
 
     pub fn length(&self) -> u32 {
         self.length
+    }
+
+    pub fn source_text(&self, cx: &Cx) -> JsResult<Gc<JsString>> {
+        if let Some(text) = self.cached_source_text() {
+            return Ok(text);
+        }
+        let text = native_source_text(cx, self.name.text())?;
+        self.set_cached_source_text(Some(text));
+        Ok(text)
     }
 
     /// Whether scripts see `bound ` in front of the name.
@@ -474,6 +485,7 @@ pub struct FunctionExecutable {
     singleton_watchpoints: InlineWatchpointSet,
     pub(self) first_function: WeakField<Option<Gc<JsFunction>>>,
     pub(self) cached_source_text: Field<Option<Gc<JsString>>>,
+    name: OnceCell<StringRef>,
     intrinsic: Cell<Intrinsic>,
 }
 
@@ -494,6 +506,7 @@ impl FunctionExecutable {
             singleton_watchpoints: InlineWatchpointSet::new(WatchpointState::Clear),
             first_function: None,
             cached_source_text: None,
+            name: OnceCell::new(),
             intrinsic: Cell::new(Intrinsic::None),
         })
     }
@@ -539,6 +552,17 @@ impl FunctionExecutable {
 
     pub fn name_text(&self) -> Text<'_> {
         self.info.name_text(self.provider().text())
+    }
+
+    /// What SetFunctionName gets, without the prefix. Allocates nothing in the heap.
+    pub fn name(&self) -> &StringRef {
+        self.name.get_or_init(|| {
+            let name = self.name_text();
+            if name == names::starDefaultText.text() && !self.info.has_own_name() {
+                return names::default.to_identifier().into_string();
+            }
+            StringRef::from_text(name)
+        })
     }
 
     fn is_default_constructor(&self) -> bool {

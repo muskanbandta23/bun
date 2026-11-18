@@ -6,6 +6,7 @@ use bun_engine_text::MAX_ARRAY_INDEX;
 
 use crate::double::{FRACTION_MASK, IMPLICIT_BIT, SIGN_BIT, SIGNIFICAND_BIAS, biased_exponent};
 
+/// Number.MAX_SAFE_INTEGER
 pub const MAX_SAFE_INTEGER: f64 = ((1u64 << 53) - 1) as f64;
 
 /// The sum of this and an integer below 2^51 in magnitude has that integer, in two's complement, in its low bits.
@@ -44,6 +45,7 @@ pub fn to_uint8(value: f64) -> u8 {
     to_int32(value) as u8
 }
 
+/// ToUint8Clamp, which rounds halves to even.
 #[inline]
 pub fn to_uint8_clamp(value: f64) -> u8 {
     let clamped = if value > 0.0 { value } else { 0.0 };
@@ -158,6 +160,7 @@ pub fn is_integer(value: f64) -> bool {
     value - value.trunc() == 0.0
 }
 
+/// Number.isSafeInteger
 #[inline]
 pub fn is_safe_integer(value: f64) -> bool {
     value.trunc() == value && value.abs() <= MAX_SAFE_INTEGER

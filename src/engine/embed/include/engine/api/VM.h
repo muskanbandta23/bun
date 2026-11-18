@@ -12,7 +12,6 @@ class DeferredWorkTimer;
 class EntryFrame;
 class FunctionHasExecutedCache;
 class HeapProfiler;
-class JSONCache;
 class MicrotaskQueue;
 class QueuedTask;
 class SamplingProfiler;
@@ -96,7 +95,7 @@ public:
 class DateCache {
 public:
     void clearForTimeZoneChange();
-    double gregorianDateTimeToMS(int32_t year, int32_t month, int32_t day, int32_t hour, int32_t minute, int32_t second, double milliseconds, TimeType);
+    double gregorianDateTimeToMS(int32_t year, int32_t month, int32_t day, int32_t hour, int32_t minute, int32_t second, int32_t millisecond, TimeType);
     PlainGregorianDateTime msToGregorianDateTime(double milliseconds, TimeType);
     double parseDate(JSGlobalObject*, VM&, const String&);
 
@@ -261,7 +260,6 @@ public:
     void shrinkFootprintWhenIdle(OptionSet<ShrinkFootprint> = {});
     void setStartupJITDeferralScale(double);
     CodeCache* codeCache() { return reinterpret_cast<CodeCache*>(this); }
-    JSONCache& jsonCache();
 
     bool enableControlFlowProfiler();
     ControlFlowProfiler* controlFlowProfiler();

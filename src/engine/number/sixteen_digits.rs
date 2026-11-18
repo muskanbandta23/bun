@@ -1,4 +1,4 @@
-//! The sixteen digits of a number from 1 to below 10^16.
+//! The sixteen digits of a number below 10^16.
 
 use core::array::from_fn;
 
@@ -8,7 +8,7 @@ use crate::digit_words::{split_sixteen_digits, spread_digits, store, to_characte
 pub(crate) struct Written {
     pub(crate) first_eight: u64,
     pub(crate) second_eight: u64,
-    /// How many digits there are up to the last nonzero one.
+    /// How many digits there are up to the last nonzero one. Meaningless if there is none.
     pub(crate) count: usize,
 }
 

@@ -10,8 +10,8 @@ use crate::{
     Attributes, CallData, CellType, CustomGetterSetter, Cx, DeletePropertySlot, DontEnumMode,
     Executable, Field, FunctionExecutable, FunctionRareData, Gc, GlobalObject, InternalFunction,
     Intrinsic, JsBoundFunction, JsCell, JsObject, JsObjectInit, JsRemoteFunction, JsResult,
-    JsString, JsSymbol, NativeExecutable, NativeFunction, PropertyDescriptor, PropertyNameList, PropertySlot,
-    PutPropertySlot, ScriptExecutable, Shape, ShapeFlags, TypeFlags, Value, Vm,
+    JsString, JsSymbol, NativeExecutable, NativeFunction, PropertyDescriptor, PropertyNameList,
+    PropertySlot, PutPropertySlot, ScriptExecutable, Shape, ShapeFlags, TypeFlags, Value, Vm,
     scope::realm_of_scope,
 };
 

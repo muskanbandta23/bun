@@ -1,6 +1,24 @@
 use bun_engine_text::CodeUnit;
 
 use crate::double::{EXPONENT_BIAS, FRACTION_BITS};
+use crate::radix::DIGITS;
+
+/// `CodeUnit::digit_value` without a branch on the kind of digit.
+#[inline(always)]
+pub(crate) fn digit_value<T: CodeUnit>(unit: T, radix: u32) -> Option<u32> {
+    static VALUES: [u8; 256] = {
+        let mut values = [u8::MAX; 256];
+        let mut value = 0;
+        while value < 36 {
+            values[DIGITS[value] as usize] = value as u8;
+            values[DIGITS[value].to_ascii_uppercase() as usize] = value as u8;
+            value += 1;
+        }
+        values
+    };
+    let value = u32::from(VALUES[usize::from(unit.to_u16().min(0xff))]);
+    (value < radix).then_some(value)
+}
 
 /// An integer in radix 2, 4, 8, 16 or 32, kept well enough to round it once.
 pub(crate) struct BinaryInteger {
@@ -33,6 +51,11 @@ impl BinaryInteger {
 
     #[inline]
     pub(crate) fn value(&self) -> f64 {
+        if let Ok(value) = i64::try_from(self.leading)
+            && self.dropped_bits == 0
+        {
+            return value as f64;
+        }
         let exponent = self.dropped_bits.min(EXPONENT_BIAS as u32);
         let scale = f64::from_bits(u64::from(EXPONENT_BIAS as u32 + exponent) << FRACTION_BITS);
         self.leading as f64 * scale
@@ -45,7 +68,7 @@ pub(crate) fn scan_binary_integer<T: CodeUnit>(units: &[T], radix: u32) -> (f64,
     let mut integer = BinaryInteger::new(radix);
     let count = units
         .iter()
-        .map_while(|unit| unit.digit_value(radix))
+        .map_while(|&unit| digit_value(unit, radix))
         .map(|digit| integer.push(digit))
         .count();
     (integer.value(), count)

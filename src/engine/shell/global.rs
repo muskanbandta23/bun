@@ -51,7 +51,7 @@ static HOOKS: RealmHooks = RealmHooks {
     current_script_execution_owner: |cx| cx.global().upcast(),
     script_execution_status: |_, _| ScriptExecutionStatus::Running,
     default_language: StringRef::empty,
-    derive_shadow_realm: |cx| Ok(GlobalObject::create(cx, &HOOKS)),
+    derive_shadow_realm: |cx| Ok(GlobalObject::create_for_shadow_realm(cx, &HOOKS)),
     compile_wasm_streaming: None,
     instantiate_wasm_streaming: None,
 };

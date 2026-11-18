@@ -1,3 +1,5 @@
+use core::array::from_fn;
+
 use crate::double::{
     FRACTION_BITS, FRACTION_MASK, IMPLICIT_BIT, MAX_BIASED_EXPONENT, SIGN_BIT, biased_exponent,
     with_sign,
@@ -61,6 +63,41 @@ impl PreciseSum {
         }
     }
 
+    pub fn add_all(&mut self, mut terms: &[f64]) {
+        while !terms.is_empty() {
+            let (block, rest) = terms.split_at(terms.len().min(BLOCK_LENGTH));
+            if let Some((upper, lower)) = sum_of_block(block) {
+                self.add(upper);
+                self.add(lower);
+                terms = rest;
+            } else {
+                // Terms that are far apart tend to come with more of the same.
+                let (run, rest) = terms.split_at(terms.len().min(16 * BLOCK_LENGTH));
+                self.add_each(run);
+                terms = rest;
+            }
+        }
+    }
+
+    fn add_each(&mut self, terms: &[f64]) {
+        terms.iter().for_each(|&term| self.add(term));
+    }
+
+    /// The same as adding all and taking the result.
+    pub fn of(terms: &[f64]) -> f64 {
+        let is_short = terms.len() <= BLOCK_LENGTH;
+        if is_short && let Some((upper, lower)) = sum_of_block(terms) {
+            return upper + lower;
+        }
+        let mut sum = PreciseSum::default();
+        if is_short {
+            sum.add_each(terms);
+        } else {
+            sum.add_all(terms);
+        }
+        sum.result()
+    }
+
     #[cold]
     fn carry(&mut self) {
         let lowest = self.used.trailing_zeros() as usize;
@@ -75,69 +112,88 @@ impl PreciseSum {
         self.terms_until_carry = TERMS_BETWEEN_CARRIES;
     }
 
-    #[inline]
-    pub fn result(mut self) -> f64 {
-        self.normalize_and_round()
-    }
-
-    fn normalize_and_round(&mut self) -> f64 {
+    pub fn result(&self) -> f64 {
         if self.special != 0.0 {
             return self.special;
         }
         let lowest = self.used.trailing_zeros() as usize;
         let end = CHUNKS - self.used.leading_zeros() as usize;
-        let Some(chunks) = self.chunks.get_mut(lowest..end) else {
-            return with_sign(0.0, self.common_bits & SIGN_BIT != 0);
-        };
+        let chunks = self.chunks.get(lowest..end).unwrap_or_default();
+        let carry_over = |carry: i64, chunk: &i64| (chunk + carry) >> CHUNK_BITS;
+        let sign = chunks.iter().fold(0, carry_over);
 
-        // To two's complement digits, then to the magnitude.
+        // The last three digits of the magnitude so far, and whether any came before them.
+        let (mut window, mut is_inexact) = (0u128, false);
+        let (mut leading, mut top) = (0, 0);
         let mut carry = 0;
-        for chunk in chunks.iter_mut() {
-            let sum = *chunk + carry;
-            *chunk = i64::from(sum as u32);
+        for (index, &chunk) in chunks.iter().enumerate() {
+            let sum = (chunk ^ sign) - sign + carry;
             carry = sum >> CHUNK_BITS;
-        }
-        let is_negative = carry < 0;
-        if is_negative {
-            let mut carry = 1;
-            for chunk in chunks.iter_mut() {
-                let sum = i64::from(!(*chunk as u32)) + carry;
-                *chunk = i64::from(sum as u32);
-                carry = sum >> CHUNK_BITS;
+            is_inexact |= window as u32 != 0;
+            window = window >> CHUNK_BITS | u128::from(sum as u32) << (2 * CHUNK_BITS);
+            if sum as u32 != 0 {
+                (leading, top) = (window | u128::from(is_inexact), lowest + index);
             }
         }
-
-        let Some(top) = chunks.iter().rposition(|&chunk| chunk != 0) else {
+        if leading == 0 {
             return with_sign(0.0, self.common_bits & SIGN_BIT != 0);
-        };
-        let (rest, leading) = chunks[..=top].split_at(top.saturating_sub(2));
-        let is_inexact = rest.iter().any(|&chunk| chunk != 0);
-        let leading = leading
-            .iter()
-            .rev()
-            .fold(0, |bits, &chunk| bits << CHUNK_BITS | chunk as u128);
-        let position = (lowest + rest.len()) as u32 * CHUNK_BITS;
-        with_sign(
-            round(leading | u128::from(is_inexact), position),
-            is_negative,
-        )
+        }
+        with_sign(round(leading, top as u32), sign < 0)
     }
 }
 
-/// `bits * 2^(position - 1075)`
-fn round(bits: u128, position: u32) -> f64 {
-    let top_bit = position + bits.ilog2();
+const BLOCK_BITS: u32 = 8;
+const BLOCK_LENGTH: usize = 1 << BLOCK_BITS;
+const LANES: usize = 4;
+
+/// Two numbers with the same sum as the terms, if these are finite, not all zero and within some 2^36 of each other.
+/// Adding and subtracting a large power of two splits off the upper bits of a term without error, and parts that are
+/// multiples of one unit add up without error: Rump, Ogita and Oishi, "Accurate floating-point summation".
+fn sum_of_block(terms: &[f64]) -> Option<(f64, f64)> {
+    const BITS_PER_PART: u32 = FRACTION_BITS - BLOCK_BITS;
+    let (groups, rest) = terms.as_chunks::<LANES>();
+    let last: [f64; LANES] = from_fn(|lane| rest.get(lane).copied().unwrap_or(0.0));
+    let larger = |a: f64, b: f64| if a > b { a } else { b };
+
+    let largest = groups.iter().fold(last.map(f64::abs), |largest, group| {
+        from_fn(|lane| larger(group[lane].abs(), largest[lane]))
+    });
+    let largest = largest.into_iter().fold(0.0, larger);
+    let upper_exponent = biased_exponent(largest.to_bits()) + 1 + BLOCK_BITS;
+    if !(4 * BITS_PER_PART..MAX_BIASED_EXPONENT - 1).contains(&upper_exponent) {
+        return None;
+    }
+    let power = |biased: u32| f64::from_bits(u64::from(biased) << FRACTION_BITS);
+    let (upper_scale, lower_scale) = (power(upper_exponent), power(upper_exponent - BITS_PER_PART));
+
+    let (mut upper, mut lower, mut left_over) = ([0.0; LANES], [0.0; LANES], [0; LANES]);
+    let mut add = |group: &[f64; LANES]| {
+        for lane in 0..LANES {
+            let upper_part = (upper_scale + group[lane]) - upper_scale;
+            let rest = group[lane] - upper_part;
+            let lower_part = (lower_scale + rest) - lower_scale;
+            upper[lane] += upper_part;
+            lower[lane] += lower_part;
+            left_over[lane] |= (rest - lower_part).to_bits();
+        }
+    };
+    groups.iter().for_each(&mut add);
+    add(&last);
+    // A NaN leaves itself over.
+    let left_over = left_over.into_iter().fold(0, |all, bits| all | bits);
+    (left_over & !SIGN_BIT == 0).then(|| (upper.into_iter().sum(), lower.into_iter().sum()))
+}
+
+/// Of three digits, the highest of which is that of chunk `top` and not zero.
+fn round(digits: u128, top: u32) -> f64 {
+    let top_bit = digits.ilog2() + top * CHUNK_BITS - 2 * CHUNK_BITS;
     // Where the last place of the result is, and by the choice of units its biased exponent.
     let biased = top_bit.saturating_sub(FRACTION_BITS).max(1);
     if biased >= MAX_BIASED_EXPONENT {
         return f64::INFINITY;
     }
-    let significand = match biased.checked_sub(position) {
-        None | Some(0) => (bits << (position - biased)) as u64,
-        Some(shift) => {
-            let just_below_half = (1 << (shift - 1)) - 1;
-            ((bits + just_below_half + (bits >> shift & 1)) >> shift) as u64
-        }
-    };
-    f64::from_bits((u64::from(biased - 1) << FRACTION_BITS) + significand)
+    let shift = biased + 2 * CHUNK_BITS - top * CHUNK_BITS;
+    let just_below_half = (1 << (shift - 1)) - 1;
+    let significand = (digits + just_below_half + (digits >> shift & 1)) >> shift;
+    f64::from_bits((u64::from(biased - 1) << FRACTION_BITS) + significand as u64)
 }

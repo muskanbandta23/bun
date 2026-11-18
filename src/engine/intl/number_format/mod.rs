@@ -2,13 +2,15 @@
 
 mod currency;
 mod digit_options;
+mod digits;
+mod layout;
 mod mathematical_value;
 mod options;
 pub(crate) mod parts;
 mod skeleton;
 mod unit;
 
-use core::cell::{OnceCell, RefCell};
+use core::cell::{Cell, OnceCell, RefCell};
 use core::ffi::CStr;
 use std::rc::Rc;
 
@@ -24,6 +26,7 @@ pub use digit_options::{
     DigitOptions, DigitRange, MinimumIntegerDigits, RequestedDigits, RoundingIncrement,
     RoundingMode, RoundingPriority, RoundingType, TrailingZeroDisplay,
 };
+use layout::Layout;
 pub use mathematical_value::MathematicalValue;
 use mathematical_value::NumberInput;
 pub use options::{
@@ -42,6 +45,9 @@ use crate::{
     Cache, Error, KeywordValue, LanguageTag, NumberingSystem, Part, Parts, Result, Source,
 };
 
+/// To learn a layout takes about as long as so many calls.
+const CALLS_WITHOUT_LAYOUT: u8 = 32;
+
 /// Those with the same locale and options are one.
 #[derive(Clone)]
 pub struct NumberFormat(Rc<Shared>);
@@ -51,6 +57,8 @@ struct Shared {
     options: Options,
     formatter: ReusingFormatter,
     range_formatter: OnceCell<NumberRangeFormatter>,
+    calls_until_layout: Cell<u8>,
+    layout: OnceCell<Option<Layout>>,
 }
 
 impl NumberFormat {
@@ -73,6 +81,8 @@ impl NumberFormat {
                     options,
                     formatter,
                     range_formatter: OnceCell::new(),
+                    calls_until_layout: Cell::new(CALLS_WITHOUT_LAYOUT),
+                    layout: OnceCell::new(),
                 })))
             },
         )
@@ -105,6 +115,11 @@ impl NumberFormat {
     }
 
     pub fn format(&self, value: &MathematicalValue) -> Result<StringRef> {
+        if let Some(number) = value.as_number()
+            && let Some(text) = self.layout().and_then(|layout| layout.format(number))
+        {
+            return text;
+        }
         let failure = match value.as_number() {
             Some(_) => "Failed to format a number.",
             None => "Failed to format a BigInt.",
@@ -163,6 +178,19 @@ impl NumberFormat {
             }
         })?;
         Ok(parts)
+    }
+
+    fn layout(&self) -> Option<&Layout> {
+        if let Some(remaining) = self.0.calls_until_layout.get().checked_sub(1) {
+            self.0.calls_until_layout.set(remaining);
+            return None;
+        }
+        let learn = || {
+            Layout::learn(&self.0.options, |number| {
+                self.format_to_parts(&number.into()).ok()
+            })
+        };
+        self.0.layout.get_or_init(learn).as_ref()
     }
 
     fn range(

@@ -35,6 +35,19 @@ impl Conditions<'_> {
         });
     }
 
+    /// Each object is the prototype of the one before it, the last has none, and none has the property.
+    pub(crate) fn absent_from_chain(&mut self, chain: &[Gc<JsObject>], name: PropertyName<'_>) {
+        for (index, object) in chain.iter().enumerate() {
+            let prototype = chain
+                .get(index + 1)
+                .map_or(Value::NULL, |&next| next.into());
+            self.add(object, || {
+                PropertyCondition::absence(object, name)
+                    .filter(|_| object.prototype_direct() == prototype)
+            });
+        }
+    }
+
     /// The property is what the static table of the object says, and stays so.
     pub(crate) fn pristine(&mut self, object: &JsObject, name: PropertyName<'_>) {
         let is_pristine = object.reify_if_pristine(self.cx, name);

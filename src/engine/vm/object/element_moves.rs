@@ -282,6 +282,7 @@ impl JsArray {
     ) -> Result<bool, AllocError> {
         let (from, length) = (source.element_kind(), u64::from(self.length()));
         if !from.is_dense()
+            || from == ElementKind::Undecided
             || !self.has_unrestricted_elements()
             || !(length..=length + u64::from(MIN_SPARSE_INDEX)).contains(&start)
             || count > u64::from(source.public_length())

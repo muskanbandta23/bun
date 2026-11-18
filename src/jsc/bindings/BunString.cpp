@@ -253,7 +253,7 @@ JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
         return Zig::toJSStringGC(bunString.impl.encoded, globalObject);
     }
 
-    UNREACHABLE();
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 JSC::Identifier toIdentifier(JSC::VM& vm, const BunString& bunString)

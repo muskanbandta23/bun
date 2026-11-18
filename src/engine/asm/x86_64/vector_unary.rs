@@ -166,12 +166,13 @@ impl MacroAssembler {
     }
 
     /// May overwrite `lhs`.
-    pub(super) fn sse_from_temporary(&mut self, op: Sse, dst: Fpr, lhs: Fpr, rhs: Fpr) {
+    fn sse_from_temporary(&mut self, op: Sse, dst: Fpr, lhs: Fpr, rhs: Fpr) {
         let result = if self.has_avx() { dst } else { lhs };
         self.asm.sse(op, result, lhs, rhs);
         self.move_vector(dst, result);
     }
 
+    /// `dst = op(0, src)`.
     pub(super) fn zero_op(&mut self, op: Sse, dst: Fpr, src: Fpr) {
         let zero = self.dst_unless(dst, src);
         self.zero_vector(zero);

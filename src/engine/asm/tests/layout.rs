@@ -477,6 +477,29 @@ fn large_random_programs_for_arm64() {
     random_programs::<arm64::MacroAssembler>(12, 200, &[48, 256 << 10, 512 << 10, 1 << 20]);
 }
 
+fn ending_with_a_replaceable_point<M: Architecture>() {
+    for has_data in [false, true] {
+        let mut program = Program::<M>::new(has_data);
+        let outside = program.external(Target::Symbol(0));
+        program.add(Item::Transfer(Transfer::OnFlags, outside));
+        if has_data {
+            program.add(Item::Constant(1, 8));
+        }
+        program.add(Item::Replaceable);
+        let point = program.items.last().unwrap().1;
+        let code = program.masm.finish().unwrap();
+        let (point, size) = (code.offset_of(point), M::REPLACEMENT_JUMP_SIZE);
+        assert!(code.instructions_end() >= point + size);
+        assert!(code.relocations()[0].offset.abs_diff(point) >= 4);
+    }
+}
+
+#[test]
+fn a_jump_fits_at_the_end_of_the_code() {
+    ending_with_a_replaceable_point::<x64::MacroAssembler>();
+    ending_with_a_replaceable_point::<arm64::MacroAssembler>();
+}
+
 #[test]
 fn x64_jumps_are_short_exactly_when_they_reach() {
     for transfer in [Transfer::Jump, Transfer::OnFlags] {
@@ -561,6 +584,43 @@ fn arm64_addresses_reach_1_mib() {
 }
 
 #[test]
+fn arm64_addresses_out_of_reach_are_anywhere_in_a_page() {
+    let mut program = Program::<arm64::MacroAssembler>::new(false);
+    let mut labels = Vec::new();
+    for _ in 0..40 {
+        labels.push(program.here());
+        program.fill(500);
+    }
+    program.fill(1 << 20);
+    for label in labels {
+        program.add(Item::Transfer(Transfer::Address, label));
+        program.fill(500);
+    }
+    assert!(program.check().iter().all(|(start, end)| end - start == 8));
+}
+
+#[test]
+fn patches_for_arm64() {
+    use arm64::patch::{REACH, move_bytes, transfer_target, transfer_word};
+    let moving = |value| {
+        let mut masm = arm64::MacroAssembler::create(false);
+        masm.patchable_move64(arm64::X9, value);
+        *masm.finish().unwrap().bytes().as_array().unwrap()
+    };
+    let values = [0, u64::MAX, 0x1234_5678_9abc_def0, 0x8001_8001_8001_8001];
+    for (old, new) in values.into_iter().flat_map(|a| values.map(|b| (a, b))) {
+        assert_eq!(move_bytes(moving(old), new), moving(new));
+    }
+    let (call, from) = (0x9400_0123, 1 << 40);
+    for to in [from, from + 4, from - 4, from + REACH, from - REACH] {
+        let word = transfer_word(call, from, to).unwrap();
+        assert_eq!((word >> 26, transfer_target(word, from)), (call >> 26, to));
+    }
+    assert_eq!(transfer_word(call, from, from + REACH + 4), None);
+    assert_eq!(transfer_word(call, from, from - REACH - 8), None);
+}
+
+#[test]
 fn arm64_constants_and_tables_out_of_reach() {
     let mut program = Program::<arm64::MacroAssembler>::new(false);
     let (behind, ahead) = (program.here(), program.masm.new_label());
@@ -573,4 +633,27 @@ fn arm64_constants_and_tables_out_of_reach() {
     let extents = program.check();
     let constants = || extents.iter().step_by(2).map(|(start, end)| end - start);
     assert!(constants().any(|size| size == 4) && constants().any(|size| size == 24));
+}
+
+#[test]
+#[ignore = "fills 128 MiB"]
+fn arm64_code_of_the_greatest_size() {
+    let program = |excess: usize| {
+        let mut program = Program::<arm64::MacroAssembler>::new(false);
+        let (behind, ahead) = (program.here(), program.masm.new_label());
+        for transfer in TRANSFERS {
+            program.add(Item::Transfer(transfer, ahead));
+        }
+        program.fill(arm64::patch::REACH - 96 + excess);
+        for transfer in TRANSFERS {
+            program.add(Item::Transfer(transfer, behind));
+        }
+        program.bind(ahead);
+        program
+    };
+    let extents = program(0).check();
+    assert_eq!(extents.last().unwrap().1 as usize, arm64::patch::REACH);
+    for excess in [4, 40, 4000] {
+        assert!(program(excess).masm.finish().is_err());
+    }
 }

@@ -133,8 +133,6 @@ private:
 
 namespace JSC {
 struct HashTableValue;
-class DecoderStringTable;
-class PrelinkedModuleGraph;
 }
 
 namespace Bun {
@@ -237,6 +235,8 @@ public:
     // filled on first use so each name is atomized once however many chunks
     // import or export it (BunAnalyzeTranspiledModule.cpp).
     Vector<JSC::Identifier> sharedModuleInfoIdentifiers;
+    // What they are made from. See ZigSourceProvider.cpp.
+    std::span<const uint8_t> moduleInfoStrings;
 
     // "process", "stdout" and "stderr", atomized by the first jsFunctionIsStandardOutputStream.
     std::array<JSC::Identifier, 3> standardOutputStreamNames;
@@ -264,18 +264,8 @@ public:
 
     void reportErrorOfMicrotask(JSC::JSGlobalObject*, JSC::Exception*) final;
 
-    JSC::DecoderStringTable* decoderStringTable() final { return m_decoderStringTable.get(); }
-    void setDecoderStringTable(std::span<const uint8_t>);
-
-    // The executable's pre-resolved module graph for this VM, created on first use over decoderStringTable() from the
-    // standalone module graph; null when there is none (or it does not validate).
-    JSC::PrelinkedModuleGraph* prelinkedModuleGraph(JSC::VM&);
-
 private:
     bool isWebCoreJSClientData() const final { return true; }
-    std::unique_ptr<JSC::DecoderStringTable> m_decoderStringTable;
-    RefPtr<JSC::PrelinkedModuleGraph> m_prelinkedModuleGraph;
-    bool m_prelinkedModuleGraphChecked { false };
 
     BunBuiltinNames m_builtinNames;
 

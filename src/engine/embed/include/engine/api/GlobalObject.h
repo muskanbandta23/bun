@@ -141,8 +141,6 @@ public:
 
     JSObject* globalThis() const { return m_globalThis.get(); }
     JSScope* globalScope() { return this; }
-    JSScope* globalScopeExtension() const { return m_scopeExtension.get(); }
-    void setGlobalScopeExtension(JSScope* scope) { m_scopeExtension.setMayBeNull(vm(), this, scope); }
     void addStaticGlobals(std::span<GlobalPropertyInfo> globals)
     {
         for (auto& global : globals)
@@ -288,9 +286,12 @@ public:
 private:
     Engine::Opaque<(Engine::RealmSlot::COUNT - namedSlotCount) * sizeof(JSCell*) + Engine::Layout::globalObjectSizeAfterSlots> m_rest;
 
+public:
     // From here on, what only C++ has.
     // For a class that wants another than the default.
     LazyProperty<JSGlobalObject, Structure> m_moduleNamespaceObjectStructure;
+
+private:
     std::unique_ptr<Inspector::JSGlobalObjectInspectorController> m_inspectorController;
     bool m_isInspectable { false };
 };

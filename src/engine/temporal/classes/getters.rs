@@ -25,7 +25,7 @@ macro_rules! getters {
             this: Value,
             name: PropertyName<'_>,
         ) -> JsResult<Value> {
-            let ($this, $cx) = (T::this(cx, this, name)?, &*cx);
+            let ($this, $cx) = (T::this_local(cx, this, name)?, &*cx);
             Ok($value.into())
         }
     )*};

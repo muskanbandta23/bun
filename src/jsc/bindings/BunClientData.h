@@ -48,7 +48,6 @@ inline bool Bun__VmHandle__scriptAllowedInline(const unsigned char* state)
 namespace WebCore {
 
 class ExtendedDOMClientIsoSubspaces;
-class ExtendedDOMIsoSubspaces;
 class JSBuiltinFunctions;
 
 class DOMWrapperWorld;
@@ -58,8 +57,6 @@ class DOMWrapperWorld;
 #include <wtf/SentinelLinkedList.h>
 
 #include "ExtendedDOMClientIsoSubspaces.h"
-#include "ExtendedDOMIsoSubspaces.h"
-#include "DOMIsoSubspaces.h"
 #include "BunBuiltinNames.h"
 // #include "WebCoreJSBuiltins.h"
 // #include "WorkerThreadType.h"
@@ -159,40 +156,6 @@ using namespace Zig;
 enum class UseCustomHeapCellType { Yes,
     No };
 
-class JSHeapData {
-    WTF_MAKE_NONCOPYABLE(JSHeapData);
-    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(JSHeapData);
-    friend class JSVMClientData;
-
-public:
-    JSHeapData(JSC::Heap&);
-    ~JSHeapData();
-
-    static JSHeapData* ensureHeapData(JSC::Heap&);
-
-    Lock& lock() { return m_lock; }
-    ExtendedDOMIsoSubspaces& subspaces() { return *m_subspaces.get(); }
-
-    Vector<JSC::IsoSubspace*>& outputConstraintSpaces() { return m_outputConstraintSpaces; }
-
-    template<typename Func>
-    void forEachOutputConstraintSpace(const Func& func)
-    {
-        for (auto* space : m_outputConstraintSpaces)
-            func(*space);
-    }
-
-private:
-    Lock m_lock;
-
-private:
-    std::unique_ptr<ExtendedDOMIsoSubspaces> m_subspaces;
-    JSC::IsoSubspace m_domConstructorSpace;
-    JSC::IsoSubspace m_domNamespaceObjectSpace;
-
-    Vector<JSC::IsoSubspace*> m_outputConstraintSpaces;
-};
-
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(JSVMClientData);
 
 // WebCore's JSVMClientDataClient: something holding JSC::Weak<> handles into a VM whose C++ owner
@@ -220,20 +183,12 @@ public:
     // `worker` is the WorkerMessagingProxy this VM is being created for, or null on the main thread.
     static void create(JSC::VM*, void* bunVM, WorkerMessagingProxy* worker);
 
-    JSHeapData& heapData() { return *m_heapData; }
     BunBuiltinNames& builtinNames() { return m_builtinNames; }
     JSBuiltinFunctions& builtinFunctions() { return *m_builtinFunctions; }
-
-    String overrideSourceURL(const StackFrame&, const String& originalSourceURL) const
-    {
-        return originalSourceURL;
-    }
 
     WebCore::DOMWrapperWorld& normalWorld() { return *m_normalWorld; }
 
     JSC::ConsoleClient& consoleClient() { return m_consoleClient; }
-
-    JSC::GCClient::IsoSubspace& domConstructorSpace() { return m_domConstructorSpace; }
 
     ExtendedDOMClientIsoSubspaces& clientSubspaces() { return *m_clientSubspaces.get(); }
 
@@ -324,15 +279,6 @@ private:
     RefPtr<JSC::PrelinkedModuleGraph> m_prelinkedModuleGraph;
     bool m_prelinkedModuleGraphChecked { false };
 
-    // Frees a per-VM `JSHeapData` but leaves the process-wide `useGlobalGC`
-    // singleton alone (it is shared by every VM). On the default `!useGlobalGC`
-    // path `ensureHeapData` allocates a fresh `JSHeapData` per VM, so without
-    // freeing it every terminated worker leaks its `JSHeapData` plus the
-    // FastMalloc-backed `IsoSubspace`s it embeds.
-    struct JSHeapDataDeleter {
-        void operator()(JSHeapData*) const;
-    };
-
     BunBuiltinNames m_builtinNames;
     std::unique_ptr<JSBuiltinFunctions> m_builtinFunctions;
 
@@ -342,12 +288,8 @@ private:
     // `LocalAllocator` whose `~LocalAllocator` unlinks itself from a
     // `BlockDirectory` that lives inside the server-side `JSHeapData`, so the
     // `JSHeapData` must outlive them.
-    std::unique_ptr<JSHeapData, JSHeapDataDeleter> m_heapData;
-
     RefPtr<WebCore::DOMWrapperWorld> m_normalWorld;
     const UniqueRef<JSC::ConsoleClient> m_consoleClient;
-    JSC::GCClient::IsoSubspace m_domConstructorSpace;
-    JSC::GCClient::IsoSubspace m_domNamespaceObjectSpace;
 
     std::unique_ptr<ExtendedDOMClientIsoSubspaces> m_clientSubspaces;
 
@@ -384,51 +326,19 @@ SPECIALIZE_TYPE_TRAITS_END()
 
 namespace WebCore {
 
-// Byte offsets of a wrapper class's client- and server-subspace slots
-// (owned-pointer members of the two subspace tables). See BUN_SUBSPACE_SLOTS.
+// Where a class that needs a space of its own keeps it.
 struct SubspaceSlots {
     size_t clientOffset;
-    size_t serverOffset;
 };
 
-#define BUN_SUBSPACE_SLOTS(clientMember, serverMember)                           \
-    ::WebCore::SubspaceSlots                                                     \
-    {                                                                            \
-        OBJECT_OFFSETOF(::WebCore::ExtendedDOMClientIsoSubspaces, clientMember), \
-            OBJECT_OFFSETOF(::WebCore::ExtendedDOMIsoSubspaces, serverMember)    \
-    }
+#define BUN_SUBSPACE_SLOTS(clientMember, serverMember) \
+    ::WebCore::SubspaceSlots { OBJECT_OFFSETOF(::WebCore::ExtendedDOMClientIsoSubspaces, clientMember) }
 
-// The type-independent part of `subspaceForImpl` (creating the server and
-// client subspaces on first use), compiled once instead of per wrapper class.
-// Everything that depends on `T` is a small per-`T` constant table.
-struct SubspaceForInit {
-    unsigned cellSize;
-    uint8_t numberOfLowerTierPreciseCells;
-    enum class CellType : uint8_t { Cell,
-        Destructible,
-        Custom } cellType;
-    bool hasOutputConstraints;
-};
+JSC::GCClient::IsoSubspace* subspaceForImplSlow(JSC::VM&, SubspaceSlots, size_t cellSize, void (*destroy)(JSC::JSCell*), bool hasOutputConstraints);
+void destroyWithClassInCell(JSC::JSCell*);
 
-JSC::GCClient::IsoSubspace* subspaceForImplSlow(JSC::VM&, const SubspaceForInit&, SubspaceSlots, const JSC::HeapCellType& (*getCustomHeapCellType)());
-
-template<typename T, UseCustomHeapCellType useCustomHeapCellType>
-inline constexpr SubspaceForInit subspaceForInit {
-    sizeof(T),
-    T::numberOfLowerTierPreciseCells,
-    useCustomHeapCellType == UseCustomHeapCellType::Yes   ? SubspaceForInit::CellType::Custom
-        : std::is_base_of_v<JSC::JSDestructibleObject, T> ? SubspaceForInit::CellType::Destructible
-                                                          : SubspaceForInit::CellType::Cell,
-    static_cast<void (*)(JSC::JSCell*, JSC::SlotVisitor&)>(T::visitOutputConstraints) != static_cast<void (*)(JSC::JSCell*, JSC::SlotVisitor&)>(JSC::JSCell::visitOutputConstraints),
-};
-
-// Holds only `T::destroy`, so every VM uses the same one.
 template<typename T>
-const JSC::HeapCellType& customHeapCellType()
-{
-    static NeverDestroyed<JSC::IsoHeapCellType> heapCellType { JSC::IsoHeapCellType::Args<T>() };
-    return heapCellType;
-}
+inline constexpr bool hasOutputConstraints = static_cast<void (*)(JSC::JSCell*, JSC::SlotVisitor&)>(T::visitOutputConstraints) != static_cast<void (*)(JSC::JSCell*, JSC::SlotVisitor&)>(JSC::JSCell::visitOutputConstraints);
 
 // A non-public destroy can only be an override.
 template<typename T, typename From>
@@ -455,14 +365,23 @@ ALWAYS_INLINE JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm, SubspaceS
     static_assert(useCustomHeapCellType == UseCustomHeapCellType::Yes || std::is_base_of_v<JSC::JSDestructibleObject, T> || T::needsDestruction == JSC::DoesNotNeedDestruction);
     static_assert(std::is_trivially_destructible_v<T> || (T::needsDestruction != JSC::DoesNotNeedDestruction && !destroySkipsMembers<T>),
         "the GC never runs the destructors of this cell type's members; set `needsDestruction` and define `static void destroy(JSC::JSCell*)`");
-    auto& clientData = *downcast<JSVMClientData>(vm.clientData);
-    auto* clientSpace = *reinterpret_cast<JSC::GCClient::IsoSubspace**>(reinterpret_cast<uint8_t*>(&clientData.clientSubspaces()) + slots.clientOffset);
-    if (clientSpace)
-        return clientSpace;
-    if constexpr (useCustomHeapCellType == UseCustomHeapCellType::Yes)
-        return subspaceForImplSlow(vm, subspaceForInit<T, useCustomHeapCellType>, slots, customHeapCellType<T>);
-    else
-        return subspaceForImplSlow(vm, subspaceForInit<T, useCustomHeapCellType>, slots, nullptr);
+    constexpr bool hasClassInCell = std::is_base_of_v<JSC::JSDestructibleObject, T>;
+    constexpr bool needsDestruction = T::needsDestruction != JSC::DoesNotNeedDestruction;
+    if constexpr (hasClassInCell && !hasOutputConstraints<T>)
+        return &vm.destructibleObjectSpace().allocatorFor<sizeof(T)>();
+    else if constexpr (!needsDestruction && !hasOutputConstraints<T>)
+        return &vm.heap.cellSpace().allocatorFor<sizeof(T)>();
+    else {
+        auto& clientData = *downcast<JSVMClientData>(vm.clientData);
+        if (auto* space = *reinterpret_cast<JSC::GCClient::IsoSubspace**>(reinterpret_cast<uint8_t*>(&clientData.clientSubspaces()) + slots.clientOffset))
+            return space;
+        void (*destroy)(JSC::JSCell*) = nullptr;
+        if constexpr (hasClassInCell)
+            destroy = destroyWithClassInCell;
+        else if constexpr (needsDestruction)
+            destroy = T::destroy;
+        return subspaceForImplSlow(vm, slots, sizeof(T), destroy, hasOutputConstraints<T>);
+    }
 }
 
 static JSVMClientData* clientData(JSC::VM& vm)
@@ -493,6 +412,5 @@ inline void* bunVM(JSC::VM& vm)
 
 namespace WebCore {
 using JSVMClientData = WebCore::JSVMClientData;
-using JSHeapData = WebCore::JSHeapData;
 
 }

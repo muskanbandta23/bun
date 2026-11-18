@@ -1,9 +1,11 @@
+use bun_engine_macros::FieldOffsets;
 use bun_engine_text::{Identifier, PropertyName};
 
 use crate::{Attributes, PropertyOffset};
 
-#[derive(Clone)]
-struct Entry {
+#[derive(Clone, FieldOffsets)]
+#[repr(C)]
+pub struct PropertyEntry {
     /// `None` once the property has been removed.
     key: Option<Identifier>,
     offset: PropertyOffset,
@@ -16,7 +18,7 @@ const LINEAR_LIMIT: usize = 8;
 /// The properties of a shape, in the order in which they were added.
 #[derive(Clone, Default)]
 pub(crate) struct PropertyTable {
-    entries: Vec<Entry>,
+    entries: Vec<PropertyEntry>,
     /// Linear probing. A slot is an index into `entries` plus one, or zero.
     index: Box<[u32]>,
     live: u32,
@@ -48,13 +50,13 @@ impl PropertyTable {
 
     pub(crate) fn memory_size(&self) -> usize {
         size_of::<PropertyTable>()
-            + self.entries.capacity() * size_of::<Entry>()
+            + self.entries.capacity() * size_of::<PropertyEntry>()
             + size_of_val(&*self.index)
     }
 
     #[inline]
     fn position(&self, name: PropertyName<'_>) -> Option<usize> {
-        let has_name = |entry: &Entry| entry.key.as_ref().is_some_and(|key| *key == name);
+        let has_name = |entry: &PropertyEntry| entry.key.as_ref().is_some_and(|key| *key == name);
         if self.index.is_empty() {
             return self.entries.iter().position(has_name);
         }
@@ -95,7 +97,7 @@ impl PropertyTable {
         debug_assert!(self.position(name).is_none());
         let offset = self.next_offset(inline_capacity);
         self.deleted_offsets.pop();
-        self.entries.push(Entry {
+        self.entries.push(PropertyEntry {
             key: Some(name.to_identifier()),
             offset,
             attributes,
@@ -168,6 +170,10 @@ impl PropertyTable {
         self.entries
             .iter()
             .filter_map(|entry| Some((entry.key.as_ref()?.name(), entry.offset, entry.attributes)))
+    }
+
+    pub(crate) fn entries(&self) -> &[PropertyEntry] {
+        &self.entries
     }
 
     /// Of all properties but private elements.

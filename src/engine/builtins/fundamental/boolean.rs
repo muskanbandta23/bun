@@ -1,4 +1,7 @@
-use bun_engine_vm::{BooleanObject, GlobalObject, JsWrapperObject};
+use bun_engine_bytecode::Visibility;
+use bun_engine_vm::{
+    BooleanObject, GlobalObject, JsFunction, JsWrapperObject, NativeExecutable, errors,
+};
 
 use crate::prelude::*;
 
@@ -12,9 +15,27 @@ struct BooleanPrototype {
     base: BooleanObject,
 }
 
-static_table!(static CONSTRUCTOR_PROPERTIES = []);
+#[cell(name = "Function", export = "engine_class_BooleanConstructor")]
+struct BooleanConstructor {
+    base: JsFunction,
+}
 
-define_constructor!(BooleanConstructor, CONSTRUCTOR_PROPERTIES, call, construct);
+fn create_constructor(cx: &Cx, prototype: &JsObject) -> Gc<JsObject> {
+    let (name, intrinsic) = (names::Boolean, Intrinsic::BooleanConstructor);
+    let name = name.to_identifier().into_string();
+    let executable =
+        NativeExecutable::shared(cx, 1, name, call, construct, intrinsic, Visibility::Public);
+    let (parent, spec) = (
+        cx.function_prototype(),
+        ShapeSpec::of::<BooleanConstructor>(),
+    );
+    let shape = Shape::create_dictionary(cx, Some(cx.global()), parent.into(), spec);
+    let constructor = cx.allocate::<BooleanConstructor>(BooleanConstructorInit {
+        base: JsFunction::native_init(cx, shape, executable),
+    });
+    constructor.link_with_prototype(cx, prototype);
+    constructor.upcast()
+}
 
 pub(crate) fn initialize(cx: &Cx) {
     let (global, parent) = (cx.global(), cx.object_prototype().into());
@@ -23,8 +44,7 @@ pub(crate) fn initialize(cx: &Cx) {
     let prototype = cx.allocate::<BooleanPrototype>(BooleanPrototypeInit {
         base: BooleanObject::init(JsWrapperObject::init(cx, shape, Value::FALSE)),
     });
-    let constructor =
-        BooleanConstructor::create(cx, cx.function_prototype(), 1, names::Boolean, &prototype);
+    let constructor = create_constructor(cx, &prototype);
     let spec = ShapeSpec::of::<BooleanObject>();
     global.init_boolean_object_shape(Shape::create(cx, Some(global), prototype.into(), spec));
     global.init_boolean_prototype(prototype.upcast());
@@ -52,7 +72,7 @@ fn this_boolean(cx: &Cx, frame: &CallFrame) -> JsResult<Value> {
     }
     match this.downcast::<BooleanObject>() {
         Some(object) => Ok(object.internal_value()),
-        None => Err(cx.throw_type_error("Type error")),
+        None => Err(cx.throw_type_error(errors::TYPE_ERROR)),
     }
 }
 

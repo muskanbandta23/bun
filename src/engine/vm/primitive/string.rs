@@ -8,7 +8,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use bun_alloc::AllocError;
 use bun_engine_text::{Atom, Identifier, PropertyName, StringImpl, StringRef, Text, names};
 
-use crate::heap::{keep_alive, visit_children_of};
+use crate::heap::{Heap, keep_alive, visit_children_of};
 use crate::{
     Attributes, CellKind, CellType, CellTypeRange, Class, ClassOps, Cx, Extends, Gc, GcFree,
     JsCell, JsResult, JsRopeString, PropertyKey, PropertySlot, Shape, TypeFlags, Visitor, Vm,
@@ -257,6 +257,9 @@ impl JsString {
     }
 
     pub(super) fn become_resolved(&self, string: StringRef) {
+        if self.is_rope() {
+            Heap::request_destruction(self);
+        }
         let is_atom = string.is_atom();
         let fiber = string.into_raw().as_ptr().expose_provenance();
         self.fiber_atomic().store(fiber, Ordering::Release);

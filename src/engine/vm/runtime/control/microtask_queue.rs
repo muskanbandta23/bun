@@ -147,7 +147,8 @@ impl MicrotaskQueue {
 
     pub(super) fn visit(&self, visitor: &mut Visitor) {
         let mut first = self.start.get();
-        if self.visited_epoch.replace(visitor.epoch()) == visitor.epoch() {
+        if !visitor.is_verifying() && self.visited_epoch.replace(visitor.epoch()) == visitor.epoch()
+        {
             first = first.max(self.visited_end.get());
         }
         for position in first..self.end.get() {

@@ -1,5 +1,6 @@
 //! The garbage-collected heap.
 
+mod activity;
 mod allocator;
 mod analyzer;
 pub mod barrier;
@@ -13,6 +14,7 @@ mod container;
 mod directory;
 mod field;
 mod gc;
+mod iteration;
 mod marking;
 mod once_box;
 mod policy;
@@ -20,24 +22,27 @@ mod precise;
 mod root_alloc;
 mod space;
 pub mod stack;
+mod statistics;
 mod strong;
+mod sweeper;
 mod trace;
 mod value_vec;
+mod verifier;
 pub mod virtual_memory;
 mod visitor;
 mod weak;
 mod weak_map;
+mod weak_table;
 
 use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use bun_engine_macros::FieldOffsets;
-use bun_threading::Guarded;
 
 pub use allocator::Allocator;
 pub use analyzer::{HeapAnalyzer, HeapGraphSink, HeapObserver, MarkingConstraint, RootReason};
-pub use block::{ATOM_SIZE, BLOCK_SIZE, Block};
+pub use block::{ATOM_SIZE, BLOCK_SIZE, Block, PAYLOAD_SIZE};
 pub use block_memory::shape_base;
 pub use cell::{CellState, JsCell};
 pub use field::{
@@ -51,19 +56,21 @@ pub use once_box::OnceBox;
 pub use policy::{HeapKind, HeapSizes};
 pub use precise::{PRECISE_BIT, PreciseAllocation};
 pub use root_alloc::{
-    RootAlloc, RootBox, RootDeque, RootMap, RootSet, RootVec, root_box, root_vec,
+    RootAlloc, free_root_words, try_allocate_root_words, RootBox, RootDeque, RootMap, RootSet, RootVec, root_box, root_vec,
 };
 pub use space::{
-    IsoSpace, LARGE_CUTOFF, SIZE_CLASS_COUNT, SIZE_CLASS_OF_STEP, Space, optimal_size, size_class,
+    EXACT_CUTOFF, IsoSpace, LARGE_CUTOFF, SIZE_CLASS_CHECKSUM, SIZE_CLASS_COUNT, SIZE_CLASS_OF_STEP, Space, optimal_size, size_class,
 };
-pub use strong::{Strong, free_strong_slot};
+pub use statistics::TypeCounts;
+pub use strong::{Strong, duplicate_strong_slot, free_strong_slot};
 pub use trace::{Trace, destroy, select_trace, visit_children_of};
 pub use value_vec::ValueVec;
 pub use visitor::{Survivors, Visitor};
 pub use weak::{Weak, WeakImpl, WeakOwner};
 pub(crate) use weak_map::WeakValueMap;
+pub use weak_table::WeakTable;
 
-use crate::{FastHashMap, FastHashSet, JsRopeString, JsString, Shape, Value, Vm, object};
+use crate::{FastHashMap, JsRopeString, JsString, Shape, Value, Vm, object, options};
 use block::Version;
 use block_memory::BlockSource;
 use block_set::BlockSet;
@@ -96,18 +103,45 @@ pub enum AllocationKind {
 pub type DestroyFunction = unsafe extern "C" fn(*mut JsCell);
 pub type Finalizer = unsafe extern "C" fn(cell: *mut JsCell, context: *mut c_void);
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum Destruction {
+    ByFunction,
+    /// The sweeper knows the function.
+    OfStrings,
+    /// The same, but only in a block that has asked for it.
+    OnRequest,
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct CellAttributes {
     kind: AllocationKind,
+    destruction: Destruction,
     destroy: Option<DestroyFunction>,
 }
 
 impl CellAttributes {
-    const fn cell(destroy: Option<DestroyFunction>) -> CellAttributes {
+    const fn new(kind: AllocationKind, destroy: Option<DestroyFunction>) -> CellAttributes {
         CellAttributes {
-            kind: AllocationKind::Cell,
+            kind,
+            destruction: Destruction::ByFunction,
             destroy,
         }
+    }
+
+    const fn cell(destroy: Option<DestroyFunction>) -> CellAttributes {
+        Self::new(AllocationKind::Cell, destroy)
+    }
+
+    const fn string(destruction: Destruction) -> CellAttributes {
+        CellAttributes {
+            destruction,
+            ..Self::cell(Some(destroy::<JsString>))
+        }
+    }
+
+    fn destroys_every_cell(self) -> bool {
+        self.destroy.is_some() && self.destruction != Destruction::OnRequest
     }
 }
 
@@ -134,9 +168,12 @@ pub struct Heap {
 
     #[expect(clippy::vec_box, reason = "handed out by address")]
     iso_spaces: RefCell<Vec<Box<IsoSpace>>>,
+    spaces_with_output_constraints: RefCell<Vec<&'static IsoSpace>>,
     allocators: RefCell<Vec<&'static Allocator>>,
     steal_cursor: Cell<usize>,
-    sweep_cursor: Cell<usize>,
+    sweeper: sweeper::Sweeper,
+    /// A block is being swept.
+    is_destroying_cells: Cell<bool>,
     blocks: RefCell<BlockSet>,
     precise: RefCell<Vec<&'static PreciseAllocation>>,
     /// The precise allocations from here on are new since the last collection.
@@ -148,21 +185,23 @@ pub struct Heap {
     is_marking_full: AtomicBool,
     collection_scope: Cell<Option<Scope>>,
     last_collection_scope: Cell<Option<Scope>>,
+    is_idle_collection: Cell<bool>,
+    collection_count: Cell<u64>,
     remembered: RefCell<Vec<usize>>,
     spare_mark_stack: Cell<Vec<usize>>,
-    opaque_roots: Guarded<FastHashSet<usize>>,
+    opaque_roots: marking::OpaqueRoots,
     analyzer: Cell<*mut HeapAnalyzer>,
 
     strong_set: strong::StrongSet,
     weak_set: weak::WeakSet,
+    weak_tables: weak_table::WeakTables,
     protected: RefCell<FastHashMap<usize, u32>>,
     observers: RefCell<Vec<*const HeapObserver>>,
     constraints: RefCell<Vec<MarkingConstraint>>,
 
     secret: Cell<u64>,
     policy: policy::Policy,
-    #[cfg(debug_assertions)]
-    stress_countdown: Cell<u32>,
+    activity: activity::Activity,
 }
 
 pub(crate) struct StateGuard<'a> {
@@ -173,6 +212,14 @@ pub(crate) struct StateGuard<'a> {
 impl Drop for StateGuard<'_> {
     fn drop(&mut self) {
         self.heap.state.set(self.previous);
+    }
+}
+
+struct DestructionGuard<'a>(StateGuard<'a>);
+
+impl Drop for DestructionGuard<'_> {
+    fn drop(&mut self) {
+        self.0.heap.is_destroying_cells.set(false);
     }
 }
 
@@ -192,66 +239,65 @@ impl Heap {
 
     pub(crate) fn new(kind: HeapKind, seed: u64) -> Heap {
         block_memory::initialize();
-        let iso = |size, destroy, source| {
-            IsoSpace::new(size, CellAttributes::cell(Some(destroy)), source)
+        let strings = |size, destruction| {
+            let attributes = CellAttributes::string(destruction);
+            IsoSpace::new(size, attributes, BlockSource::General)
         };
+        let first_version = options().initial_heap_version.max(block::FIRST_VERSION);
         Heap {
             barrier_threshold: Cell::new(u32::from(barrier::BLACK_THRESHOLD)),
             mutator_should_be_fenced: Cell::new(false),
             state: Cell::new(MutatorState::Running),
             did_defer_collection: Cell::new(false),
             deferral_depth: Cell::new(0),
-            strings: iso(
-                size_of::<JsString>(),
-                destroy::<JsString>,
-                BlockSource::General,
+            strings: strings(size_of::<JsString>(), Destruction::OfStrings),
+            rope_strings: strings(size_of::<JsRopeString>(), Destruction::OnRequest),
+            shapes: IsoSpace::new(
+                size_of::<Shape>(),
+                CellAttributes::cell(Some(destroy::<Shape>)),
+                BlockSource::Shapes,
             ),
-            rope_strings: iso(
-                size_of::<JsRopeString>(),
-                destroy::<JsString>,
-                BlockSource::General,
-            ),
-            shapes: iso(size_of::<Shape>(), destroy::<Shape>, BlockSource::Shapes),
             cells: Space::new(CellAttributes::cell(None)),
-            auxiliary: Space::new(CellAttributes {
-                kind: AllocationKind::Auxiliary,
-                destroy: None,
-            }),
+            auxiliary: Space::new(CellAttributes::new(AllocationKind::Auxiliary, None)),
             destructible_objects: Space::new(CellAttributes::cell(Some(
                 object::destroy_by_class_field,
             ))),
             destructible_cells: Space::new(CellAttributes::cell(Some(object::destroy_by_shape))),
             iso_spaces: RefCell::default(),
+            spaces_with_output_constraints: RefCell::default(),
             allocators: RefCell::default(),
             steal_cursor: Cell::new(0),
-            sweep_cursor: Cell::new(0),
+            sweeper: sweeper::Sweeper::default(),
+            is_destroying_cells: Cell::new(false),
             blocks: RefCell::new(BlockSet::new()),
             precise: RefCell::default(),
             first_young_precise: Cell::new(0),
             precise_bytes: Cell::new(0),
-            marking_version: AtomicU32::new(block::FIRST_VERSION),
-            allocation_version: AtomicU32::new(block::FIRST_VERSION),
+            marking_version: AtomicU32::new(first_version),
+            allocation_version: AtomicU32::new(first_version),
             is_marking_full: AtomicBool::new(false),
             collection_scope: Cell::new(None),
             last_collection_scope: Cell::new(None),
+            is_idle_collection: Cell::new(false),
+            collection_count: Cell::new(0),
             remembered: RefCell::default(),
             spare_mark_stack: Cell::default(),
-            opaque_roots: Guarded::default(),
+            opaque_roots: marking::OpaqueRoots::default(),
             analyzer: Cell::new(core::ptr::null_mut()),
             strong_set: strong::StrongSet::default(),
             weak_set: weak::WeakSet::default(),
+            weak_tables: weak_table::WeakTables::default(),
             protected: RefCell::default(),
             observers: RefCell::default(),
             constraints: RefCell::default(),
             secret: Cell::new(seed | 1),
             policy: policy::Policy::new(kind),
-            #[cfg(debug_assertions)]
-            stress_countdown: Cell::new(0),
+            activity: activity::Activity::default(),
         }
     }
 
     #[inline(always)]
-    pub(crate) fn vm(&self) -> &Vm {
+    pub fn vm(&self) -> &Vm {
         let address = core::ptr::from_ref(self).addr() - core::mem::offset_of!(Vm, heap);
         // SAFETY: a heap exists only as that field of a `Vm`, whose provenance is exposed.
         unsafe { &*core::ptr::with_exposed_provenance(address) }
@@ -271,10 +317,6 @@ impl Heap {
         self.is_marking_full.load(Ordering::Relaxed)
     }
 
-    fn active_analyzer(&self) -> *mut HeapAnalyzer {
-        self.analyzer.get()
-    }
-
     pub fn mutator_state(&self) -> MutatorState {
         self.state.get()
     }
@@ -285,6 +327,21 @@ impl Heap {
 
     pub fn last_collection_scope(&self) -> Option<Scope> {
         self.last_collection_scope.get()
+    }
+
+    /// The one in progress has been asked for by `collect_when_idle`.
+    pub fn is_idle_collection(&self) -> bool {
+        self.is_idle_collection.get()
+    }
+
+    /// Changes whenever scripts may have run since marking last looked.
+    pub fn mutator_execution_version(&self) -> u64 {
+        self.collection_count.get()
+    }
+
+    fn enter_destruction(&self) -> DestructionGuard<'_> {
+        assert!(!self.is_destroying_cells.replace(true));
+        DestructionGuard(self.enter_state(MutatorState::Sweeping))
     }
 
     pub(crate) fn enter_state(&self, state: MutatorState) -> StateGuard<'_> {
@@ -329,6 +386,15 @@ impl Heap {
         unsafe { &*address }
     }
 
+    /// The cells get references without a barrier, which `visit_output_constraints` shows. Panics unless the heap made
+    /// the space.
+    pub fn constrain_by_cells_in(&self, space: &IsoSpace) {
+        assert!((self.iso_spaces.borrow().iter()).any(|it| core::ptr::eq(&raw const **it, space)));
+        // SAFETY: lives as long as the heap.
+        let space = unsafe { &*core::ptr::from_ref(space) };
+        self.spaces_with_output_constraints.borrow_mut().push(space);
+    }
+
     fn steal_block(&self) -> Option<usize> {
         loop {
             let cursor = self.steal_cursor.get();
@@ -342,16 +408,40 @@ impl Heap {
         }
     }
 
-    /// An empty block of another allocator, or a new one.
-    fn acquire_block(&self, source: BlockSource) -> Option<usize> {
-        if source == BlockSource::General
-            && let Some(block) = self.steal_block()
-        {
-            return Some(block);
+    /// In a block of the directory, in an empty one of another, or in a new one.
+    fn find_free_cells(
+        &self,
+        directory: &directory::Directory,
+        secret: u64,
+    ) -> Option<(&'static Block, block::FreeList)> {
+        let source = directory.allocator().source;
+        let mut memory = None;
+        // A finalizer that has yet to run counts on the dead being as they were.
+        if self.mutator_state() == MutatorState::Running {
+            if let found @ Some(_) = directory.find_free_cells(secret) {
+                return found;
+            }
+            if source == BlockSource::General {
+                memory = self.steal_block();
+            }
         }
-        let block = source.allocate()?;
-        self.blocks.borrow_mut().add(block);
-        Some(block)
+        let memory = memory.or_else(|| {
+            let block = source.allocate()?;
+            self.blocks.borrow_mut().add(block);
+            Some(block)
+        })?;
+        // SAFETY: empty, and in no directory.
+        Some(unsafe { directory.add_block(memory, secret) })
+    }
+
+    /// For a cell of a space whose cells do not all need it.
+    #[inline]
+    pub(crate) fn request_destruction(cell: &JsCell) {
+        if let Container::Block(block) = container::of(cell.address())
+            && block.request_destruction()
+        {
+            block.directory().did_request_destruction(block);
+        }
     }
 
     #[inline(never)]
@@ -361,8 +451,11 @@ impl Heap {
         attributes: CellAttributes,
         allocate: fn(usize) -> *mut c_void,
     ) -> usize {
-        self.collect_if_necessary();
-        let Some(allocation) = PreciseAllocation::try_create(self, size, attributes, allocate)
+        self.will_allocate_slowly();
+        let create = || PreciseAllocation::try_create(self, size, attributes, allocate);
+        let could_fit = size < options().ram_size;
+        let Some(allocation) = create()
+            .or_else(|| (could_fit && self.collect_for_lack_of_memory()).then(create).flatten())
         else {
             return 0;
         };
@@ -393,6 +486,9 @@ impl Heap {
         self.precise.borrow_mut()[allocation.index.get() as usize] = allocation;
         self.precise_bytes.update(|bytes| bytes + size - old_size);
         self.did_allocate(size - old_size);
+        if allocation.is_marked() {
+            self.policy.did_grow_old_cell(size - old_size);
+        }
         allocation.cell()
     }
 
@@ -444,7 +540,7 @@ impl Heap {
         owner: *const WeakOwner,
         context: *mut c_void,
     ) -> &'static WeakImpl {
-        self.weak_set.allocate(cell.address(), owner, context)
+        self.weak_set.allocate(self, cell.address(), owner, context)
     }
 
     pub fn protect(&self, value: Value) {
@@ -468,18 +564,6 @@ impl Heap {
                 false
             }
             None => false,
-        }
-    }
-
-    pub fn for_each_protected_cell(&self, mut visit: impl FnMut(Gc<JsCell>)) {
-        let mut cells: FastHashSet<usize> = self.protected.borrow().keys().copied().collect();
-        self.strong_set.for_each_cell(|cell| {
-            cells.insert(cell);
-        });
-        let _defer = self.defer_collection();
-        for cell in cells {
-            // SAFETY: a root.
-            visit(unsafe { Gc::from_address(cell) });
         }
     }
 
@@ -521,7 +605,7 @@ impl Heap {
         };
         let boxed = Box::into_raw(Box::new((finalizer, context)));
         self.weak_set
-            .allocate(cell.address(), &raw const OWNER, boxed.cast());
+            .allocate(self, cell.address(), &raw const OWNER, boxed.cast());
     }
 
     /// # Safety
@@ -558,133 +642,38 @@ impl Heap {
         }
     }
 
-    /// `visit` does not allocate.
-    pub fn for_each_live_cell(&self, mut visit: impl FnMut(Gc<JsCell>)) {
-        self.stop_allocating();
-        let _state = self.enter_state(MutatorState::Collecting);
-        self.for_each_directory(|directory| Self::live_cells_of(directory, &mut visit));
-        let precise = self.precise.borrow().clone();
-        for allocation in precise {
-            if allocation.attributes.kind == AllocationKind::Cell && allocation.is_live() {
-                // SAFETY: live.
-                visit(unsafe { Gc::from_address(allocation.cell()) });
-            }
-        }
-    }
-
-    /// `visit` does not allocate.
-    pub fn for_each_live_cell_in(&self, space: &IsoSpace, mut visit: impl FnMut(Gc<JsCell>)) {
-        space.allocator.stop_allocating(self);
-        let _state = self.enter_state(MutatorState::Collecting);
-        if let Some(directory) = space.allocator.directory() {
-            Self::live_cells_of(directory, &mut visit);
-        }
-    }
-
-    /// Of a type that needs no destruction. `visit` does not allocate.
-    pub fn for_each_live<T: CellKind>(&self, mut visit: impl FnMut(Gc<T>)) {
-        const { assert!(!core::mem::needs_drop::<T>() && size_of::<T>() <= space::LARGE_CUTOFF) };
-        let Some(allocator) = self.cells.allocator_for(size_of::<T>()) else {
-            return;
-        };
-        allocator.stop_allocating(self);
-        let _state = self.enter_state(MutatorState::Collecting);
-        if let Some(directory) = allocator.directory() {
-            Self::live_cells_of(directory, &mut |cell| {
-                cell.downcast().into_iter().for_each(&mut visit)
-            });
-        }
-    }
-
-    fn live_cells_of(directory: &directory::Directory, visit: &mut impl FnMut(Gc<JsCell>)) {
-        if directory.attributes().kind != AllocationKind::Cell {
-            return;
-        }
-        for block in directory.blocks() {
-            for cell in block.cells().filter(|&cell| block.is_live(cell)) {
-                // SAFETY: live.
-                visit(unsafe { Gc::from_address(cell) });
-            }
-        }
-    }
-
-    /// For a marking constraint.
-    pub fn for_each_marked_cell_in(&self, space: &IsoSpace, mut visit: impl FnMut(Gc<JsCell>)) {
-        let version = self.marking_version();
-        let blocks = space.allocator.directory();
-        for block in blocks.into_iter().flat_map(|it| it.blocks_with_marks()) {
-            for cell in block.cells().filter(|&cell| block.is_marked(version, cell)) {
-                // SAFETY: marked.
-                visit(unsafe { Gc::from_address(cell) });
-            }
-        }
-    }
-
-    /// False if nothing is left to sweep.
-    pub fn sweep_next_block(&self) -> bool {
-        loop {
-            let cursor = self.sweep_cursor.get();
-            let Some(&allocator) = self.allocators.borrow().get(cursor) else {
-                return false;
-            };
-            if allocator
-                .directory()
-                .is_some_and(|it| it.sweep_next_block())
-            {
-                return true;
-            }
-            self.sweep_cursor.set(cursor + 1);
-        }
-    }
-
-    pub fn sweep_synchronously(&self) {
-        while self.sweep_next_block() {}
-        self.free_empty_blocks(0);
-    }
-
-    /// Gives the memory of all but `keep` empty blocks back.
-    pub fn free_empty_blocks(&self, keep: usize) {
-        let mut empty = 0;
-        self.for_each_directory(|directory| empty += directory.empty_block_count());
-        let mut excess = empty.saturating_sub(keep);
-        self.for_each_directory(|directory| {
-            while excess != 0
-                && let Some(block) = directory.take_empty_block()
-            {
-                self.blocks.borrow_mut().remove(block);
-                // SAFETY: empty, and in no directory.
-                unsafe { directory.allocator().source.free(block) };
-                excess -= 1;
-            }
-        });
-    }
-
     /// Destroys every cell and frees all memory.
     ///
     /// # Safety
     /// Nothing uses a cell afterwards.
     pub(crate) unsafe fn tear_down(&self) {
-        self.stop_allocating();
         let _state = self.enter_state(MutatorState::Sweeping);
+        self.stop_allocating();
         self.weak_set.finalize_all();
-        for allocation in self.precise.take() {
-            // SAFETY: the caller's.
-            unsafe { allocation.destroy() };
+        self.stop_allocating();
+        self.for_each_directory(|directory| {
+            (directory.blocks().iter()).for_each(|block| block.forget_liveness());
+            directory.begin_full_marking();
+            directory.end_marking(Scope::Full);
+        });
+        let precise = self.precise.take();
+        for allocation in &precise {
+            allocation.begin_full_marking();
+            allocation.end_marking();
         }
-        // Destroying a cell may read its shape.
-        for source in [BlockSource::General, BlockSource::Shapes] {
+        // A destructor may look at another dead cell, and at its shape.
+        let sweep = |source| {
             self.for_each_directory(|directory| {
-                if directory.allocator().source == source {
-                    directory
-                        .blocks()
-                        .iter()
-                        .for_each(|it| it.forget_liveness());
-                    directory.begin_full_marking();
-                    directory.end_marking(Scope::Full);
-                    while directory.sweep_next_block() {}
-                }
+                while directory.allocator().source == source && directory.sweep_next_block() {}
             });
-        }
-        self.free_empty_blocks(0);
+        };
+        sweep(BlockSource::General);
+        // SAFETY: the caller's.
+        precise.iter().for_each(|it| unsafe { it.destroy_cell() });
+        sweep(BlockSource::Shapes);
+        // SAFETY: as above.
+        precise.iter().for_each(|it| unsafe { it.free() });
+        self.free_swept_empty_blocks(0);
+        assert!(self.blocks.borrow().len() == 0);
     }
 }

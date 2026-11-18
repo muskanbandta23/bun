@@ -40,8 +40,8 @@ impl JsCell {
     pub const OFFSET_OF_FLAGS: usize = offset_of!(JsCell, flags);
     pub const OFFSET_OF_STATE: usize = offset_of!(JsCell, state);
 
-    const IS_LOCKED: u8 = 0x40;
-    const LOCK_BITS: u8 = 0xc0;
+    pub const IS_LOCKED: u8 = 0x40;
+    pub const LOCK_BITS: u8 = 0xc0;
 
     #[inline(always)]
     pub fn as_cell(&self) -> &JsCell {
@@ -178,7 +178,7 @@ impl JsCell {
     /// # Safety
     /// `shape` has the class and type of the old one and describes the slots and elements that the cell has.
     #[inline]
-    pub(crate) unsafe fn set_shape(&self, shape: &Shape) {
+    pub unsafe fn set_shape(&self, shape: &Shape) {
         debug_assert!(shape.instance_type() == self.cell_type());
         self.shape_id_atomic()
             .store(shape.id().bits(), Ordering::Relaxed);
@@ -275,7 +275,7 @@ impl JsCell {
     }
 
     #[inline(always)]
-    pub(crate) fn heap(&self) -> &Heap {
+    pub fn heap(&self) -> &Heap {
         container::of(self.address()).heap()
     }
 

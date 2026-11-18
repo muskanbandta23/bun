@@ -144,10 +144,7 @@ enum WalkerState { StateUnknown,
     MapDataEndVisitKey,
     MapDataEndVisitValue,
     SetDataStartVisitEntry,
-    SetDataEndVisitKey,
-    CompactMapDataStartVisitEntry,
-    CompactMapDataEndVisitKey,
-    CompactSetDataStartVisitEntry };
+    SetDataEndVisitKey };
 
 // These can't be reordered, and any new types must be added to the end of the list
 // When making changes to these lists please cover your new type(s) in the API test "IndexedDB.StructuredCloneBackwardCompatibility"
@@ -1176,7 +1173,7 @@ private:
                     return true;
                 write(RegExpTag);
                 write(regExp->regExp()->pattern());
-                write(String(JSC::Yarr::flagsString(regExp->regExp()->flags()).span()));
+                write(JSC::Yarr::flagsString(regExp->regExp()->flags()));
                 return true;
             }
             if (auto* errorInstance = dynamicDowncast<ErrorInstance>(obj)) {
@@ -2134,15 +2131,13 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
                 m_gcBuffer.appendWithCrashOnOverflow(iterator);
                 mapIteratorStack.append(iterator);
                 inputObjectStack.append(inMap);
-                if (vm.hasCompiledCode()) [[unlikely]]
-                    goto compactMapDataStartVisitEntry;
                 goto mapDataStartVisitEntry;
             }
         mapDataStartVisitEntry:
         case MapDataStartVisitEntry: {
             JSMapIterator* iterator = mapIteratorStack.last();
             JSValue key, value;
-            if (!iterator->nextKeyValue<JSMap::Storage>(m_lexicalGlobalObject, key, value)) {
+            if (!iterator->nextKeyValue(m_lexicalGlobalObject, key, value)) {
                 mapIteratorStack.removeLast();
                 JSObject* object = inputObjectStack.last();
                 ASSERT(dynamicDowncast<JSMap>(object));
@@ -2183,15 +2178,13 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
                 m_gcBuffer.appendWithCrashOnOverflow(iterator);
                 setIteratorStack.append(iterator);
                 inputObjectStack.append(inSet);
-                if (vm.hasCompiledCode()) [[unlikely]]
-                    goto compactSetDataStartVisitEntry;
                 goto setDataStartVisitEntry;
             }
         setDataStartVisitEntry:
         case SetDataStartVisitEntry: {
             JSSetIterator* iterator = setIteratorStack.last();
             JSValue key;
-            bool hasNext = iterator->next<JSSet::Storage>(m_lexicalGlobalObject, key);
+            bool hasNext = iterator->next(m_lexicalGlobalObject, key);
             RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
             if (!hasNext) {
                 setIteratorStack.removeLast();
@@ -2210,37 +2203,6 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
         }
         case SetDataEndVisitKey: {
             goto setDataStartVisitEntry;
-        }
-
-        compactMapDataStartVisitEntry:
-        case CompactMapDataStartVisitEntry: {
-            JSValue key, value;
-            // A closed iterator stays closed, so MapDataStartVisitEntry only ends the map.
-            if (!mapIteratorStack.last()->nextKeyValue(m_lexicalGlobalObject, key, value))
-                goto mapDataStartVisitEntry;
-            inValue = key;
-            m_gcBuffer.appendWithCrashOnOverflow(value);
-            mapIteratorValueStack.append(value);
-            stateStack.append(CompactMapDataEndVisitKey);
-            goto stateUnknown;
-        }
-        case CompactMapDataEndVisitKey: {
-            inValue = mapIteratorValueStack.last();
-            mapIteratorValueStack.removeLast();
-            stateStack.append(CompactMapDataStartVisitEntry);
-            goto stateUnknown;
-        }
-
-        compactSetDataStartVisitEntry:
-        case CompactSetDataStartVisitEntry: {
-            JSValue key;
-            bool hasNext = setIteratorStack.last()->next(m_lexicalGlobalObject, key);
-            RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
-            if (!hasNext)
-                goto setDataStartVisitEntry;
-            inValue = key;
-            stateStack.append(CompactSetDataStartVisitEntry);
-            goto stateUnknown;
         }
 
         stateUnknown:
@@ -3743,8 +3705,8 @@ private:
                 return JSValue();
             }
             VM& vm = m_lexicalGlobalObject->vm();
-            RegExp* regExp = RegExp::create(vm, pattern->string(), reFlags.value());
-            if (!regExp->isValid()) [[unlikely]] {
+            RegExp* regExp = RegExp::tryCreate(vm, pattern->string(), reFlags.value());
+            if (!regExp) [[unlikely]] {
                 fail();
                 return JSValue();
             }
@@ -4189,9 +4151,6 @@ DeserializationResult CloneDeserializer::deserialize()
             goto setDataStartVisitEntry;
         }
 
-        case CompactMapDataStartVisitEntry:
-        case CompactMapDataEndVisitKey:
-        case CompactSetDataStartVisitEntry:
             RELEASE_ASSERT_NOT_REACHED();
 
         stateUnknown:

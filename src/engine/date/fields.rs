@@ -1,7 +1,9 @@
 use core::num::NonZeroU64;
 
 use crate::civil::{week_day, year_month_day};
-use crate::time_value::{make_date, make_day, make_time, split_at_midnight, time_as_integer};
+use crate::time_value::{
+    LOCAL_TIMES, local_time_as_integer, make_date, make_day, make_time, split_at_midnight,
+};
 use crate::zone::{Offset, TimeZoneId};
 
 /// Where a field is in the bits of `DateFields`.
@@ -73,18 +75,20 @@ impl DateFields {
 
     pub const EPOCH: DateFields = DateFields::at_midnight(0, OffsetBits::UTC);
 
-    /// `None` if `time` is not in the range of time values.
+    /// `None` if `time` is more than a day outside the range of time values.
     #[inline]
     pub fn utc(time: f64) -> Option<DateFields> {
-        let (days, since_midnight) = split_at_midnight(time_as_integer(time)?);
+        let (days, since_midnight) = split_at_midnight(local_time_as_integer(time)?);
         Some(DateFields::at_midnight(days, OffsetBits::UTC).later(since_midnight))
     }
 
-    /// `None` if `time` is not in the range of time values.
+    /// The same, and for the local time too.
     pub fn in_zone(time: f64, zone: TimeZoneId) -> Option<DateFields> {
-        let time = time_as_integer(time)?;
+        let time = local_time_as_integer(time)?;
         let offset = zone.rules().span_at(time.div_euclid(1000)).offset;
-        let (days, since_midnight) = split_at_midnight(time + i64::from(offset.seconds) * 1000);
+        let local_time = time + i64::from(offset.seconds) * 1000;
+        LOCAL_TIMES.contains(&local_time).then_some(())?;
+        let (days, since_midnight) = split_at_midnight(local_time);
         Some(DateFields::at_midnight(days, OffsetBits::new(offset)).later(since_midnight))
     }
 

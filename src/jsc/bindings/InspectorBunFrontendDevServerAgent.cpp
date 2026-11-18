@@ -5,7 +5,6 @@
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <wtf/text/WTFString.h>
 #include <JavaScriptCore/ScriptCallStackFactory.h>
-#include <JavaScriptCore/ScriptArguments.h>
 #include <JavaScriptCore/ConsoleMessage.h>
 #include <JavaScriptCore/InspectorConsoleAgent.h>
 #include <JavaScriptCore/JSGlobalObjectDebuggable.h>

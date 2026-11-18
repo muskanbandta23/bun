@@ -1225,24 +1225,21 @@ static bool getPropertySlotOfContextifiedObject(JSGlobalObject* globalObject, JS
         if (auto* proxy = dynamicDowncast<ProxyObject>(object); proxy && !proxy->isRevoked() && !propertyName.isPrivateName()) {
             JSObject* target = proxy->target();
             JSObject* handler = asObject(proxy->handler());
-            CallData callData;
-            JSObject* getTrap = proxy->getHandlerTrap(globalObject, handler, callData, vm.propertyNames->get, ProxyObject::HandlerTrap::Get);
+            JSObject* getTrap = ProxyObject::getHandlerTrap(globalObject, handler, vm.propertyNames->get);
             RETURN_IF_EXCEPTION(scope, false);
             if (!getTrap)
                 RELEASE_AND_RETURN(scope, getPropertySlotOfContextifiedObject(globalObject, target, propertyName, slot));
 
-            // Copied from performProxyGet() in JSC's ProxyObject.cpp. Calling it would read the trap from the handler twice.
+            // The rest of the proxy's [[Get]]. Calling that would read the trap from the handler twice.
             MarkedArgumentBuffer arguments;
             arguments.append(target);
             arguments.append(identifierToSafePublicJSValue(vm, Identifier::fromUid(vm, propertyName.uid())));
             arguments.append(slot.thisValue());
             ASSERT(!arguments.hasOverflowed());
-            JSValue trapResult = call(globalObject, getTrap, callData, handler, arguments);
+            JSValue trapResult = call(globalObject, getTrap, getCallData(getTrap), handler, arguments);
             RETURN_IF_EXCEPTION(scope, false);
-            if (target->structure()->hasNonConfigurableReadOnlyOrGetterSetterProperties()) {
-                ProxyObject::validateGetTrapResult(globalObject, trapResult, target, propertyName);
-                RETURN_IF_EXCEPTION(scope, false);
-            }
+            ProxyObject::validateGetTrapResult(globalObject, trapResult, target, propertyName);
+            RETURN_IF_EXCEPTION(scope, false);
             unsigned ignoredAttributes = 0;
             slot.setValue(proxy, ignoredAttributes, trapResult);
             return true;

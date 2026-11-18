@@ -380,6 +380,7 @@ pub(crate) fn install_code(
     specialization: Specialization,
     code: Rc<Code>,
 ) -> JsResult<Gc<CodeBlock>> {
+    cx.ensure_can_run(executable.provider())?;
     let code_block = CodeBlock::link(cx, executable, code)?;
     if code_block.has_debug_hooks()
         && let Some(debugger) = cx.global().debugger()

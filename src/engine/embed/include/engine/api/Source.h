@@ -67,7 +67,6 @@ public:
     String sourceMappingURLDirective() const { return Engine::source_provider_mapping_url_directive(*this); }
     SourceProviderSourceType sourceType() const { return m_sourceType; }
     SourceTaintedness taintedness() const { return SourceTaintedOrigin::Untainted; }
-    SourceProvenance provenance() const { return isFromEmbedder() ? m_provenance : SourceProvenance::GeneratedAtRuntime; }
     const SourceOrigin& sourceOrigin() const;
     TextPosition startPosition() const { return { OrdinalNumber::fromZeroBasedInt(m_startLine), OrdinalNumber::fromZeroBasedInt(m_startColumn) }; }
     SourceID asID() const { return Engine::source_provider_id(*this); }
@@ -85,10 +84,9 @@ public:
 
 protected:
     SourceProvider(const String& source, const SourceOrigin& origin, String&& url, const TextPosition& start, SourceProviderSourceType type, SourceProvenance provenance = SourceProvenance::GeneratedAtRuntime)
-        : m_provenance(provenance)
-        , m_origin(origin)
+        : m_origin(origin)
     {
-        Engine::source_provider_construct(this, source, WTF::move(url), type, start.m_line.zeroBasedInt(), start.m_column.zeroBasedInt(), origin.fetcher());
+        Engine::source_provider_construct(this, source, WTF::move(url), type, start.m_line.zeroBasedInt(), start.m_column.zeroBasedInt(), origin.fetcher(), provenance == SourceProvenance::Static);
     }
 
     // Instead of what would be computed from the text.
@@ -112,7 +110,6 @@ private:
         String m_url;
     };
     Engine::Opaque<Engine::Layout::sourceProviderSize - Engine::Layout::SourceProvider_url - sizeof(String)> m_rest;
-    SourceProvenance m_provenance;
     SourceOrigin m_origin;
 };
 

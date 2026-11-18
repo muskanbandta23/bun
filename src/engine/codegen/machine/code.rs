@@ -278,6 +278,8 @@ pub(crate) struct BlockData {
     pub(crate) pressure: [u32; 2],
     /// What the instructions clobber or need for themselves.
     pub(crate) claimed: RegisterSet,
+    /// For each bank, how many instructions come before the first that clobbers all of it, plus one. Zero for none.
+    pub(crate) barrier: [u32; 2],
     pub(crate) params: Span<VReg>,
 }
 

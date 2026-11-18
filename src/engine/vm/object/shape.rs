@@ -196,6 +196,8 @@ pub struct Shape {
 pub struct Properties(Option<Rc<PropertyTable>>);
 
 impl Properties {
+    pub(super) const NONE: Properties = Properties(None);
+
     /// With those that have been removed.
     pub fn entries(&self) -> &[PropertyEntry] {
         self.0.as_ref().map_or_default(|table| table.entries())

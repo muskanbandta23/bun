@@ -211,21 +211,21 @@ impl DateTimeFormat {
         prepared.or_type_error(FORMAT_FAILURE)
     }
 
-    fn fill(
+    fn fill<T>(
         &self,
         template: &Template,
         layout: &Layout,
         moment: &Moment,
-        text: &mut DateText,
         each_part: impl FnMut(PartKind, &[u16]) -> Result<()>,
-    ) -> Result<()> {
+        whole: impl FnOnce(&[u16]) -> Result<T>,
+    ) -> Result<T> {
         let mut zone_name = DateText::new();
         if let Some(field) = template.time_zone_field() {
             let (format, mut calendar) = self.prepare(field, layout, moment)?;
             (format.format(&mut calendar, &mut zone_name)).or_type_error(FORMAT_FAILURE)?;
             use_plain_spaces(&mut zone_name);
         }
-        template.write(self.local_time(moment), &zone_name, text, each_part)
+        template.write(self.local_time(moment), &zone_name, each_part, whole)
     }
 
     fn string(&self, layout: &Layout, moment: &Moment) -> Result<StringRef> {
@@ -233,9 +233,7 @@ impl DateTimeFormat {
             let (format, mut calendar) = self.prepare(&layout.pattern, layout, moment)?;
             return layout.string(&format, &mut calendar);
         };
-        let mut text = DateText::new();
-        self.fill(template, layout, moment, &mut text, |_, _| Ok(()))?;
-        new_string(&text)
+        self.fill(template, layout, moment, |_, _| Ok(()), new_string)
     }
 
     fn parts(&self, layout: &Layout, moment: &Moment, source: Option<Source>) -> Result<Parts> {
@@ -243,11 +241,12 @@ impl DateTimeFormat {
             let (format, mut calendar) = self.prepare(&layout.pattern, layout, moment)?;
             return layout.parts(&format, &mut calendar, source);
         };
-        let (mut text, mut parts) = (DateText::new(), Parts::default());
-        self.fill(template, layout, moment, &mut text, |kind, value| {
+        let mut parts = Parts::default();
+        let push = |kind, value: &[u16]| {
             let unit = None;
             parts.push(Part { kind, unit, source }, value)
-        })?;
+        };
+        self.fill(template, layout, moment, push, |_| Ok(()))?;
         Ok(parts)
     }
 

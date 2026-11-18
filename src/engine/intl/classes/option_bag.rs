@@ -1,5 +1,6 @@
 use bun_engine_text::Text;
 use bun_engine_vm::StringView;
+use bun_engine_vm::caches::get_megamorphic;
 
 use super::prelude::*;
 use crate::{KeywordValue, LocaleMatcher, OptionValue, Result};
@@ -30,7 +31,7 @@ impl OptionBag {
         let Some(options) = self.0 else {
             return Ok(None);
         };
-        let value = options.get(cx, name)?;
+        let value = get_megamorphic(cx, options.into(), name)?;
         Ok((!value.is_undefined()).then_some(value))
     }
 

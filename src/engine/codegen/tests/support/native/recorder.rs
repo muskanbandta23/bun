@@ -109,7 +109,7 @@ impl<M: FloatAssembly> Client<M> for Recorder {
         let stop = Stop {
             kind: Kind::Exit,
             token: site.token,
-            state: site.state.to_vec(),
+            state: site.state.iter().collect(),
             scratch: scratch_of(masm),
             labels: Vec::new(),
         };
@@ -129,7 +129,7 @@ impl<M: FloatAssembly> Client<M> for Recorder {
                 falls_through_to: site.falls_through_to,
             },
             token: site.token,
-            state: site.state.to_vec(),
+            state: site.state.iter().collect(),
             scratch: scratch_of(masm) | gprs.chain(fprs).collect(),
             labels: site.successors.to_vec(),
         };
@@ -147,7 +147,7 @@ impl<M: FloatAssembly> Client<M> for Recorder {
         let stop = Stop {
             kind: Kind::Call,
             token: site.token,
-            state: site.state.to_vec(),
+            state: site.state.iter().collect(),
             scratch: scratch_of(masm),
             labels: site.handlers.to_vec(),
         };

@@ -8,6 +8,7 @@ use bun_engine_number::Random;
 use bun_engine_text::{PropertyName, StringRef, names};
 
 use super::watchpoints::RealmWatchpoints;
+use crate::runtime::control::RealmMicrotaskQueue;
 use crate::{
     Attributes, Cx, DeferredFire, DeletePropertySlot, DontEnumMode, ElementKind, Environment,
     Field, FieldArray, Gc, GcFree, GlobalBinding, GlobalBindings, GlobalProxy, IndexingMode,
@@ -111,7 +112,7 @@ pub struct GlobalObject {
     embedder_methods: *const c_void,
     overridden_date_now: Cell<f64>,
     console_client: Cell<*mut c_void>,
-    /// Looked in after the global object.
+    /// A `with` scope that is looked in after the global object.
     pub scope_extension: Field<Option<Gc<Environment>>>,
     pub(self) original_array_shapes: FieldArray<Option<Gc<Shape>>, ARRAY_SHAPE_COUNT>,
     pub(self) array_shapes_for_allocation: FieldArray<Option<Gc<Shape>>, ARRAY_SHAPE_COUNT>,
@@ -123,9 +124,11 @@ pub struct GlobalObject {
     /// Changes when a lexical binding is declared, which may hide a property.
     lexical_epoch: Cell<u32>,
     is_initialized: Cell<bool>,
+    needs_debug_hooks: Cell<bool>,
+    discards_microtasks: Cell<bool>,
     /// What other crates keep for the realm. See `extension_cell`.
     pub(self) extension_cells: TracedVec<Option<Gc<JsCell>>>,
-    microtask_queue: RefCell<MicrotaskQueueRef>,
+    microtask_queue: RealmMicrotaskQueue,
     regexp_state: RegExpGlobalState,
     random: Cell<Random>,
     stack_trace_limit: Cell<Option<u32>>,
@@ -144,15 +147,7 @@ impl GlobalObject {
         name: PropertyName<'_>,
         slot: &mut PropertySlot,
     ) -> JsResult<bool> {
-        if self.ordinary_get_own_property_slot(cx, name, slot)? {
-            return Ok(true);
-        }
-        let Some(binding) = self.variables.find(name) else {
-            return Ok(false);
-        };
-        let attributes = binding.attributes() | Attributes::DONT_DELETE;
-        slot.set_value(self, attributes, binding.get().unwrap_or_default());
-        Ok(true)
+        self.get_declared_property_slot(cx, name, slot)
     }
 
     fn put(
@@ -234,6 +229,7 @@ impl GlobalObject {
 impl GlobalObject {
     pub const OFFSET_OF_VM: usize = offset_of!(GlobalObject, vm);
     pub const OFFSET_OF_LEXICAL_EPOCH: usize = offset_of!(GlobalObject, lexical_epoch);
+    pub const OFFSET_OF_MICROTASK_QUEUE: usize = offset_of!(GlobalObject, microtask_queue);
     pub const OFFSET_OF_RANDOM: usize = offset_of!(GlobalObject, random);
 
     pub const fn offset_of_slot(slot: RealmSlot) -> usize {
@@ -266,8 +262,10 @@ impl GlobalObject {
             lexicals: GlobalBindings::default(),
             lexical_epoch: Cell::new(1),
             is_initialized: Cell::new(false),
+            needs_debug_hooks: Cell::new(false),
+            discards_microtasks: Cell::new(false),
             scope_extension: None,
-            microtask_queue: RefCell::new(vm.default_microtask_queue().clone()),
+            microtask_queue: RealmMicrotaskQueue::new(vm.default_microtask_queue().clone()),
             regexp_state: RegExpGlobalState::default(),
             random: Cell::new(Random::new(vm.random_seed() as u32)),
             stack_trace_limit: Cell::new(Some(crate::options().default_error_stack_trace_limit)),
@@ -319,6 +317,29 @@ impl GlobalObject {
         self.is_initialized.set(true);
         self.watchpoints(vm, RealmWatchpoint::ArrayPrototypeChainIsSane);
         self.watchpoints(vm, RealmWatchpoint::ArrayIteratorProtocol);
+    }
+
+    /// Whatever a class that extends this one makes of it.
+    pub(super) fn get_declared_property_slot(
+        &self,
+        cx: &mut Cx,
+        name: PropertyName<'_>,
+        slot: &mut PropertySlot,
+    ) -> JsResult<bool> {
+        if self.ordinary_get_own_property_slot(cx, name, slot)? {
+            return Ok(true);
+        }
+        let Some(binding) = self.variables.find(name) else {
+            return Ok(false);
+        };
+        let attributes = binding.attributes() | Attributes::DONT_DELETE;
+        slot.set_value(self, attributes, binding.get().unwrap_or_default());
+        Ok(true)
+    }
+
+    /// Whether a debugger wants to step through the code that is compiled from now on.
+    pub fn needs_debug_hooks(&self) -> &Cell<bool> {
+        &self.needs_debug_hooks
     }
 
     pub(super) fn is_initialized(&self) -> bool {
@@ -457,11 +478,22 @@ impl GlobalObject {
     }
 
     pub fn microtask_queue(&self) -> MicrotaskQueueRef {
-        self.microtask_queue.borrow().clone()
+        self.microtask_queue.get()
     }
 
     pub fn set_microtask_queue(&self, queue: MicrotaskQueueRef) {
-        self.microtask_queue.replace(queue);
+        self.microtask_queue.set(queue);
+    }
+
+    #[inline(always)]
+    pub(crate) fn realm_microtask_queue(&self) -> &RealmMicrotaskQueue {
+        &self.microtask_queue
+    }
+
+    /// Whether the microtasks of the realm are dropped when it is their turn.
+    #[inline(always)]
+    pub fn discards_microtasks(&self) -> &Cell<bool> {
+        &self.discards_microtasks
     }
 
     pub fn regexp_state(&self) -> crate::heap::Owned<'_, RegExpGlobalState> {

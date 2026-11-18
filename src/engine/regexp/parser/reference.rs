@@ -3,22 +3,27 @@ use bun_engine_text::CodeUnit;
 use super::group::Relation;
 use super::names::Name;
 use super::scan::{GroupTotals, group_totals};
-use super::{Parser, Sink};
+use super::{Cursor, Parser, Sink};
 use crate::Error;
 use crate::tree::{Group, Groups, MAX_GROUPS};
 
-impl<'a, C: CodeUnit, S: Sink> Parser<'a, C, S> {
-    fn totals(&mut self) -> GroupTotals {
-        *self.totals.get_or_insert_with(|| group_totals(self.units))
+impl<'a, S: Sink> Parser<'a, S> {
+    fn totals<C: CodeUnit>(&mut self, units: &[C]) -> GroupTotals {
+        *self.totals.get_or_insert_with(|| group_totals(units))
     }
 
     /// At the first digit. False, with the cursor where it was, if the digits are an escape of B.1.2.
-    pub(super) fn back_reference(&mut self) -> Result<bool, Error> {
-        let start = self.at;
-        let number = u32::try_from(self.decimal()).unwrap_or(u32::MAX);
+    #[inline(never)]
+    pub(super) fn back_reference<C: CodeUnit>(
+        &mut self,
+        cursor: &mut Cursor<C>,
+    ) -> Result<bool, Error> {
+        let start = cursor.at;
+        let number = cursor.decimal().and_then(|it| u32::try_from(it).ok());
+        let number = number.unwrap_or(u32::MAX);
         let is_known = number <= u32::from(self.group_count);
-        if !is_known && !self.is_unicode && number > self.totals().count {
-            self.at = start;
+        if !is_known && !cursor.is_unicode && number > self.totals(cursor.units).count {
+            cursor.at = start;
             return Ok(false);
         }
         self.highest_reference = self.highest_reference.max(number);
@@ -39,23 +44,28 @@ impl<'a, C: CodeUnit, S: Sink> Parser<'a, C, S> {
     }
 
     /// At the `k`. False, with the cursor where it was, if it stands for itself.
-    pub(super) fn named_reference(&mut self) -> Result<bool, Error> {
-        let start = self.at;
-        self.at += 1;
-        if self.eat(b'<')
-            && (self.is_unicode || self.has_named_groups || self.totals().has_names)
-            && let Some(name) = self.group_name()?
+    #[inline(never)]
+    pub(super) fn named_reference<C: CodeUnit>(
+        &mut self,
+        cursor: &mut Cursor<'a, C>,
+    ) -> Result<bool, Error> {
+        let start = cursor.at;
+        cursor.at += 1;
+        if cursor.eat(b'<')
+            && (cursor.is_unicode || self.has_named_groups || self.totals(cursor.units).has_names)
+            && let Some(name) = cursor.group_name()?
         {
             self.refer_to(name)?;
             return Ok(true);
         }
-        self.at = start;
+        cursor.at = start;
         Ok(false)
     }
 
     fn refer_to(&mut self, name: Name<'a>) -> Result<(), Error> {
-        let name = self.names.find_or_add(name)?;
-        let last = *self.names.last_group(name);
+        let names = self.names.get_or_insert_default();
+        let name = names.find_or_add(name)?;
+        let last = *names.last_group(name);
         match last.map(|last| (last, self.relation(last))) {
             Some((
                 last,
@@ -77,11 +87,13 @@ impl<'a, C: CodeUnit, S: Sink> Parser<'a, C, S> {
 
     /// What only the end of the pattern decides.
     #[inline]
-    pub(super) fn check_references(&self) -> Result<(), Error> {
+    pub(super) fn check_references(&self, has_escaped_k: bool) -> Result<(), Error> {
         if self.highest_reference > u32::from(self.group_count) {
             return Err(Error::InvalidBackReference);
         }
-        if (self.has_escaped_k && self.has_named_groups) || !self.names.all_have_groups() {
+        if let Some(names) = &self.names
+            && (has_escaped_k || !names.all_have_groups())
+        {
             return Err(Error::InvalidNamedReference);
         }
         Ok(())

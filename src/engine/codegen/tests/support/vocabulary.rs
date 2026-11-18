@@ -251,6 +251,13 @@ pub(crate) struct Registers {
     pub(crate) usable: RegisterSet,
     /// May be clobbered, and hold nothing else.
     pub(crate) scratch: RegisterSet,
+    /// Those of `scratch` that compiled code uses like any other.
+    pub(crate) allocatable_scratch: RegisterSet,
+    /// Some instructions work on these only.
+    pub(crate) indispensable: RegisterSet,
+    pub(crate) of_signatures: RegisterSet,
+    /// How many of each bank one instruction may need.
+    pub(crate) least: [u32; 2],
     argument_gprs: &'static [Gpr],
     argument_fprs: &'static [Fpr],
     return_gprs: [Gpr; 2],
@@ -264,7 +271,7 @@ pub(crate) const NOT_CELL_MASK: u64 = NUMBER_TAG | 2;
 
 pub(crate) fn registers(target: Target) -> &'static Registers {
     macro_rules! describe {
-        ($arch:ident, $scratch_gprs:expr, $special:expr) => {{
+        ($arch:ident, $scratch_gprs:expr, $allocatable:expr, $special:expr, $indispensable:expr, $least:expr) => {{
             use $arch::abi::*;
             const SCRATCH: RegisterSet = RegisterSet::of(&$scratch_gprs, &SCRATCH_FPRS);
             const SPECIAL: RegisterSet = RegisterSet::of(&$special, &[]);
@@ -273,6 +280,11 @@ pub(crate) fn registers(target: Target) -> &'static Registers {
                 pinned: [VM, NUMBER_TAG, NOT_CELL_MASK],
                 usable: ALL.difference(PINNED.union(SCRATCH).union(SPECIAL)),
                 scratch: SCRATCH,
+                allocatable_scratch: RegisterSet::of(&$allocatable, &[SCRATCH_FPRS[1]]),
+                indispensable: RegisterSet::of(&$indispensable, &[]),
+                of_signatures: RegisterSet::of(&ARGUMENT_GPRS, &ARGUMENT_FPRS)
+                    .union(RegisterSet::of(&RETURN_GPRS, &[RETURN_FPR])),
+                least: $least,
                 argument_gprs: &ARGUMENT_GPRS,
                 argument_fprs: &ARGUMENT_FPRS,
                 return_gprs: RETURN_GPRS,
@@ -284,8 +296,22 @@ pub(crate) fn registers(target: Target) -> &'static Registers {
         }};
     }
     match target {
-        Target::X64(_) => describe!(x64, [SCRATCH_GPR], [x64::RSP, x64::RBP]),
-        Target::Arm64(_) => describe!(arm64, SCRATCH_GPRS, [arm64::SP, arm64::FP, arm64::LR]),
+        Target::X64(_) => describe!(
+            x64,
+            [SCRATCH_GPR],
+            [SCRATCH_GPR],
+            [x64::RSP, x64::RBP],
+            [x64::RAX, x64::RCX, x64::RDX],
+            [6, 6]
+        ),
+        Target::Arm64(_) => describe!(
+            arm64,
+            SCRATCH_GPRS,
+            [],
+            [arm64::SP, arm64::FP, arm64::LR],
+            [],
+            [11, 8]
+        ),
     }
 }
 

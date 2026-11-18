@@ -116,6 +116,7 @@ impl Generator<'_> {
     }
 
     /// The registers from `mark` on are free once the member is read.
+    #[inline(never)]
     pub(super) fn load_member(
         &mut self,
         node: &Expr,
@@ -156,7 +157,7 @@ impl Generator<'_> {
         self.asm().put_by_id(base, name, value, flags);
     }
 
-    fn put_member(&mut self, start: u32, member: &Member, value: Operand) {
+    pub(super) fn put_member(&mut self, start: u32, member: &Member, value: Operand) {
         let Member { base, this, key } = *member;
         let strict = self.is_strict;
         match (key, this) {
@@ -176,6 +177,7 @@ impl Generator<'_> {
         }
     }
 
+    #[inline(never)]
     fn get_private(
         &mut self,
         start: u32,
@@ -204,6 +206,7 @@ impl Generator<'_> {
         self.top = mark;
     }
 
+    #[inline(never)]
     fn put_private(
         &mut self,
         start: u32,
@@ -287,6 +290,7 @@ impl Generator<'_> {
         }
     }
 
+    #[inline(never)]
     pub(super) fn initialize_declarator(&mut self, node: &Expr) -> Operand {
         let ExprKind::Initialize {
             kind,
@@ -322,6 +326,7 @@ impl Generator<'_> {
         result
     }
 
+    #[inline(never)]
     pub(super) fn declare(&mut self, kind: DeclarationKind, name: Name) -> Operand {
         let undefined = self.undefined();
         if kind != DeclarationKind::Var {
@@ -332,6 +337,7 @@ impl Generator<'_> {
 
     // Assignments
 
+    #[inline(never)]
     fn assign_to_name(&mut self, name: Name, start: u32, value: ExprId, dst: Dest) -> Operand {
         let variable = self.resolve(name, start);
         if let Some(register) = variable.writable_register() {
@@ -353,6 +359,7 @@ impl Generator<'_> {
         self.deliver(dst, result)
     }
 
+    #[inline(never)]
     pub(super) fn assign(&mut self, node: &Expr, dst: Dest) -> Operand {
         let ExprKind::Assign {
             operator,
@@ -435,6 +442,7 @@ impl Generator<'_> {
         self.undefined()
     }
 
+    #[inline(never)]
     fn modify_name(
         &mut self,
         name: Name,
@@ -490,6 +498,7 @@ impl Generator<'_> {
         self.cover_skippable(value, end);
     }
 
+    #[inline(never)]
     fn short_circuit_name(
         &mut self,
         name: Name,
@@ -532,6 +541,7 @@ impl Generator<'_> {
         }
     }
 
+    #[inline(never)]
     pub(super) fn update(&mut self, node: &Expr, dst: Dest) -> Operand {
         let (operator, operand, range, is_postfix) = match node.kind {
             ExprKind::Prefix {
@@ -584,6 +594,7 @@ impl Generator<'_> {
         }
     }
 
+    #[inline(never)]
     fn update_name(
         &mut self,
         name: Name,
@@ -627,6 +638,7 @@ impl Generator<'_> {
         self.deliver(dst, result)
     }
 
+    #[inline(never)]
     pub(super) fn delete(&mut self, node: &Expr, dst: Dest) -> Operand {
         let ExprKind::Delete {
             operand,

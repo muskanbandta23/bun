@@ -126,6 +126,7 @@ pub(crate) enum Inst {
 
 impl Instruction for Inst {
     type Features = X64Features;
+    type Selection = ();
 
     const COPY: Self = Self::Copy;
     const ZERO_EXTEND: Self = Self::ZeroExtend;

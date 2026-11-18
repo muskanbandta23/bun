@@ -27,9 +27,7 @@ use bun_icu::formatted_value::FormattedValue;
 
 pub(crate) use cache::DateCache;
 pub use components::{Component, ComponentStyle, ComponentValue, Components};
-pub use options::{
-    FormatMatcher, Options, Purpose, Style, TIME_ZONE_OPTION_NOT_ACCEPTED, parse_time_zone,
-};
+pub use options::{FormatMatcher, Options, Purpose, Style, parse_time_zone};
 pub use value::DateTimeValue;
 
 use crate::error::IcuResult;
@@ -57,7 +55,6 @@ pub struct ResolvedOptions<'a> {
     pub numbering_system: NumberingSystem,
     pub time_zone: TimeZone,
     pub hour_cycle: Option<HourCycle>,
-    pub hour12: Option<bool>,
     pub components: Components,
     pub date_style: Option<Style>,
     pub time_style: Option<Style>,
@@ -146,14 +143,12 @@ impl DateTimeFormat {
     pub fn resolved_options(&self) -> Result<ResolvedOptions<'_>> {
         let formats = &*self.formats;
         let pattern = &formats.of_time_values.pattern;
-        let hour_cycle = pattern::hour_cycle(pattern);
         Ok(ResolvedOptions {
             locale: formats.locale.tag(),
             calendar: formats.data.calendar()?,
             numbering_system: formats.data.numbering_system()?,
             time_zone: self.time_zone,
-            hour_cycle,
-            hour12: hour_cycle.map(HourCycle::is_twelve_hour),
+            hour_cycle: pattern::hour_cycle(pattern),
             components: if formats.has_style() {
                 Components::default()
             } else {

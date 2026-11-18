@@ -3,8 +3,8 @@ use bun_engine_text::{Identifier, PropertyName};
 
 use crate::heap::{Scope, Survivors};
 use crate::{
-    BuiltinId, CallFrame, CodeBlock, Cx, Gc, GlobalObject, Intrinsic, JsObject, JsResult,
-    PropertyCondition, RealmSlot, RealmWatchpoint, Value, Visitor, Vm,
+    BuiltinId, CallFrame, CodeBlock, CompileError, Cx, Gc, GlobalObject, Intrinsic, JsObject,
+    JsResult, PropertyCondition, RealmSlot, RealmWatchpoint, SourceProvider, Value, Visitor, Vm,
 };
 
 /// What this crate needs from those above it.
@@ -30,6 +30,9 @@ pub struct Hooks {
     /// `toLocaleString` of an instance of a class of `Temporal`, with the locales and the options.
     pub temporal_to_locale_string: fn(&mut Cx, Gc<JsObject>, Value, Value) -> JsResult<Value>,
     pub find_wasm_handler: fn(&Vm, &CallFrame) -> Option<(usize, u32)>,
+    pub debugger_did_parse: fn(&Cx, &SourceProvider, Option<&CompileError>),
+    /// With a number that tells the task from all others.
+    pub debugger_microtask_event: fn(&Vm, &GlobalObject, crate::MicrotaskEvent, u64),
     pub debugger_will_unwind: fn(&Vm, &CallFrame),
     pub debugger_did_unwind_frame: fn(&Vm, &CallFrame),
     pub visit_roots: fn(&Vm, &mut Visitor),

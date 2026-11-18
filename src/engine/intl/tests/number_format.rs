@@ -206,7 +206,8 @@ fn parts() {
         describe_parts(&format.format_to_parts(&(-1234.5).into()).unwrap()).join(" "),
         "literal:( currency:$ integer:1 group:, integer:234 decimal:. fraction:50 literal:)"
     );
-    let range = format.format_range_to_parts(&(-1.0).into(), &f64::INFINITY.into());
+    let range =
+        format.format_range_to_parts(&Cache::default(), &(-1.0).into(), &f64::INFINITY.into());
     assert_eq!(
         describe_parts(&range.unwrap())[5..],
         [
@@ -218,7 +219,7 @@ fn parts() {
     );
     let yen = currency("JPY", CurrencyDisplay::Code, CurrencySign::Standard);
     let format = number_format("en", yen);
-    let range = format.format_range_to_parts(&1.0.into(), &2.0.into());
+    let range = format.format_range_to_parts(&Cache::default(), &1.0.into(), &2.0.into());
     assert_eq!(
         describe_parts(&range.unwrap()),
         [
@@ -229,9 +230,13 @@ fn parts() {
             "integer:2:endRange"
         ]
     );
-    let same = format.format_range(&1.1.into(), &from_string("0.9"));
+    let same = format.format_range(&Cache::default(), &1.1.into(), &from_string("0.9"));
     assert_eq!(same.unwrap().to_string(), "~JPY\u{a0}1");
-    assert!(format.format_range(&f64::NAN.into(), &1.0.into()).is_err());
+    assert!(
+        format
+            .format_range(&Cache::default(), &f64::NAN.into(), &1.0.into())
+            .is_err()
+    );
 }
 
 #[test]
@@ -325,7 +330,7 @@ fn plural_categories() {
         ]
     );
     assert_eq!(
-        russian.select_range(&1.0.into(), &2.0.into()),
+        russian.select_range(&Cache::default(), &1.0.into(), &2.0.into()),
         Ok(Category::Few)
     );
     let categories: Vec<_> = russian.categories().unwrap().map(Named::as_str).collect();

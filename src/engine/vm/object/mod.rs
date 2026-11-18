@@ -2,10 +2,12 @@
 
 mod accessor;
 mod array;
+mod array_creation;
 mod class;
 mod condition;
 mod define;
 mod descriptor;
+mod element_writer;
 mod elements;
 mod final_object;
 mod get;
@@ -40,6 +42,7 @@ pub use condition::{
 pub(crate) use condition::may_be_special_property;
 pub use define::validate_property_descriptor;
 pub use descriptor::PropertyDescriptor;
+pub use element_writer::{ElementWriter, HoleMode};
 pub use elements::{Elements, ElementsMut, Int32Elements, PutDirectIndexMode};
 pub use final_object::JsFinalObject;
 pub use immutable_array::ImmutableArray;

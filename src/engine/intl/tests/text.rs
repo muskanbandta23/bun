@@ -13,7 +13,7 @@ use support::{locales, narrow, units, wide};
 fn segments(granularity: Granularity, text: StringRef) -> Vec<Segment> {
     let cache = Cache::default();
     let segmenter = Segmenter::new(&cache, &locales(&cache, "en"), granularity).unwrap();
-    let segments = segmenter.segment(text);
+    let segments = segmenter.segment(text).unwrap();
     let iterator = segments.iterate();
     let all: Vec<_> = core::iter::from_fn(|| iterator.next().unwrap()).collect();
     assert_eq!(iterator.next(), Ok(None));

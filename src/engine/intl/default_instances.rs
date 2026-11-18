@@ -20,7 +20,7 @@ impl<T> Default for DefaultInstances<T> {
 }
 
 impl<T> DefaultInstances<T> {
-    #[inline]
+    #[inline(always)]
     pub(crate) fn with<R>(
         &self,
         cache: &Cache,
@@ -28,9 +28,19 @@ impl<T> DefaultInstances<T> {
         construct: impl FnOnce(&[LanguageTag]) -> Result<T>,
         call: impl FnOnce(&T) -> Result<R>,
     ) -> Result<R> {
-        let Some(locale) = locale else {
-            return call(self.without_locale.get_or_try_init(|| construct(&[]))?);
-        };
+        match locale {
+            Some(locale) => self.with_locale(cache, locale, construct, call),
+            None => call(self.without_locale.get_or_try_init(|| construct(&[]))?),
+        }
+    }
+
+    fn with_locale<R>(
+        &self,
+        cache: &Cache,
+        locale: &StringImpl,
+        construct: impl FnOnce(&[LanguageTag]) -> Result<T>,
+        call: impl FnOnce(&T) -> Result<R>,
+    ) -> Result<R> {
         let mut last = self.last.borrow_mut();
         match &mut *last {
             Some((written, instance)) if **written == *locale => call(instance),

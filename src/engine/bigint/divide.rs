@@ -55,12 +55,7 @@ impl Fill for Quotient<'_> {
     #[inline]
     fn fill(self, out: &mut [u64], poll: Poll<'_>) -> Result<Filled, Error> {
         let out = &mut out[..self.length];
-        match *self.b {
-            [divisor] => {
-                digits::divide_by_digit(out, self.a, divisor);
-            }
-            _ => digits::divide(Some(out), None, self.a, self.b, &mut Work::new(poll))?,
-        }
+        digits::divide(out, &mut [], self.a, self.b, &mut Work::new(poll))?;
         Ok(Filled::whole(self.is_negative, out))
     }
 }
@@ -111,7 +106,7 @@ impl Fill for Remainder<'_> {
     #[inline]
     fn fill(self, out: &mut [u64], poll: Poll<'_>) -> Result<Filled, Error> {
         let out = &mut out[..self.b.len()];
-        digits::divide(None, Some(out), self.a, self.b, &mut Work::new(poll))?;
+        digits::divide(&mut [], out, self.a, self.b, &mut Work::new(poll))?;
         Ok(Filled::trimmed(self.is_negative, out))
     }
 }

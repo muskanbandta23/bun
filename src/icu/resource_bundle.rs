@@ -3,6 +3,7 @@
 use core::ffi::{CStr, c_char};
 use core::ptr;
 
+use crate::argument::locale_id;
 use crate::error::Status;
 use crate::ffi::{adopt, call, open};
 use crate::{Error, Result};
@@ -44,15 +45,23 @@ fn position(index: usize) -> Result<i32> {
 impl ResourceBundle {
     /// The root of the tree of a locale, which falls back to those of its parents for a key that it lacks.
     pub fn open(locale: &CStr) -> Result<ResourceBundle> {
+        let locale = locale_id(locale)?;
         // SAFETY: `locale` is terminated, and no package means the data of ICU itself.
-        open(|status| unsafe { ures_open(ptr::null(), locale.as_ptr(), status) })
-            .map(ResourceBundle)
+        open(|status| unsafe { ures_open(ptr::null(), locale, status) }).map(ResourceBundle)
     }
 
     /// The root of the tree of this name, with no fallback to another.
     pub fn open_direct(name: &CStr) -> Result<ResourceBundle> {
         // SAFETY: `name` is terminated, and no package means the data of ICU itself.
         open(|status| unsafe { ures_openDirect(ptr::null(), name.as_ptr(), status) })
+            .map(ResourceBundle)
+    }
+
+    /// The names of time zones that `locale` does not share with its parents.
+    pub fn open_zone_names(locale: &CStr) -> Result<ResourceBundle> {
+        let locale = locale_id(locale)?;
+        // SAFETY: both strings are terminated, and the first names a part of the data of ICU itself.
+        open(|status| unsafe { ures_openDirect(c"ICUDATA-zone".as_ptr(), locale, status) })
             .map(ResourceBundle)
     }
 

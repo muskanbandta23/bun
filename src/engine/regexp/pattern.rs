@@ -1,0 +1,42 @@
+use bun_engine_text::{AllocError, Text};
+
+use crate::construct::{GroupNames, build};
+use crate::tree::Tree;
+use crate::{Error, Flags, Form};
+
+/// A parsed pattern.
+pub struct Pattern {
+    tree: Tree,
+    names: GroupNames,
+}
+
+impl Pattern {
+    pub fn new(source: Text<'_>, flags: Flags) -> Result<Pattern, Error> {
+        let (tree, names) = build(source, flags)?;
+        Ok(Pattern { tree, names })
+    }
+
+    #[inline]
+    pub fn tree(&self) -> &Tree {
+        &self.tree
+    }
+
+    /// The whole match does not count.
+    #[inline]
+    pub fn group_count(&self) -> u16 {
+        self.tree.group_count()
+    }
+
+    #[inline]
+    pub fn group_names(&self) -> &GroupNames {
+        &self.names
+    }
+
+    pub fn into_group_names(self) -> GroupNames {
+        self.names
+    }
+
+    pub fn form(&self) -> Result<Option<Form>, AllocError> {
+        Form::of(&self.tree)
+    }
+}

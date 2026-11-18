@@ -268,11 +268,11 @@ impl MacroAssembler {
             self.asm.shift_cl(op, size, dst);
         } else {
             let scratch = self.scratch_gpr();
-            self.asm.mov(Width::W64, scratch, RCX);
+            self.copy(Width::W64, scratch, RCX);
             self.asm.mov(Width::W32, RCX, amount);
             self.move_int(width, dst, if src == RCX { scratch } else { src });
             self.asm.shift_cl(op, size, dst);
-            self.asm.mov(Width::W64, RCX, scratch);
+            self.copy(Width::W64, RCX, scratch);
         }
     }
 

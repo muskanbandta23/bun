@@ -23,6 +23,16 @@ pub enum FloatFlags {
     Either(Cc, Cc),
 }
 
+impl FloatFlags {
+    pub fn inverted(self) -> Self {
+        match self {
+            Self::One(cc) => Self::One(cc.inverted()),
+            Self::Either(Cc::Mi, _) => FloatCond::EqOrUnordered.into(),
+            Self::Either(..) => FloatCond::Ne.into(),
+        }
+    }
+}
+
 impl From<FloatCond> for FloatFlags {
     fn from(cond: FloatCond) -> Self {
         Self::One(match cond {
@@ -97,10 +107,8 @@ impl MacroAssembler {
 impl FloatAssembly for MacroAssembler {
     #[inline]
     fn move_float(&mut self, dst: Fpr, src: Fpr) {
-        if dst != src {
-            self.asm
-                .float_unary(FloatUnary::Fmov, FloatWidth::F64, dst, src);
-        }
+        // Some processors take no time for this, and do for `fmov`.
+        self.move_vector(dst, src);
     }
 
     #[inline]

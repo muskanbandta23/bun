@@ -118,14 +118,8 @@ typedef int mode_t;
 #endif
 #endif
 
-#if ASSERT_ENABLED
-#include <JavaScriptCore/IntegrityInlines.h>
-#endif
-
-#if OS(DARWIN)
 #include <unicode/uchar.h>
 #include <unicode/uversion.h>
-#endif
 
 #pragma mark - Node.js Process
 

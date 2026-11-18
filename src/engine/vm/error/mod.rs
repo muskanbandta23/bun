@@ -20,7 +20,7 @@ pub use exception::Exception;
 pub use source_appender::SourceAppender;
 pub use stack_frame::{StackFrame, WasmNames, stack_trace_text};
 pub use stack_trace::{StackTrace, StackTraceRequest, capture_stack_trace};
-pub use stack_visitor::{FrameKind, StackVisitor, VisitedFrame, WasmFrame};
+pub use stack_visitor::{FrameKind, SampledWasmFrame, StackVisitor, VisitedFrame, WasmFrame, WasmTier};
 pub use termination::{AfterDeferral, DeferTermination, TerminationDeadline};
 pub use throw::Message;
 
@@ -31,7 +31,6 @@ use crate::traps::BlockedThread;
 #[derive(Default)]
 pub(crate) struct State {
     caches: caches::Caches,
-    entry_contexts: stack_visitor::EntryContexts,
     termination_deferral: termination::Deferral,
     has_had_deadlines: Cell<bool>,
     pub(crate) blocked_thread: BlockedThread,

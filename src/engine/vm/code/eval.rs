@@ -184,7 +184,7 @@ pub fn execute_indirect_eval(cx: &mut Cx, executable: Gc<EvalExecutable>) -> JsR
 
 fn execute(cx: &mut Cx, executable: Gc<EvalExecutable>, scope: Gc<JsCell>) -> JsResult<Value> {
     cx.check_stack()?;
-    cx.ensure_can_run(executable.provider())?;
+    cx.ensure_can_run(executable.anchor().provider())?;
     declare(cx, &executable.unit().declarations, scope)?;
     cx.execute(executable.upcast(), scope, cx.global_this().into())
 }

@@ -68,6 +68,9 @@ impl DisplayNames {
     }
 
     pub fn of_locale(&self, code: &CStr) -> Result<Option<Buffer<u16>>> {
+        if locale_id(code).is_err() {
+            return Ok(None);
+        }
         // SAFETY: the object is open, `code` is terminated, and `out` has room for `capacity`.
         name_of(code, |out, capacity, status| unsafe {
             uldn_localeDisplayName(self.0.as_ptr(), code.as_ptr(), out, capacity, status)

@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use rustc_attr_ir::LangItem;
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
-use rustc_errors::Diag;
+use rustc_errors::{Diag, EmissionOverride, Level};
 use rustc_hir::def_id::DefId;
 use rustc_infer::infer::TyCtxtInferExt;
 use rustc_middle::mir::{BasicBlockData, TerminatorKind};
@@ -31,6 +31,7 @@ pub struct Types<'tcx> {
     refers: Cache<'tcx, bool>,
     points_to_references: Cache<'tcx, bool>,
     lends: Cache<'tcx, bool>,
+    has_capability: Cache<'tcx, bool>,
     can_allocate: Cache<'tcx, bool>,
     has_unknown_code: Cache<'tcx, bool>,
     has_callback: Cache<'tcx, bool>,
@@ -62,7 +63,7 @@ struct Pointee<'tcx> {
 
 #[derive(Clone, Copy, PartialEq)]
 enum Ownership {
-    /// A raw pointer. It owns if a type around it has a destructor and no lifetime.
+    /// A raw pointer. It owns if a type around it has a destructor and does not borrow what it points to.
     Pointer,
     /// A pointer beside a `PhantomData`, in a type that is `Copy`. It owns once a type around it is not.
     Marker,
@@ -82,6 +83,7 @@ impl<'tcx> Types<'tcx> {
             refers: Default::default(),
             points_to_references: Default::default(),
             lends: Default::default(),
+            has_capability: Default::default(),
             can_allocate: Default::default(),
             has_unknown_code: Default::default(),
             has_callback: Default::default(),
@@ -92,7 +94,8 @@ impl<'tcx> Types<'tcx> {
     }
 
     pub fn report(&self, rule: &str, span: Span, message: String) -> Diag<'tcx> {
-        let mut diagnostic = self.tcx.dcx().struct_span_warn(span, message);
+        let level = Level::Warning(Some(EmissionOverride::Forced { lint_id: None }));
+        let mut diagnostic = Diag::new(self.tcx.dcx(), level, message).with_span(span);
         diagnostic.is_lint(format!("rootcheck::{rule}"), false, None);
         diagnostic
     }
@@ -260,17 +263,43 @@ impl<'tcx> Types<'tcx> {
                     .any(|it| self.contains_inline(env, it, part)))
     }
 
-    /// Whether code that is given such a value can allocate in the heap.
-    pub fn can_allocate(&self, env: TypingEnv<'tcx>, ty: Ty<'tcx>) -> bool {
-        self.reaches(&self.can_allocate, env, ty, |ty| match *ty.kind() {
+    /// Whether it has a `Vm`, a `Cx` or a `Heap` in it.
+    pub fn has_capability(&self, env: TypingEnv<'tcx>, ty: Ty<'tcx>) -> bool {
+        self.reaches(&self.has_capability, env, ty, |ty| match *ty.kind() {
             ty::Adt(def, _) if self.engine.capabilities.contains(&def.did()) => Some(true),
-            ty::Adt(def, _) if def.is_phantom_data() => Some(false),
-            _ if self.declared_polarity(ty) == Some(ImplPolarity::Negative) => Some(false),
-            _ if self.is_upper(ty) => (self.constituents(env, ty).into_iter())
-                .any(|it| self.has_unknown_code(env, it))
-                .then_some(true),
-            _ => None,
+            _ => self.gives_no_access(ty).then_some(false),
         })
+    }
+
+    /// As `&Vm` and `Option<&Heap>` do.
+    pub fn names_capability(&self, ty: Ty<'tcx>) -> bool {
+        let mut walker = ty.walk();
+        while let Some(argument) = walker.next() {
+            match argument.as_type().map(|it| it.kind()) {
+                Some(ty::Adt(def, _)) if self.engine.capabilities.contains(&def.did()) => {
+                    return true;
+                }
+                Some(ty::FnPtr(..) | ty::Dynamic(..)) => walker.skip_current_subtree(),
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// Whether code that is given such a value may be able to allocate in the heap.
+    pub fn can_allocate(&self, env: TypingEnv<'tcx>, ty: Ty<'tcx>) -> bool {
+        self.has_capability(env, ty)
+            || self.reaches(&self.can_allocate, env, ty, |ty| {
+                if self.gives_no_access(ty) {
+                    return Some(false);
+                }
+                let mut inside = self.is_upper(ty).then(|| self.constituents(env, ty))?.into_iter();
+                inside.any(|it| self.has_unknown_code(env, it)).then_some(true)
+            })
+    }
+
+    fn gives_no_access(&self, ty: Ty<'tcx>) -> bool {
+        ty.is_phantom_data() || self.declared_polarity(ty) == Some(ImplPolarity::Negative)
     }
 
     /// Whether code that knows nothing of the engine finds something in it to call, of which the type does not say
@@ -412,7 +441,15 @@ impl<'tcx> Types<'tcx> {
             }));
         }
         let is_copy = tcx.lang_items().copy_trait().is_some_and(|it| self.implements(this, it));
-        let borrows = tcx.generics_of(def.did()).own_counts().lifetimes != 0;
+        // `Drain<'a, T>` needs `T: 'a`. A vector in an arena does not.
+        let clauses = tcx.clauses_of(def.did()).clauses.iter();
+        let outliving: Vec<_> = (clauses.filter_map(|it| it.0.as_type_outlives_clause()))
+            .map(|it| it.skip_binder().0.into())
+            .collect();
+        let borrows = |pointee: Ty<'tcx>| {
+            tcx.generics_of(def.did()).own_counts().lifetimes != 0
+                && (!pointee.has_param() || pointee.walk().any(|it| outliving.contains(&it)))
+        };
         let is_ours = self.engine.is_in_workspace(def.did());
         // The private ones of other crates are guards that put things back in place.
         let frees = def.has_dtor(tcx) && (is_ours || tcx.visibility(def.did()).is_public());
@@ -424,7 +461,7 @@ impl<'tcx> Types<'tcx> {
                 return true;
             };
             let takes_ownership = match pointee.ownership {
-                Ownership::Pointer if borrows => return false,
+                Ownership::Pointer if borrows(pointee.ty) => return false,
                 Ownership::Pointer => frees,
                 Ownership::Marker => !is_copy,
                 Ownership::Owned => !is_ours,

@@ -587,6 +587,7 @@ version = "0.0.0"
 dependencies = [
  "bun_engine_baseline",
  "bun_engine_builtins",
+ "bun_engine_bytecode",
  "bun_engine_inspector",
  "bun_engine_interpreter",
  "bun_engine_intl",
@@ -703,6 +704,7 @@ dependencies = [
  "bun_engine_bigint",
  "bun_engine_bytecode",
  "bun_engine_date",
+ "bun_engine_exec_memory",
  "bun_engine_inspector",
  "bun_engine_macros",
  "bun_engine_number",
@@ -736,8 +738,10 @@ name = "bun_engine_inspector"
 version = "0.0.0"
 dependencies = [
  "bun_engine_bytecode",
+ "bun_engine_exec_memory",
  "bun_engine_macros",
  "bun_engine_number",
+ "bun_engine_platform",
  "bun_engine_regexp",
  "bun_engine_standalone",
  "bun_engine_syntax",
@@ -745,6 +749,7 @@ dependencies = [
  "bun_engine_vm",
  "bun_threading",
  "hashbrown 0.15.5",
+ "libc",
  "smallvec",
 ]
 
@@ -804,6 +809,8 @@ name = "bun_engine_optimizer"
 version = "0.0.0"
 dependencies = [
  "bitflags",
+ "bun_alloc",
+ "bun_engine",
  "bun_engine_asm",
  "bun_engine_bytecode",
  "bun_engine_codegen",
@@ -954,6 +961,7 @@ dependencies = [
  "bun_engine_text",
  "bun_engine_unicode",
  "bun_highway",
+ "bun_pod",
  "bun_simdutf_sys",
  "bun_threading",
  "getrandom",
@@ -2049,6 +2057,7 @@ dependencies = [
  "bun_http1",
  "bun_http_jsc",
  "bun_http_types",
+ "bun_icu",
  "bun_install",
  "bun_install_jsc",
  "bun_install_types",

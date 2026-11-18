@@ -206,13 +206,13 @@ public:
     ENGINE_DECLARE_CLASS(ArrayBuffer)
 
     // Becomes the object that stands for the buffer.
-    static JSArrayBuffer* create(VM& vm, Structure* structure, RefPtr<ArrayBuffer>&& buffer, size_t bytesAlreadyReported = 0) { return Engine::js_array_buffer_create(vm, structure, *buffer, bytesAlreadyReported); }
+    static JSArrayBuffer* create(VM& vm, Structure* structure, RefPtr<ArrayBuffer>&& buffer) { return Engine::js_array_buffer_create(vm, structure, *buffer); }
     // The object that stands for the buffer, which is made in that realm if there is none.
     static JSArrayBuffer* wrap(JSGlobalObject* globalObject, ArrayBuffer& buffer)
     {
         if (auto* wrapper = buffer.wrapper())
             return wrapper;
-        return Engine::js_array_buffer_create(globalObject->vm(), globalObject->arrayBufferStructure(buffer.sharingMode()), buffer, 0);
+        return Engine::js_array_buffer_create(globalObject->vm(), globalObject->arrayBufferStructure(buffer.sharingMode()), buffer);
     }
 
     ArrayBuffer* impl() const { return Engine::fieldAt<ArrayBuffer*>(this, Engine::Layout::JsArrayBuffer_buffer); }
@@ -464,7 +464,9 @@ public:
         return cast(Engine::uint8_array_adopt(vm, structure, bytes.data(), bytes.size()));
     }
     // Without a length it reaches to the end of the buffer.
-    static JSGenericTypedArrayView* create(JSGlobalObject* globalObject, Structure* structure, RefPtr<ArrayBuffer>&& buffer, size_t byteOffset, std::optional<size_t> length) { return cast(JSArrayBufferView::create(globalObject, structure, *buffer, byteOffset, length)); }
+    static JSGenericTypedArrayView* create(JSGlobalObject* globalObject, Structure* structure, RefPtr<ArrayBuffer>&& buffer, size_t byteOffset, std::optional<size_t> length) { return createOn(globalObject, structure, *buffer, byteOffset, length); }
+    // For the buffer of an object that is alive.
+    static JSGenericTypedArrayView* createOn(JSGlobalObject* globalObject, Structure* structure, ArrayBuffer& buffer, size_t byteOffset, std::optional<size_t> length) { return cast(JSArrayBufferView::create(globalObject, structure, buffer, byteOffset, length)); }
 
     size_t byteLength() const { return length() * sizeof(ElementType); }
     std::span<const uint8_t> span() const { return { static_cast<const uint8_t*>(vector()), byteLength() }; }

@@ -207,6 +207,31 @@ inline FunctionExecutable* linkStaticBuiltin(VM& vm, const char* text, const Bui
     return Engine::static_builtin_link(vm, reinterpret_cast<const uint8_t*>(text), metadata, name, visibility, ability == ConstructAbility::CanConstruct);
 }
 
+// An ordinary function in strict code: not async, no generator, outside any class, and without a direct `eval`.
+struct KnownFunction {
+    unsigned parametersStart;
+    unsigned end;
+    unsigned parameterCount;
+};
+ENGINE_CHECK_SIZE(KnownFunction, sizeOfKnownFunction);
+
+struct KnownCapture {
+    unsigned nameStart;
+    unsigned nameLength;
+    bool mayBeAssigned;
+};
+ENGINE_CHECK_SIZE(KnownCapture, sizeOfKnownCapture);
+
+// Inner functions in one scope of a function, which the parser can skip, and all variables of that scope that they refer to.
+struct KnownFunctions {
+    void tellParser(VM& vm, SourceProvider& provider) const { Engine::source_add_known_functions(vm, provider, functions.span(), captures.span()); }
+    // Null if the parser finds the same.
+    String check(VM& vm, UnlinkedFunctionExecutable& outer) const { return Engine::unlinked_function_check_known_functions(outer, vm, functions.span(), captures.span()); }
+
+    Vector<KnownFunction, 64> functions;
+    Vector<KnownCapture, 128> captures;
+};
+
 struct JSTextPosition {
     int offset { -1 };
 };

@@ -71,7 +71,7 @@ fn resolved_options(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let categories = this.rules.categories().or_throw(cx)?;
     let categories = values_to_array(cx, categories.map(|category| Ok(named(cx, category))))?;
 
-    let options = Record::with_locale(cx, this.rules.locale());
+    let options = Record::with_locale(cx, this.rules.locale().string().clone());
     options.put_named(names::r#type, resolved.kind);
     options.put_named(names::notation, resolved.notation);
     if resolved.notation == Notation::Compact {

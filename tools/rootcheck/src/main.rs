@@ -15,6 +15,8 @@ extern crate rustc_infer;
 extern crate rustc_interface;
 extern crate rustc_lint_defs;
 extern crate rustc_middle;
+extern crate rustc_mir_dataflow;
+extern crate rustc_mir_transform;
 extern crate rustc_span;
 extern crate rustc_trait_selection;
 
@@ -29,9 +31,11 @@ mod types;
 use std::process::ExitCode;
 
 use rustc_driver::{Callbacks, Compilation};
-use rustc_interface::interface::Compiler;
+use rustc_hir::def_id::LocalDefId;
+use rustc_interface::interface::{Compiler, Config};
 use rustc_middle::ty::TyCtxt;
-use rustc_span::Symbol;
+use rustc_mir_transform::run_analysis_to_runtime_passes;
+use rustc_span::{ErrorGuaranteed, Symbol};
 
 use crate::engine::Engine;
 
@@ -40,6 +44,30 @@ const LIST_LENDERS: &str = "ROOTCHECK_LENDERS";
 struct Rootcheck;
 
 impl Callbacks for Rootcheck {
+    /// These work on a copy, so that the borrow checker can be asked again afterwards.
+    fn config(&mut self, config: &mut Config) {
+        config.override_queries = Some(|_, providers| {
+            providers.queries.mir_drops_elaborated_and_const_checked = |tcx, def_id| {
+                if tcx.is_coroutine(def_id.to_def_id()) {
+                    tcx.ensure_done().mir_coroutine_witnesses(def_id);
+                }
+                let mut body = tcx.mir_promoted(def_id).0.borrow().clone();
+                body.tainted_by_errors = body.tainted_by_errors.or(borrow_check(tcx, def_id));
+                run_analysis_to_runtime_passes(tcx, &mut body);
+                tcx.alloc_steal_mir(body)
+            };
+            providers.queries.promoted_mir = |tcx, def_id| {
+                if tcx.is_constructor(def_id.to_def_id()) {
+                    return tcx.arena.alloc(Default::default());
+                }
+                borrow_check(tcx, def_id);
+                let mut bodies = tcx.mir_promoted(def_id).1.borrow().clone();
+                bodies.iter_mut().for_each(|body| run_analysis_to_runtime_passes(tcx, body));
+                tcx.arena.alloc(bodies)
+            };
+        });
+    }
+
     /// Has cargo check the crate again when this program changes.
     fn after_expansion<'tcx>(&mut self, _: &Compiler, tcx: TyCtxt<'tcx>) -> Compilation {
         if Engine::is_visible(tcx) {
@@ -59,14 +87,21 @@ impl Callbacks for Rootcheck {
             if std::env::var_os(LIST_LENDERS).is_some() {
                 borrows::list_lenders(&cx);
             }
-            let suspects = borrows::find_suspects(&cx);
             let calls = calls::Calls::new(&cx);
             let instantiations = calls::check(&calls, &cx);
-            borrows::report(&calls, &cx, &instantiations, suspects);
+            items::check_visited(&cx, &calls);
+            let trusting = calls::Calls::going_by_signatures(&cx);
+            calls::check_signatures(&trusting, &instantiations);
+            borrows::check(&cx, &calls, &trusting, &instantiations);
             allow::check(&cx);
         }
         Compilation::Continue
     }
+}
+
+fn borrow_check(tcx: TyCtxt<'_>, def_id: LocalDefId) -> Option<ErrorGuaranteed> {
+    let root = tcx.typeck_root_def_id_local(def_id);
+    (!tcx.is_synthetic_mir(def_id)).then(|| tcx.mir_borrowck(root).err()).flatten()
 }
 
 fn main() -> ExitCode {

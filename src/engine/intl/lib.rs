@@ -3,7 +3,6 @@
 #![forbid(unsafe_code)]
 #![feature(maybe_uninit_fill, negative_impls, once_cell_try)]
 #![allow(improper_ctypes_definitions)]
-#![expect(dead_code, reason = "the constructors that use it are to come")]
 
 #[macro_use]
 mod options;

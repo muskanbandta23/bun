@@ -7,7 +7,8 @@ use std::rc::Rc;
 
 use bun_engine_bytecode::{
     ArrayLiteral, Body, Code, CodeFlags, CodeKind, Constant, FunctionIndex, FunctionRef,
-    IdentifierIndex, Instructions, Opcode, Position, ScopeIndex, Specialization, TemplateSite,
+    IdentifierIndex, Instructions, Opcode, Position, Register, ScopeIndex, Specialization,
+    SuspendPoint, SuspendPointIndex, TemplateSite,
 };
 use bun_engine_macros::cell;
 use bun_engine_text::{Identifier, PropertyName, names};
@@ -22,7 +23,7 @@ use crate::{
     ScopeTemplate, ScriptExecutable, SourceProviderRef, TypeFlags, Value, ValueVec, Visitor, Vm,
 };
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 #[repr(u8)]
 pub enum Tier {
     Interpreter,
@@ -52,6 +53,12 @@ pub struct CodeOrigin {
 pub trait CompiledCode: GcFree + Any {
     /// What the call site slot of a frame stands for.
     fn origin_of_call_site(&self, call_site: u32) -> CodeOrigin;
+
+    /// Whether `origin_of_call_site` knows the number, which may be anything.
+    fn has_call_site(&self, call_site: u32) -> bool;
+
+    /// What the instruction at the address, which may be anything, was made for. See `Vm::records_code_origins`.
+    fn origin_of_address(&self, address: usize) -> Option<CodeOrigin>;
 
     fn inline_frame(&self, vm: &Vm, index: u32) -> InlineFrame;
 
@@ -128,6 +135,8 @@ pub struct CodeBlock {
     tier: Cell<Tier>,
     is_jettisoned: Cell<bool>,
     saved_words: u32,
+    suspend_points: *const SuspendPoint,
+    saved_registers: *const Register,
     /// How many breakpoints may be hit in the code.
     debugger_requests: Cell<u32>,
     alternative: Option<Gc<CodeBlock>>,
@@ -186,6 +195,8 @@ impl CodeBlock {
             tier: Cell::new(Tier::Interpreter),
             is_jettisoned: Cell::new(false),
             saved_words: code.body.saved_words(),
+            suspend_points: code.body.suspend_points().as_ptr(),
+            saved_registers: code.body.all_saved_registers().as_ptr(),
             debugger_requests: Cell::new(0),
             alternative: None,
             code,
@@ -227,6 +238,8 @@ impl CodeBlock {
             tier: Cell::new(tier),
             is_jettisoned: Cell::new(false),
             saved_words: self.saved_words,
+            suspend_points: self.suspend_points,
+            saved_registers: self.saved_registers,
             debugger_requests: Cell::new(0),
             alternative: Some(self.baseline()),
             code: Rc::clone(&self.code),
@@ -387,6 +400,27 @@ impl CodeBlock {
     #[inline(always)]
     pub fn saved_words(&self) -> u32 {
         self.saved_words
+    }
+
+    /// # Safety
+    /// The code has that point.
+    #[inline(always)]
+    pub unsafe fn suspend_point_unchecked(&self, point: SuspendPointIndex) -> &SuspendPoint {
+        debug_assert!(point.index() < self.body().suspend_points().len());
+        // SAFETY: the caller's. The body is kept alive.
+        unsafe { &*self.suspend_points.add(point.index()) }
+    }
+
+    /// # Safety
+    /// As above.
+    #[inline(always)]
+    pub unsafe fn saved_registers_unchecked(&self, point: SuspendPointIndex) -> &[Register] {
+        // SAFETY: as above, and the range has been verified.
+        unsafe {
+            let range = self.suspend_point_unchecked(point).registers();
+            let first = self.saved_registers.add(range.start);
+            core::slice::from_raw_parts(first, range.end - range.start)
+        }
     }
 
     /// With `this`.

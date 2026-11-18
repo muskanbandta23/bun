@@ -68,10 +68,11 @@ pub(super) fn initialize(cx: &Cx) {
 #[inline(always)]
 pub(super) fn with_cache<T>(cx: &Cx, call: impl FnOnce(&Cache) -> Result<T>) -> JsResult<T> {
     let state = cx.intl_state().cast::<State>();
-    if state.shared.seen_language_changes.get() != LANGUAGE_CHANGES.load(Ordering::Relaxed) {
-        state.shared.follow_language_change();
+    let shared = &state.anchor().shared;
+    if shared.seen_language_changes.get() != LANGUAGE_CHANGES.load(Ordering::Relaxed) {
+        shared.follow_language_change();
     }
-    let cache = state.shared.cache.borrow();
+    let cache = shared.cache.borrow();
     let result = call(&cache);
     let allocated_bytes = cache.take_allocated_bytes();
     drop(cache);

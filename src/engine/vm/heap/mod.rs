@@ -226,7 +226,8 @@ pub struct DeferCollection<'a>(&'a Heap);
 impl Drop for DeferCollection<'_> {
     #[inline]
     fn drop(&mut self) {
-        self.0.end_deferral();
+        // SAFETY: begun by `defer_collection`.
+        unsafe { self.0.end_deferral() }
     }
 }
 
@@ -502,8 +503,10 @@ impl Heap {
         self.deferral_depth.update(|depth| depth + 1);
     }
 
+    /// # Safety
+    /// The caller has begun it.
     #[inline]
-    pub fn end_deferral(&self) {
+    pub unsafe fn end_deferral(&self) {
         self.deferral_depth.update(|depth| depth - 1);
     }
 
@@ -625,6 +628,23 @@ impl Heap {
                 !block.directory().allocator().is_free(cell)
             }
             Container::Block(block) => block.is_live(cell),
+        }
+    }
+
+    /// The cell that starts at `word`, which may be anything, if `is_live` holds for it. No marker is running.
+    pub fn live_cell_at(&self, word: usize) -> Option<Gc<JsCell>> {
+        let kind = if word & PRECISE_BIT != 0 {
+            let precise = self.precise.borrow();
+            precise.iter().find(|it| it.cell() == word)?.attributes.kind
+        } else {
+            let block = self.blocks.borrow().block_containing(word)?;
+            (block.cell_containing(word) == Some(word)).then_some(block.attributes.kind)?
+        };
+        // SAFETY: the start of a cell in memory of the heap.
+        unsafe {
+            let is_cell = kind == AllocationKind::Cell && self.is_live(word);
+            let cell = is_cell.then(|| Gc::<JsCell>::from_address(word));
+            cell.filter(|cell| !cell.shape_id().is_none())
         }
     }
 

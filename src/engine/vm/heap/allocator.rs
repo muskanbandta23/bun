@@ -88,13 +88,19 @@ impl Allocator {
     /// The address of a new cell, if that takes no call. The caller initializes it before the next allocation.
     #[inline(always)]
     pub fn try_bump(&self) -> Option<usize> {
+        self.try_bump_sized(self.cell_size())
+    }
+
+    #[inline(always)]
+    pub(super) fn try_bump_sized(&self, cell_size: usize) -> Option<usize> {
+        debug_assert!(cell_size == self.cell_size());
         #[cfg(debug_assertions)]
         if crate::options().collect_every_n_allocations != 0 {
             return None;
         }
         let cell = self.start.get();
         (cell < self.end.get()).then(|| {
-            self.start.set(cell + self.cell_size());
+            self.start.set(cell + cell_size);
             cell
         })
     }

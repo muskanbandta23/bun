@@ -9,7 +9,7 @@ use crate::error::IcuResult;
 use crate::language_tag::Key;
 use crate::language_tag::subtag::Subtag;
 use crate::locale_resolver::{LocaleResolver, ResolvedLocale};
-use crate::{KeywordValue, Result};
+use crate::{AvailableLocales, Cache, KeywordValue, LanguageTag, Result};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct NumberingSystem(Subtag);
@@ -68,6 +68,7 @@ impl NumberingSystem {
 }
 
 /// The locale of a constructor whose only relevant extension key is `nu`.
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct NumericLocale {
     locale: ResolvedLocale,
     numbering_system: Option<NumberingSystem>,
@@ -75,11 +76,11 @@ pub(crate) struct NumericLocale {
 
 impl NumericLocale {
     pub(crate) fn resolve(
-        cache: &crate::Cache,
-        requested: &[crate::LanguageTag],
+        cache: &Cache,
+        requested: &[LanguageTag],
         option: Option<&KeywordValue>,
     ) -> Result<NumericLocale> {
-        let available = crate::AvailableLocales::general();
+        let available = AvailableLocales::general();
         let mut resolver = LocaleResolver::new(cache, available, requested);
         let numbering_system = NumberingSystem::resolve(&mut resolver, option);
         Ok(NumericLocale {
@@ -88,7 +89,7 @@ impl NumericLocale {
         })
     }
 
-    pub(crate) fn tag(&self) -> &crate::LanguageTag {
+    pub(crate) fn tag(&self) -> &LanguageTag {
         self.locale.tag()
     }
 

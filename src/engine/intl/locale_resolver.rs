@@ -82,13 +82,22 @@ impl LocaleResolver {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct ResolvedLocale {
     tag: LanguageTag,
     data_locale_length: usize,
 }
 
 impl ResolvedLocale {
+    /// For a constructor that has no relevant extension keys.
+    pub(crate) fn new(
+        cache: &Cache,
+        available: &AvailableLocales,
+        requested: &[LanguageTag],
+    ) -> Result<ResolvedLocale> {
+        LocaleResolver::new(cache, available, requested).finish()
+    }
+
     pub(crate) fn tag(&self) -> &LanguageTag {
         &self.tag
     }
@@ -97,7 +106,7 @@ impl ResolvedLocale {
         &self.tag.as_bytes()[..self.data_locale_length]
     }
 
-    /// The locale whose data is used, with values of `ca`, `co` and `nu`.
+    /// The locale whose data is used, with values of `ca`, `co`, `hc` and `nu`.
     pub(crate) fn icu_locale(&self, keywords: &[(Key, &[u8])]) -> Result<CText> {
         let mut id = Buffer::from_slice(self.data_locale());
         let mut separator = b'@';
@@ -105,6 +114,7 @@ impl ResolvedLocale {
             let (key, value): (&[u8], _) = match key {
                 Key::CALENDAR => (b"calendar", calendar::icu_name(value)),
                 Key::COLLATION => (b"collation", collation::icu_name(value)),
+                Key::HOUR_CYCLE => (b"hours", value),
                 Key::NUMBERING_SYSTEM => (b"numbers", value),
                 _ => (key.as_bytes(), value),
             };

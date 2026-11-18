@@ -6,6 +6,7 @@ pub enum ErrorKind {
     RangeError,
     TypeError,
     OutOfMemory,
+    Interruption,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -16,6 +17,8 @@ pub enum Error {
     RangeQuoting(StringRef),
     Type(&'static str),
     OutOfMemory,
+    /// The poll function asked to stop. Whoever answered it has the reason.
+    Interrupted,
 }
 
 pub type Result<T> = core::result::Result<T, Error>;
@@ -33,6 +36,7 @@ impl Error {
             Error::Range(_) | Error::RangeQuoting(_) => ErrorKind::RangeError,
             Error::Type(_) => ErrorKind::TypeError,
             Error::OutOfMemory => ErrorKind::OutOfMemory,
+            Error::Interrupted => ErrorKind::Interruption,
         }
     }
 
@@ -43,6 +47,7 @@ impl Error {
             }
             Error::RangeQuoting(message) => message.clone(),
             Error::OutOfMemory => StringRef::from_literal("Out of memory"),
+            Error::Interrupted => StringRef::empty(),
         }
     }
 }

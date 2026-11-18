@@ -42,6 +42,11 @@ impl Summary {
     }
 }
 
+/// False only if [`Summary::is_near_limits`] is.
+pub fn may_be_near_limits(pattern: Text<'_>) -> bool {
+    pattern.len() > MAX_DEPTH || pattern.contains_unit(b'{'.into())
+}
+
 /// The early errors of a literal.
 pub fn check_syntax(pattern: Text<'_>, flags: Text<'_>) -> Result<(), Error> {
     let flags = Flags::parse(flags).ok_or(Error::InvalidFlags)?;

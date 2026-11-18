@@ -805,6 +805,7 @@ dependencies = [
  "bun_engine_standalone",
  "bun_engine_text",
  "bun_engine_unicode",
+ "bun_highway",
  "bun_pod",
  "smallvec",
 ]

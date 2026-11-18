@@ -1,4 +1,4 @@
-use core::cell::{Cell, RefCell};
+use core::cell::{Cell, OnceCell, RefCell};
 use core::mem::offset_of;
 use std::rc::Rc;
 
@@ -7,18 +7,18 @@ use bun_engine_bytecode::{
     Specialization, Visibility,
 };
 use bun_engine_macros::{Trace, cell};
-use bun_engine_text::{StringRef, Text};
+use bun_engine_text::{StringRef, Text, names};
 
 use super::eval::EvalKey;
 use crate::heap::{OnceBox, Owned};
 use crate::{
     CellType, CodeBlock, Cx, Field, Gc, GlobalObject, InlineWatchpointSet, Intrinsic, JsArray,
     JsCell, JsFunction, JsResult, JsString, NativeFunction, RealmSlot, ScopeTemplate, Shape,
-    SourceCode, SourceProviderRef, TracedMap, TypeFlags, Vm, WatchpointState, WeakField, call,
+    SourceCode, SourceProviderRef, TracedMap, TypeFlags, Visitor, Vm, WatchpointState, WeakField, call,
 };
 
 /// What a call goes through: it stores the code block in the new frame and calls the entry.
-#[cell(flags = TypeFlags::SHAPE_IS_IMMORTAL)]
+#[cell(flags = TypeFlags::SHAPE_IS_IMMORTAL, export = "engine_class_Executable")]
 pub struct Executable {
     base: JsCell,
     entries: [Cell<usize>; 2],
@@ -103,6 +103,7 @@ pub struct NativeExecutable {
     function: NativeFunction,
     constructor: NativeFunction,
     name: StringRef,
+    pub(self) cached_source_text: Field<Option<Gc<JsString>>>,
     length: u32,
     intrinsic: Intrinsic,
     visibility: Visibility,
@@ -141,6 +142,7 @@ impl NativeExecutable {
             function,
             constructor,
             name,
+            cached_source_text: None,
             length,
             intrinsic,
             visibility,
@@ -202,13 +204,23 @@ impl NativeExecutable {
         self.length
     }
 
+    pub fn source_text(&self, cx: &Cx) -> JsResult<Gc<JsString>> {
+        if let Some(text) = self.cached_source_text() {
+            return Ok(text);
+        }
+        let text = native_source_text(cx, self.name.text())?;
+        self.set_cached_source_text(Some(text));
+        Ok(text)
+    }
+
     /// Whether scripts see `bound ` in front of the name.
     pub fn is_named_as_bound(&self) -> &Cell<bool> {
         &self.is_named_as_bound
     }
 }
 
-#[cell(cell_type = ProgramExecutable..=FunctionExecutable)]
+#[cell(cell_type = ProgramExecutable..=FunctionExecutable, visit_children,
+    export = "engine_class_ScriptExecutable")]
 pub struct ScriptExecutable {
     base: Executable,
     provider: SourceProviderRef,
@@ -252,8 +264,34 @@ impl ScriptExecutable {
         }
     }
 
+    fn visit_children(&self, visitor: &mut Visitor) {
+        visitor.add_opaque_root(self.provider.opaque_root());
+    }
+
     pub fn provider(&self) -> &SourceProviderRef {
         &self.provider
+    }
+
+    /// The text that the positions in the code refer to, which lives no shorter than this.
+    pub fn code_provider(&self) -> SourceProviderRef {
+        match self.downcast::<FunctionExecutable>() {
+            Some(function) if function.is_default_constructor() => {
+                (self.heap().vm()).default_constructor_provider(&function.info)
+            }
+            _ => self.provider.clone(),
+        }
+    }
+
+    /// In that text. Of a function, from the parameters on.
+    pub fn code_range(&self) -> core::ops::Range<u32> {
+        match self.downcast::<FunctionExecutable>() {
+            Some(function) if function.is_default_constructor() => {
+                let length = function.info.default_constructor_source().len() - ")".len();
+                function.parameters_start()..length as u32
+            }
+            Some(function) => function.parameters_start()..function.info.range().end,
+            None => 0..self.provider.text().len() as u32,
+        }
     }
 
     /// The script, module or `eval` code that this is a part of.
@@ -474,6 +512,7 @@ pub struct FunctionExecutable {
     singleton_watchpoints: InlineWatchpointSet,
     pub(self) first_function: WeakField<Option<Gc<JsFunction>>>,
     pub(self) cached_source_text: Field<Option<Gc<JsString>>>,
+    name: OnceCell<StringRef>,
     intrinsic: Cell<Intrinsic>,
 }
 
@@ -494,6 +533,7 @@ impl FunctionExecutable {
             singleton_watchpoints: InlineWatchpointSet::new(WatchpointState::Clear),
             first_function: None,
             cached_source_text: None,
+            name: OnceCell::new(),
             intrinsic: Cell::new(Intrinsic::None),
         })
     }
@@ -541,19 +581,22 @@ impl FunctionExecutable {
         self.info.name_text(self.provider().text())
     }
 
+    /// What SetFunctionName gets, without the prefix. Allocates nothing in the heap.
+    pub fn name(&self) -> &StringRef {
+        self.name.get_or_init(|| {
+            let name = self.name_text();
+            if name == names::starDefaultText.text() && !self.info.has_own_name() {
+                return names::default.to_identifier().into_string();
+            }
+            StringRef::from_text(name)
+        })
+    }
+
     fn is_default_constructor(&self) -> bool {
         self.info.origin().contains(Origin::DEFAULT_CONSTRUCTOR)
     }
 
-    /// The text that the positions in the code refer to.
-    pub fn code_provider(&self) -> SourceProviderRef {
-        if self.is_default_constructor() {
-            return self.heap().vm().default_constructor_provider(&self.info);
-        }
-        self.provider().clone()
-    }
-
-    /// In that text.
+    /// In the text of `code_provider`.
     pub fn parameters_start(&self) -> u32 {
         if self.is_default_constructor() {
             return "(function ".len() as u32;
@@ -589,7 +632,7 @@ impl FunctionExecutable {
             return Ok(text);
         }
         let text = if self.is_private_builtin() && !self.info.kind().is_class_constructor() {
-            native_source_text(cx, self.name_text())?
+            native_source_text(cx, crate::anchor!(self).name_text())?
         } else {
             let range = self.info.text_range();
             let range = range.start as usize..range.end as usize;

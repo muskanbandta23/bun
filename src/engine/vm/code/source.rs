@@ -5,8 +5,8 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering, fence};
 
 use bun_engine_bytecode::Directives;
-use bun_engine_syntax::LineTable;
 use bun_engine_macros::FieldOffsets;
+use bun_engine_syntax::LineTable;
 use bun_engine_text::{StringRef, Text};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -40,6 +40,8 @@ pub struct SourceProvider {
     ref_count: AtomicU32,
     source_type: SourceType,
     has_live_exports: Cell<bool>,
+    /// The text has never been a value of the program.
+    is_static: bool,
     /// Zero until it is asked for, unless the embedder knows it.
     hash: Cell<u32>,
     /// Where the text starts in its document, from zero.
@@ -53,6 +55,8 @@ pub struct SourceProvider {
     source_mapping_url_directive: RefCell<Option<StringRef>>,
     /// For text that was made at run time: that of the code which made it.
     origin: Option<SourceProviderRef>,
+    /// Is reachable for as long as code from this text is. Null for none.
+    opaque_root: *const c_void,
     lines: OnceCell<LineTable>,
 }
 
@@ -68,6 +72,16 @@ impl SourceProviderBuilder {
 
     pub fn origin(mut self, origin: Option<&SourceProvider>) -> SourceProviderBuilder {
         self.0.origin = origin.map(|origin| SourceProviderRef::retain(origin.origin()));
+        self.opaque_root(origin.map_or_default(SourceProvider::opaque_root))
+    }
+
+    pub fn is_static(mut self, is_static: bool) -> SourceProviderBuilder {
+        self.0.is_static = is_static;
+        self
+    }
+
+    pub fn opaque_root(mut self, root: *const c_void) -> SourceProviderBuilder {
+        self.0.opaque_root = root;
         self
     }
 
@@ -97,6 +111,7 @@ impl SourceProvider {
             ref_count: AtomicU32::new(1),
             source_type,
             has_live_exports: Cell::new(false),
+            is_static: false,
             hash: Cell::new(0),
             id: Cell::new(0),
             source,
@@ -106,6 +121,7 @@ impl SourceProvider {
             start_line: 0,
             start_column: 0,
             origin: None,
+            opaque_root: core::ptr::null(),
             lines: OnceCell::new(),
         }))
     }
@@ -118,6 +134,10 @@ impl SourceProvider {
 
     pub fn is_from_embedder(&self) -> bool {
         !self.embedder_vtable.is_null()
+    }
+
+    pub fn is_static(&self) -> bool {
+        self.is_static
     }
 
     pub fn source(&self) -> &StringRef {
@@ -157,6 +177,10 @@ impl SourceProvider {
     /// What `import()` in the text is relative to.
     pub fn origin(&self) -> &SourceProvider {
         self.origin.as_deref().unwrap_or(self)
+    }
+
+    pub(super) fn opaque_root(&self) -> *const c_void {
+        self.opaque_root
     }
 
     pub fn id(&self) -> usize {

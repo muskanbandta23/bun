@@ -1,4 +1,4 @@
-//! The time zone of the process.
+//! The time zone of the process. Each word of the state stands by itself, so accesses need no order.
 
 use core::sync::atomic::{AtomicU64, Ordering};
 

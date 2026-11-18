@@ -1,3 +1,4 @@
+use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_engine_macros::export;
@@ -20,10 +21,15 @@ unsafe fn source_provider_construct(
     source_type: SourceType,
     start_line: i32,
     start_column: i32,
+    opaque_root: *const c_void,
+    is_static: bool,
 ) {
-    let provider = SourceProvider::build(StringRef::retain(source), url, source_type);
+    let provider = SourceProvider::build(StringRef::retain(source), url, source_type)
+        .start_position(start_line, start_column)
+        .opaque_root(opaque_root)
+        .is_static(is_static);
     // SAFETY: from the constructor.
-    unsafe { (provider.start_position(start_line, start_column)).finish_in(place) }
+    unsafe { provider.finish_in(place) }
 }
 
 #[export]

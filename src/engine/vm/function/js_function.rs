@@ -2,7 +2,7 @@ use core::mem::offset_of;
 
 use bun_engine_bytecode::{FunctionKind, Specialization, Visibility};
 use bun_engine_macros::{cell, native_abi, object_ops};
-use bun_engine_text::{PropertyName, StringRef, Text, names, private_names};
+use bun_engine_text::{PropertyName, StringRef, Text, names};
 
 use crate::call::native_not_a_constructor;
 use crate::code::native_source_text;
@@ -486,7 +486,13 @@ impl JsFunction {
 
     pub fn original_name(&self, cx: &Cx) -> JsResult<Gc<JsString>> {
         if let Some(executable) = self.script_executable() {
-            return self.prefixed_name(cx, &[executable.specified_name()]);
+            let executable = executable.anchor();
+            return match executable.info().kind() {
+                FunctionKind::Getter | FunctionKind::Setter => {
+                    self.prefixed_name(cx, &[executable.name().text()])
+                }
+                _ => Ok(JsString::from_impl_cached(cx, executable.name())),
+            };
         }
         let prefix = || JsString::from_name(cx, names::boundPrefix);
         if let Some(bound) = self.downcast::<JsBoundFunction>() {
@@ -496,7 +502,7 @@ impl JsFunction {
             return Ok(remote.target_name());
         }
         let executable = self.executable().cast::<NativeExecutable>();
-        let name = JsString::from_impl_cached(cx, executable.name());
+        let name = JsString::from_impl_cached(cx, executable.anchor().name());
         if executable.is_named_as_bound().get() {
             return JsString::concat(cx, prefix(), name);
         }
@@ -526,7 +532,7 @@ impl JsFunction {
         }
         let string = if let Some(symbol) = name.downcast::<JsSymbol>() {
             let (open, close) = (Text::from_ascii("["), Text::from_ascii("]"));
-            match symbol.symbol().description() {
+            match symbol.anchor().symbol().description() {
                 Some(text) if symbol.name().is_private() => self.prefixed_name(cx, &[text])?,
                 Some(text) => self.prefixed_name(cx, &[open, text, close])?,
                 None => self.prefixed_name(cx, &[])?,
@@ -565,7 +571,7 @@ impl JsFunction {
         } else if let Some(remote) = self.downcast::<JsRemoteFunction>() {
             remote.target_name()
         } else {
-            return native_source_text(cx, self.name().text());
+            return self.executable().cast::<NativeExecutable>().source_text(cx);
         };
         native_source_text(cx, name.view(cx)?.text())
     }
@@ -598,32 +604,13 @@ fn get_original_name(cx: &mut Cx, this: Value, _: PropertyName<'_>) -> JsResult<
 }
 
 impl FunctionExecutable {
-    fn is_default_export(&self) -> bool {
-        let name = self.name_text();
-        !self.info().has_own_name()
-            && (name == names::starDefaultText.text() || name == private_names::starDefault.text())
-    }
-
-    /// What SetFunctionName gets, without the prefix.
-    fn specified_name(&self) -> Text<'_> {
-        if self.is_default_export() {
-            names::default.text()
-        } else {
-            self.name_text()
-        }
-    }
-
     /// Empty if the function only has a name from where it stands.
     pub fn declared_name(&self) -> StringRef {
         if self.info().has_own_name() || self.info().kind() == FunctionKind::Method {
-            StringRef::from_text(self.name_text())
+            self.name().clone()
         } else {
             StringRef::empty()
         }
-    }
-
-    pub fn display_name(&self) -> StringRef {
-        StringRef::from_text(self.specified_name())
     }
 }
 
@@ -643,7 +630,7 @@ pub fn display_name(object: &JsObject) -> StringRef {
     }
     let function = object.as_object().cast::<JsFunction>();
     match function.script_executable() {
-        Some(executable) if !executable.is_builtin() => executable.display_name(),
+        Some(executable) if !executable.is_builtin() => executable.name().clone(),
         _ => function.name(),
     }
 }

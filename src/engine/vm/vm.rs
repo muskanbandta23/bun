@@ -818,7 +818,8 @@ impl Vm {
         bun_engine_exec_memory::address_range()
     }
 
-    pub(crate) fn will_collect(&self, _: Scope) {
+    pub(crate) fn will_collect(&self, scope: Scope) {
+        self.services.caches.will_collect(scope);
         // They go on writing their profiles without a barrier.
         for code_block in self.machine_frames().filter_map(CallFrame::code_block) {
             code_block.write_barrier_for_cell();

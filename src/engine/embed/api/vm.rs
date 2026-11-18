@@ -8,6 +8,8 @@ use bun_engine_vm::{
     AfterDeferral, Cx, Exception, Gc, RealmSlot, SourceProvider, Trap, Value, Vm, VmRef,
 };
 
+use super::console::CONSOLE_HOOKS;
+
 unsafe extern "C" {
     safe fn engine_host_destroy_vm_members(vm: &Vm);
     fn engine_host_delete_source_provider(provider: *mut SourceProvider);
@@ -23,6 +25,7 @@ fn vm_create(kind: HeapKind, static_atom_count: usize, realm_slot_count: usize) 
     // SAFETY: nothing else has it.
     let embedder = unsafe { vm.get() }.embedder();
     (embedder.destroy_members).set(Some(|vm| engine_host_destroy_vm_members(vm)));
+    embedder.console.set(Some(&CONSOLE_HOOKS));
     vm.into_raw().as_ptr()
 }
 
@@ -71,8 +74,9 @@ fn vm_delete_all_code(vm: &Vm) {
 }
 
 #[export]
-fn throw_value(cx: &Cx, value: Value) -> Option<Gc<Exception>> {
+fn throw_value(cx: &mut Cx, value: Value) -> Option<Gc<Exception>> {
     let _ = cx.throw(value);
+    cx.notify_debugger_of_exception();
     cx.exception()
 }
 

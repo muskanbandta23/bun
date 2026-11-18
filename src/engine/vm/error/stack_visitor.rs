@@ -333,6 +333,31 @@ impl Vm {
     }
 }
 
+impl Cx {
+    /// For what a call throws before the context of the callee is there or after it has gone. The innermost `skip`
+    /// frames are those of the callee.
+    pub(super) fn in_realm_of_caller(&self, skip: usize) -> &Cx {
+        let caller = StackVisitor::frames(self).nth(skip);
+        match caller.and_then(|it| it.callee?.realm()) {
+            Some(realm) => self.in_realm_shared(realm),
+            None => self,
+        }
+    }
+
+    /// Whether the innermost code is a constructor at the last of the steps that `[[Construct]]` takes.
+    pub(super) fn is_leaving_constructor(&self) -> bool {
+        let next_opcode = |frame: VisitedFrame<'_>| {
+            let code_block = frame
+                .code_block
+                .filter(|it| it.body().kind() == CodeKind::Construct)?;
+            let bytes = code_block.body().instructions();
+            let current = RawInstruction::read(bytes, frame.bytecode_offset)?;
+            code_block.opcode_at(frame.bytecode_offset + u32::from(current.size))
+        };
+        StackVisitor::frames(self).next().and_then(next_opcode) == Some(Opcode::Return)
+    }
+}
+
 /// What a call from native code is made on behalf of.
 pub(super) struct EntryContext {
     context: Value,
@@ -366,19 +391,25 @@ impl Cx {
 }
 
 impl Vm {
+    fn entries_with_context(&self) -> impl Iterator<Item = &EntryContext> {
+        // SAFETY: each is in the frame of a call of `with_entry_context` that has not returned.
+        let at = |entry: *const EntryContext| unsafe { entry.as_ref() };
+        let innermost = at(self.services.errors.entry_contexts.0.get());
+        core::iter::successors(innermost, move |entry| at(entry.previous))
+    }
+
+    /// Of the calls that have not returned, innermost first.
+    pub fn entry_contexts(&self) -> impl Iterator<Item = Value> {
+        self.entries_with_context().map(|entry| entry.context)
+    }
+
     /// # Safety
     /// The address of an entry frame that is on the stack.
     pub unsafe fn entry_context(&self, entry_frame: usize) -> Option<Value> {
         // SAFETY: the caller's.
         let outer = unsafe { EntryRecord::of(entry_frame) }.previous_top_entry_frame;
-        let mut next = self.services.errors.entry_contexts.0.get();
-        // SAFETY: each is in the frame of a call of `with_entry_context` that has not returned.
-        while let Some(entry) = unsafe { next.as_ref() } {
-            if entry.outer_entry_frame == outer {
-                return Some(entry.context);
-            }
-            next = entry.previous;
-        }
-        None
+        (self.entries_with_context())
+            .find(|entry| entry.outer_entry_frame == outer)
+            .map(|entry| entry.context)
     }
 }

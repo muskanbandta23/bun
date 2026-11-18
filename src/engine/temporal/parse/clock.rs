@@ -24,7 +24,7 @@ pub(crate) fn utc_offset(text: Text<'_>) -> Option<i64> {
 
 impl<T: CodeUnit> Cursor<'_, T> {
     /// Nanoseconds since midnight, and whether seconds were written.
-    #[inline]
+    #[inline(always)]
     fn clock(&mut self, last_second: u8) -> Option<(i64, bool)> {
         let mut seconds = u32::from(self.two_digits_up_to(23)?) * 3600;
         let mut fraction = 0;
@@ -46,13 +46,12 @@ impl<T: CodeUnit> Cursor<'_, T> {
         Some((nanoseconds, has_seconds))
     }
 
-    #[inline]
+    #[inline(always)]
     pub(super) fn time(&mut self) -> Option<PlainTime> {
         let (nanoseconds, _) = self.clock(60)?;
         Some(PlainTime::from_nanosecond_of_day(nanoseconds))
     }
 
-    #[inline]
     pub(super) fn utc_offset(&mut self) -> Option<(i64, bool)> {
         let sign = self.sign()?;
         let (nanoseconds, has_seconds) = self.clock(59)?;
@@ -60,7 +59,7 @@ impl<T: CodeUnit> Cursor<'_, T> {
     }
 
     /// An optional DateTimeUTCOffset.
-    #[inline]
+    #[inline(always)]
     pub(super) fn date_time_offset(&mut self) -> Option<Offset> {
         if self.eat_letter(b'Z') {
             return Some(Offset::Utc);

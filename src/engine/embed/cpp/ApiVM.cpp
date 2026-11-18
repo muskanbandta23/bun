@@ -19,7 +19,12 @@ RefPtr<VM> VM::tryCreate(HeapType heapType)
 {
     Options::freeze();
     void* memory = Engine::vm_create(heapType, Engine::StaticAtom::COUNT, Engine::RealmSlot::COUNT);
-    return adoptRef(new (memory) VM);
+    auto* vm = new (memory) VM;
+    if (Options::useControlFlowProfiler()) [[unlikely]]
+        vm->enableControlFlowProfiler();
+    if (Options::useSamplingProfiler()) [[unlikely]]
+        vm->ensureSamplingProfiler().start();
+    return adoptRef(vm);
 }
 
 extern "C" void engine_host_destroy_vm_members(VM* vm)
@@ -78,6 +83,9 @@ void ExceptionScope::verifyThatNoCheckIsOwed() const
         return;
     auto& thrown = m_vm.m_simulatedThrowLocation;
     fprintf(stderr, "ERROR: Unchecked JS exception:\n    This scope can throw a JS exception: %s @ %s:%u\n    But the exception was unchecked as of this scope: %s @ %s:%u\n", thrown.functionName, thrown.file, thrown.line, m_location.functionName, m_location.file, m_location.line);
+    if (m_vm.m_simulatedThrowStack)
+        dataLogLn("The simulated exception was thrown at:\n", m_vm.m_simulatedThrowStack->toString());
+    dataLogLn("Unchecked exception detected at:");
     WTFReportBacktrace();
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -86,6 +94,8 @@ void ExceptionScope::simulateThrow() const
 {
     m_vm.m_needsExceptionCheck = true;
     m_vm.m_simulatedThrowLocation = m_location;
+    if (Options::dumpSimulatedThrows()) [[unlikely]]
+        m_vm.m_simulatedThrowStack = WTF::StackTrace::captureStackTrace(100);
 }
 
 ThrowScope::ThrowScope(VM& vm, ExceptionEventLocation location)

@@ -703,10 +703,13 @@ dependencies = [
  "bun_engine_bigint",
  "bun_engine_bytecode",
  "bun_engine_date",
+ "bun_engine_inspector",
  "bun_engine_macros",
  "bun_engine_number",
  "bun_engine_platform",
+ "bun_engine_regexp",
  "bun_engine_standalone",
+ "bun_engine_temporal",
  "bun_engine_text",
  "bun_engine_unicode",
  "bun_engine_vm",
@@ -774,6 +777,7 @@ dependencies = [
  "bun_highway",
  "bun_icu",
  "bun_pod",
+ "bun_threading",
  "hashbrown 0.15.5",
  "smallvec",
 ]
@@ -861,6 +865,7 @@ version = "0.0.0"
 dependencies = [
  "bun_engine",
  "bun_engine_bytecode",
+ "bun_engine_date",
  "bun_engine_inspector",
  "bun_engine_intl",
  "bun_engine_macros",
@@ -898,6 +903,7 @@ dependencies = [
 name = "bun_engine_temporal"
 version = "0.0.0"
 dependencies = [
+ "bun_core",
  "bun_engine_date",
  "bun_engine_macros",
  "bun_engine_number",
@@ -1490,6 +1496,7 @@ dependencies = [
  "bun_uws",
  "bun_watcher",
  "bun_wyhash",
+ "bun_yarr",
  "libc",
  "scopeguard",
  "strum",
@@ -2028,6 +2035,8 @@ dependencies = [
  "bun_deflate",
  "bun_dns",
  "bun_dotenv",
+ "bun_engine_date",
+ "bun_engine_text",
  "bun_errno",
  "bun_event_loop",
  "bun_exe_format",

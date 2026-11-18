@@ -15,7 +15,8 @@ fn is_well_formed(units: &[u16]) -> bool {
     !block::any(Units(units, u16::is_surrogate)) || has_only_pairs(units)
 }
 
-fn has_only_pairs(units: &[u16]) -> bool {
+#[inline]
+pub(crate) fn has_only_pairs(units: &[u16]) -> bool {
     let (Some(first), Some(last)) = (units.first(), units.last()) else {
         return true;
     };

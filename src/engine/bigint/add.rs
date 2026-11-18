@@ -1,13 +1,14 @@
 use core::cmp::Ordering;
+use core::hint::select_unpredictable;
 
-use crate::{BigIntRef, Error, Fill, Filled, Outcome, Poll, digits};
+use crate::{BigIntRef, Error, Fill, Filled, MAX_LENGTH, Outcome, Poll, digits};
 
 const ONE: BigIntRef<'static> = BigIntRef {
     is_negative: false,
     digits: &[1],
 };
 
-#[inline]
+#[inline(always)]
 pub fn add<'a>(x: BigIntRef<'a>, y: BigIntRef<'a>) -> Outcome<impl Fill + 'a> {
     if x.is_zero() {
         return Outcome::Second;
@@ -15,23 +16,23 @@ pub fn add<'a>(x: BigIntRef<'a>, y: BigIntRef<'a>) -> Outcome<impl Fill + 'a> {
     sum(x, y.is_negative, y.digits)
 }
 
-#[inline]
+#[inline(always)]
 pub fn subtract<'a>(x: BigIntRef<'a>, y: BigIntRef<'a>) -> Outcome<impl Fill + 'a> {
     sum(x, !y.is_negative, y.digits)
 }
 
-#[inline]
+#[inline(always)]
 pub fn increment(x: BigIntRef<'_>) -> Outcome<impl Fill + '_> {
     sum(x, false, ONE.digits)
 }
 
-#[inline]
+#[inline(always)]
 pub fn decrement(x: BigIntRef<'_>) -> Outcome<impl Fill + '_> {
     sum(x, true, ONE.digits)
 }
 
 /// `-x - 1`
-#[inline]
+#[inline(always)]
 pub fn bitwise_not(x: BigIntRef<'_>) -> Outcome<impl Fill + '_> {
     let negated = BigIntRef {
         is_negative: !x.is_negative,
@@ -40,7 +41,7 @@ pub fn bitwise_not(x: BigIntRef<'_>) -> Outcome<impl Fill + '_> {
     sum(negated, true, ONE.digits)
 }
 
-#[inline]
+#[inline(always)]
 pub fn unary_minus(x: BigIntRef<'_>) -> Outcome<impl Fill + '_> {
     match digits::to_u128(x.digits) {
         Some(0) => Outcome::First,
@@ -57,10 +58,10 @@ impl Fill for Negation<'_> {
         self.0.digits.len()
     }
 
-    #[inline]
+    #[inline(always)]
     fn fill(self, out: &mut [u64], _: Poll<'_>) -> Result<Filled, Error> {
         let out = &mut out[..self.digit_count()];
-        out.copy_from_slice(self.0.digits);
+        digits::copy(out, self.0.digits);
         Ok(Filled::whole(!self.0.is_negative, out))
     }
 }
@@ -76,6 +77,29 @@ fn sum<'a>(x: BigIntRef<'a>, y_is_negative: bool, y: &'a [u64]) -> Outcome<Sum<'
             Outcome::small(x.is_negative != (a < b), u128::from(a.abs_diff(b)))
         };
     }
+    if let (&[_, .., a], &[.., b]) = (x.digits, y)
+        && x.digits.len() == y.len()
+    {
+        if adds {
+            return Outcome::large(Sum {
+                length: y.len() + usize::from(a >= !b),
+                long: x.digits,
+                short: y,
+                adds,
+                is_negative: x.is_negative,
+            });
+        }
+        if y.len() > 2 && a.abs_diff(b) > 1 {
+            let (long, short) = select_unpredictable(a < b, (y, x.digits), (x.digits, y));
+            return Outcome::large(Sum {
+                length: y.len(),
+                long,
+                short,
+                adds,
+                is_negative: x.is_negative != (a < b),
+            });
+        }
+    }
     if y.is_empty() {
         return Outcome::First;
     }
@@ -88,13 +112,10 @@ fn sum<'a>(x: BigIntRef<'a>, y_is_negative: bool, y: &'a [u64]) -> Outcome<Sum<'
         }
     }
     if adds {
-        let (long, short) = if x.digits.len() < y.len() {
-            (y, x.digits)
-        } else {
-            (x.digits, y)
-        };
+        let (long, short) = digits::long_and_short(x.digits, y);
+        let top = long.len() - 1;
         return Outcome::large(Sum {
-            length: long.len() + usize::from(can_carry(long, short)),
+            length: long.len() + usize::from(long[top] >= !digits::digit_or_zero(short, top)),
             long,
             short,
             adds,
@@ -113,14 +134,6 @@ fn sum<'a>(x: BigIntRef<'a>, y_is_negative: bool, y: &'a [u64]) -> Outcome<Sum<'
         adds,
         is_negative,
     })
-}
-
-#[inline(always)]
-fn can_carry(long: &[u64], short: &[u64]) -> bool {
-    let top = long.len() - 1;
-    long[top]
-        .carrying_add(digits::digit_or_zero(short, top), true)
-        .1
 }
 
 /// The length of `larger - smaller`, or one more.
@@ -148,6 +161,7 @@ fn difference_length_after_cancellation(larger: &[u64], smaller: &[u64]) -> usiz
 }
 
 struct Sum<'a> {
+    /// Has room for a carry only if the top digits allow one.
     length: usize,
     /// The larger of the two if they are subtracted.
     long: &'a [u64],
@@ -162,19 +176,20 @@ impl Fill for Sum<'_> {
         self.length
     }
 
-    #[inline]
+    #[inline(always)]
     fn fill(self, out: &mut [u64], _: Poll<'_>) -> Result<Filled, Error> {
         let out = &mut out[..self.length];
-        if self.adds {
-            let (low, top) = out.split_at_mut(self.long.len());
-            let carry = digits::add(low, self.long, self.short);
-            if let [top] = top {
-                *top = u64::from(carry);
-            }
-        } else {
-            let short = &self.short[..self.short.len().min(self.length)];
-            digits::subtract(out, &self.long[..self.length], short);
+        if !self.adds {
+            digits::subtract_into(out, self.long, self.short);
+            return Filled::whole_or_one_less(self.is_negative, out);
         }
-        Filled::whole_or_one_less(self.is_negative, out)
+        // Where there is no room for a carry, this is a digit that is written next.
+        out[self.length - 1] = 1;
+        let carry = digits::add_into(&mut out[..self.long.len()], self.long, self.short);
+        let length = self.long.len() + usize::from(carry);
+        if length > MAX_LENGTH {
+            return Err(Error::TooBig);
+        }
+        Ok(Filled::whole(self.is_negative, &out[..length]))
     }
 }

@@ -147,6 +147,15 @@ impl Kind {
     }
 
     #[inline]
+    pub(crate) fn name(self) -> &'static str {
+        INFO[self as usize].name
+    }
+
+    pub(crate) fn all() -> &'static [Kind] {
+        ALL
+    }
+
+    #[inline]
     pub(crate) fn effects(self) -> Effects {
         DOES[self as usize].effects
     }
@@ -300,6 +309,4 @@ nodes! {
     ShadowFrame: Word, NOTHING;
     /// The shadow frame and the address of the instruction. The data is the opcode. Gives an `Outcome`.
     Interpret: Tuple(&[Type::I64, Type::I64]), ANYTHING.on_frame();
-    /// With the arguments of the frame on the stack.
-    InterpretWithArguments: Tuple(&[Type::I64, Type::I64]), ANYTHING.on_frame();
 }

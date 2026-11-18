@@ -28,8 +28,9 @@ pub(super) fn try_list_of_elements(
         _ => ElementKind::Contiguous,
     };
     // SAFETY: all that has happened since is allocation. The elements are only copied, and no hole is left.
-    let list =
-        unsafe { ImmutableArray::try_build(cx, kind, plain.len(), |writer| plain.write_to(writer)) };
+    let list = unsafe {
+        ImmutableArray::try_build(cx, kind, plain.len(), |writer| plain.write_to(writer))
+    };
     cx.or_out_of_memory(list).map(Some)
 }
 
@@ -37,7 +38,7 @@ pub(super) fn list_of_code_points(cx: &Cx, string: &JsString) -> JsResult<Gc<Imm
     let view = string.view(cx)?;
     cx.or_out_of_memory(match view.text() {
         Text::Latin1(characters) => ImmutableArray::try_from_fn(cx, characters.len(), |index| {
-            (cx.small_strings.single_character(cx, characters[index])).into()
+            (cx.small_strings.single_character(characters[index])).into()
         }),
         text => {
             let mut code_points = text.code_points();

@@ -53,12 +53,23 @@ static FEATURE_SETS: LazyLock<Vec<Features>> = LazyLock::new(|| {
     all.into_iter().filter(|&set| host.contains(set)).collect()
 });
 
+/// Those that differ in how data is moved.
+static FEATURE_SETS_FOR_MOVES: LazyLock<Vec<Features>> = LazyLock::new(|| {
+    #[cfg(target_arch = "x86_64")]
+    let for_arithmetic = Features::FMA;
+    #[cfg(target_arch = "aarch64")]
+    let for_arithmetic = Features::all();
+    let all = FEATURE_SETS.iter().copied();
+    all.filter(|set| !set.intersects(for_arithmetic)).collect()
+});
+
 type Emit<'a> = &'a dyn Fn(&mut MacroAssembler, [Fpr; 4], [Gpr; 4]);
 
 struct Case<'a> {
     name: &'a dyn Debug,
     /// How many of the vector registers it names, from the destination on.
     vectors: usize,
+    features: &'a [Features],
     needs: &'a dyn Fn(Features) -> ScratchNeeds,
     emit: Emit<'a>,
 }
@@ -74,7 +85,7 @@ impl Case<'_> {
     ) {
         let choice = random.next();
         let mut known: Vec<Vec<u8>> = Vec::new();
-        for &features in FEATURE_SETS.iter() {
+        for &features in self.features {
             let needs = (self.needs)(features);
             let operands = machine::Operands::new(aliasing, needs, false, &mut Random(choice));
             let code = assemble(features, &operands, |masm| {
@@ -202,6 +213,7 @@ fn unary() {
         Case {
             name: &op,
             vectors: 2,
+            features: &FEATURE_SETS,
             needs: &|features| MacroAssembler::scratch_for_unary(features, op),
             emit: &|masm, [dst, a, ..], _| masm.vector_unary(op, dst, a),
         }
@@ -227,14 +239,20 @@ fn binary(is_included: impl Fn(&str) -> bool) {
         let is_exact = op.is_relaxed()
             && MacroAssembler::relaxed(Features::host()).contains(Relaxed::SECOND_OPERAND_MIN_MAX);
         let width = op.nan_lanes().filter(|_| !is_exact);
+        let mut all = operands.of(op).to_vec();
+        if format!("{op:?}").contains("ExtMul") {
+            let other_halves = |item: &[u128; 3]| item.map(|vector| vector.rotate_left(64));
+            all.extend(operands.of(op).iter().map(other_halves));
+        }
         Case {
             name: &op,
             vectors: 3,
+            features: &FEATURE_SETS,
             needs: &|features| MacroAssembler::scratch_for_binary(features, op),
             emit: &|masm, [dst, a, b, _], _| masm.vector_binary(op, dst, a, b),
         }
         .check_with(
-            &inputs(operands.of(op), random),
+            &inputs(&all, random),
             random,
             |relaxed, [a, b, _], _| (Some(op.evaluate_with(relaxed, a, b)), None),
             |sources, expected, actual| {
@@ -274,6 +292,7 @@ fn ternary() {
         Case {
             name: &op,
             vectors: 4,
+            features: &FEATURE_SETS,
             needs: &|features| MacroAssembler::scratch_for_ternary(features, op),
             emit: &|masm, [dst, a, b, c], _| masm.vector_ternary(op, dst, a, b, c),
         }
@@ -301,6 +320,7 @@ fn shifts() {
         Case {
             name: &op,
             vectors: 2,
+            features: &FEATURE_SETS,
             needs: &|features| MacroAssembler::scratch_for_shift(features, op, false),
             emit: &|masm, [dst, a, ..], [_, amount, ..]| masm.vector_shift(op, dst, a, amount),
         }
@@ -312,6 +332,7 @@ fn shifts() {
             Case {
                 name: &(op, amount),
                 vectors: 2,
+                features: &FEATURE_SETS,
                 needs: &|features| MacroAssembler::scratch_for_shift(features, op, true),
                 emit: &|masm, [dst, a, ..], _| masm.vector_shift(op, dst, a, amount),
             }
@@ -349,6 +370,7 @@ fn reductions() {
         Case {
             name: &op,
             vectors: 1,
+            features: &FEATURE_SETS,
             needs: &|features| MacroAssembler::scratch_for_reduce(features, op),
             emit: &|masm, [_, a, ..], [dst, ..]| masm.vector_reduce(op, dst, a),
         }
@@ -360,6 +382,7 @@ fn reductions() {
         Case {
             name: &cond,
             vectors: 1,
+            features: &FEATURE_SETS,
             needs: &MacroAssembler::scratch_for_branch_test,
             emit: &|masm, [_, a, ..], [dst, ..]| {
                 let taken = masm.new_label();
@@ -381,6 +404,7 @@ fn without_scratch<'a>(name: &'a dyn Debug, vectors: usize, emit: Emit<'a>) -> C
     Case {
         name,
         vectors,
+        features: &FEATURE_SETS_FOR_MOVES,
         needs: &|_| NO_SCRATCH,
         emit,
     }
@@ -456,6 +480,7 @@ fn with_one_scratch<'a>(name: &'a dyn Debug, vectors: usize, emit: Emit<'a>) -> 
     Case {
         name,
         vectors,
+        features: &FEATURE_SETS,
         needs: &|_| ScratchNeeds { gprs: 0, fprs: 1 },
         emit,
     }
@@ -497,6 +522,18 @@ fn searching_text() {
     .check(&set_masks, random, |[a, ..], _| {
         (None, Some((a.trailing_zeros() / 8).into()))
     });
+    let mut in_registers = random_inputs(16, random);
+    for (byte, input) in in_registers.iter_mut().enumerate() {
+        input.scalars[1] =
+            u64::MAX >> (64 - 16 * bits_for_byte) & u64::MAX << (byte * bits_for_byte);
+    }
+    with_one_scratch(&"first", 1, &|masm, _, [dst, mask, ..]| {
+        masm.first_in_byte_mask(dst, mask);
+    })
+    .check(&in_registers, random, |_, mask| {
+        let byte = mask.trailing_zeros() >> MacroAssembler::BYTE_MASK_SHIFT;
+        (None, Some(byte.into()))
+    });
     let even = std::array::from_fn(|byte| 2 * byte as u8);
     for (sign, inputs) in SIGNS.into_iter().zip([signed, unsigned]) {
         with_one_scratch(&sign, 3, &|masm, [dst, a, b, _], _| {
@@ -535,6 +572,7 @@ fn check_shuffles(patterns: Vec<[u8; 16]>, random: &mut Random) {
         Case {
             name: &pattern,
             vectors: 3,
+            features: &FEATURE_SETS_FOR_MOVES,
             needs: &|features| MacroAssembler::scratch_for_shuffle(features, pattern),
             emit: &|masm, [dst, a, b, _], _| masm.vector_shuffle(dst, a, b, pattern),
         }
@@ -578,6 +616,17 @@ fn shuffles_with_names() {
 fn shuffles_near_those_with_names() {
     let random = &mut Random(seed());
     check_shuffles(shuffles::near_names(count(1500), random), random);
+}
+
+#[test]
+fn shuffles_that_prepare_a_lane() {
+    check_shuffles(shuffles::prepared_lanes(), &mut Random(seed()));
+}
+
+#[test]
+fn shuffles_that_nearly_interleave() {
+    let patterns = shuffles::interleavings_but_for_a_byte();
+    check_shuffles(patterns, &mut Random(seed()));
 }
 
 #[test]
@@ -656,7 +705,7 @@ mod memory {
         let forms = OFFSETS
             .iter()
             .flat_map(|&offset| SCALES.map(|scale| (offset, scale)));
-        for (features, (offset, scale)) in FEATURE_SETS
+        for (features, (offset, scale)) in FEATURE_SETS_FOR_MOVES
             .iter()
             .flat_map(|&features| forms.clone().map(move |form| (features, form)))
         {

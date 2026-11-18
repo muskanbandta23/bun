@@ -135,8 +135,10 @@ impl Builder<'_> {
         );
         if let Entry::Loop(_) = self.graph.entry {
             registers.extend(frame.liveness.live_in(first).iter());
-            self.graph.function.reserved_frame_bytes = info.frame_words * 8;
         }
+        // The slots of the bytecode frame stay where the lower tiers put them, so that the interpreter can run an
+        // instruction of this function on the frame itself, and an exit has less to move.
+        self.graph.function.reserved_frame_bytes = info.frame_words * 8;
         let params: Vec<_> = registers
             .iter()
             .map(|register| (Type::I64, Boundary::Frame(register.offset() * 8)))

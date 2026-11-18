@@ -18,6 +18,7 @@ mod plain_month_day;
 mod plain_time;
 mod plain_year_month;
 mod throw;
+mod zone_names;
 mod zoned_date_time;
 
 use bun_engine_vm::{Cx, RealmSlot};
@@ -35,6 +36,7 @@ pub fn initialize_slot(cx: &Cx, slot: RealmSlot) -> bool {
     let initialize = match slot {
         temporal_object => namespace::initialize,
         temporal_now_object => now::initialize,
+        temporal_zone_names => zone_names::initialize,
         temporal_duration_constructor | temporal_duration_shape => duration::initialize,
         temporal_instant_constructor | temporal_instant_shape => instant::initialize,
         temporal_plain_date_constructor | temporal_plain_date_shape => plain_date::initialize,
@@ -65,6 +67,7 @@ mod prelude {
         CallFrame, Cx, Gc, JsObject, JsResult, JsString, StaticProperty, Value, static_table,
     };
 
+    pub(super) use super::arguments::get;
     pub(super) use super::define::{function, getter};
     pub(super) use super::instance::Instance;
     pub(super) use super::options::Options;

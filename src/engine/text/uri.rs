@@ -271,10 +271,9 @@ impl<const IS_URI: bool> Decoding for PercentDecoding<IS_URI> {
                 .filter(|_| units[3 * index].is(b'%'))
                 .ok_or(UriError::MalformedEscape)?;
         }
-        match utf8::decode(&bytes) {
-            Ok((code_point, length)) => Ok((code_point, 3 * length)),
-            Err(_) => Err(UriError::MalformedEscape),
-        }
+        let (code_point, length) =
+            utf8::decode_non_ascii(&bytes).ok_or(UriError::MalformedEscape)?;
+        Ok((code_point, 3 * length))
     }
 }
 

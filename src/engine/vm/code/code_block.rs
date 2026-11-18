@@ -18,7 +18,7 @@ use super::profile::ValueProfile;
 use crate::heap::Survivors;
 use crate::{
     Attributes, Cx, Field, FunctionExecutable, Gc, GcFree, GlobalObject, ImmutableArray,
-    IntegrityLevel, JsArray, JsBigInt, JsCell, JsResult, JsString, LineColumn, RealmSlot, RegExp,
+    IntegrityLevel, JsArray, JsBigInt, JsCell, JsResult, JsString, RealmSlot, RegExp,
     ScopeTemplate, ScriptExecutable, SourceProviderRef, TypeFlags, Value, ValueVec, Visitor, Vm,
 };
 
@@ -109,7 +109,7 @@ impl Drop for Words {
 }
 
 /// Code linked to a realm. Optimized code has one of its own, whose `alternative` has the profiles.
-#[cell(cell_type = CodeBlock, flags = TypeFlags::SHAPE_IS_IMMORTAL,
+#[cell(cell_type = CodeBlock, flags = TypeFlags::SHAPE_IS_IMMORTAL, export = "engine_class_CodeBlock",
     visit_children, visit_output_constraints, reconcile_weak_references, estimated_size)]
 pub struct CodeBlock {
     base: JsCell,
@@ -198,7 +198,8 @@ impl CodeBlock {
         if !code_block.coverage_counts.is_empty() {
             code_block.link_coverage_counts();
         }
-        for (slot, constant) in code_block.fields().iter().zip(&code_block.code.constants) {
+        let anchored = code_block.anchor();
+        for (slot, constant) in anchored.fields().iter().zip(&anchored.code.constants) {
             let value = code_block.link_constant(cx, constant)?;
             // SAFETY: traced by `visit_children`.
             unsafe { slot.set(&code_block, value) };
@@ -539,15 +540,7 @@ impl CodeBlock {
     }
 
     pub fn source_provider(&self) -> SourceProviderRef {
-        match self.executable.downcast::<FunctionExecutable>() {
-            Some(function) => function.code_provider(),
-            None => self.executable.provider().clone(),
-        }
-    }
-
-    pub fn line_column(&self, bytecode_offset: u32) -> LineColumn {
-        let divot = self.position(bytecode_offset).divot;
-        self.source_provider().position_in_document(divot)
+        self.executable.code_provider()
     }
 
     fn visit_children(&self, visitor: &mut Visitor) {

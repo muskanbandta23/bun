@@ -3,6 +3,7 @@
 #![feature(
     adt_const_params,
     allocator_ext,
+    allow_internal_unstable,
     auto_traits,
     core_intrinsics,
     macro_metavar_expr_concat,

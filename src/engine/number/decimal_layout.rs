@@ -80,12 +80,10 @@ static HEADS: [Head; 13] = {
     heads
 };
 
+/// Every layout writes its digits where the buffer has room for all sixteen.
 #[inline(always)]
 fn sixteen_at(out: &mut Buffer, at: usize) -> &mut [u8; 16] {
-    match out[at..].first_chunk_mut() {
-        Some(chunk) => chunk,
-        None => unreachable!(),
-    }
+    out[at..].first_chunk_mut().expect("room for the digits")
 }
 
 #[inline(always)]

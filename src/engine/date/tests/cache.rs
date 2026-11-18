@@ -1,9 +1,12 @@
 use bun_engine_date::{
-    DateCache, iso_string, make_date_from_integers, parse_cookie_date, parse_date_as_utc,
-    set_time_zone_override, time_clip,
+    DateCache, DateFields, iso_string, make_date_from_integers, parse_cookie_date,
+    parse_date_as_utc, set_time_zone_override, time_clip,
 };
 use bun_engine_standalone as _;
 use bun_engine_text::Text;
+
+/// A day more than the greatest time value.
+const LIMIT: f64 = 8.64e15 + 8.64e7;
 
 fn utc(text: &str) -> f64 {
     parse_date_as_utc(text.as_bytes())
@@ -68,6 +71,13 @@ fn local_times(cache: &DateCache) {
         let time = cache.parse(Text::from_ascii(local));
         assert_eq!(iso_string(time).unwrap().to_string(), expected);
     }
+    for time in [LIMIT, -LIMIT + 17_762_000.0] {
+        for (time, has_fields) in [(time, true), (time + time.signum(), false)] {
+            let fields = cache.local_fields(time);
+            assert_eq!(fields, DateFields::in_zone(time, cache.time_zone()));
+            assert_eq!(fields.is_some(), has_fields);
+        }
+    }
     let too_late = make_date_from_integers([275_760, 8, 12, 20, 0, 0, 1]);
     assert!(time_clip(cache.utc(too_late)).is_nan());
     assert!(cache.utc(f64::NAN).is_nan());
@@ -119,6 +129,8 @@ fn changes_of_zone(cache: &DateCache) {
         to_string(cache, 0.0),
         "Thu Jan 01 1970 05:30:00 GMT+0530 (India Standard Time)"
     );
+    assert!(cache.local_fields(LIMIT - 19_800_000.0).is_some());
+    assert_eq!(cache.local_fields(LIMIT - 19_799_999.0), None);
     let kolkata = cache.time_zone();
     assert!(set_time_zone_override(Text::from_ascii("IST")));
     assert!(!cache.refresh());
@@ -129,6 +141,41 @@ fn changes_of_zone(cache: &DateCache) {
         to_string(cache, 0.0),
         "Thu Jan 01 1970 00:00:00 GMT+0000 (Coordinated Universal Time)"
     );
+}
+
+#[test]
+fn days_in_utc() {
+    for step in -40..40 {
+        let time = f64::from(step) * 40_000_000.0;
+        assert_eq!(DateCache::default().utc_fields(time), DateFields::utc(time));
+    }
+    let cache = DateCache::default();
+    for time in [LIMIT - 1.0, LIMIT, LIMIT + 1.0, -LIMIT, -LIMIT - 1.0] {
+        assert_eq!(cache.utc_fields(time), DateFields::utc(time));
+        assert_eq!(cache.utc_fields(time).is_some(), time.abs() <= LIMIT);
+    }
+}
+
+#[test]
+fn texts_that_are_alike() {
+    let cache = DateCache::default();
+    for text in [
+        "2022-02-03T13:05:09.1Z",
+        "2022-02-03T13:05:09.1Z",
+        "2022-02-03T13:05:09.2Z",
+        "2022-02-04T13:05:09.2Z",
+        "2022",
+        "2022-02-04T13:05:09.2Z",
+        "1/1/2000 1:00 z      (((((((()",
+        "1/1/2000 1:00 z      ((((((((()",
+        "1/1/2000 1:00 z +11111111111",
+        "1/1/2000 1:00 z +1111",
+        "(                ) 1/1/1111 z",
+        "(                ) 1/11/111 z",
+    ] {
+        let time = cache.parse(Text::from_ascii(text));
+        assert_eq!(time.to_bits(), utc(text).to_bits());
+    }
 }
 
 /// One test, because the zone is that of the process.

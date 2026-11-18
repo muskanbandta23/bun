@@ -120,6 +120,17 @@ cell    JsPromise class JSC::JSPromise
 
 # Errors, stack and code
 mirror  ErrorFlags vm/error/error_instance.rs
+mirror  CodeKind bytecode/code.rs
+mirror  CodeFlags bytecode/code.rs
+mirror  Origin bytecode/function.rs
+mirror  Instrumentation bytecode/compiler.rs
+mirror  FunctionKind syntax/options.rs
+mirror  ErrorKind syntax/error.rs
+mirror  Recovery syntax/error.rs
+opaque  BuiltinOutline struct JSC::BuiltinSourceMetadata
+opaque  ParserError class JSC::ParserError
+opaque  Position struct JSC::ExpressionRange
+opaque  UnlinkedFunction class JSC::UnlinkedFunctionExecutable
 opaque  StackFrame class JSC::StackFrame
 opaque  StackTrace WTF::Vector<JSC::StackFrame>
 opaque  TerminationDeadline class JSC::TerminationDeadline
@@ -156,6 +167,30 @@ opaque  Ticket class JSC::DeferredWorkTicket
 opaque  DeferredTask class Engine::DeferredTask
 value   InternalMicrotask JSC::InternalMicrotask
 value   WorkKind uint8_t
+mirror  IterationKind vm/runtime/iteration/array_iterator.rs
+value   IterationKind JSC::IterationKind
+cell    JsMap class JSC::JSMap
+cell    JsSet class JSC::JSSet
+cell    JsMapIterator class JSC::JSMapIterator
+cell    JsSetIterator class JSC::JSSetIterator
+cell    JsWeakMap class JSC::JSWeakMap
+cell    JsWeakSet class JSC::JSWeakSet
+cell    JsFinalizationRegistry class JSC::JSFinalizationRegistry
+cell    JsAsyncFromSyncIterator class JSC::JSAsyncFromSyncIterator
+opaque  IteratorRecord class Engine::IteratorRecord
+cell    ProxyObject class JSC::ProxyObject
+mirror  Flags regexp/flags.rs
+cell    RegExp class JSC::RegExp
+cell    RegExpObject class JSC::RegExpObject
+cell    DateInstance class JSC::DateInstance
+cell    BooleanObject class JSC::BooleanObject
+mirror  LinesEnd vm/runtime/text/json/lines.rs
+mirror  MessageType vm/realm/console.rs
+mirror  MessageLevel vm/realm/console.rs
+value   MessageType JSC::MessageType
+value   MessageLevel JSC::MessageLevel
+mirror  TemporalType embed/api/temporal.rs
+value   TemporalType JSC::TemporalType
 
 # Modules, scopes and cached bytecode
 mirror  ModuleType vm/runtime/modules/request.rs
@@ -186,3 +221,12 @@ value   ImportKind uint8_t
 
 # Inspector, profilers and options
 opaque  Options struct Engine::Options
+mirror  CodeRangeKind inspector/profiling/coverage.rs
+opaque  BlockRange struct JSC::BasicBlockRange
+opaque  CodeRange struct JSC::CodeRange
+mirror  AsyncCallType embed/api/missing.rs
+mirror  ProfilingReason embed/api/missing.rs
+opaque  InspectorBackend class Engine::InspectorBackend
+opaque  InspectorController class Inspector::JSGlobalObjectInspectorController
+value   AsyncCallType Inspector::AsyncCallType
+value   ProfilingReason JSC::ProfilingReason

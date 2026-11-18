@@ -2,6 +2,7 @@
 //! before that the out-of-line slots, in descending order. An object without elements has no word for the lengths.
 
 use core::cell::Cell;
+use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use bun_alloc::AllocError;
@@ -190,6 +191,18 @@ impl Storage {
         unsafe { core::slice::from_raw_parts(self.word(0).cast(), length as usize) }
     }
 
+    /// Of a storage whose elements nothing else looks at.
+    #[inline(always)]
+    pub(super) unsafe fn uninitialized_elements<'a>(
+        self,
+        from: u32,
+        to: u32,
+    ) -> &'a mut [MaybeUninit<u64>] {
+        let (first, count) = (self.word(from as isize), (to - from) as usize);
+        // SAFETY: the caller's.
+        unsafe { core::slice::from_raw_parts_mut(first.cast(), count) }
+    }
+
     /// The first `count` out-of-line slots, the last one first.
     #[inline(always)]
     pub(crate) unsafe fn slots<'a>(self, count: usize) -> &'a [Field<Option<Value>>] {
@@ -205,13 +218,9 @@ impl Storage {
 
     #[inline(always)]
     pub(crate) unsafe fn clear_elements(self, kind: ElementKind, from: u32, to: u32) {
-        let hole = if kind == ElementKind::Double {
-            Value::PURE_NAN_BITS
-        } else {
-            0
-        };
+        let (first, count) = (self.word(from as isize), (to - from) as usize);
         // SAFETY: the caller's.
-        unsafe { barrier::fill_words(self.word(from as isize), (to - from) as usize, hole) }
+        unsafe { barrier::fill_words(first, count, kind.hole()) }
     }
 
     #[inline(always)]

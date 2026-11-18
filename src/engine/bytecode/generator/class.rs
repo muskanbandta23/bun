@@ -89,6 +89,7 @@ impl<'a> Generator<'a> {
     }
 
     /// `name` is the name of an anonymous class, where that is computed.
+    #[inline(never)]
     pub(super) fn class(
         &mut self,
         start: u32,
@@ -391,6 +392,7 @@ impl<'a> Generator<'a> {
         self.top = mark;
     }
 
+    #[inline(never)]
     pub(super) fn define_field(
         &mut self,
         start: u32,
@@ -448,6 +450,7 @@ impl<'a> Generator<'a> {
         }
     }
 
+    #[inline(never)]
     pub(super) fn run_static_block(&mut self, node: &Stmt, function: FunctionId) {
         let block = self.temp();
         self.new_function(block, function, node.start);

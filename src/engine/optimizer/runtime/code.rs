@@ -123,6 +123,21 @@ impl CompiledCode for Compiled {
         })
     }
 
+    fn has_call_site(&self, call_site: u32) -> bool {
+        let sites = &self.output.call_sites;
+        (sites.binary_search_by_key(&call_site, |call| call.site)).is_ok()
+    }
+
+    fn origin_of_address(&self, address: usize) -> Option<CodeOrigin> {
+        if !self.handle.contains(address) {
+            return None;
+        }
+        let (offset, origins) = (address - self.handle.start(), &self.output.origins);
+        let after = origins.partition_point(|&(start, _)| start as usize <= offset);
+        let &(_, origin) = origins[..after].last()?;
+        Some(self.origin(*self.output.positions.get(origin.0 as usize)?))
+    }
+
     fn inline_frame(&self, _vm: &Vm, index: u32) -> InlineFrame {
         let info = self.frame_at(FrameIndex(index));
         InlineFrame {

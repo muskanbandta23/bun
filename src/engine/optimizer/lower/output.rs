@@ -114,6 +114,8 @@ pub(crate) struct Output {
     pub(crate) layout_registers: Vec<Register>,
     /// What an `Origin` stands for, which is what `Layout::resume` needs.
     pub(crate) positions: Vec<Position>,
+    /// Where the code for each begins, ascending. Empty unless a profiler wants to know.
+    pub(crate) origins: Vec<(u32, bun_engine_codegen::ir::Origin)>,
 }
 
 /// An [`Assumption`] with its shape resolved to an address.

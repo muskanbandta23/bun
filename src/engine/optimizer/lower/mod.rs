@@ -31,6 +31,7 @@ use crate::graph::{ExitKind, Gives, Graph, Kind};
 /// Memory that the compilation of one function leaves to the next.
 #[derive(Default)]
 pub(crate) struct Compiler {
+    pub(crate) records_origins: bool,
     sites: Sites,
     tables: Tables,
     back_end: bun_engine_codegen::Compiler,
@@ -52,7 +53,7 @@ impl Compiler {
         });
         let options = bun_engine_codegen::Options {
             level: graph.level,
-            records_origins: false,
+            records_origins: self.records_origins,
         };
         // The back end wants the function to itself, and the emitter the rest of the graph.
         let placeholder = ir::Function::new(bun_engine_asm::RegisterSet::EMPTY);

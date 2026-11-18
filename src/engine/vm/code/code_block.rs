@@ -57,7 +57,7 @@ pub trait CompiledCode: GcFree + Any {
     /// Whether `origin_of_call_site` knows the number, which may be anything.
     fn has_call_site(&self, call_site: u32) -> bool;
 
-    /// What the instruction at the address, which may be anything, was made for.
+    /// What the instruction at the address, which may be anything, was made for. See `Vm::records_code_origins`.
     fn origin_of_address(&self, address: usize) -> Option<CodeOrigin>;
 
     fn inline_frame(&self, vm: &Vm, index: u32) -> InlineFrame;

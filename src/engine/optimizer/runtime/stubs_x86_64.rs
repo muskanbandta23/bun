@@ -52,6 +52,7 @@ macro_rules! save_fprs {
 
 /// Writes the frames of the tier below where the optimized frame was and goes on there. `r11` has the index of the
 /// exit, `rbp` the frame pointer and `r13` the `Vm`.
+#[bun_engine_macros::in_call_frame(naked)]
 #[unsafe(naked)]
 pub(super) unsafe extern "sysv64" fn exit() {
     naked_asm!(

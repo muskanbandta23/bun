@@ -128,6 +128,7 @@ fn compile(
 ) -> Option<(Output, Dependencies)> {
     let (graph, dependencies) = builder::build(vm, code_block, level, entry).ok()?;
     let mut compiler = lower::Compiler::default();
+    compiler.records_origins = vm.records_code_origins().get();
     let output = compiler.compile(graph, Features::host()).ok()?;
     holds(vm, &output, &dependencies).then_some((output, dependencies))
 }

@@ -119,7 +119,7 @@ impl<'a> ElementWriter<'a> {
         self.take(count).write_filled(word);
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn extend_from_slice(&mut self, values: &[Value]) {
         if self.kind == ElementKind::Contiguous {
             self.take(values.len())
@@ -146,7 +146,7 @@ impl<'a> ElementWriter<'a> {
     }
 
     /// Only contiguous elements can have holes filled.
-    #[inline]
+    #[inline(always)]
     pub fn extend(&mut self, source: Elements<'_>, holes: HoleMode) {
         assert!(source.kind() <= self.kind);
         let is_double = self.kind == ElementKind::Double;

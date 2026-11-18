@@ -3455,7 +3455,9 @@ mod draft {
                 frame_index += 1;
                 continue;
             }
-            if limits.stop_at_jsc_llint && strings::includes(&source.symbol_name, b"_llint_") {
+            if limits.stop_at_interpreter
+                && strings::includes(&source.symbol_name, b"bun_engine_interpreter")
+            {
                 break;
             }
 

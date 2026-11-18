@@ -10,7 +10,7 @@ use bun_engine_text::{Identifier, Text};
 use crate::code::Code;
 use crate::scope::StaticScope;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(u8)]
 pub enum Specialization {
     Call,

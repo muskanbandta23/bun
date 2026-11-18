@@ -4,6 +4,7 @@ use core::arch::naked_asm;
 use core::mem::offset_of;
 
 use bun_engine_bytecode::Specialization::{Call, Construct};
+use bun_engine_macros::in_call_frame;
 
 use super::ProtoFrame;
 use crate::{
@@ -131,6 +132,7 @@ pub(super) unsafe extern "sysv64" fn return_to_native_code_with_exception() {
     )
 }
 
+#[in_call_frame(naked)]
 #[unsafe(naked)]
 pub unsafe extern "sysv64" fn throw_from_frame() {
     naked_asm!(
@@ -149,6 +151,7 @@ pub unsafe extern "sysv64" fn throw_from_frame() {
 /// `$load` puts the realm in `rdi` and the function in `rax`, given the callee in `rdx`.
 macro_rules! native_entry {
     ($name:ident, [$($load:literal),*], $($operand:ident = $value:expr),*) => {
+        #[in_call_frame(naked)]
         #[unsafe(naked)]
         pub(crate) unsafe extern "sysv64" fn $name() {
             naked_asm!(
@@ -215,6 +218,7 @@ native_entry!(
 
 macro_rules! link_entry {
     ($name:ident, $specialization:expr) => {
+        #[in_call_frame(naked)]
         #[unsafe(naked)]
         pub(super) unsafe extern "sysv64" fn $name() {
             naked_asm!(
@@ -243,6 +247,7 @@ link_entry!(link_construct_entry, Construct);
 
 macro_rules! watched_entry {
     ($name:ident, $specialization:expr) => {
+        #[in_call_frame(naked)]
         #[unsafe(naked)]
         pub(super) unsafe extern "sysv64" fn $name() {
             naked_asm!(
@@ -271,6 +276,7 @@ watched_entry!(watched_construct_entry, Construct);
 
 macro_rules! rare_data_entry {
     ($name:ident, $specialization:expr) => {
+        #[in_call_frame(naked)]
         #[unsafe(naked)]
         pub(super) unsafe extern "sysv64" fn $name() {
             naked_asm!(
@@ -289,6 +295,7 @@ macro_rules! rare_data_entry {
 rare_data_entry!(rare_data_call_entry, Call);
 rare_data_entry!(rare_data_construct_entry, Construct);
 
+#[in_call_frame(naked)]
 #[unsafe(naked)]
 pub unsafe extern "sysv64" fn pad_arguments() {
     naked_asm!(

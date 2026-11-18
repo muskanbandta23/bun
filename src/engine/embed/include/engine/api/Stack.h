@@ -103,7 +103,7 @@ public:
         ImplementationVisibility m_visibility;
     };
 
-    // From `first` outwards.
+    // From `first` outwards, if that is a frame on the stack.
     template<typename Functor> static void visit(CallFrame* first, VM& vm, const Functor& functor)
     {
         auto visitFrame = [](const void* functor, StackFrame* frame, ImplementationVisibility visibility) {

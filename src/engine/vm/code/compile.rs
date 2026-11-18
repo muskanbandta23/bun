@@ -27,6 +27,7 @@ pub(super) struct Compilation {
     source_caches: RefCell<FastHashMap<usize, KeptSourceCache>>,
     code_cache: RefCell<CodeCache>,
     covers: Cell<bool>,
+    records_origins: Cell<bool>,
 }
 
 struct KeptSourceCache {
@@ -53,6 +54,11 @@ impl Vm {
     /// Whether code counts the executions of its blocks.
     pub fn collects_coverage(&self) -> &Cell<bool> {
         &self.services.code.compilation.covers
+    }
+
+    /// Whether what is compiled to machine code can answer `CompiledCode::origin_of_address`.
+    pub fn records_code_origins(&self) -> &Cell<bool> {
+        &self.services.code.compilation.records_origins
     }
 
     pub fn clear_code_cache(&self) {

@@ -54,6 +54,7 @@ const _: () = assert!(Saved::OFFSET_OF_FPRS == 0x100 && Saved::SIZE == 0x200);
 
 /// Writes the frames of the tier below where the optimized frame was and goes on there. `x17` has the index of the
 /// exit, `x29` the frame pointer and `x21` the `Vm`.
+#[bun_engine_macros::in_call_frame(naked)]
 #[unsafe(naked)]
 pub(super) unsafe extern "C" fn exit() {
     naked_asm!(

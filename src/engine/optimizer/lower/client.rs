@@ -151,6 +151,9 @@ pub(super) fn finish(
             layouts: core::mem::take(&mut graph.layouts),
             layout_registers: core::mem::take(&mut graph.layout_registers),
             positions,
+            origins: (compiled.emitted.origins.iter())
+                .map(|&(start, origin)| (at(start), origin))
+                .collect(),
             code,
         }
     }

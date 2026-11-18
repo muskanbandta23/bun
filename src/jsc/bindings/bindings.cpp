@@ -7129,9 +7129,20 @@ extern "C" void Bun__JSValue__protect(JSC::EncodedJSValue encodedValue)
     }
 }
 #if ASSERT_ENABLED
-CPP_DECL const char* Bun__CallFrame__describeFrame(JSC::CallFrame* callFrame)
+CPP_DECL JSC::CallFrame* Bun__CallFrame__ofScriptAt(JSC::JSGlobalObject* globalObject, JSC::CallFrame* address)
 {
-    return callFrame->describeFrame();
+    JSC::CallFrame* found = nullptr;
+    JSC::StackVisitor::visit(address, JSC::getVM(globalObject), [&](JSC::StackVisitor& visitor) {
+        if (visitor->codeBlock())
+            found = address;
+        return WTF::IterationStatus::Done;
+    });
+    return found;
+}
+
+CPP_DECL void Bun__CallFrame__getFunctionName(JSC::CallFrame* callFrame, JSC::JSGlobalObject* globalObject, Bun::OwnedString* name)
+{
+    *name = Bun::toStringRef(Zig::functionName(JSC::getVM(globalObject), callFrame->jsCallee()));
 }
 #endif
 

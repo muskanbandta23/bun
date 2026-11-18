@@ -30,7 +30,11 @@ pub fn evaluate_script_in_scope(
     match cx.compile_script(&source.provider, static_scope_of(scope).as_ref()) {
         // SAFETY: just compiled for it.
         Ok(script) => unsafe { evaluate_compiled_script(cx, source, script, scope, this) },
-        Err(error) => Err(throw_compile_error(cx, &error, &source.provider)),
+        Err(error) => {
+            let thrown = throw_compile_error(cx, &error, &source.provider);
+            cx.notify_debugger_of_exception();
+            Err(thrown)
+        }
     }
 }
 
@@ -44,7 +48,8 @@ pub unsafe fn evaluate_compiled_script(
     this: Value,
 ) -> JsResult<Value> {
     let executable = ProgramExecutable::create(cx, source, script);
-    declare_globals(cx, &executable.unit().declarations)?;
+    declare_globals(cx, &executable.unit().declarations)
+        .inspect_err(|_| cx.notify_debugger_of_exception())?;
     let global = cx.global();
     if global.shape().is_uncacheable_dictionary() {
         global.flatten_dictionary(cx);
@@ -76,6 +81,9 @@ fn declare_globals(cx: &mut Cx, declarations: &Declarations) -> JsResult<()> {
     } = declarations;
     for name in lets.iter().chain(constants) {
         if global.lexicals().find(name.name()).is_some() {
+            if cx.allows_redeclaration() {
+                continue;
+            }
             return Err(throw_duplicate(cx, name.name()));
         }
         let property = global.get_own_property_descriptor(cx, name.name())?;
@@ -104,11 +112,12 @@ fn declare_globals(cx: &mut Cx, declarations: &Declarations) -> JsResult<()> {
         }
     }
     global.declare_functions_and_variables(cx, declarations, Declarer::Script)?;
-    for name in lets {
-        global.add_lexical(cx, name.name(), Attributes::NONE);
-    }
-    for name in constants {
-        global.add_lexical(cx, name.name(), Attributes::READ_ONLY);
+    for (names, attributes) in [(lets, Attributes::NONE), (constants, Attributes::READ_ONLY)] {
+        for name in names {
+            if !cx.allows_redeclaration() || global.lexicals().find(name.name()).is_none() {
+                global.add_lexical(cx, name.name(), attributes);
+            }
+        }
     }
     Ok(())
 }

@@ -165,6 +165,9 @@ impl Cx {
             base.with_prototype(self, global, prototype)
         };
         if let Some(rare_data) = cache {
+            if rare_data.subclass_shape().is_some() {
+                rare_data.allocation_watchpoints().fire(self);
+            }
             rare_data.set_subclass_shape(Some(shape));
             rare_data.allocation_watchpoints().start_watching();
         }

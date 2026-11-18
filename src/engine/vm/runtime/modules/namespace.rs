@@ -185,9 +185,6 @@ impl ModuleNamespace {
         phase: ImportPhase,
         is_extensible: bool,
     ) -> Gc<ModuleNamespace> {
-        if phase == ImportPhase::Defer {
-            exports.retain(|it| it.0 != names::then);
-        }
         exports.sort_unstable_by(|a, b| a.0.name().text().cmp(&b.0.name().text()));
         let mut positions = HashTable::with_capacity(exports.len());
         let hash = |&position: &u32| spread(exports[position as usize].0.name());

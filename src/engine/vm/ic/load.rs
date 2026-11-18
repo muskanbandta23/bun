@@ -188,7 +188,7 @@ unsafe impl Entry for LoadCache {
         match self.cases() {
             Some(cases) => cases.visit(visitor),
             // SAFETY: a cell that has been kept alive so far.
-            None => unsafe { visitor.append_hidden_word(self.cases_or_lookup.bits() as u64) },
+            None => unsafe { visitor.append_word(self.cases_or_lookup.bits() as u64) },
         }
     }
 

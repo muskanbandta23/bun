@@ -1,6 +1,7 @@
 //! From the parts of a pattern to its tree.
 
 mod class;
+mod known_sets;
 mod length_limit;
 mod names;
 mod strings;
@@ -14,45 +15,55 @@ use crate::parser::{
     self, Assertion, ClassEscape, GroupKind, NameId, Quantifier, SetOperator, Sink,
 };
 use crate::set::Set;
-use crate::tree::{Group, Groups, Node, NodeId, Span, Tree};
+use crate::tree::{Group, Groups, Node, NodeId, SetId, Span, Tree};
 use crate::{Error, Flags};
 use class::Classes;
+use known_sets::KnownSets;
 pub use names::GroupNames;
 use names::NamedGroups;
 
-pub(crate) fn build(pattern: Text<'_>, flags: Flags) -> Result<(Tree, GroupNames), Error> {
-    const MOST_RESERVED: usize = 256;
+/// `tree` is new, and has the `flags`.
+#[inline]
+pub(crate) fn build(
+    pattern: Text<'_>,
+    flags: Flags,
+    tree: &mut Tree,
+) -> Result<Option<Box<GroupNames>>, Error> {
     let mut builder = Builder {
-        tree: Tree::new(flags, 0),
+        tree,
         flags,
         is_backward: false,
         stack: SmallVec::new(),
         alternatives_start: 0,
         terms_start: 0,
         text_start: 0,
+        text_end: 0,
         text_ignores_case: false,
         atom: Atom::Nothing,
         classes: Classes::default(),
-        named_groups: NamedGroups::default(),
+        known_sets: KnownSets::default(),
+        common_sets: [None; COMMON_SETS],
+        named_groups: None,
     };
-    let reserved = pattern.len().min(MOST_RESERVED);
-    builder.tree.reserve(reserved / 2 + 2, reserved)?;
     let summary = parser::parse(pattern, flags, &mut builder)?;
     if summary.is_too_deep {
         return Err(Error::TooDeeplyNested);
     }
     builder.end_disjunction()?;
-    let mut tree = builder.tree;
-    tree.set_group_count(summary.group_count);
+    builder.tree.set_group_count(summary.group_count);
     if summary.has_large_counts {
-        length_limit::check(&tree)?;
+        length_limit::check(builder.tree)?;
     }
-    let names = builder.named_groups.resolve(&mut tree)?;
-    Ok((tree, names))
+    let names = builder.named_groups.map(|it| it.resolve(builder.tree));
+    Ok(names.transpose()?.map(Box::new))
 }
 
-struct Builder {
-    tree: Tree,
+/// `\d`, `\D`, `\s`, `\S`, `\w`, `\W` and the dot.
+const COMMON_SETS: usize = 7;
+const DOT: usize = 6;
+
+struct Builder<'a> {
+    tree: &'a mut Tree,
     /// Those in force.
     flags: Flags,
     is_backward: bool,
@@ -60,12 +71,16 @@ struct Builder {
     stack: SmallVec<[NodeId; 32]>,
     alternatives_start: usize,
     terms_start: usize,
-    /// The characters of the tree from here on come after the last term and have no node yet.
+    /// The last characters of the tree come after the last term and have no node yet.
     text_start: usize,
+    text_end: usize,
     text_ignores_case: bool,
     atom: Atom,
     classes: Classes,
-    named_groups: NamedGroups,
+    known_sets: KnownSets,
+    /// Under the flags in force.
+    common_sets: [Option<SetId>; COMMON_SETS],
+    named_groups: Option<Box<NamedGroups>>,
 }
 
 /// What a quantifier would apply to.
@@ -87,7 +102,7 @@ pub(crate) struct Outer {
 
 const NO_CAPTURES: Groups = Groups { first: 1, end: 1 };
 
-impl Builder {
+impl Builder<'_> {
     #[inline]
     fn ignores_case(&self) -> bool {
         self.flags.contains(Flags::IGNORE_CASE)
@@ -98,12 +113,12 @@ impl Builder {
         self.ignores_case().then(|| self.tree.case_equivalence())
     }
 
-    #[inline]
+    #[inline(always)]
     fn push(&mut self, id: NodeId) -> Result<(), Error> {
         parser::try_push(&mut self.stack, id)
     }
 
-    #[inline]
+    #[inline(always)]
     fn add_term(&mut self, node: Node) -> Result<(), Error> {
         self.end_text()?;
         let id = self.tree.add(node)?;
@@ -113,11 +128,39 @@ impl Builder {
 
     #[inline]
     fn add_set(&mut self, set: Set) -> Result<(), Error> {
-        let set = self.tree.add_set(set)?;
+        let set = self.known_sets.find_or_add(self.tree, set)?;
+        self.add_known_set(set)
+    }
+
+    fn add_known_set(&mut self, set: SetId) -> Result<(), Error> {
         self.add_term(Node::Set(set))
     }
 
+    #[inline(always)]
+    fn add_common_set(
+        &mut self,
+        index: usize,
+        set: impl FnOnce(Flags) -> Result<Set, Error>,
+    ) -> Result<(), Error> {
+        let set = match self.common_sets[index] {
+            Some(known) => known,
+            None => {
+                let new = self.known_sets.find_or_add(self.tree, set(self.flags)?)?;
+                *self.common_sets[index].insert(new)
+            }
+        };
+        self.add_known_set(set)
+    }
+
     #[inline]
+    fn set_flags(&mut self, flags: Flags) {
+        if self.flags != flags {
+            self.flags = flags;
+            self.common_sets = [None; COMMON_SETS];
+        }
+    }
+
+    #[inline(always)]
     fn text_node(&mut self, end: usize) -> Result<NodeId, Error> {
         let chars = Span::new(self.text_start..end);
         self.text_start = end;
@@ -125,21 +168,25 @@ impl Builder {
         self.tree.add(Node::Text { chars, ignore_case })
     }
 
-    #[inline]
+    #[inline(always)]
     fn end_text_at(&mut self, end: usize) -> Result<(), Error> {
-        if self.text_start < end {
-            let id = self.text_node(end)?;
-            self.push(id)?;
+        match self.text_start < end {
+            true => self.push_text(end),
+            false => Ok(()),
         }
-        Ok(())
     }
 
-    #[inline]
+    fn push_text(&mut self, end: usize) -> Result<(), Error> {
+        let id = self.text_node(end)?;
+        self.push(id)
+    }
+
+    #[inline(always)]
     fn end_text(&mut self) -> Result<(), Error> {
-        self.end_text_at(self.tree.char_count())
+        self.end_text_at(self.text_end)
     }
 
-    #[inline]
+    #[inline(always)]
     fn start_text(&mut self, ignore_case: bool) -> Result<(), Error> {
         if self.text_ignores_case != ignore_case {
             self.end_text()?;
@@ -151,7 +198,7 @@ impl Builder {
 
     /// Lets text that was ended for a group go on, now that the group turns out to be nothing but text.
     fn resume_text(&mut self) {
-        let has_text = self.text_start < self.tree.char_count();
+        let has_text = self.text_start < self.text_end;
         if let [.., last] = self.stack[self.terms_start..]
             && last == self.tree.root()
             && let Node::Text { chars, ignore_case } = self.tree[last]
@@ -167,7 +214,7 @@ impl Builder {
 
     fn end_alternative(&mut self) -> Result<NodeId, Error> {
         if self.stack.len() == self.terms_start {
-            let end = self.tree.char_count();
+            let end = self.text_end;
             return match self.text_start < end {
                 true => self.text_node(end),
                 false => self.tree.add(Node::Empty),
@@ -187,7 +234,12 @@ impl Builder {
     }
 
     /// Takes the nodes from `start` on off the stack.
-    fn join(&mut self, start: usize, node: fn(Span<NodeId>) -> Node) -> Result<NodeId, Error> {
+    #[inline(always)]
+    fn join(
+        &mut self,
+        start: usize,
+        node: impl FnOnce(Span<NodeId>) -> Node,
+    ) -> Result<NodeId, Error> {
         let joined = match self.stack[start..] {
             [only] => only,
             ref children => {
@@ -199,7 +251,7 @@ impl Builder {
         Ok(joined)
     }
 
-    /// The nodes from `first_node` on are `body` and what it holds.
+    /// The nodes from `first_node` on are `body` and what it holds. The quantifier is not `{1}`.
     fn repeat(
         &mut self,
         body: NodeId,
@@ -207,22 +259,25 @@ impl Builder {
         captures: Groups,
         Quantifier { min, max, greedy }: Quantifier,
     ) -> Result<(), Error> {
-        let consumes_nothing = matches!(
-            self.tree[body],
-            Node::Look { .. }
-                | Node::InputStart
-                | Node::InputEnd
-                | Node::LineStart
-                | Node::LineEnd
-                | Node::WordBoundary { .. }
-        );
         // RepeatMatcher rejects an empty iteration beyond the minimum, and those within it all do the same.
-        if max == 0 || self.tree[body] == Node::Empty || (consumes_nothing && min == 0) {
+        let (is_needless, runs_once) = match self.tree[body] {
+            Node::Empty => (true, false),
+            Node::Look { .. }
+            | Node::InputStart
+            | Node::InputEnd
+            | Node::LineStart
+            | Node::LineEnd
+            | Node::WordBoundary { .. } => (min == 0, true),
+            _ => (max == 0, false),
+        };
+        if is_needless {
             self.tree.truncate(first_node);
-            self.named_groups.forget_references_from(first_node);
+            if let Some(named_groups) = &mut self.named_groups {
+                named_groups.forget_references_from(first_node);
+            }
             return Ok(());
         }
-        let id = match consumes_nothing || (min, max) == (1, 1) {
+        let id = match runs_once {
             true => body,
             false => self.tree.add(Node::Repeat {
                 body,
@@ -236,28 +291,36 @@ impl Builder {
     }
 }
 
-impl Sink for Builder {
+impl Sink for Builder<'_> {
     type Outer = Outer;
 
     #[inline]
     fn text<C: CodeUnit>(&mut self, units: &[C]) -> Result<(), Error> {
-        self.start_text(self.ignores_case())?;
-        let ignore_case = self.ignore_case();
-        let canonical = |c| ignore_case.map_or(c, |it| it.canonicalize(c));
-        if !C::IS_LATIN1 && self.tree.is_unicode_aware() {
-            let chars = C::text(units).code_points();
-            self.tree.extend_chars(units.len(), chars.map(canonical))
-        } else {
-            let chars = units.iter().map(|unit| unit.to_u32());
-            self.tree.extend_chars(units.len(), chars.map(canonical))
+        if let [unit] = units {
+            return self.character(unit.to_u32());
         }
+        self.start_text(self.ignores_case())?;
+        let (ignore_case, most) = (self.ignore_case(), units.len());
+        let chars = units.iter().map(|unit| unit.to_u32());
+        self.text_end = if !C::IS_LATIN1 && self.tree.is_unicode_aware() {
+            let canonical = |c| ignore_case.map_or(c, |it| it.canonicalize(c));
+            let chars = C::text(units).code_points();
+            self.tree.extend_chars(most, chars.map(canonical))?
+        } else if let Some(ignore_case) = ignore_case {
+            let canonical = |c| ignore_case.canonicalize(c);
+            self.tree.extend_chars(most, chars.map(canonical))?
+        } else {
+            self.tree.extend_chars(most, chars)?
+        };
+        Ok(())
     }
 
     #[inline]
     fn character(&mut self, c: u32) -> Result<(), Error> {
         self.start_text(self.ignores_case())?;
         let c = self.ignore_case().map_or(c, |it| it.canonicalize(c));
-        self.tree.extend_chars(1, [c].into_iter())
+        self.text_end = self.tree.push_char(c)?;
+        Ok(())
     }
 
     fn assertion(&mut self, assertion: Assertion) -> Result<(), Error> {
@@ -275,14 +338,25 @@ impl Sink for Builder {
     }
 
     fn dot(&mut self) -> Result<(), Error> {
-        self.add_set(match self.flags.contains(Flags::DOT_ALL) {
-            true => Set::ALL,
-            false => Set::NOT_LINE_TERMINATOR,
+        self.add_common_set(DOT, |flags| match flags.contains(Flags::DOT_ALL) {
+            true => Ok(Set::ALL),
+            false => Ok(Set::NOT_LINE_TERMINATOR),
         })
     }
 
     fn class_escape(&mut self, escape: ClassEscape) -> Result<(), Error> {
-        self.add_set(class::set_of_escape(escape, self.flags)?)
+        let index = match escape {
+            ClassEscape::Digit => 0,
+            ClassEscape::NotDigit => 1,
+            ClassEscape::Space => 2,
+            ClassEscape::NotSpace => 3,
+            ClassEscape::Word => 4,
+            ClassEscape::NotWord => 5,
+            ClassEscape::Property(_) | ClassEscape::NotProperty(_) => {
+                return self.add_set(class::set_of_escape(escape, self.flags)?);
+            }
+        };
+        self.add_common_set(index, |flags| class::set_of_escape(escape, flags))
     }
 
     fn back_reference(&mut self, group: Option<Group>) -> Result<(), Error> {
@@ -304,6 +378,7 @@ impl Sink for Builder {
             ignore_case: self.ignores_case(),
         })?;
         self.named_groups
+            .get_or_insert_default()
             .add_reference(self.tree.root(), name, candidates)
     }
 
@@ -313,7 +388,7 @@ impl Sink for Builder {
         }
         let body = match self.atom {
             Atom::Character => {
-                let end = self.tree.char_count();
+                let end = self.text_end;
                 self.end_text_at(end - 1)?;
                 self.text_node(end)?
             }
@@ -327,7 +402,9 @@ impl Sink for Builder {
     }
 
     fn name_group(&mut self, group: Group, name: NameId, text: Text<'_>) -> Result<(), Error> {
-        self.named_groups.add_group(group, name, text)
+        self.named_groups
+            .get_or_insert_default()
+            .add_group(group, name, text)
     }
 
     #[inline]
@@ -343,7 +420,7 @@ impl Sink for Builder {
         };
         match kind {
             GroupKind::Capture(_) => {}
-            GroupKind::Plain { set, cleared } => self.flags = (self.flags | set) - cleared,
+            GroupKind::Plain { set, cleared } => self.set_flags((self.flags | set) - cleared),
             GroupKind::Look { behind, .. } => self.is_backward = behind,
         }
         self.alternatives_start = self.stack.len();
@@ -374,7 +451,7 @@ impl Sink for Builder {
             true => None,
             false => Some(self.end_disjunction()?),
         };
-        self.flags = outer.flags;
+        self.set_flags(outer.flags);
         self.is_backward = outer.is_backward;
         self.alternatives_start = outer.alternatives_start as usize;
         self.terms_start = outer.terms_start as usize;
@@ -415,12 +492,17 @@ impl Sink for Builder {
     }
 
     fn close_class(&mut self, negated: bool, quantifier: Option<Quantifier>) -> Result<(), Error> {
-        let (set, strings) = self.classes.close(negated, self.ignore_case())?;
-        if let Some(strings) = strings {
-            let outer = self.open(GroupKind::PLAIN)?;
-            self.add_strings(&set, strings)?;
-            return self.close(outer, NO_CAPTURES, quantifier);
-        }
+        let set = if self.classes.has_only_characters() {
+            self.classes.close_characters(negated, self.ignore_case())?
+        } else {
+            let (set, strings) = self.classes.close(negated, self.ignore_case())?;
+            if !strings.is_empty() {
+                let outer = self.open(GroupKind::PLAIN)?;
+                self.add_strings(&set, strings)?;
+                return self.close(outer, NO_CAPTURES, quantifier);
+            }
+            set
+        };
         self.add_class(set)?;
         quantifier.map_or(Ok(()), |quantifier| self.quantify(quantifier))
     }

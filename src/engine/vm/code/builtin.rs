@@ -1,9 +1,10 @@
 //! Functions that are written in JavaScript with `@names`: those of the standard library, and those of the embedder.
 
 use core::cell::{OnceCell, RefCell};
+use std::rc::Rc;
 
 use bun_engine_bytecode::{
-    BuiltinFunction, BuiltinValue, FunctionKind, FunctionRef, Host, Visibility,
+    BuiltinFunction, BuiltinValue, FunctionInfo, FunctionKind, FunctionRef, Host, Visibility,
 };
 use bun_engine_text::{Atom, Identifier, PropertyName, StringRef, Text};
 
@@ -114,10 +115,10 @@ pub fn describe_builtin(
         is_strict: outline.is_strict,
         is_async: outline.is_async,
         is_generator: outline.is_generator,
-        visibility: if outline.is_async {
-            visibility.max(Visibility::Private)
-        } else {
-            visibility
+        // The frame is that of the body too, which only `PrivateRecursive` hides.
+        visibility: match visibility {
+            Visibility::Private if outline.is_async => Visibility::Public,
+            _ => visibility,
         },
         has_positions: source.provider.url().is_some(),
     }
@@ -150,6 +151,11 @@ impl Vm {
             SourceProvider::build(text, None, SourceType::Program).finish()
         });
         provider.clone()
+    }
+
+    pub(super) fn builtin_function_tables(&self) -> Vec<Rc<[FunctionInfo]>> {
+        let functions = self.services.code.builtins.functions.borrow();
+        (functions.values().map(|it| Rc::clone(it.1.table()))).collect()
     }
 
     /// A new one, whose code is linked to the realm that calls it first.

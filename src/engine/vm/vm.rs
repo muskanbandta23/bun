@@ -13,7 +13,9 @@ use bun_engine_macros::FieldOffsets;
 use crate::code::NativeExecutableKey;
 use crate::function::CustomAccessorKey;
 use crate::heap::stack::{self, StackBounds, stack_pointer};
-use crate::heap::{Heap, HeapKind, IsoSpace, Scope, Survivors, WeakValueMap, barrier};
+use crate::heap::{
+    FieldValue, Heap, HeapKind, IsoSpace, RootReason, Scope, Survivors, WeakValueMap, barrier,
+};
 use crate::object::ShapeCache;
 use crate::primitive::{StringCaches, WeaklyHeldSymbols};
 use crate::services::Service;
@@ -133,7 +135,6 @@ impl VmShapes {
 pub struct Embedder {
     pub debugger_break: Cell<Option<fn(&mut Cx)>>,
     pub shell_timeout_check: Cell<Option<fn(&mut Cx)>>,
-    pub reconcile_weak_references: Cell<Option<fn(&Vm, &Survivors)>>,
     /// After the last cell.
     pub destroy_members: Cell<Option<fn(&Vm)>>,
     /// AgentCanSuspend is false.
@@ -189,6 +190,7 @@ pub struct Vm {
     lowest_stack_pointer: Cell<usize>,
     is_handling_error: Cell<bool>,
     debugger_count: Cell<u32>,
+    stepping_debugger_count: Cell<u32>,
     seed: Cell<u64>,
     when_idle: RefCell<Vec<Box<dyn FnOnce(&Vm) + GcFree>>>,
     conservative_ranges: RefCell<Vec<Range<usize>>>,
@@ -281,6 +283,7 @@ impl VmRef {
             deletes_unconfigurable_properties: Cell::new(false),
             is_async_context_tracked: Cell::new(false),
             debugger_count: Cell::new(0),
+            stepping_debugger_count: Cell::new(0),
             did_enter: Cell::new(false),
             seed: Cell::new(seed.rotate_left(32) | 1),
             when_idle: RefCell::default(),
@@ -377,6 +380,7 @@ impl Vm {
     pub const OFFSET_OF_SCRATCH: usize = offset_of!(Vm, scratch);
     pub const OFFSET_OF_IS_ASYNC_CONTEXT_TRACKED: usize = offset_of!(Vm, is_async_context_tracked);
     pub const OFFSET_OF_DEBUGGER_COUNT: usize = offset_of!(Vm, debugger_count);
+    pub const OFFSET_OF_STEPPING_DEBUGGER_COUNT: usize = offset_of!(Vm, stepping_debugger_count);
     pub const OFFSET_OF_HEAP: usize = offset_of!(Vm, heap);
     pub const OFFSET_OF_SMALL_STRINGS: usize = offset_of!(Vm, small_strings);
     pub const OFFSET_OF_NUMBER_STRINGS: usize = offset_of!(Vm, number_strings);
@@ -495,14 +499,18 @@ impl Vm {
 
     /// State that another crate keeps for the `Vm`.
     pub fn extension<T: Default + GcFree + 'static>(&self) -> Rc<T> {
+        self.existing_extension().unwrap_or_else(|| {
+            let new = Rc::new(T::default());
+            let mut extensions = self.extensions.borrow_mut();
+            extensions.insert(TypeId::of::<T>(), Rc::<T>::clone(&new));
+            new
+        })
+    }
+
+    /// `None` if nothing has asked for it.
+    pub fn existing_extension<T: 'static>(&self) -> Option<Rc<T>> {
         let existing = self.extensions.borrow().get(&TypeId::of::<T>()).cloned();
-        if let Some(Ok(existing)) = existing.map(Rc::downcast) {
-            return existing;
-        }
-        let new = Rc::new(T::default());
-        let mut extensions = self.extensions.borrow_mut();
-        extensions.insert(TypeId::of::<T>(), Rc::<T>::clone(&new));
-        new
+        existing?.downcast().ok()
     }
 
     pub fn random_seed(&self) -> u64 {
@@ -553,6 +561,15 @@ impl Vm {
     pub(crate) fn set_exception(&self, exception: Gc<Exception>) {
         self.exception.set(Some(exception));
         self.last_exception.set(Some(exception));
+    }
+
+    pub(crate) fn restore_exceptions(
+        &self,
+        pending: Option<Gc<Exception>>,
+        last: Option<Gc<Exception>>,
+    ) {
+        self.exception.set(pending);
+        self.last_exception.set(last);
     }
 
     /// Whatever it is.
@@ -609,8 +626,14 @@ impl Vm {
         self.debugger_count.get() != 0
     }
 
-    pub fn debugger_count(&self) -> &Cell<u32> {
+    pub(crate) fn debugger_count(&self) -> &Cell<u32> {
         &self.debugger_count
+    }
+
+    /// How many want to hear of every debug hook.
+    #[inline(always)]
+    pub fn stepping_debugger_count(&self) -> &Cell<u32> {
+        &self.stepping_debugger_count
     }
 
     #[inline(always)]
@@ -796,10 +819,13 @@ impl Vm {
     }
 
     pub(crate) fn visit_roots(&self, visitor: &mut Visitor) {
+        visitor.replace_root_reason(RootReason::Exceptions);
         self.exception.visit(visitor);
         self.last_exception.visit(visitor);
         self.termination_exception.visit(visitor);
-        self.entry_global.visit(visitor);
+        visitor.replace_root_reason(RootReason::StrongReferences);
+        // SAFETY: zero or a root. It stands for a reference on the stack.
+        unsafe { visitor.append_hidden_word(self.entry_global.get().to_word()) };
         self.internal_function_executable.visit(visitor);
         self.bound_function_executable.visit(visitor);
         self.shapes.visit(visitor);
@@ -811,6 +837,7 @@ impl Vm {
             unsafe { visitor.append_word(shape as u64) };
         }
         self.services.visit(visitor);
+        visitor.replace_root_reason(RootReason::Debugger);
         (self.hooks.visit_roots)(self, visitor);
     }
 
@@ -832,9 +859,6 @@ impl Vm {
         self.custom_accessor_functions.prune(survivors);
         self.services.reconcile_weak_references(self, survivors);
         (self.hooks.reconcile_weak_references)(self, survivors);
-        if let Some(reconcile) = self.embedder.reconcile_weak_references.get() {
-            reconcile(self, survivors);
-        }
     }
 
     pub(crate) fn did_collect(&self, scope: Scope, cells_on_stack: &[usize]) {

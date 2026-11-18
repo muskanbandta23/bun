@@ -12,7 +12,6 @@ class DefaultWeakPtrImpl;
 class Hasher;
 class Lock;
 class MonotonicTime;
-class RunLoop;
 class Seconds;
 class Thread;
 class WallTime;

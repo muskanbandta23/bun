@@ -4,12 +4,13 @@ use core::ffi::{CStr, c_char};
 use core::ptr;
 
 use crate::error::Status;
-use crate::ffi::{call, open};
+use crate::ffi::{adopt, call, open};
 use crate::{Error, Result};
 
 bun_opaque::opaque_ffi! { struct UResourceBundle; }
 
 icu_functions! {
+    fn ures_open(package: *const c_char, locale: *const c_char, status: &mut Status) -> *mut UResourceBundle;
     fn ures_openDirect(package: *const c_char, name: *const c_char, status: &mut Status) -> *mut UResourceBundle;
     fn ures_close(bundle: *mut UResourceBundle);
     fn ures_getSize(bundle: *const UResourceBundle) -> i32;
@@ -24,6 +25,7 @@ icu_functions! {
     fn ures_getIntVector(bundle: *const UResourceBundle, length: &mut i32, status: &mut Status) -> *const i32;
     fn ures_getBinary(bundle: *const UResourceBundle, length: &mut i32, status: &mut Status) -> *const u8;
     fn ures_getString(bundle: *const UResourceBundle, length: &mut i32, status: &mut Status) -> *const u16;
+    fn ures_getStringByKey(bundle: *const UResourceBundle, key: *const c_char, length: &mut i32, status: &mut Status) -> *const u16;
     fn ures_getStringByIndex(bundle: *const UResourceBundle, index: i32, length: &mut i32, status: &mut Status) -> *const u16;
 }
 
@@ -32,11 +34,21 @@ icu_handle! {
     pub struct ResourceBundle(UResourceBundle), ures_close
 }
 
+// SAFETY: what takes `&self` only reads the node, and ICU counts the users of the data under a lock.
+unsafe impl Sync for ResourceBundle {}
+
 fn position(index: usize) -> Result<i32> {
     i32::try_from(index).map_err(|_| Error::MISSING_RESOURCE)
 }
 
 impl ResourceBundle {
+    /// The root of the tree of a locale, which falls back to those of its parents for a key that it lacks.
+    pub fn open(locale: &CStr) -> Result<ResourceBundle> {
+        // SAFETY: `locale` is terminated, and no package means the data of ICU itself.
+        open(|status| unsafe { ures_open(ptr::null(), locale.as_ptr(), status) })
+            .map(ResourceBundle)
+    }
+
     /// The root of the tree of this name, with no fallback to another.
     pub fn open_direct(name: &CStr) -> Result<ResourceBundle> {
         // SAFETY: `name` is terminated, and no package means the data of ICU itself.
@@ -51,18 +63,22 @@ impl ResourceBundle {
     }
 
     pub fn by_key(&self, key: &CStr) -> Result<ResourceBundle> {
-        // SAFETY: the bundle is open and `key` is terminated.
-        open(|status| unsafe {
-            ures_getByKey(self.0.as_ptr(), key.as_ptr(), ptr::null_mut(), status)
-        })
-        .map(ResourceBundle)
+        adopt(
+            // SAFETY: the bundle is open and `key` is terminated.
+            |status| unsafe {
+                ures_getByKey(self.0.as_ptr(), key.as_ptr(), ptr::null_mut(), status)
+            },
+            ResourceBundle,
+        )
     }
 
     pub fn by_index(&self, index: usize) -> Result<ResourceBundle> {
         let index = position(index)?;
-        // SAFETY: the bundle is open, and ICU checks the range of `index`.
-        open(|status| unsafe { ures_getByIndex(self.0.as_ptr(), index, ptr::null_mut(), status) })
-            .map(ResourceBundle)
+        adopt(
+            // SAFETY: the bundle is open, and ICU checks the range of `index`.
+            |status| unsafe { ures_getByIndex(self.0.as_ptr(), index, ptr::null_mut(), status) },
+            ResourceBundle,
+        )
     }
 
     pub fn int(&self) -> Result<i32> {
@@ -83,6 +99,15 @@ impl ResourceBundle {
     pub fn string(&self) -> Result<&[u16]> {
         // SAFETY: the bundle is open, and the function returns its data.
         unsafe { self.data(|bundle, length, status| ures_getString(bundle, length, status)) }
+    }
+
+    pub fn string_by_key(&self, key: &CStr) -> Result<&[u16]> {
+        // SAFETY: the bundle is open, `key` is terminated, and the function returns data of the bundle.
+        unsafe {
+            self.data(|bundle, length, status| {
+                ures_getStringByKey(bundle, key.as_ptr(), length, status)
+            })
+        }
     }
 
     pub fn string_at(&self, index: usize) -> Result<&[u16]> {

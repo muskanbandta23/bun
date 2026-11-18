@@ -51,6 +51,30 @@ pub(crate) fn open<T>(function: impl FnOnce(&mut Status) -> *mut T) -> Result<No
     NonNull::new(call(function)?).ok_or(Error::MEMORY_ALLOCATION)
 }
 
+/// For a function that can return a new object along with a failure, which `own` then closes.
+pub(crate) fn adopt<T, O>(
+    function: impl FnOnce(&mut Status) -> *mut T,
+    own: impl FnOnce(NonNull<T>) -> O,
+) -> Result<O> {
+    let mut status = Status::default();
+    let object = NonNull::new(function(&mut status)).map(own);
+    status.result()?;
+    object.ok_or(Error::MEMORY_ALLOCATION)
+}
+
+/// For a function that returns a pointer and a length.
+///
+/// # Safety
+/// Unless `units` is null, it has `length` units that nothing changes or frees during `'a`.
+#[inline]
+pub(crate) unsafe fn borrowed<'a, T>(units: *const T, length: i32) -> &'a [T] {
+    match usize::try_from(length) {
+        // SAFETY: the caller's.
+        Ok(length) if !units.is_null() => unsafe { core::slice::from_raw_parts(units, length) },
+        _ => &[],
+    }
+}
+
 #[inline]
 pub(crate) fn length<T>(units: &[T]) -> Result<i32> {
     i32::try_from(units.len()).map_err(|_| Error::INDEX_OUT_OF_BOUNDS)

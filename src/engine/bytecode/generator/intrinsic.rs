@@ -210,6 +210,7 @@ impl Generator<'_> {
         true
     }
 
+    #[inline(never)]
     pub(super) fn intrinsic(
         &mut self,
         intrinsic: Intrinsic,

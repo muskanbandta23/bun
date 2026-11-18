@@ -42,11 +42,13 @@ mod vector;
 
 use core::convert::Infallible;
 use core::marker::PhantomData;
+use core::mem;
 
 use bun_engine_asm::{Cond, FloatCond, FloatWidth, Rounding, Shift, Sign, Size, Width};
 
+pub(crate) use self::gc::STRUCT_SET;
 use self::immediates::Access;
-pub(crate) use self::vector::V128_CONST;
+pub(crate) use self::vector::{V128_CONST, VectorOp};
 use crate::error::{Error, Missing};
 use crate::module::{FunctionFlags, ModuleHeader};
 use crate::opcode::{self, *};
@@ -83,7 +85,7 @@ impl Mode for Check {
     #[cold]
     #[inline(never)]
     fn error(make: impl FnOnce() -> Error) -> Error {
-        make()
+        make().lacking(Missing::InstructionStart)
     }
 
     #[cold]
@@ -91,17 +93,27 @@ impl Mode for Check {
         let Some(missing) = error.take_missing() else {
             return error;
         };
-        let mut reader = Reader::new(bytes, start + 1);
-        let second = (bytes[start] >= GC_PREFIX).then(|| reader.u32()).flatten();
+        let after_opcode = || opcodes_at(bytes, start);
         match missing {
             Missing::OffsetAfterInstruction => error.set_offset(end),
-            Missing::OffsetAfterOpcode => error.set_offset(reader.position()),
+            Missing::OffsetAfterOpcode => error.set_offset(after_opcode().2),
             Missing::OffsetOfLastByte => error.set_offset(end - 1),
-            Missing::OpcodeName => error.prefix_reason(opcode::name(bytes[start])),
-            Missing::SecondOpcodeNumber => error.prefix_reason(&second.unwrap_or(0).to_string()),
+            Missing::OpcodeName => error.prefix_reason(opcode::name(after_opcode().0)),
+            Missing::SecondOpcodeNumber => error.prefix_reason(&after_opcode().1.to_string()),
+            Missing::InstructionStart | Missing::OperandCheck(_) => {
+                return error.lacking(Missing::OperandCheck(start));
+            }
         }
         error
     }
+}
+
+/// The first byte, the number after a prefix, and the offset after them.
+pub(crate) fn opcodes_at(bytes: &[u8], start: usize) -> (u8, u32, usize) {
+    let mut reader = Reader::new(bytes, start);
+    let first = reader.u8().unwrap_or(UNREACHABLE);
+    let second = (first >= GC_PREFIX).then(|| reader.u32()).flatten();
+    (first, second.unwrap_or(u32::MAX), reader.position())
 }
 
 pub(crate) struct Run<E>(PhantomData<E>);
@@ -156,9 +168,10 @@ impl VisitMemory for Ignore {}
 impl VisitReference for Ignore {}
 impl VisitVector for Ignore {}
 
-/// What changes from one instruction to the next, apart from the position.
+/// What is not needed for every instruction.
 #[derive(Clone, Copy)]
-pub(crate) struct Progress {
+pub(crate) struct Context<'a> {
+    header: &'a ModuleHeader,
     /// The number of open blocks, the body included.
     pub(crate) depth: u32,
     /// Zero in live code, otherwise one more than the number of open blocks that started in dead code.
@@ -168,31 +181,24 @@ pub(crate) struct Progress {
     pub(crate) flags: FunctionFlags,
 }
 
-impl Progress {
-    pub(crate) const START: Self = Self {
-        depth: 1,
-        dead: 0,
-        calls: 0,
-        loops: 0,
-        flags: FunctionFlags::empty(),
-    };
-}
-
-pub(crate) struct Decoder<'a, M> {
-    pub(crate) reader: Reader<'a>,
-    pub(crate) progress: Progress,
-    header: &'a ModuleHeader,
-    mode: PhantomData<M>,
-}
-
-impl<M> Clone for Decoder<'_, M> {
-    #[inline(always)]
-    fn clone(&self) -> Self {
-        *self
+impl<'a> Context<'a> {
+    pub(crate) fn new(header: &'a ModuleHeader) -> Self {
+        Self {
+            header,
+            depth: 1,
+            dead: 0,
+            calls: 0,
+            loops: 0,
+            flags: FunctionFlags::empty(),
+        }
     }
 }
 
-impl<M> Copy for Decoder<'_, M> {}
+pub(crate) struct Decoder<'c, 'a, M> {
+    pub(crate) reader: Reader<'a>,
+    pub(crate) cx: &'c mut Context<'a>,
+    mode: PhantomData<M>,
+}
 
 const INT_CONDS: [Cond; 10] = [
     Cond::Eq,
@@ -242,13 +248,12 @@ const FLOAT_BINARY: [FloatBinaryOp; 7] = [
 const SIGNS: [Sign; 2] = [Sign::Signed, Sign::Unsigned];
 const SIZES: [Size; 4] = [Size::S8, Size::S16, Size::S32, Size::S64];
 
-impl<'a, M: Mode> Decoder<'a, M> {
+impl<'c, 'a, M: Mode> Decoder<'c, 'a, M> {
     #[inline(always)]
-    pub(crate) fn new(header: &'a ModuleHeader, reader: Reader<'a>, progress: Progress) -> Self {
+    pub(crate) fn new(reader: Reader<'a>, cx: &'c mut Context<'a>) -> Self {
         Self {
             reader,
-            progress,
-            header,
+            cx,
             mode: PhantomData,
         }
     }
@@ -256,11 +261,12 @@ impl<'a, M: Mode> Decoder<'a, M> {
     /// Goes on to the end of the outermost block. When skipping, stops in front of the instruction that ends it.
     #[inline]
     pub(crate) fn run<V: Visitor<Error = M::Error>>(&mut self, v: &mut V) -> Result<(), M::Error> {
-        // A copy whose address no call gets stays in registers.
-        let mut local = *self;
+        // The reader stays in registers, as no call gets its address, and the context takes none.
+        let mut cx = *self.cx;
+        let mut local = Decoder::<M>::new(self.reader, &mut cx);
         let result = loop {
-            if M::PURPOSE == Purpose::Run && v.flow() == Flow::Dead && local.progress.dead == 0 {
-                local.progress.dead = 1;
+            if M::PURPOSE == Purpose::Run && v.flow() == Flow::Dead && local.cx.dead == 0 {
+                local.cx.dead = 1;
                 local.skip_dead_code();
             }
             let start = local.reader.position();
@@ -273,14 +279,15 @@ impl<'a, M: Mode> Decoder<'a, M> {
                 }
             }
         };
-        *self = local;
+        self.reader = local.reader;
+        *self.cx = cx;
         result
     }
 
     /// For what is too rare or too large to be part of the loop.
     #[inline(always)]
-    fn apart<T>(&mut self, function: impl FnOnce(&mut Self) -> T) -> T {
-        let mut copy = *self;
+    fn apart<T>(&mut self, function: impl FnOnce(&mut Decoder<'_, 'a, M>) -> T) -> T {
+        let mut copy = Decoder::new(self.reader, self.cx);
         let result = function(&mut copy);
         self.reader.set_position(copy.reader.position());
         result
@@ -288,10 +295,8 @@ impl<'a, M: Mode> Decoder<'a, M> {
 
     #[inline(always)]
     pub(crate) fn skip_dead_code(&mut self) {
-        let (position, calls, loops) = skip_block(self.header, self.reader, self.progress);
+        let position = skip_block(self.reader, self.cx);
         self.reader.set_position(position);
-        self.progress.calls = calls;
-        self.progress.loops = loops;
     }
 
     /// Returns whether there is more.
@@ -307,6 +312,7 @@ impl<'a, M: Mode> Decoder<'a, M> {
         v.at(start as u32);
         let op = read!(self, self.reader.u8(), "{NO_OPCODE}");
         let nth = |first: u8| usize::from(op - first);
+        // No range patterns: they are tested one after the other, outside the jump table.
         match op {
             UNREACHABLE => self.transfer(|| v.unreachable())?,
             NOP => v.nop()?,
@@ -318,8 +324,8 @@ impl<'a, M: Mode> Decoder<'a, M> {
             LOOP => {
                 let ty = self.block_type(op)?;
                 self.open_block();
-                self.progress.loops += 1;
-                v.loop_(ty, self.progress.loops - 1)?;
+                self.cx.loops += 1;
+                v.loop_(ty, self.cx.loops - 1)?;
             }
             IF => {
                 let ty = self.block_type(op)?;
@@ -335,12 +341,12 @@ impl<'a, M: Mode> Decoder<'a, M> {
             TRY_TABLE => {
                 self.note_if_live(FunctionFlags::HAS_TRY_TABLE);
                 let ty = self.block_type(op)?;
-                let catches = self.apart(Self::catches)?;
+                let catches = self.apart(|decoder| decoder.catches())?;
                 self.open_block();
                 v.try_table(ty, catches)?;
             }
             ELSE | CATCH | CATCH_ALL | DELEGATE | END
-                if M::PURPOSE == Purpose::Skip && self.progress.depth == 1 =>
+                if M::PURPOSE == Purpose::Skip && self.cx.depth == 1 =>
             {
                 self.reader.set_position(start);
                 return Ok(false);
@@ -364,7 +370,7 @@ impl<'a, M: Mode> Decoder<'a, M> {
             }
             END => {
                 v.end(self.close_block())?;
-                return Ok(self.progress.depth != 0);
+                return Ok(self.cx.depth != 0);
             }
             THROW => {
                 let tag = self.tag()?;
@@ -381,7 +387,7 @@ impl<'a, M: Mode> Decoder<'a, M> {
             }
             BR_IF => v.br_if(self.label()?)?,
             BR_TABLE => {
-                let table = self.apart(Self::br_table)?;
+                let table = self.apart(|decoder| decoder.br_table())?;
                 self.transfer(|| v.br_table(table))?;
             }
             RETURN => self.transfer(|| v.return_())?,
@@ -390,11 +396,11 @@ impl<'a, M: Mode> Decoder<'a, M> {
                 v.call(func, self.call_site())?;
             }
             CALL_INDIRECT => {
-                let (ty, table) = self.apart(Self::call_indirect_immediates)?;
+                let (ty, table) = self.apart(|decoder| decoder.call_indirect_immediates())?;
                 v.call_indirect(ty, table, self.call_site())?;
             }
             CALL_REF => {
-                let ty = self.apart(Self::call_ref_type)?;
+                let ty = self.apart(|decoder| decoder.call_ref_type())?;
                 v.call_ref(ty, self.call_site())?;
             }
             RETURN_CALL => {
@@ -403,19 +409,19 @@ impl<'a, M: Mode> Decoder<'a, M> {
                 self.transfer(|| v.return_call(func, site))?;
             }
             RETURN_CALL_INDIRECT => {
-                let (ty, table) = self.apart(Self::call_indirect_immediates)?;
+                let (ty, table) = self.apart(|decoder| decoder.call_indirect_immediates())?;
                 let site = self.tail_call_site();
                 self.transfer(|| v.return_call_indirect(ty, table, site))?;
             }
             RETURN_CALL_REF => {
-                let ty = self.apart(Self::call_ref_type)?;
+                let ty = self.apart(|decoder| decoder.call_ref_type())?;
                 let site = self.tail_call_site();
                 self.transfer(|| v.return_call_ref(ty, site))?;
             }
 
             DROP => v.drop_()?,
             SELECT => v.select(None)?,
-            SELECT_TYPED => v.select(Some(self.apart(Self::select_type)?))?,
+            SELECT_TYPED => v.select(Some(self.apart(|decoder| decoder.select_type())?))?,
             LOCAL_GET => v.local_get(self.local()?)?,
             LOCAL_SET => v.local_set(self.local()?)?,
             LOCAL_TEE => v.local_tee(self.local()?)?,
@@ -424,12 +430,15 @@ impl<'a, M: Mode> Decoder<'a, M> {
             TABLE_GET => v.table_get(self.table()?)?,
             TABLE_SET => v.table_set(self.table()?)?,
 
-            I32_LOAD..=I64_LOAD32_U => {
+            I32_LOAD | I64_LOAD | F32_LOAD | F64_LOAD | I32_LOAD8_S | I32_LOAD8_U
+            | I32_LOAD16_S | I32_LOAD16_U | I64_LOAD8_S | I64_LOAD8_U | I64_LOAD16_S
+            | I64_LOAD16_U | I64_LOAD32_S | I64_LOAD32_U => {
                 let load = LoadOp::ALL[nth(I32_LOAD)];
                 let arg = self.mem_arg(Access::Load(op), load.size().log2_bytes())?;
                 v.load(load, arg)?;
             }
-            I32_STORE..=I64_STORE32 => {
+            I32_STORE | I64_STORE | F32_STORE | F64_STORE | I32_STORE8 | I32_STORE16
+            | I64_STORE8 | I64_STORE16 | I64_STORE32 => {
                 let store = StoreOp::ALL[nth(I32_STORE)];
                 let arg = self.mem_arg(Access::Store(op), store.size().log2_bytes())?;
                 v.store(store, arg)?;
@@ -443,63 +452,81 @@ impl<'a, M: Mode> Decoder<'a, M> {
             F64_CONST => v.f64_const(u64::from_le_bytes(self.float_immediate()?))?,
 
             I32_EQZ => v.int_eqz(W32)?,
-            I32_EQ..=I32_GE_U => v.int_compare(W32, INT_CONDS[nth(I32_EQ)])?,
+            I32_EQ | I32_NE | I32_LT_S | I32_LT_U | I32_GT_S | I32_GT_U | I32_LE_S | I32_LE_U
+            | I32_GE_S | I32_GE_U => v.int_compare(W32, INT_CONDS[nth(I32_EQ)])?,
             I64_EQZ => v.int_eqz(W64)?,
-            I64_EQ..=I64_GE_U => v.int_compare(W64, INT_CONDS[nth(I64_EQ)])?,
-            F32_EQ..=F32_GE => v.float_compare(F32, FLOAT_CONDS[nth(F32_EQ)])?,
-            F64_EQ..=F64_GE => v.float_compare(F64, FLOAT_CONDS[nth(F64_EQ)])?,
+            I64_EQ | I64_NE | I64_LT_S | I64_LT_U | I64_GT_S | I64_GT_U | I64_LE_S | I64_LE_U
+            | I64_GE_S | I64_GE_U => v.int_compare(W64, INT_CONDS[nth(I64_EQ)])?,
+            F32_EQ | F32_NE | F32_LT | F32_GT | F32_LE | F32_GE => {
+                v.float_compare(F32, FLOAT_CONDS[nth(F32_EQ)])?
+            }
+            F64_EQ | F64_NE | F64_LT | F64_GT | F64_LE | F64_GE => {
+                v.float_compare(F64, FLOAT_CONDS[nth(F64_EQ)])?
+            }
 
-            I32_CLZ..=I32_POPCNT => v.int_unary(W32, INT_UNARY[nth(I32_CLZ)])?,
-            I32_ADD..=I32_MUL => v.int_binary(W32, ARITHMETIC[nth(I32_ADD)])?,
-            I32_DIV_S..=I32_DIV_U => v.int_div(W32, SIGNS[nth(I32_DIV_S)])?,
-            I32_REM_S..=I32_REM_U => v.int_rem(W32, SIGNS[nth(I32_REM_S)])?,
-            I32_AND..=I32_XOR => v.int_binary(W32, BITWISE[nth(I32_AND)])?,
-            I32_SHL..=I32_ROTR => v.int_shift(W32, SHIFTS[nth(I32_SHL)])?,
-            I64_CLZ..=I64_POPCNT => v.int_unary(W64, INT_UNARY[nth(I64_CLZ)])?,
-            I64_ADD..=I64_MUL => v.int_binary(W64, ARITHMETIC[nth(I64_ADD)])?,
-            I64_DIV_S..=I64_DIV_U => v.int_div(W64, SIGNS[nth(I64_DIV_S)])?,
-            I64_REM_S..=I64_REM_U => v.int_rem(W64, SIGNS[nth(I64_REM_S)])?,
-            I64_AND..=I64_XOR => v.int_binary(W64, BITWISE[nth(I64_AND)])?,
-            I64_SHL..=I64_ROTR => v.int_shift(W64, SHIFTS[nth(I64_SHL)])?,
+            I32_CLZ | I32_CTZ | I32_POPCNT => v.int_unary(W32, INT_UNARY[nth(I32_CLZ)])?,
+            I32_ADD | I32_SUB | I32_MUL => v.int_binary(W32, ARITHMETIC[nth(I32_ADD)])?,
+            I32_DIV_S | I32_DIV_U => v.int_div(W32, SIGNS[nth(I32_DIV_S)])?,
+            I32_REM_S | I32_REM_U => v.int_rem(W32, SIGNS[nth(I32_REM_S)])?,
+            I32_AND | I32_OR | I32_XOR => v.int_binary(W32, BITWISE[nth(I32_AND)])?,
+            I32_SHL | I32_SHR_S | I32_SHR_U | I32_ROTL | I32_ROTR => {
+                v.int_shift(W32, SHIFTS[nth(I32_SHL)])?
+            }
+            I64_CLZ | I64_CTZ | I64_POPCNT => v.int_unary(W64, INT_UNARY[nth(I64_CLZ)])?,
+            I64_ADD | I64_SUB | I64_MUL => v.int_binary(W64, ARITHMETIC[nth(I64_ADD)])?,
+            I64_DIV_S | I64_DIV_U => v.int_div(W64, SIGNS[nth(I64_DIV_S)])?,
+            I64_REM_S | I64_REM_U => v.int_rem(W64, SIGNS[nth(I64_REM_S)])?,
+            I64_AND | I64_OR | I64_XOR => v.int_binary(W64, BITWISE[nth(I64_AND)])?,
+            I64_SHL | I64_SHR_S | I64_SHR_U | I64_ROTL | I64_ROTR => {
+                v.int_shift(W64, SHIFTS[nth(I64_SHL)])?
+            }
 
             F32_ABS => v.float_unary(F32, FloatUnaryOp::Abs)?,
             F32_NEG => v.float_unary(F32, FloatUnaryOp::Neg)?,
-            F32_CEIL..=F32_NEAREST => v.float_round(F32, ROUNDINGS[nth(F32_CEIL)])?,
+            F32_CEIL | F32_FLOOR | F32_TRUNC | F32_NEAREST => {
+                v.float_round(F32, ROUNDINGS[nth(F32_CEIL)])?
+            }
             F32_SQRT => v.float_unary(F32, FloatUnaryOp::Sqrt)?,
-            F32_ADD..=F32_COPYSIGN => v.float_binary(F32, FLOAT_BINARY[nth(F32_ADD)])?,
+            F32_ADD | F32_SUB | F32_MUL | F32_DIV | F32_MIN | F32_MAX | F32_COPYSIGN => {
+                v.float_binary(F32, FLOAT_BINARY[nth(F32_ADD)])?
+            }
             F64_ABS => v.float_unary(F64, FloatUnaryOp::Abs)?,
             F64_NEG => v.float_unary(F64, FloatUnaryOp::Neg)?,
-            F64_CEIL..=F64_NEAREST => v.float_round(F64, ROUNDINGS[nth(F64_CEIL)])?,
+            F64_CEIL | F64_FLOOR | F64_TRUNC | F64_NEAREST => {
+                v.float_round(F64, ROUNDINGS[nth(F64_CEIL)])?
+            }
             F64_SQRT => v.float_unary(F64, FloatUnaryOp::Sqrt)?,
-            F64_ADD..=F64_COPYSIGN => v.float_binary(F64, FLOAT_BINARY[nth(F64_ADD)])?,
+            F64_ADD | F64_SUB | F64_MUL | F64_DIV | F64_MIN | F64_MAX | F64_COPYSIGN => {
+                v.float_binary(F64, FLOAT_BINARY[nth(F64_ADD)])?
+            }
 
             I32_WRAP_I64 => v.i32_wrap_i64()?,
-            I32_TRUNC_F32_S..=I32_TRUNC_F32_U => {
+            I32_TRUNC_F32_S | I32_TRUNC_F32_U => {
                 v.truncate_float(F32, SIGNS[nth(I32_TRUNC_F32_S)], W32)?;
             }
-            I32_TRUNC_F64_S..=I32_TRUNC_F64_U => {
+            I32_TRUNC_F64_S | I32_TRUNC_F64_U => {
                 v.truncate_float(F64, SIGNS[nth(I32_TRUNC_F64_S)], W32)?;
             }
-            I64_EXTEND_I32_S..=I64_EXTEND_I32_U => {
+            I64_EXTEND_I32_S | I64_EXTEND_I32_U => {
                 v.i64_extend_i32(SIGNS[nth(I64_EXTEND_I32_S)])?;
             }
-            I64_TRUNC_F32_S..=I64_TRUNC_F32_U => {
+            I64_TRUNC_F32_S | I64_TRUNC_F32_U => {
                 v.truncate_float(F32, SIGNS[nth(I64_TRUNC_F32_S)], W64)?;
             }
-            I64_TRUNC_F64_S..=I64_TRUNC_F64_U => {
+            I64_TRUNC_F64_S | I64_TRUNC_F64_U => {
                 v.truncate_float(F64, SIGNS[nth(I64_TRUNC_F64_S)], W64)?;
             }
-            F32_CONVERT_I32_S..=F32_CONVERT_I32_U => {
+            F32_CONVERT_I32_S | F32_CONVERT_I32_U => {
                 v.convert_int_to_float(SIGNS[nth(F32_CONVERT_I32_S)], W32, F32)?;
             }
-            F32_CONVERT_I64_S..=F32_CONVERT_I64_U => {
+            F32_CONVERT_I64_S | F32_CONVERT_I64_U => {
                 v.convert_int_to_float(SIGNS[nth(F32_CONVERT_I64_S)], W64, F32)?;
             }
             F32_DEMOTE_F64 => v.f32_demote_f64()?,
-            F64_CONVERT_I32_S..=F64_CONVERT_I32_U => {
+            F64_CONVERT_I32_S | F64_CONVERT_I32_U => {
                 v.convert_int_to_float(SIGNS[nth(F64_CONVERT_I32_S)], W32, F64)?;
             }
-            F64_CONVERT_I64_S..=F64_CONVERT_I64_U => {
+            F64_CONVERT_I64_S | F64_CONVERT_I64_U => {
                 v.convert_int_to_float(SIGNS[nth(F64_CONVERT_I64_S)], W64, F64)?;
             }
             F64_PROMOTE_F32 => v.f64_promote_f32()?,
@@ -507,12 +534,14 @@ impl<'a, M: Mode> Decoder<'a, M> {
             I64_REINTERPRET_F64 => v.reinterpret_float_as_int(F64)?,
             F32_REINTERPRET_I32 => v.reinterpret_int_as_float(F32)?,
             F64_REINTERPRET_I64 => v.reinterpret_int_as_float(F64)?,
-            I32_EXTEND8_S..=I32_EXTEND16_S => v.int_sign_extend(W32, SIZES[nth(I32_EXTEND8_S)])?,
-            I64_EXTEND8_S..=I64_EXTEND32_S => v.int_sign_extend(W64, SIZES[nth(I64_EXTEND8_S)])?,
+            I32_EXTEND8_S | I32_EXTEND16_S => v.int_sign_extend(W32, SIZES[nth(I32_EXTEND8_S)])?,
+            I64_EXTEND8_S | I64_EXTEND16_S | I64_EXTEND32_S => {
+                v.int_sign_extend(W64, SIZES[nth(I64_EXTEND8_S)])?
+            }
 
-            REF_NULL => v.ref_null(self.apart(Self::null_type)?)?,
+            REF_NULL => v.ref_null(self.apart(|decoder| decoder.null_type())?)?,
             REF_IS_NULL => v.ref_is_null()?,
-            REF_FUNC => v.ref_func(self.apart(Self::referenced_func)?)?,
+            REF_FUNC => v.ref_func(self.apart(|decoder| decoder.referenced_func())?)?,
             REF_EQ => v.ref_eq()?,
             REF_AS_NON_NULL => v.ref_as_non_null()?,
             BR_ON_NULL => v.br_on_null(self.label()?)?,
@@ -521,7 +550,7 @@ impl<'a, M: Mode> Decoder<'a, M> {
             GC_PREFIX => self.apart(|decoder| decoder.gc(v))?,
             MISC_PREFIX => self.apart(|decoder| decoder.misc(v))?,
             VECTOR_PREFIX => {
-                self.progress.flags |= FunctionFlags::USES_SIMD;
+                self.cx.flags |= FunctionFlags::USES_SIMD;
                 self.apart(|decoder| decoder.vector(v))?;
             }
             ATOMIC_PREFIX => self.apart(|decoder| decoder.atomic(v))?,
@@ -531,15 +560,12 @@ impl<'a, M: Mode> Decoder<'a, M> {
     }
 }
 
-/// Returns the position of the instruction that ends the block or its arm, and the new counts of calls and loops.
+/// Returns the position of the instruction that ends the block or its arm.
 #[inline(never)]
-fn skip_block(header: &ModuleHeader, reader: Reader<'_>, progress: Progress) -> (usize, u32, u32) {
-    let progress = Progress {
-        depth: 1,
-        ..progress
-    };
-    let mut decoder = Decoder::<Skip>::new(header, reader, progress);
+fn skip_block<'a>(reader: Reader<'a>, cx: &mut Context<'a>) -> usize {
+    let depth = mem::replace(&mut cx.depth, 1);
+    let mut decoder = Decoder::<Skip>::new(reader, cx);
     let Ok(()) = decoder.run(&mut Ignore);
-    let Progress { calls, loops, .. } = decoder.progress;
-    (decoder.reader.position(), calls, loops)
+    decoder.cx.depth = depth;
+    decoder.reader.position()
 }

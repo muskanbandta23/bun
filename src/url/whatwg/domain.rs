@@ -33,58 +33,111 @@ fn convert_text(conversion: Conversion, name: Text<'_>, out: &mut Name) -> Resul
     }
 }
 
-/// Domain parser ToASCII, from UTF-8.
-pub(crate) fn encode_in_place(domain: &mut Buffer) -> Result<()> {
-    let text = core::str::from_utf8(domain).map_err(|_| Error::Invalid)?;
-    let units: Name = text.encode_utf16().take(MAX_NAME_LENGTH + 1).collect();
-    let mut ascii = Name::new();
-    if convert(idna::to_ascii, &units, &mut ascii) != Ok(Verdict::Valid) {
-        return Err(Error::Invalid);
-    }
-    domain.truncate(0);
-    for &unit in &ascii {
-        domain.push(unit as u8)?;
-    }
-    Ok(())
-}
-
-fn ace_labels(domain: &[u8]) -> impl Iterator<Item = &[u8]> {
+fn labels(domain: &[u8]) -> impl Iterator<Item = &[u8]> {
     let mut rest = Some(domain);
-    let labels = core::iter::from_fn(move || {
+    core::iter::from_fn(move || {
         let text = rest?;
         let dot = bun_highway::index_of_char(text, b'.');
         rest = dot.map(|dot| &text[dot + 1..]);
         Some(&text[..dot.unwrap_or(text.len())])
-    });
-    labels.filter(|label| label.starts_with(b"xn--"))
+    })
 }
 
-/// The validity criteria, where the label alone and a table or two decide them.
-fn judge_ace_label(label: &[u8]) -> Option<Verdict> {
-    if label.len() > MAX_LABEL_LENGTH {
-        return None;
-    }
-    let mut storage = ['\0'; MAX_LABEL_LENGTH];
-    let characters = match punycode::decode(&label["xn--".len()..], &mut storage) {
-        Some([] | ['x', 'n', '-', '-', ..]) | None => return Some(Verdict::Invalid),
-        Some(characters) => characters,
-    };
-    if label.ends_with(b"-") || idna::is_mark(characters[0]) || characters.contains(&'\u{fffd}') {
-        return Some(Verdict::Invalid);
+fn ace_labels(domain: &[u8]) -> impl Iterator<Item = &[u8]> {
+    labels(domain).filter(|label| label.starts_with(b"xn--"))
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Label {
+    Valid,
+    /// The steps Map and Normalize would change it, or it does not meet the validity criteria.
+    NotValidAsItIs,
+    /// It takes the rules for joiners or the Bidi Rule to tell.
+    Undecided,
+}
+
+/// For up to [`MAX_LABEL_LENGTH`] characters, and at least one.
+fn judge(label: &[char]) -> Label {
+    if matches!(label, ['x', 'n', '-', '-', ..])
+        || idna::is_mark(label[0])
+        || label.contains(&char::REPLACEMENT_CHARACTER)
+    {
+        return Label::NotValidAsItIs;
     }
     let mut units = [0; 2 * MAX_LABEL_LENGTH];
     let mut length = 0;
-    for character in characters {
+    for character in label {
         length += character.encode_utf16(&mut units[length..]).len();
-    }
-    if !idna::is_mapped(&units[..length]).ok()? {
-        return Some(Verdict::Invalid);
     }
     let needs_context = |&character: &char| {
         !character.is_ascii()
             && (matches!(character, '\u{200c}' | '\u{200d}') || idna::is_right_to_left(character))
     };
-    (!characters.iter().any(needs_context)).then_some(Verdict::Valid)
+    match idna::is_mapped(&units[..length]) {
+        Ok(false) => Label::NotValidAsItIs,
+        Ok(true) if !label.iter().any(needs_context) => Label::Valid,
+        _ => Label::Undecided,
+    }
+}
+
+fn judge_ace_label(label: &[u8]) -> Label {
+    if label.len() > MAX_LABEL_LENGTH {
+        return Label::Undecided;
+    }
+    match punycode::decode(&label["xn--".len()..], &mut ['\0'; MAX_LABEL_LENGTH]) {
+        Some(decoded @ [_, ..]) if !label.ends_with(b"-") => judge(decoded),
+        _ => Label::NotValidAsItIs,
+    }
+}
+
+/// ToASCII of a name to which there is nothing to do but to encode its labels. False for any other.
+fn encode_labels(domain: &[u8], out: &mut Buffer) -> Result<bool> {
+    for (index, label) in labels(domain).enumerate() {
+        if index != 0 {
+            out.push(b'.')?;
+        }
+        if label.is_ascii() && !label.starts_with(b"xn--") {
+            out.extend(label)?;
+            continue;
+        }
+        let mut characters = ['\0'; MAX_LABEL_LENGTH];
+        let mut count = 0;
+        let label = core::str::from_utf8(label).map_err(|_| Error::Invalid)?;
+        for character in label.chars() {
+            let Some(slot) = characters.get_mut(count) else {
+                return Ok(false);
+            };
+            *slot = character;
+            count += 1;
+        }
+        if judge(&characters[..count]) != Label::Valid {
+            return Ok(false);
+        }
+        out.extend(b"xn--")?;
+        punycode::encode(&characters[..count], out)?;
+    }
+    Ok(true)
+}
+
+/// Domain parser ToASCII, for UTF-8 whose ASCII is lowercase.
+pub(crate) fn encode(domain: &[u8], out: &mut Buffer) -> Result<()> {
+    if domain.len() > MAX_NAME_LENGTH {
+        return Err(Error::Invalid);
+    }
+    if encode_labels(domain, out)? {
+        return Ok(());
+    }
+    out.truncate(0);
+    let text = core::str::from_utf8(domain).map_err(|_| Error::Invalid)?;
+    let units: Name = text.encode_utf16().collect();
+    let mut ascii = Name::new();
+    if convert(idna::to_ascii, &units, &mut ascii) != Ok(Verdict::Valid) {
+        return Err(Error::Invalid);
+    }
+    for &unit in &ascii {
+        out.push(unit as u8)?;
+    }
+    Ok(())
 }
 
 /// Whether ToASCII records no error for a lowercase ASCII domain.
@@ -92,9 +145,9 @@ pub(crate) fn has_valid_ace_labels(domain: &[u8]) -> bool {
     let mut is_decided = true;
     for label in ace_labels(domain) {
         match judge_ace_label(label) {
-            Some(Verdict::Valid) => {}
-            Some(Verdict::Invalid) => return false,
-            None => is_decided = false,
+            Label::Valid => {}
+            Label::NotValidAsItIs => return false,
+            Label::Undecided => is_decided = false,
         }
     }
     is_decided

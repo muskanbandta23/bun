@@ -11,10 +11,10 @@ use crate::types::{AbstractHeapType, BlockType, TypeKind, ValType};
 
 const MAX_BLOCK_TYPE_INDEX_BYTES: usize = 5;
 
-impl<'a, M: Mode> Decoder<'a, M> {
+impl<'a, M: Mode> Decoder<'_, 'a, M> {
     #[inline(always)]
     pub(super) fn is_dead(&self) -> bool {
-        self.progress.dead != 0
+        self.cx.dead != 0
     }
 
     /// What messages end with.
@@ -30,15 +30,15 @@ impl<'a, M: Mode> Decoder<'a, M> {
     #[inline(always)]
     pub(super) fn note_if_live(&mut self, flag: FunctionFlags) {
         if !self.is_dead() {
-            self.progress.flags |= flag;
+            self.cx.flags |= flag;
         }
     }
 
     #[inline(always)]
     pub(super) fn open_block(&mut self) {
-        self.progress.depth += 1;
+        self.cx.depth += 1;
         if M::PURPOSE == Purpose::Check && self.is_dead() {
-            self.progress.dead += 1;
+            self.cx.dead += 1;
         }
     }
 
@@ -54,8 +54,8 @@ impl<'a, M: Mode> Decoder<'a, M> {
     #[inline(always)]
     pub(super) fn next_arm(&mut self) -> Flow {
         let flow = self.flow();
-        if M::PURPOSE != Purpose::Skip && self.progress.dead == 1 {
-            self.progress.dead = 0;
+        if M::PURPOSE != Purpose::Skip && self.cx.dead == 1 {
+            self.cx.dead = 0;
         }
         flow
     }
@@ -63,9 +63,9 @@ impl<'a, M: Mode> Decoder<'a, M> {
     #[inline(always)]
     pub(super) fn close_block(&mut self) -> Flow {
         let flow = self.flow();
-        self.progress.depth -= 1;
+        self.cx.depth -= 1;
         if M::PURPOSE != Purpose::Skip {
-            self.progress.dead = self.progress.dead.saturating_sub(1);
+            self.cx.dead = self.cx.dead.saturating_sub(1);
         }
         flow
     }
@@ -76,7 +76,7 @@ impl<'a, M: Mode> Decoder<'a, M> {
         &mut self,
         visit: impl FnOnce() -> Result<(), M::Error>,
     ) -> Result<(), M::Error> {
-        self.progress.dead = self.progress.dead.max(1);
+        self.cx.dead = self.cx.dead.max(1);
         visit()?;
         if M::PURPOSE == Purpose::Run {
             self.skip_dead_code();
@@ -88,7 +88,7 @@ impl<'a, M: Mode> Decoder<'a, M> {
     pub(super) fn ensure_in_block(&self, what: &'static str) -> Result<(), M::Error> {
         ensure!(
             self,
-            self.progress.depth > 1 || self.is_dead(),
+            self.cx.depth > 1 || self.is_dead(),
             parse,
             "can't use {what} at the top-level of a function"
         );
@@ -97,18 +97,18 @@ impl<'a, M: Mode> Decoder<'a, M> {
 
     #[inline(always)]
     pub(super) fn call_site(&mut self) -> u32 {
-        self.progress.calls += 1;
-        self.progress.calls - 1
+        self.cx.calls += 1;
+        self.cx.calls - 1
     }
 
     #[inline(always)]
     pub(super) fn tail_call_site(&mut self) -> u32 {
-        self.progress.flags |= FunctionFlags::HAS_TAIL_CALL;
+        self.cx.flags |= FunctionFlags::HAS_TAIL_CALL;
         self.call_site()
     }
 
     #[inline(always)]
-    pub(super) fn block_type(&mut self, op: u8) -> Result<BlockType, M::Error> {
+    pub(crate) fn block_type(&mut self, op: u8) -> Result<BlockType, M::Error> {
         let ty = match self.reader.peek() {
             Some(EMPTY) => BlockType::Empty,
             Some(I32) => BlockType::Value(ValType::I32),
@@ -154,7 +154,7 @@ impl<'a, M: Mode> Decoder<'a, M> {
             return ty.map(BlockType::Value);
         }
         let index = u32::try_from(self.reader.i64()?).ok()?;
-        let heap_type = self.header.types.get_heap_type(index)?;
+        let heap_type = self.cx.header.types.get_heap_type(index)?;
         let is_valid = heap_type.has_kind(TypeKind::Func)
             && self.reader.position() - start <= MAX_BLOCK_TYPE_INDEX_BYTES;
         heap_type.index().filter(|_| is_valid).map(BlockType::Func)
@@ -163,7 +163,7 @@ impl<'a, M: Mode> Decoder<'a, M> {
     #[inline(always)]
     pub(super) fn label(&mut self) -> Result<u32, M::Error> {
         let label = read!(self, self.reader.u32(), "can't get br / br_if's target");
-        let depth = self.progress.depth;
+        let depth = self.cx.depth;
         ensure!(
             self,
             label < depth,
@@ -175,7 +175,7 @@ impl<'a, M: Mode> Decoder<'a, M> {
 
     #[inline(always)]
     pub(super) fn delegate_label(&mut self) -> Result<u32, M::Error> {
-        let outer = self.progress.depth - 1;
+        let outer = self.cx.depth - 1;
         ensure!(
             self,
             outer > 0,
@@ -195,7 +195,7 @@ impl<'a, M: Mode> Decoder<'a, M> {
     #[inline(never)]
     pub(super) fn br_table(&mut self) -> Result<BrTable<'a>, M::Error> {
         let context = self.context();
-        let depth = self.progress.depth;
+        let depth = self.cx.depth;
         let count = read!(
             self,
             self.reader.u32(),
@@ -250,7 +250,7 @@ impl<'a, M: Mode> Decoder<'a, M> {
     pub(super) fn catches(&mut self) -> Result<Catches<'a>, M::Error> {
         let context = self.context();
         let dead = self.is_dead();
-        let depth = self.progress.depth;
+        let depth = self.cx.depth;
         let count = read!(
             self,
             self.reader.u32(),
@@ -327,7 +327,7 @@ impl<'a, M: Mode> Decoder<'a, M> {
     #[inline(always)]
     pub(super) fn tag(&mut self) -> Result<TagIndex, M::Error> {
         let index = read!(self, self.reader.u32(), "can't parse exception index");
-        let count = self.header.tags.len();
+        let count = self.cx.header.tags.len();
         ensure!(
             self,
             (index as usize) < count,
@@ -340,7 +340,7 @@ impl<'a, M: Mode> Decoder<'a, M> {
     #[inline(always)]
     pub(super) fn func(&mut self) -> Result<FuncIndex, M::Error> {
         let index = read!(self, self.reader.u32(), "can't parse function index");
-        let count = self.header.funcs.len();
+        let count = self.cx.header.funcs.len();
         ensure!(
             self,
             (index as usize) < count,
@@ -352,7 +352,7 @@ impl<'a, M: Mode> Decoder<'a, M> {
 
     #[inline(never)]
     pub(super) fn call_indirect_immediates(&mut self) -> Result<(TypeIndex, TableIndex), M::Error> {
-        let header = self.header;
+        let header = self.cx.header;
         let (tables, types) = (header.tables.len(), header.types.len());
         ensure!(
             self,
@@ -420,7 +420,7 @@ impl<'a, M: Mode> Decoder<'a, M> {
         };
         ensure!(
             self,
-            index < self.header.types.len(),
+            index < self.cx.header.types.len(),
             validation,
             "call_ref index {index} is out of bounds"
         );

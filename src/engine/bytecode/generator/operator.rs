@@ -558,6 +558,15 @@ impl Generator<'_> {
 
     fn jump_on_test(&mut self, test: Test, outcome: bool, target: Label) {
         use BinaryOperator::{Equal, Greater, GreaterEqual, Less, LessEqual};
+        if let Test::Identical(a, b) = test
+            && self.has_identity(a)
+            && self.has_identity(b)
+        {
+            if (a == b) == outcome {
+                self.asm().jump(target);
+            }
+            return;
+        }
         let asm = self.asm();
         match (test, outcome) {
             (Test::Compare(Equal, a, b), true) => asm.jump_if_equal(a, b, target),

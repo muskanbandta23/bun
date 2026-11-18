@@ -416,13 +416,6 @@ enumerations! {
         Await,
     }
 
-    /// The values of the mode of a resumption.
-    ResumeMode {
-        Normal,
-        Return,
-        Throw,
-    }
-
     /// How control leaves the code that holds an iterator open.
     CloseMode {
         Normal,
@@ -454,6 +447,15 @@ enumerations! {
         Double,
         Contiguous,
     }
+}
+
+/// The values of the mode of a resumption.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum ResumeMode {
+    Normal,
+    Return,
+    Throw,
 }
 
 impl StaticError {

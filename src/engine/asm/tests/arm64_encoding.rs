@@ -910,28 +910,3 @@ fn every_float_immediate() {
     }
     listing.check();
 }
-
-#[test]
-fn basic_vector_instructions() {
-    let mut listing = Listing::new();
-    for [d, n, m] in float_operands() {
-        let [vd, vn, vm] = [d, n, m].map(|reg| format!("v{}", reg.number()));
-        for &op in BasicBitwise::ALL {
-            let operands = format!("{vd}.16b, {vn}.16b, {vm}.16b");
-            listing.add(format!("{} {operands}", lower(op)), |a| {
-                a.basic_bitwise(op, d, n, m)
-            });
-        }
-        listing.add(format!("movi {vd}.2d, #0"), |a| a.basic_zero(d));
-        listing.add(format!("movi {vd}.2s, #0x80, lsl #24"), |a| {
-            a.basic_sign_bits32(d)
-        });
-        listing.add(format!("cnt {vd}.8b, {vn}.8b"), |a| {
-            a.basic_count_ones(d, n)
-        });
-        listing.add(format!("addv {}, {vn}.8b", part(d, Size::S8)), |a| {
-            a.basic_add_bytes(d, n)
-        });
-    }
-    listing.check();
-}

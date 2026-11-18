@@ -1,5 +1,4 @@
 use core::cell::OnceCell;
-use core::ops::Range;
 
 use bun_engine_text::StringRef;
 use bun_icu::calendar::Calendar;
@@ -24,31 +23,23 @@ pub(super) struct Layout {
     pub(super) pattern: Pattern,
     /// Only if the pattern shows the era.
     early_era: Option<EarlyEra>,
-    time_zone_field: Option<Range<usize>>,
     template: OnceCell<Option<Template>>,
     pub(super) range_format: OnceCell<DateIntervalFormat>,
 }
 
 impl Layout {
     pub(super) fn new(pattern: Pattern, locale: &LocaleData) -> Result<Layout> {
-        let find = |component| {
-            pattern::fields(&pattern).find(|field| field.component() == Some(component))
-        };
+        let shows_era = pattern::fields(&pattern).any(|it| it.component() == Some(Component::Era));
         Ok(Layout {
-            early_era: match find(Component::Era) {
-                Some(_) => EarlyEra::of(locale.calendar()?),
-                None => None,
+            early_era: if shows_era {
+                EarlyEra::of(locale.calendar()?)
+            } else {
+                None
             },
-            time_zone_field: find(Component::TimeZoneName).map(|field| field.range),
             pattern,
             template: OnceCell::new(),
             range_format: OnceCell::new(),
         })
-    }
-
-    /// As a pattern of its own.
-    pub(super) fn time_zone_field(&self) -> Option<&[u16]> {
-        self.pattern.get(self.time_zone_field.clone()?)
     }
 
     pub(super) fn template(&self, locale: &LocaleData) -> Result<Option<&Template>> {

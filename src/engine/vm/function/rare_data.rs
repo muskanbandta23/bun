@@ -49,6 +49,7 @@ impl FunctionRareData {
     }
 
     #[inline(always)]
+    #[cfg_attr(rootcheck, rootcheck::stays("a part of the heap"))]
     pub fn object_allocator(&self) -> Option<&Allocator> {
         // SAFETY: null, or a part of the heap.
         unsafe { self.object_allocator.get().as_ref() }

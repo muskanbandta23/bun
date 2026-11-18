@@ -2,7 +2,7 @@ use bun_alloc::AllocError;
 use bun_engine_macros::cell;
 use bun_engine_text::{PropertyName, StringImpl, StringRef, SymbolRef, Text};
 
-use crate::{Field, Gc, JsCell, JsString, TypeFlags, Value, Vm};
+use crate::{Cx, Field, Gc, JsCell, JsResult, JsString, TypeFlags, Value, Vm};
 
 #[cell(name = "symbol", cell_type = Symbol, flags = TypeFlags::SHAPE_IS_IMMORTAL,
     export = "engine_class_Symbol")]
@@ -10,32 +10,43 @@ pub struct JsSymbol {
     base: JsCell,
     symbol: SymbolRef,
     pub(self) cached_description: Field<Option<Gc<JsString>>>,
+    pub(self) cached_string: Field<Option<Gc<JsString>>>,
 }
 
 impl JsSymbol {
     pub const OFFSET_OF_NAME: usize = core::mem::offset_of!(JsSymbol, symbol);
 
+    /// There is no cell for the symbol.
+    fn allocate(vm: &Vm, symbol: SymbolRef, description: Option<Gc<JsString>>) -> Gc<JsSymbol> {
+        let address = symbol.name().address();
+        let cell = vm.allocate::<JsSymbol>(JsSymbolInit {
+            base: vm.shapes.symbol(),
+            symbol,
+            cached_description: description,
+            cached_string: None,
+        });
+        vm.symbols.insert(address, cell);
+        cell
+    }
+
     /// The one cell that stands for the symbol.
     pub fn for_symbol(vm: &Vm, symbol: SymbolRef) -> Gc<JsSymbol> {
-        let address = symbol.name().address();
-        vm.symbols.get(vm, &address).unwrap_or_else(|| {
-            let cell = vm.allocate::<JsSymbol>(JsSymbolInit {
-                base: vm.shapes.symbol(),
-                symbol,
-                cached_description: None,
-            });
-            vm.symbols.insert(address, cell);
-            cell
-        })
+        (vm.symbols.get(vm, &symbol.name().address()))
+            .unwrap_or_else(|| Self::allocate(vm, symbol, None))
     }
 
     pub fn create(vm: &Vm, description: Option<&StringImpl>) -> Gc<JsSymbol> {
         let symbol = description.map_or_else(SymbolRef::without_description, SymbolRef::new);
-        Self::for_symbol(vm, symbol)
+        Self::allocate(vm, symbol, None)
+    }
+
+    pub fn with_description(cx: &Cx, description: Gc<JsString>) -> JsResult<Gc<JsSymbol>> {
+        let symbol = SymbolRef::new(&*description.resolve(cx)?);
+        Ok(Self::allocate(cx, symbol, Some(description)))
     }
 
     pub fn create_private(vm: &Vm, description: &StringImpl) -> Gc<JsSymbol> {
-        Self::for_symbol(vm, SymbolRef::private(description))
+        Self::allocate(vm, SymbolRef::private(description), None)
     }
 
     #[inline(always)]
@@ -59,6 +70,15 @@ impl JsSymbol {
     pub fn descriptive_string(&self) -> Result<StringRef, AllocError> {
         let (open, close) = (Text::from_ascii("Symbol("), Text::from_ascii(")"));
         StringRef::try_concat(&[open, self.name().text(), close])
+    }
+
+    pub fn to_descriptive_string(&self, cx: &Cx) -> JsResult<Gc<JsString>> {
+        if let Some(string) = self.cached_string() {
+            return Ok(string);
+        }
+        let string = JsString::new(cx, cx.or_out_of_memory(self.descriptive_string())?);
+        self.set_cached_string(Some(string));
+        Ok(string)
     }
 }
 

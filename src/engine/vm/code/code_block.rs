@@ -19,7 +19,7 @@ use crate::heap::Survivors;
 use crate::{
     Attributes, Cx, Field, FunctionExecutable, Gc, GcFree, GlobalObject, ImmutableArray,
     IntegrityLevel, JsArray, JsBigInt, JsCell, JsResult, JsString, LineColumn, RealmSlot, RegExp,
-    ScopeTemplate, ScriptExecutable, TypeFlags, Value, ValueVec, Visitor, Vm,
+    ScopeTemplate, ScriptExecutable, SourceProviderRef, TypeFlags, Value, ValueVec, Visitor, Vm,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -475,11 +475,14 @@ impl CodeBlock {
         })
     }
 
+    /// In the text of `source_provider`. What comes before the first position has that.
     pub fn position(&self, bytecode_offset: u32) -> Position {
-        let found = self.body().positions().find(bytecode_offset);
+        let positions = self.body().positions();
+        let found = positions.find(bytecode_offset);
+        let found = found.or_else(|| Some(positions.entries().next()?.1));
         found.unwrap_or_else(|| {
             let function = self.executable.downcast::<FunctionExecutable>();
-            let start = function.map_or(0, |function| function.info().parameters_start());
+            let start = function.map_or(0, |function| function.parameters_start());
             Position {
                 divot: start,
                 start,
@@ -488,9 +491,16 @@ impl CodeBlock {
         })
     }
 
+    pub fn source_provider(&self) -> SourceProviderRef {
+        match self.executable.downcast::<FunctionExecutable>() {
+            Some(function) => function.code_provider(),
+            None => self.executable.provider().clone(),
+        }
+    }
+
     pub fn line_column(&self, bytecode_offset: u32) -> LineColumn {
         let divot = self.position(bytecode_offset).divot;
-        self.executable.provider().position_in_document(divot)
+        self.source_provider().position_in_document(divot)
     }
 
     fn visit_children(&self, visitor: &mut Visitor) {

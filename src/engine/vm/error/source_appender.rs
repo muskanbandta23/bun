@@ -1,6 +1,7 @@
+use bun_engine_bytecode::CodeFlags;
 use bun_engine_text::{StringBuilder, StringRef, Text};
 
-use crate::{CodeBlock, Value};
+use crate::{StackVisitor, Value, Vm};
 
 /// How the text of the expression that failed goes into the message.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -153,17 +154,20 @@ impl SourceAppender {
     }
 
     /// `None` if the message stays as it is.
-    pub(super) fn append(
-        self,
-        message: Text<'_>,
-        code_block: &CodeBlock,
-        bytecode_offset: u32,
-        value: Value,
-    ) -> Option<StringRef> {
+    pub(super) fn append(self, vm: &Vm, message: Text<'_>, value: Value) -> Option<StringRef> {
         const CONTEXT: usize = 20;
-        let executable = code_block.executable();
-        let text = executable.provider().text();
-        let position = code_block.position(bytecode_offset);
+        let (code_block, bytecode_offset) = StackVisitor::frames(vm)
+            .filter(|frame| !frame.is_private())
+            .find_map(|frame| Some((frame.code_block?, frame.bytecode_offset)))?;
+        let body = code_block.body();
+        if body.positions().is_empty() || code_block.executable().is_private_builtin() {
+            return None;
+        }
+        // Of a built-in the message tells no more than which it is.
+        let is_builtin = body.flags().contains(CodeFlags::BUILTIN);
+        let position = code_block.position(if is_builtin { 0 } else { bytecode_offset });
+        let provider = code_block.source_provider();
+        let text = provider.text();
         let (start, end) = (position.start as usize, position.end as usize);
         if end == 0 || start > text.len() || end > text.len() {
             return None;
@@ -173,11 +177,13 @@ impl SourceAppender {
         }
         let is_on_line = |&unit: &u16| unit != u16::from(b'\n');
         let before = text.slice(0..start).code_units().rev().take(CONTEXT);
+        let before = text.slice(start - before.take_while(is_on_line).count()..start);
+        let leading = before.code_units().take_while(|&it| is_space(it)).count();
         let after = text.slice_from(start).code_units().take(CONTEXT);
-        let (before, after) = (before.take_while(is_on_line), after.take_while(is_on_line));
-        near(
-            message,
-            trimmed(text.slice(start - before.count()..start + after.count())),
-        )
+        let after = text.slice(start..start + after.take_while(is_on_line).count());
+        let trailing = after.code_units().rev().take_while(|&it| is_space(it));
+        let first = start - before.len() + leading.min(before.len().saturating_sub(1));
+        let last = start + after.len() - trailing.count();
+        near(message, text.slice(first..last))
     }
 }

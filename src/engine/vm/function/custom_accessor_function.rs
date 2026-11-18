@@ -2,13 +2,13 @@
 
 use bun_engine_bytecode::Visibility;
 use bun_engine_macros::{cell, native_abi};
-use bun_engine_text::{Identifier, PropertyName};
+use bun_engine_text::{Identifier, PropertyName, names};
 
 use crate::call::native_not_a_constructor;
 use crate::object::function_name;
 use crate::{
-    CallFrame, Class, CustomGetter, CustomSetter, Cx, Gc, Intrinsic, JsFunction, JsResult,
-    NativeExecutable, NativeFunction, Value, errors,
+    Attributes, CallFrame, Class, CustomGetter, CustomSetter, Cx, Gc, Intrinsic, JsFunction,
+    JsResult, JsString, NativeExecutable, NativeFunction, Value, errors,
 };
 
 #[cell(name = "Function")]
@@ -40,12 +40,11 @@ unsafe impl crate::heap::PlainKey for CustomAccessorKey {}
 
 fn executable(
     cx: &Cx,
-    prefix: &str,
     name: PropertyName<'_>,
     length: u32,
     function: NativeFunction,
 ) -> Gc<NativeExecutable> {
-    let (name, constructor) = (function_name(prefix, name), native_not_a_constructor);
+    let (name, constructor) = (function_name("", name), native_not_a_constructor);
     let (intrinsic, visibility) = (Intrinsic::None, Visibility::Public);
     NativeExecutable::shared(
         cx,
@@ -66,6 +65,11 @@ fn cached(
     let cache = &cx.custom_accessor_functions;
     cache.get(cx, &key).unwrap_or_else(|| {
         let function = make();
+        // Only the property has the prefix, and not the source text.
+        let prefix = if key.is_getter { "get " } else { "set " };
+        let name = JsString::new(cx, function_name(prefix, key.property.name())).into();
+        let attributes = Attributes::READ_ONLY | Attributes::DONT_ENUM;
+        function.put_direct(cx, names::name, name, attributes);
         cache.insert(key, function);
         function
     })
@@ -86,7 +90,7 @@ impl JsFunction {
             is_getter: true,
         };
         cached(cx, key, || {
-            let executable = executable(cx, "get ", name, 0, call_getter);
+            let executable = executable(cx, name, 0, call_getter);
             cx.allocate::<JsCustomGetterFunction>(JsCustomGetterFunctionInit {
                 base: Self::native_init(cx, cx.custom_getter_function_shape(), executable),
                 property: name.to_identifier(),
@@ -110,7 +114,7 @@ impl JsFunction {
             is_getter: false,
         };
         cached(cx, key, || {
-            let executable = executable(cx, "set ", name, 1, call_setter);
+            let executable = executable(cx, name, 1, call_setter);
             cx.allocate::<JsCustomSetterFunction>(JsCustomSetterFunctionInit {
                 base: Self::native_init(cx, cx.custom_setter_function_shape(), executable),
                 property: name.to_identifier(),
@@ -130,7 +134,9 @@ fn call_getter(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     {
         return Err(errors::throw_getter_type_error(cx, class, name));
     }
-    (function.getter)(cx, this, name)
+    let result = (function.getter)(cx, this, name);
+    cx.check_exception()?;
+    Ok(result.unwrap_or_default())
 }
 
 #[native_abi]

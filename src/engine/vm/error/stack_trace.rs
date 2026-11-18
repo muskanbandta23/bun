@@ -1,169 +1,187 @@
-use bun_engine_bytecode::{CodeKind, Visibility};
-use bun_engine_macros::Trace;
-use bun_engine_text::{StringBuilder, StringRef};
+use core::alloc::Allocator;
+use core::mem::ManuallyDrop;
+use core::ops::Deref;
 
-use crate::{
-    CallFrame, CodeBlock, CodeOrigin, Gc, JsCell, JsFunction, JsObject, LineColumn, RootVec, Vm,
-    display_name, options, root_vec,
-};
+use bun_engine_macros::FieldOffsets;
 
-/// A frame as the script sees it: a call that was inlined has one too.
-#[derive(Clone, Copy)]
-pub struct VisitedFrame<'a> {
-    pub machine_frame: &'a CallFrame,
-    /// The baseline one. `None` for native code.
-    pub code_block: Option<Gc<CodeBlock>>,
-    pub bytecode_offset: u32,
-    pub inline_frame: Option<u32>,
-    /// `None` for WebAssembly code.
-    pub callee: Option<Gc<JsObject>>,
-}
+use super::async_stack_trace;
+use crate::{Gc, GcFree, JsObject, RootVec, StackFrame, StackVisitor, Vm, options, root_vec};
 
-impl VisitedFrame<'_> {
-    pub fn is_private(&self) -> bool {
-        let function = self
-            .callee
-            .and_then(|callee| callee.downcast::<JsFunction>());
-        function.is_some_and(|it| {
-            let executable = it.executable();
-            executable.visibility() != Visibility::Public
-                || (self.code_block.is_none() && !executable.is_native())
-        })
-    }
-}
-
-pub struct StackVisitor;
-
-impl StackVisitor {
-    /// Innermost first.
-    pub fn frames(vm: &Vm) -> impl Iterator<Item = VisitedFrame<'_>> {
-        vm.machine_frames()
-            .flat_map(move |frame| Self::frames_in(vm, frame))
-    }
-
-    fn frames_in<'a>(vm: &'a Vm, frame: &'a CallFrame) -> impl Iterator<Item = VisitedFrame<'a>> {
-        let code_block = frame.code_block();
-        let compiled = code_block
-            .filter(|it| it.is_optimized())
-            .and_then(|it| it.compiled());
-        let mut next = Some(match &compiled {
-            Some(compiled) => compiled.origin_of_call_site(frame.call_site()),
-            None => CodeOrigin {
-                bytecode_offset: code_block
-                    .map_or(0, |it| it.bytecode_offset_of(frame.call_site())),
-                inline_frame: None,
-            },
-        });
-        core::iter::from_fn(move || {
-            let origin = next.take()?;
-            let (Some(index), Some(compiled)) = (origin.inline_frame, &compiled) else {
-                return Some(VisitedFrame {
-                    machine_frame: frame,
-                    code_block: code_block.map(|it| it.baseline()),
-                    bytecode_offset: origin.bytecode_offset,
-                    inline_frame: None,
-                    callee: (!frame.has_native_callee()).then(|| frame.callee()),
-                });
-            };
-            let inlined = compiled.inline_frame(vm, index);
-            next = Some(inlined.caller);
-            Some(VisitedFrame {
-                machine_frame: frame,
-                code_block: Some(inlined.code_block),
-                bytecode_offset: origin.bytecode_offset,
-                inline_frame: Some(index),
-                // SAFETY: the origin is that of the call site of the frame.
-                callee: unsafe { compiled.inline_callee(frame, index) }.as_object(),
-            })
-        })
-    }
-}
-
-/// A frame of a stack trace that has been captured.
-#[derive(Clone, Copy, Trace)]
+/// Frames in memory of the global allocator, laid out as the vector of the embedder is. It is no root: whoever has
+/// one keeps what the frames refer to alive, or finds out when that dies.
+#[derive(FieldOffsets)]
 #[repr(C)]
-pub struct StackFrame {
-    /// Of WebAssembly code, what has the names of its functions.
-    pub callee: Option<Gc<JsCell>>,
-    pub code_block: Option<Gc<CodeBlock>>,
-    /// Of WebAssembly code, the index of the function.
-    pub bytecode_offset: u32,
-    pub is_async: bool,
-    pub is_wasm: bool,
+pub struct StackTrace {
+    frames: *mut StackFrame,
+    capacity: u32,
+    length: u32,
 }
 
-impl StackFrame {
-    pub fn line_column(&self) -> Option<LineColumn> {
-        Some(self.code_block?.line_column(self.bytecode_offset))
-    }
+impl !GcFree for StackTrace {}
 
-    pub fn function_name(&self) -> StringRef {
-        if self.is_wasm {
-            return StringRef::from_literal("wasm-stub");
-        }
-        match self.code_block.map(|it| it.body().kind()) {
-            Some(CodeKind::Eval) => return StringRef::from_literal("eval code"),
-            Some(CodeKind::Module) => return StringRef::from_literal("module code"),
-            Some(CodeKind::Script) => return StringRef::from_literal("global code"),
-            _ => {}
-        }
-        let callee = self.callee.and_then(|callee| callee.as_object());
-        callee.map_or_default(|callee| display_name(&callee))
-    }
+impl StackTrace {
+    pub(super) const EMPTY: StackTrace = StackTrace {
+        frames: core::ptr::null_mut(),
+        capacity: 0,
+        length: 0,
+    };
 
-    pub fn source_url(&self) -> StringRef {
-        let Some(code_block) = self.code_block else {
-            let text = if self.is_wasm {
-                "[wasm code]"
-            } else {
-                "[native code]"
-            };
-            return StringRef::from_literal(text);
+    fn from_vec(mut frames: Vec<StackFrame>) -> StackTrace {
+        if u32::try_from(frames.capacity()).is_err() {
+            bun_alloc::out_of_memory();
+        }
+        if frames.capacity() == 0 {
+            return Self::EMPTY;
+        }
+        let trace = StackTrace {
+            frames: frames.as_mut_ptr(),
+            capacity: frames.capacity() as u32,
+            length: frames.len() as u32,
         };
-        let executable = code_block.executable();
-        let provider = executable.provider();
-        provider
-            .source_url_directive()
-            .or_else(|| provider.url().cloned())
-            .unwrap_or_default()
+        core::mem::forget(frames);
+        trace
     }
 
-    pub fn write(&self, out: &mut StringBuilder) {
-        use core::fmt::Write;
-        let url = self.source_url();
-        out.push_text(self.function_name().text());
-        out.push_latin1(b'@');
-        out.push_text(url.text());
-        if let Some(LineColumn { line, column }) = self.line_column().filter(|_| !url.is_empty()) {
-            let _ = write!(out, ":{line}:{column}");
+    fn into_vec(self) -> Vec<StackFrame> {
+        let this = ManuallyDrop::new(self);
+        if this.capacity == 0 {
+            return Vec::new();
+        }
+        // SAFETY: from the global allocator, with room for that many.
+        unsafe { Vec::from_raw_parts(this.frames, this.length as usize, this.capacity as usize) }
+    }
+
+    pub(super) fn copy_of(frames: &[StackFrame]) -> StackTrace {
+        Self::from_vec(frames.to_vec())
+    }
+
+    pub(super) fn capture(vm: &Vm, request: StackTraceRequest<'_>) -> StackTrace {
+        let mut frames = Vec::new();
+        request.capture_into(vm, &mut frames);
+        Self::from_vec(frames)
+    }
+
+    /// Adds the frames of the stack to those that it has, which count towards the limit.
+    pub fn append_capture(&mut self, vm: &Vm, request: StackTraceRequest<'_>) {
+        let mut frames = core::mem::replace(self, Self::EMPTY).into_vec();
+        request.capture_into(vm, &mut frames);
+        *self = Self::from_vec(frames);
+    }
+
+    pub fn take(&mut self) -> StackTrace {
+        core::mem::replace(self, Self::EMPTY)
+    }
+
+    /// Keeps the memory.
+    pub(super) fn clear(&mut self) {
+        self.length = 0;
+    }
+
+    pub(super) fn memory_size(&self) -> usize {
+        self.capacity as usize * size_of::<StackFrame>()
+    }
+
+    pub(super) fn to_root_vec(&self) -> RootVec<StackFrame> {
+        let mut copy = root_vec();
+        copy.extend_from_slice(self);
+        copy
+    }
+}
+
+impl Deref for StackTrace {
+    type Target = [StackFrame];
+
+    #[inline]
+    fn deref(&self) -> &[StackFrame] {
+        if self.length == 0 {
+            return &[];
+        }
+        // SAFETY: that many are there.
+        unsafe { core::slice::from_raw_parts(self.frames, self.length as usize) }
+    }
+}
+
+impl Drop for StackTrace {
+    #[inline]
+    fn drop(&mut self) {
+        if self.capacity != 0 {
+            drop(self.take().into_vec());
         }
     }
 }
 
-/// With `below`, the frames up to and including the first call of that function are left out.
+/// Which frames of the stack to list.
+pub struct StackTraceRequest<'a> {
+    /// How many of the innermost to leave out.
+    pub skip: usize,
+    /// The functions that wait for the one that is running come on top, up to as many again.
+    pub limit: usize,
+    /// Those up to and including the first call of this function are left out, and all if there is none.
+    pub below: Option<Gc<JsObject>>,
+    /// Is not asked about functions that wait. Does not allocate in the heap.
+    pub filter: Option<&'a mut dyn FnMut(&StackFrame) -> bool>,
+}
+
+impl StackTraceRequest<'_> {
+    fn capture_into<A: Allocator>(mut self, vm: &Vm, out: &mut Vec<StackFrame, A>) {
+        const USUAL_DEPTH: usize = 10;
+        if self.limit <= out.len() || vm.top_call_frame().is_none() {
+            return;
+        }
+        let mut frames = StackVisitor::frames(vm).skip(self.skip);
+        if self.below.is_some() {
+            frames.find(|frame| frame.callee == self.below);
+        }
+        out.reserve_exact(self.limit.min(USUAL_DEPTH));
+        // The entry frame of the last frame that is not private, and how many were listed with that.
+        let mut last_visible = (0, 0);
+        let mut resumed = None;
+        let find_resumed = |(entry_frame, position): (usize, usize)| {
+            if entry_frame == 0 || !options().use_async_stack_trace {
+                return None;
+            }
+            // SAFETY: that of a frame which is on the stack.
+            let context = unsafe { vm.entry_context(entry_frame) }?;
+            Some((async_stack_trace::async_function_in(context)?, position))
+        };
+        for frame in frames {
+            if frame.entry_frame != last_visible.0 {
+                resumed = find_resumed(last_visible).or(resumed);
+            }
+            if frame.is_private() {
+                continue;
+            }
+            let captured = StackFrame::from(&frame);
+            if self.filter.as_mut().is_none_or(|filter| filter(&captured)) {
+                out.push(captured);
+            }
+            last_visible = (frame.entry_frame, out.len());
+            if out.len() >= self.limit {
+                break;
+            }
+        }
+        if let Some((function, position)) = resumed.or_else(|| find_resumed(last_visible)) {
+            let before = out.len();
+            out.extend(async_stack_trace::frames_awaiting(function).take(self.limit));
+            out[position..].rotate_left(before - position);
+        }
+    }
+}
+
+/// See `StackTraceRequest`.
 pub fn capture_stack_trace(
     vm: &Vm,
     skip: usize,
     limit: usize,
     below: Option<Gc<JsObject>>,
 ) -> RootVec<StackFrame> {
-    let shows_private = options().show_private_scripts_in_stack_traces;
-    let mut frames = StackVisitor::frames(vm).skip(skip);
-    if below.is_some() {
-        frames.find(|frame| frame.callee == below);
-    }
-    let mut trace = root_vec();
-    trace.extend(
-        frames
-            .filter(|frame| shows_private || !frame.is_private())
-            .take(limit)
-            .map(|frame| StackFrame {
-                callee: frame.callee.map(Gc::cell),
-                code_block: frame.code_block,
-                bytecode_offset: frame.bytecode_offset,
-                is_async: false,
-                is_wasm: frame.callee.is_none(),
-            }),
-    );
-    trace
+    let mut frames = root_vec();
+    let request = StackTraceRequest {
+        skip,
+        limit,
+        below,
+        filter: None,
+    };
+    request.capture_into(vm, &mut frames);
+    frames
 }

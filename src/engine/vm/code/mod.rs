@@ -27,9 +27,9 @@ pub use eval::{
 };
 pub use executable::{
     EvalExecutable, Executable, FunctionExecutable, ModuleExecutable, NativeExecutable,
-    ProgramExecutable, ScriptExecutable,
+    ProgramExecutable, ScriptExecutable, native_source_text,
 };
-pub(crate) use executable::{NativeExecutableKey, native_source_text};
+pub(crate) use executable::NativeExecutableKey;
 pub use optimization::{ExitKind, ExitKinds, OptimizerState};
 pub use profile::{Arithmetic, ArithmeticProfile, ArrayModes, ArrayProfile, ValueProfile};
 pub use script::{evaluate_compiled_script, evaluate_script, evaluate_script_in_scope};

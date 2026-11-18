@@ -112,7 +112,6 @@ fn synthetic_exports_set(
     values: &[Option<Value>],
     source: Option<Gc<JsObject>>,
 ) {
-    assert!(names.len() == values.len());
     exports.names.extend_from_slice(names);
     exports.values.extend_from_slice(values);
     exports.source = source;
@@ -574,11 +573,11 @@ fn module_loader_create(vm: &Vm, module_scope: Gc<JsCell>) -> Gc<ModuleLoader> {
 unsafe fn module_loader_for_each_entry(
     loader: &ModuleLoader,
     context: *mut c_void,
-    visit: unsafe extern "C" fn(*mut c_void, ModuleType, Gc<ModuleRegistryEntry>),
+    visit: unsafe extern "C" fn(*mut c_void, Gc<ModuleRegistryEntry>),
 ) {
-    for (key, entry) in loader.registry().entries() {
+    for entry in loader.registry().values() {
         // SAFETY: the two go together.
-        unsafe { visit(context, key.module_type, entry) };
+        unsafe { visit(context, entry) };
     }
 }
 
@@ -608,10 +607,10 @@ fn module_loader_find_entry(
 fn module_loader_ensure_entry(
     loader: &ModuleLoader,
     vm: &Vm,
-    key: PropertyName<'_>,
+    key: &Identifier,
     module_type: ModuleType,
 ) -> Gc<ModuleRegistryEntry> {
-    loader.ensure_entry(vm, ModuleKeyRef::new(key, module_type))
+    loader.ensure_entry(vm, ModuleKeyRef::new(key.name(), module_type))
 }
 
 #[export]
@@ -646,11 +645,11 @@ fn module_loader_shareable_executable(
 fn module_loader_provide_fetch(
     loader: &ModuleLoader,
     cx: &Cx,
-    key: PropertyName<'_>,
+    key: &Identifier,
     module_type: ModuleType,
     data: Value,
 ) {
-    loader.provide_fetch(cx, ModuleKeyRef::new(key, module_type), data);
+    loader.provide_fetch(cx, ModuleKeyRef::new(key.name(), module_type), data);
 }
 
 #[export]

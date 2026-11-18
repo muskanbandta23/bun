@@ -233,8 +233,49 @@ fn from_utf8(bytes: &[u8], invalid: Invalid) -> Result<Option<StringRef>, AllocE
     from_non_ascii_utf8(bytes, invalid)
 }
 
+/// The string of bytes that are UTF-8 with no character above U+00FF, which the first byte above
+/// [`LAST_LATIN1_LEAD`] rules out. `None` if they are not.
+fn from_latin1_utf8(bytes: &[u8]) -> Option<Result<StringRef, AllocError>> {
+    let mut scratch = [MaybeUninit::uninit(); SCRATCH];
+    let mut is_valid = false;
+    let characters = Cursor::fill_uninit(&mut scratch, |cursor| {
+        is_valid = if bytes.len() <= SHORT || cfg!(miri) {
+            decode_latin1(bytes, cursor)
+        } else {
+            cursor.lend(|it| simdutf::convert::utf8::to::latin1(bytes, it))
+        };
+    });
+    is_valid.then(|| StringRef::try_copy(Text::Latin1(characters)))
+}
+
+/// Returns whether the bytes are UTF-8 with no character above U+00FF. There is room for a byte of each.
+#[inline(always)]
+fn decode_latin1(bytes: &[u8], cursor: &mut Cursor<'_, u8>) -> bool {
+    let mut read = 0;
+    while read < bytes.len() {
+        let rest = &bytes[read..];
+        if rest[0].is_ascii() {
+            cursor.push(rest[0]);
+            read += 1;
+        } else if starts_with_sequence(rest)
+            && let Ok((character, length)) = decode_sequence(rest)
+        {
+            cursor.push(character as u8);
+            read += length;
+        } else {
+            return false;
+        }
+    }
+    true
+}
+
 fn from_non_ascii_utf8(bytes: &[u8], invalid: Invalid) -> Result<Option<StringRef>, AllocError> {
     if bytes.len() <= SCRATCH {
+        if ascii::find_above(bytes, LAST_LATIN1_LEAD).is_none()
+            && let Some(string) = from_latin1_utf8(bytes)
+        {
+            return string.map(Some);
+        }
         let copy = |units: &[u16]| {
             let text = Text::Utf16(units);
             if text.fits_latin1() {

@@ -50,16 +50,6 @@ const Vector<RefPtr<UniquedStringImpl>, 8> AbstractModuleRecord::resolvedRequest
     return keys;
 }
 
-const JSModuleLoader::Registry JSModuleLoader::moduleMap() const
-{
-    Registry registry;
-    registry.reserveInitialCapacity(moduleCount());
-    Engine::module_loader_for_each_entry(this, &registry, [](void* registry, ScriptFetchParameters::Type type, ModuleRegistryEntry* entry) {
-        static_cast<Registry*>(registry)->append({ { entry->key().impl(), type }, entry });
-    });
-    return registry;
-}
-
 JSModuleNamespaceObject* JSModuleLoader::getModuleNamespaceObject(JSGlobalObject* globalObject, JSValue moduleRecord)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());

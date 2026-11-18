@@ -217,10 +217,7 @@ function parameter(type: string, name: string): Parameter {
   if (bare === "PropertyName") return one("JSC::PropertyName", `${name}.uid()`);
   if (bare === "&StringImpl") return one("const WTF::String&", isOptional ? `${name}.impl()` : `implOrEmpty(${name})`);
   if (bare === "StringRef") return one("WTF::String&&", `${isOptional ? "leak" : "leakOrEmpty"}(WTF::move(${name}))`);
-  if (bare === "&Identifier") {
-    const address = `reinterpret_cast<WTF::UniquedStringImpl* const*>(&${name})`;
-    return one("const JSC::Identifier&", isOptional ? `${name}.isNull() ? nullptr : ${address}` : address);
-  }
+  if (bare === "&Identifier") return one("const JSC::Identifier&", `${isOptional ? "addressOrNull" : "addressOrEmpty"}(${name})`);
   const known = types.get(bare);
   if (known?.kind === "counted")
     return isOptional

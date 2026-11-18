@@ -202,6 +202,11 @@ fn nanoseconds_per_value() {
         (Level::Full, true),
     ] {
         for statements in [10, 100, 1000] {
+            if std::env::var("ONLY")
+                .is_ok_and(|only| only != format!("{level:?}-{shorten_jumps}-{statements}"))
+            {
+                continue;
+            }
             let (start, mut rounds, mut building, mut bytes, mut values) =
                 (Instant::now(), 0, 0.0, 0, 0);
             while start.elapsed().as_secs_f64() < seconds {

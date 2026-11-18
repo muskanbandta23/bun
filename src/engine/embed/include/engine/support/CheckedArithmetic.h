@@ -43,6 +43,8 @@ public:
     friend constexpr Checked operator+(Checked a, std::integral auto b) { return a += b; }
     friend constexpr Checked operator-(Checked a, std::integral auto b) { return a -= b; }
     friend constexpr Checked operator*(Checked a, std::integral auto b) { return a *= b; }
+    friend constexpr Checked operator+(std::integral auto a, Checked b) { return b += a; }
+    friend constexpr Checked operator*(std::integral auto a, Checked b) { return b *= a; }
     friend constexpr Checked operator+(Checked a, Checked b) { return a += b; }
     friend constexpr Checked operator-(Checked a, Checked b) { return a -= b; }
     friend constexpr Checked operator*(Checked a, Checked b) { return a *= b; }

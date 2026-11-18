@@ -5,6 +5,9 @@ use bun_engine_date::{
 use bun_engine_standalone as _;
 use bun_engine_text::Text;
 
+/// A day more than the greatest time value.
+const LIMIT: f64 = 8.64e15 + 8.64e7;
+
 fn utc(text: &str) -> f64 {
     parse_date_as_utc(text.as_bytes())
 }
@@ -68,9 +71,12 @@ fn local_times(cache: &DateCache) {
         let time = cache.parse(Text::from_ascii(local));
         assert_eq!(iso_string(time).unwrap().to_string(), expected);
     }
-    for time in [8.64e15, -8.64e15] {
-        assert!(cache.local_fields(time).is_some());
-        assert_eq!(cache.local_fields(time + time.signum()), None);
+    for time in [LIMIT, -LIMIT + 17_762_000.0] {
+        for (time, has_fields) in [(time, true), (time + time.signum(), false)] {
+            let fields = cache.local_fields(time);
+            assert_eq!(fields, DateFields::in_zone(time, cache.time_zone()));
+            assert_eq!(fields.is_some(), has_fields);
+        }
     }
     let too_late = make_date_from_integers([275_760, 8, 12, 20, 0, 0, 1]);
     assert!(time_clip(cache.utc(too_late)).is_nan());
@@ -123,6 +129,8 @@ fn changes_of_zone(cache: &DateCache) {
         to_string(cache, 0.0),
         "Thu Jan 01 1970 05:30:00 GMT+0530 (India Standard Time)"
     );
+    assert!(cache.local_fields(LIMIT - 19_800_000.0).is_some());
+    assert_eq!(cache.local_fields(LIMIT - 19_799_999.0), None);
     let kolkata = cache.time_zone();
     assert!(set_time_zone_override(Text::from_ascii("IST")));
     assert!(!cache.refresh());
@@ -142,14 +150,9 @@ fn days_in_utc() {
         assert_eq!(DateCache::default().utc_fields(time), DateFields::utc(time));
     }
     let cache = DateCache::default();
-    for time in [
-        8.64e15 - 1.0,
-        8.64e15,
-        8.64e15 + 1.0,
-        -8.64e15,
-        -8.64e15 - 1.0,
-    ] {
+    for time in [LIMIT - 1.0, LIMIT, LIMIT + 1.0, -LIMIT, -LIMIT - 1.0] {
         assert_eq!(cache.utc_fields(time), DateFields::utc(time));
+        assert_eq!(cache.utc_fields(time).is_some(), time.abs() <= LIMIT);
     }
 }
 

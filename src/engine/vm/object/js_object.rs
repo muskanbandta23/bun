@@ -667,6 +667,7 @@ impl JsObject {
         self.did_change_as_prototype(vm, &new);
     }
 
+    #[inline(always)]
     pub fn is_callable(&self) -> bool {
         CellType::FUNCTIONS.contains(self.cell_type())
             || (self.inline_flags().contains(TypeFlags::OVERRIDES_CALL_DATA)

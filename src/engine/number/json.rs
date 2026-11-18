@@ -1,6 +1,7 @@
 use bun_engine_text::{CodeUnit, Text};
 
 use crate::decimal_scanner::{finish_decimal, scan_whole_digits};
+use crate::digit_words::{ZEROS, gather_digits, non_digits};
 use crate::double::with_sign;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -25,6 +26,21 @@ impl JsonNumberError {
             JsonNumberError::NoDigitsAfterPoint => "Invalid digits after decimal point",
         }
     }
+}
+
+/// The value and the number of the digits at the start, if they are seven at most and can be the integer part of a
+/// number. The first character is a digit.
+#[inline(always)]
+pub fn parse_few_json_digits(characters: [u8; 8]) -> Option<(i32, u32)> {
+    debug_assert!(characters[0].is_ascii_digit());
+    let characters = u64::from_le_bytes(characters);
+    let stop = non_digits(characters);
+    if stop == 0 || characters & 0xf0ff == ZEROS & 0xffff {
+        return None;
+    }
+    let top_bit = stop.trailing_zeros();
+    let digits = characters.wrapping_sub(ZEROS).wrapping_shl(71 - top_bit);
+    Some((gather_digits(digits) as i32, top_bit / 8))
 }
 
 /// The value and the length of the number (ECMA-404) that `units` start with. It ends before a digit that follows a

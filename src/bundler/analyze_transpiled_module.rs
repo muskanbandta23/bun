@@ -120,7 +120,7 @@ pub struct ModuleInfoDeserialized {
 /// Where a record's names come from: a self-contained record carries its own
 /// strings (`WTF::StringImpl` bodies the runtime atomizes) and the bytes they
 /// live in; a record inside an executable indexes the slot table every module
-/// of the executable shares, resolved by JSC as the bytecode's own string slots are.
+/// of the executable shares.
 pub enum ModuleInfoStrings<'a> {
     Owned {
         table: ModuleInfoStringTable<'a>,
@@ -133,7 +133,7 @@ pub enum ModuleInfoStrings<'a> {
 pub enum ModuleInfoString<'a> {
     /// `is_8bit` Latin-1 bytes, else 2-byte-aligned little-endian UTF-16.
     Chars { chars: &'a [u8], is_8bit: bool },
-    /// `EncoderStringTable::slotFor`.
+    /// `EncoderStringTable::slot_for_wtf8`.
     Slot(u32),
 }
 impl<'a> ModuleInfoStrings<'a> {
@@ -425,10 +425,7 @@ impl<'a> ModuleInfoStringTable<'a> {
 
 /// The executable's module-info string table: `u32 count` then one `u32`
 /// slot per string, each resolved by `JSC__IdentifierArray__setFromSlot`
-/// exactly as the bytecode cache resolves its own string slots — up to three
-/// Latin-1 characters inline (tag 1), an ordinal into the executable's
-/// bytecode string table (tag 2), or the empty string (tag 3). Built by
-/// `ModuleInfoSlotTableBuilder`.
+/// from the executable's `EncoderStringTable`. Built by `ModuleInfoSlotTableBuilder`.
 #[derive(Clone, Copy)]
 pub struct ModuleInfoSlotTable<'a> {
     slots: &'a [u8],
@@ -481,16 +478,6 @@ impl ModuleInfoSlotTableBuilder {
             ids.push(id);
         }
         ids
-    }
-    /// Interns one string (a module key the pre-resolved graph names); returns its table id.
-    pub fn intern(&mut self, s: &[u8], slot_for: impl Fn(&[u8]) -> u32) -> u32 {
-        if let Some(&id) = self.ids.get(s) {
-            return id;
-        }
-        let id = u32::try_from(self.slots.len()).expect("int cast");
-        self.slots.push(slot_for(s));
-        self.ids.insert(s.into(), id);
-        id
     }
     pub fn count(&self) -> u32 {
         self.slots.len() as u32

@@ -6,7 +6,7 @@ use std::process::Command;
 
 use bun_engine_standalone as _;
 use bun_icu::collator::Collator;
-use bun_icu::{locale, process};
+use bun_icu::locale;
 
 const EXPECTED: &str = "BUN_ICU_TEST_DEFAULT_LOCALE";
 
@@ -14,13 +14,10 @@ const EXPECTED: &str = "BUN_ICU_TEST_DEFAULT_LOCALE";
 #[test]
 fn default_locale() {
     if let Ok(expected) = env::var(EXPECTED) {
-        // SAFETY: this is the only test of the program, and these are its first calls.
-        unsafe {
-            process::use_default_allocator();
-            process::choose_default_locale();
-        }
-        assert_eq!(locale::default().to_str(), Ok(&*expected));
+        // SAFETY: this is the only test of the program, and its first call.
+        unsafe { bun_icu::use_default_allocator() };
         Collator::open(c"zz").unwrap();
+        assert_eq!(locale::default().to_str(), Ok(&*expected));
         return;
     }
     for (language, expected) in [

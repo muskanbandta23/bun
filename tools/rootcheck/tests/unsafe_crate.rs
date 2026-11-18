@@ -105,7 +105,7 @@ fn makes_its_own_realm(global: Gc<GlobalObject>) {
     allocate(unsafe { Cx::from_global(global) });
 }
 
-pub fn no_vm_in_the_signature(global: Gc<GlobalObject>, list: Vec<Value>) -> Vec<Value> { //~ hidden: held while
+fn no_vm_in_the_signature(global: Gc<GlobalObject>, list: Vec<Value>) -> Vec<Value> { //~ hidden: held while
     makes_its_own_realm(global);
     list
 }

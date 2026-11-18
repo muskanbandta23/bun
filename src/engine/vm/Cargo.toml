@@ -25,6 +25,7 @@ bun_engine_exec_memory.workspace = true
 bun_engine_platform.workspace = true
 bun_alloc.workspace = true
 bun_highway.workspace = true
+bun_pod.workspace = true
 bun_simdutf_sys.workspace = true
 bun_threading.workspace = true
 bitflags.workspace = true

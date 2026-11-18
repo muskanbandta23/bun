@@ -64,6 +64,7 @@ bun_http.workspace = true
 bun_http1.workspace = true
 bun_http_jsc.workspace = true
 bun_http_types.workspace = true
+bun_icu.workspace = true
 bun_install.workspace = true
 bun_install_types.workspace = true
 bun_parsers.workspace = true

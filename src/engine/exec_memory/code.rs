@@ -18,6 +18,11 @@ use crate::pool::{self, GRANULE, Pool, State};
 pub struct Owner(pub NonZeroUsize);
 
 impl Owner {
+    /// For code whose frames are like those of C functions.
+    pub const NATIVE: Owner = Owner(NonZeroUsize::MIN);
+}
+
+impl Owner {
     pub const KIND_MASK: usize = 7;
     pub const WASM_FUNCTION: usize = 1;
 }

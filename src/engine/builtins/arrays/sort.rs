@@ -1,9 +1,16 @@
+use core::cmp::Ordering;
+
+use bun_engine_bytecode::{Comparator, Known, SortKey};
 use bun_engine_number::NumberText;
-use bun_engine_text::AllocError;
-use bun_engine_vm::{ElementKind, HoleMode, JsArray, RootVec, root_vec};
+use bun_engine_text::{AllocError, Text};
+use bun_engine_vm::{
+    HoleMode, JsArray, NoGc, RepeatedCall, RootVec, ValueVec, find_sort_keys, root_vec,
+};
 
 use super::copy::{array_create, check_array_size};
-use super::string_sort::{int32_of_key, key_of_int32, sorted_indices};
+use super::string_sort::{
+    Entry, List, entries_for, int32_of_key, key_of_int32, sort_texts, try_collect,
+};
 use super::{merge_sort, this_object};
 use crate::prelude::*;
 
@@ -20,102 +27,6 @@ pub(crate) fn means_less(cx: &mut Cx, result: Value) -> JsResult<bool> {
     Ok(result.to_number(cx)? < 0.0)
 }
 
-const INLINE_CAPACITY: usize = 64;
-
-/// A list with a limit that is known when it is made. A short one allocates nothing.
-struct Buffer {
-    inline: [Value; INLINE_CAPACITY],
-    spilled: RootVec<Value>,
-}
-
-impl Buffer {
-    #[inline(always)]
-    fn new() -> Buffer {
-        Buffer {
-            inline: [Value::UNDEFINED; INLINE_CAPACITY],
-            spilled: root_vec(),
-        }
-    }
-
-    #[inline(always)]
-    fn room(&mut self, length: usize) -> Result<&mut [Value], AllocError> {
-        if length <= INLINE_CAPACITY {
-            return Ok(&mut self.inline[..length]);
-        }
-        (self.spilled.try_reserve_exact(length)).map_err(|_| AllocError)?;
-        self.spilled.resize(length, Value::UNDEFINED);
-        Ok(&mut self.spilled)
-    }
-}
-
-/// What there is to sort.
-struct Collected<'a> {
-    values: &'a mut [Value],
-    kind: ElementKind,
-    undefined_count: u64,
-}
-
-fn collect<'a>(
-    cx: &mut Cx,
-    object: &JsObject,
-    length: u64,
-    buffer: &'a mut Buffer,
-) -> JsResult<Collected<'a>> {
-    let mut undefined_count = 0;
-    let no_gc = cx.no_gc();
-    if let Some(elements) = object.plain_elements(&no_gc, 0..length) {
-        let (kind, mut count) = (elements.kind(), 0);
-        let Ok(room) = buffer.room(elements.len()) else {
-            return Err(cx.throw_out_of_memory());
-        };
-        for value in elements.iter().flatten() {
-            room[count] = value;
-            count += usize::from(!value.is_undefined());
-            undefined_count += u64::from(value.is_undefined());
-        }
-        return Ok(Collected {
-            values: &mut room[..count],
-            kind,
-            undefined_count,
-        });
-    }
-    let values = &mut buffer.spilled;
-    for index in 0..length {
-        match object.get_index_if_has_property(cx, index)? {
-            Some(Value::UNDEFINED) => undefined_count += 1,
-            Some(value) => {
-                if values.len() == u32::MAX as usize || values.try_reserve(1).is_err() {
-                    return Err(cx.throw_out_of_memory());
-                }
-                values.push(value);
-            }
-            None => cx.check_traps()?,
-        }
-    }
-    Ok(Collected {
-        values,
-        kind: ElementKind::Contiguous,
-        undefined_count,
-    })
-}
-
-fn try_vec<T>(items: impl ExactSizeIterator<Item = T>) -> Result<Vec<T>, AllocError> {
-    let mut list = Vec::new();
-    list.try_reserve_exact(items.len())
-        .map_err(|_| AllocError)?;
-    list.extend(items);
-    Ok(list)
-}
-
-fn sort_int32s_as_strings(values: &mut [Value]) -> Result<(), AllocError> {
-    let mut keys = try_vec(values.iter().map(|it| key_of_int32(it.to_bits() as i32)))?;
-    keys.sort_unstable();
-    for (value, key) in values.iter_mut().zip(keys) {
-        *value = Value::int32(int32_of_key(key));
-    }
-    Ok(())
-}
-
 fn permute(values: &mut [Value], scratch: &mut [Value], order: impl Iterator<Item = u32>) {
     scratch.copy_from_slice(values);
     for (value, index) in values.iter_mut().zip(order) {
@@ -123,71 +34,297 @@ fn permute(values: &mut [Value], scratch: &mut [Value], order: impl Iterator<Ite
     }
 }
 
-fn sort_doubles_as_strings(values: &mut [Value], scratch: &mut [Value]) -> Result<(), AllocError> {
-    let texts = try_vec((values.iter()).map(|it| NumberText::from(it.double_unchecked())))?;
-    let order = sorted_indices(values.len() as u32, |index| texts[index as usize].text())?;
-    permute(values, scratch, order);
+fn indices(entries: &[Entry]) -> impl DoubleEndedIterator<Item = u32> {
+    entries.iter().map(|entry| entry.index)
+}
+
+fn texts_of<'a>(
+    no_gc: &'a NoGc<'_>,
+    strings: impl ExactSizeIterator<Item = Value>,
+) -> Result<List<Text<'a>>, AllocError> {
+    try_collect(strings.map(|it| it.cast::<JsString>().try_text(no_gc).expect("a view")))
+}
+
+fn sort_int32s_as_strings(values: &mut [Value]) -> Result<(), AllocError> {
+    let mut keys = try_collect(values.iter().map(|it| key_of_int32(it.to_bits() as i32)))?;
+    keys.sort_unstable();
+    for (value, &key) in values.iter_mut().zip(&keys) {
+        *value = Value::int32(int32_of_key(key));
+    }
+    Ok(())
+}
+
+fn sort_numbers_as_strings(values: &mut [Value], scratch: &mut [Value]) -> Result<(), AllocError> {
+    let text = |value: &Value| NumberText::from(value.as_number().unwrap_or_default());
+    let numbers = try_collect(values.iter().map(text))?;
+    let texts = try_collect(numbers.iter().map(NumberText::text))?;
+    permute(values, scratch, indices(&sort_texts(&texts)?));
     Ok(())
 }
 
 fn sort_as_strings(cx: &mut Cx, values: &mut [Value], scratch: &mut [Value]) -> JsResult<()> {
-    let mut views = root_vec();
-    if views.try_reserve_exact(values.len()).is_err() {
-        return Err(cx.throw_out_of_memory());
+    if values.iter().all(|it| it.is_int32()) {
+        return cx.or_out_of_memory(sort_int32s_as_strings(values));
     }
-    for value in &*values {
-        views.push(value.to_string_view(cx)?);
+    if values.iter().all(|it| it.is_number()) {
+        return cx.or_out_of_memory(sort_numbers_as_strings(values, scratch));
     }
-    let order = sorted_indices(values.len() as u32, |index| views[index as usize].text());
-    permute(values, scratch, cx.or_out_of_memory(order)?);
+    for (string, value) in scratch.iter_mut().zip(&*values) {
+        let converted = value.to_string(cx)?;
+        converted.view(cx)?;
+        *string = converted.into();
+    }
+    let no_gc = cx.no_gc();
+    let order = texts_of(&no_gc, scratch.iter().copied()).and_then(|texts| sort_texts(&texts));
+    permute(values, scratch, indices(&cx.or_out_of_memory(order)?));
     Ok(())
 }
 
-fn sort_values(cx: &mut Cx, values: &mut [Value], kind: ElementKind, order: Value) -> JsResult<()> {
-    if order.is_undefined() && kind == ElementKind::Int32 {
-        return cx.or_out_of_memory(sort_int32s_as_strings(values));
-    }
-    let mut scratch = Buffer::new();
-    let scratch = cx.or_out_of_memory(scratch.room(values.len()))?;
-    if !order.is_undefined() {
-        return merge_sort::sort(values, scratch, |a, b| {
-            let result = cx.call(order, Value::UNDEFINED, &[a, b])?;
-            means_less(cx, result)
-        });
-    }
-    if kind == ElementKind::Double {
-        return cx.or_out_of_memory(sort_doubles_as_strings(values, scratch));
-    }
-    sort_as_strings(cx, values, scratch)
+/// Compares as the number does, which is not NaN.
+#[inline(always)]
+fn key_of_number(number: f64) -> u64 {
+    let bits = (number + 0.0).to_bits();
+    bits ^ (((bits as i64) >> 63) as u64 | 1 << 63)
 }
 
-fn sort_object(cx: &mut Cx, object: &JsObject, length: u64, comparator: Value) -> JsResult<()> {
-    if length < 2 {
+/// Whether a comparator puts its first argument before the second if the key of that is less, equal or greater.
+type Verdicts = [bool; 3];
+
+const ASCENDING: Verdicts = [true, false, false];
+const DESCENDING: Verdicts = [false, false, true];
+
+fn verdicts_of(comparator: &Comparator) -> Verdicts {
+    [Ordering::Less, Ordering::Equal, Ordering::Greater].map(|order| {
+        match comparator.result(order) {
+            Known::Boolean(result) => !result,
+            Known::Number(result) => result < 0.0,
+        }
+    })
+}
+
+/// If all that `comparator` does with two numbers but NaN is to order them: whether the greater comes first.
+pub(crate) fn orders_numbers_descending(cx: &mut Cx, comparator: Value) -> JsResult<Option<bool>> {
+    let comparator = find_sort_keys(cx, comparator, &[], &mut [])?;
+    let verdicts = (comparator.filter(|it| it.key == SortKey::Whole)).map(|it| verdicts_of(&it));
+    Ok(match verdicts {
+        Some(ASCENDING) => Some(false),
+        Some(DESCENDING) => Some(true),
+        _ => None,
+    })
+}
+
+/// Asks the questions that the comparator would have been asked.
+fn sort_by_verdicts(
+    entries: &mut [Entry],
+    verdicts: Verdicts,
+    compare: impl Fn(Entry, Entry) -> Ordering,
+) -> Result<(), AllocError> {
+    let mut scratch = try_collect(entries.iter().copied())?;
+    merge_sort::sort(entries, &mut scratch, |a, b| {
+        Ok(verdicts[(compare(a, b) as i8 + 1) as usize])
+    })
+}
+
+fn sort_by_numbers(
+    values: &mut [Value],
+    keys: &mut [Value],
+    verdicts: Verdicts,
+) -> Result<(), AllocError> {
+    let flip = if verdicts == DESCENDING { u64::MAX } else { 0 };
+    let key = |key: &Value| key_of_number(key.as_number().unwrap_or_default()) ^ flip;
+    let mut entries = entries_for(keys.iter().map(key))?;
+    match verdicts {
+        ASCENDING | DESCENDING => entries.sort_unstable(),
+        _ => sort_by_verdicts(&mut entries, verdicts, |a, b| a.key.cmp(&b.key))?,
+    }
+    permute(values, keys, indices(&entries));
+    Ok(())
+}
+
+fn sort_by_strings(
+    no_gc: &NoGc<'_>,
+    values: &mut [Value],
+    keys: &mut [Value],
+    verdicts: Verdicts,
+) -> Result<(), AllocError> {
+    if verdicts == DESCENDING {
+        let entries = sort_texts(&texts_of(no_gc, keys.iter().copied().rev())?)?;
+        let last = values.len() as u32 - 1;
+        permute(values, keys, indices(&entries).rev().map(|it| last - it));
         return Ok(());
     }
-    let mut buffer = Buffer::new();
-    let Collected {
-        values,
-        kind,
-        undefined_count,
-    } = collect(cx, object, length, &mut buffer)?;
-    sort_values(cx, values, kind, comparator)?;
+    let texts = texts_of(no_gc, keys.iter().copied())?;
+    let entries = if verdicts == ASCENDING {
+        sort_texts(&texts)?
+    } else {
+        let mut entries = entries_for(texts.iter().map(|_| 0))?;
+        let text = |entry: Entry| texts[entry.index as usize];
+        sort_by_verdicts(&mut entries, verdicts, |a, b| text(a).cmp(&text(b)))?;
+        entries
+    };
+    permute(values, keys, indices(&entries));
+    Ok(())
+}
 
+/// False, having left the values as they are, if the comparator has to be called.
+#[inline(never)]
+fn try_sort_without_calls(
+    cx: &mut Cx,
+    values: &mut [Value],
+    keys: &mut [Value],
+    comparator: Value,
+) -> JsResult<bool> {
+    let Some(comparator) = find_sort_keys(cx, comparator, values, keys)? else {
+        return Ok(false);
+    };
+    let verdicts = verdicts_of(&comparator);
+    let is_ordered = |key: &Value| key.as_number().is_some_and(|it| !it.is_nan());
+    if comparator.key == SortKey::Whole
+        && matches!(verdicts, ASCENDING | DESCENDING)
+        && values.iter().all(|it| it.is_int32())
+    {
+        values.sort_unstable_by_key(|it| it.to_bits() as i32);
+        if verdicts == DESCENDING {
+            values.reverse();
+        }
+    } else if keys.iter().all(is_ordered) {
+        cx.or_out_of_memory(sort_by_numbers(values, keys, verdicts))?;
+    } else if !comparator.subtracts && keys.iter().all(|it| it.is_string()) {
+        for key in &*keys {
+            key.cast::<JsString>().view(cx)?;
+        }
+        let sorted = sort_by_strings(&cx.no_gc(), values, keys, verdicts);
+        cx.or_out_of_memory(sorted)?;
+    } else {
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+/// From here on, a look at the code of the comparator can pay.
+pub(crate) const MIN_LENGTH_TO_AVOID_CALLS: usize = 8;
+
+fn sort_values(
+    cx: &mut Cx,
+    values: &mut [Value],
+    scratch: &mut [Value],
+    comparator: Value,
+) -> JsResult<()> {
+    if comparator.is_undefined() {
+        return sort_as_strings(cx, values, scratch);
+    }
+    if values.len() >= MIN_LENGTH_TO_AVOID_CALLS
+        && try_sort_without_calls(cx, values, scratch, comparator)?
+    {
+        return Ok(());
+    }
+    let comparator = RepeatedCall::new(cx, comparator)?;
+    merge_sort::sort(values, scratch, |a, b| {
+        let result = comparator.call(cx, Value::UNDEFINED, [a, b])?;
+        means_less(cx, result)
+    })
+}
+
+/// `values` are the elements that are not undefined.
+fn sort_and_store(
+    cx: &mut Cx,
+    object: &JsObject,
+    length: u64,
+    comparator: Value,
+    (values, scratch): (&mut [Value], &mut [Value]),
+    undefined_count: u64,
+) -> JsResult<()> {
+    sort_values(cx, values, scratch, comparator)?;
     if !cx.or_out_of_memory(object.try_set_elements(cx, 0, values))? {
         for (index, &value) in (0..).zip(&*values) {
             object.set_index(cx, index, value, true)?;
         }
     }
     let first_undefined = values.len() as u64;
-    let first_hole = first_undefined + undefined_count;
-    for index in first_undefined..first_hole {
+    let mut index = first_undefined + undefined_count;
+    for index in first_undefined..index {
         object.set_index(cx, index, Value::UNDEFINED, true)?;
     }
-    for index in first_hole..length {
+    while index < length {
         object.delete_index_or_throw(cx, index)?;
+        index = object.skip_holes(index + 1..length);
         cx.check_traps()?;
     }
     Ok(())
+}
+
+/// The elements are plain, and `room` has twice as many.
+fn sort_plain_elements(
+    cx: &mut Cx,
+    object: &JsObject,
+    comparator: Value,
+    room: &mut [Value],
+) -> JsResult<()> {
+    let (values, scratch) = room.split_at_mut(room.len() / 2);
+    let (length, mut count, mut present) = (values.len(), 0, 0);
+    let no_gc = cx.no_gc();
+    for value in object
+        .dense_elements(&no_gc)
+        .slice(0..length)
+        .iter()
+        .flatten()
+    {
+        values[count] = value;
+        count += usize::from(!value.is_undefined());
+        present += 1;
+    }
+    let lists = (&mut values[..count], &mut scratch[..count]);
+    sort_and_store(
+        cx,
+        object,
+        length as u64,
+        comparator,
+        lists,
+        present - count as u64,
+    )
+}
+
+fn try_room(cx: &Cx, length: usize) -> JsResult<RootVec<Value>> {
+    let mut room = root_vec();
+    if room.try_reserve_exact(length).is_err() {
+        return Err(cx.throw_out_of_memory());
+    }
+    room.resize(length, Value::UNDEFINED);
+    Ok(room)
+}
+
+#[inline(never)]
+fn sort_properties(cx: &mut Cx, object: &JsObject, length: u64, comparator: Value) -> JsResult<()> {
+    let (mut values, mut undefined_count, mut index) = (ValueVec::new(), 0, 0);
+    while index < length {
+        let value = object.get_index_if_has_property(cx, index)?;
+        index += 1;
+        match value {
+            Some(Value::UNDEFINED) => undefined_count += 1,
+            Some(_) if values.len() == u32::MAX as usize => return Err(cx.throw_out_of_memory()),
+            Some(value) => cx.or_out_of_memory(values.try_push(value))?,
+            None => index = object.skip_holes(index..length),
+        }
+        cx.check_traps()?;
+    }
+    let mut scratch = try_room(cx, values.len())?;
+    let lists = (&mut *values, &mut *scratch);
+    sort_and_store(cx, object, length, comparator, lists, undefined_count)
+}
+
+fn sort_object(cx: &mut Cx, object: &JsObject, length: u64, comparator: Value) -> JsResult<()> {
+    if length < 2 {
+        return Ok(());
+    }
+    if object.plain_elements(&cx.no_gc(), 0..length).is_none() {
+        return sort_properties(cx, object, length, comparator);
+    }
+    let size = length as usize * 2;
+    match size {
+        ..=16 => sort_plain_elements(cx, object, comparator, &mut [Value::UNDEFINED; 16][..size]),
+        ..=128 => sort_plain_elements(cx, object, comparator, &mut [Value::UNDEFINED; 128][..size]),
+        _ => sort_plain_elements(cx, object, comparator, &mut try_room(cx, size)?),
+    }
 }
 
 #[native_abi]

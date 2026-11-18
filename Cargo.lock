@@ -738,6 +738,7 @@ name = "bun_engine_inspector"
 version = "0.0.0"
 dependencies = [
  "bun_engine_bytecode",
+ "bun_engine_exec_memory",
  "bun_engine_macros",
  "bun_engine_number",
  "bun_engine_platform",
@@ -748,6 +749,7 @@ dependencies = [
  "bun_engine_vm",
  "bun_threading",
  "hashbrown 0.15.5",
+ "libc",
  "smallvec",
 ]
 

@@ -4,7 +4,7 @@ use core::ffi::{CStr, c_char};
 use std::sync::Once;
 
 use crate::CText;
-use crate::argument::locale_id;
+use crate::argument::{MAX_LOCALE_ID_LENGTH, locale_id};
 use crate::error::Status;
 
 icu_functions! {
@@ -42,6 +42,7 @@ fn choose() {
 
     let found = current();
     let usable = parents(found.to_bytes())
+        .filter(|id| id.len() <= MAX_LOCALE_ID_LENGTH)
         .filter_map(|id| CText::new(id).ok())
         .find(|id| locale_id(id).is_ok());
     match usable {

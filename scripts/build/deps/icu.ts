@@ -84,11 +84,14 @@ const COMPRESSOR_ZSTD_SOURCES = [
 /** Most of the time to compile zstd, and none is used at the level of compress.c. */
 const UNUSED_ZSTD_STRATEGIES = ["DFAST", "GREEDY", "LAZY", "LAZY2", "BTLAZY2", "BTOPT"];
 
+const checkoutHint = "See ICU in scripts/build/deps/README.md";
+
 /** The major version of the ICU that the graph compiles: the suffix of its symbols. */
 export function bundledIcuMajorVersion(cfg: Config): string {
   const checkout = cfg.localDeps.icu;
   if (checkout === undefined) return ICU_VERSION.split(".")[0]!;
   const header = join(checkout, "source", "common", "unicode", "uvernum.h");
+  assert(existsSync(header), `--local-deps: ${header} is missing`, { hint: checkoutHint });
   const major = /^#define U_ICU_VERSION_MAJOR_NUM (\d+)/m.exec(readFileSync(header, "utf8"))?.[1];
   assert(major !== undefined, "no major version of ICU", { file: header });
   return major;
@@ -106,11 +109,10 @@ function bundled(cfg: Config): DirectBuild {
 
   const checkout = cfg.localDeps.icu;
   if (checkout !== undefined) {
-    const hint = "See ICU in scripts/build/deps/README.md";
-    assert(existsSync(release), `--local-deps: ${release} is missing`, { hint });
+    assert(existsSync(release), `--local-deps: ${release} is missing`, { hint: checkoutHint });
     const loader = readFileSync(join(checkout, "source", "common", "udata.cpp"), "utf8");
     assert(loader.includes("bun_icu_maybe_decompress"), `--local-deps: patches/icu is not applied to ${checkout}`, {
-      hint,
+      hint: checkoutHint,
     });
   }
 

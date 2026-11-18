@@ -3,6 +3,7 @@
 use core::arch::naked_asm;
 
 use bun_engine_bytecode::{Narrow, Width};
+use bun_engine_macros::in_call_frame;
 use bun_engine_vm::{CallFrame, CodeBlock, Value, Vm, call};
 
 use crate::fast::calls::{after_call, fill_varargs_frame, prologue, prologue_with_traps};
@@ -44,6 +45,7 @@ macro_rules! frame_bottom {
 macro_rules! stub {
     ($(#[$doc:meta])* fn $name:ident $(<$($parameter:ident: $bound:path),*>)?, [$($line:expr),* $(,)?], $($operands:tt)*) => {
         $(#[$doc])*
+        #[in_call_frame(naked)]
         #[unsafe(naked)]
         pub(crate) unsafe extern "rust-preserve-none" fn $name $(<$($parameter: $bound),*>)? (
             _: Pc, _: &'static Vm, _: u64, _: u64, _: *mut u64, _: *mut u64, _: *const u64,

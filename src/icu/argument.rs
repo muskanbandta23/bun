@@ -9,12 +9,13 @@ fn require(condition: bool) -> Result<()> {
     condition.then_some(()).ok_or(Error::ILLEGAL_ARGUMENT)
 }
 
+/// With its terminator it fits `ULOC_KEYWORDS_CAPACITY`, the smaller of the two sizes that ICU documents for an
+/// identifier or a part of one.
+pub(crate) const MAX_LOCALE_ID_LENGTH: usize = 95;
+
 /// `language[_Script][_REGION][_VARIANT…][@key=value;…]` or `root[@key=value;…]`, with `_` or `-` between the subtags
 /// and no extension of BCP 47.
 pub(crate) fn locale_id(id: &CStr) -> Result<*const c_char> {
-    /// `ULOC_KEYWORDS_CAPACITY`, the smaller of the two sizes that ICU documents for an identifier or a part of one.
-    const CAPACITY: usize = 96;
-
     #[derive(Clone, Copy)]
     enum Part {
         Language,
@@ -23,8 +24,8 @@ pub(crate) fn locale_id(id: &CStr) -> Result<*const c_char> {
         Value,
     }
 
+    require(id.count_bytes() <= MAX_LOCALE_ID_LENGTH)?;
     let bytes = id.to_bytes_with_nul();
-    require(bytes.len() <= CAPACITY)?;
     let (mut part, mut start) = (Part::Language, 0);
     for (index, &byte) in bytes.iter().enumerate() {
         let next = match (part, byte) {
@@ -52,14 +53,14 @@ pub(crate) fn locale_id(id: &CStr) -> Result<*const c_char> {
 }
 
 /// Of text that ICU holds in an expanded form, in which a unit takes the room of up to 22.
+pub(crate) const MAX_EXPANDABLE_LENGTH: usize = 1 << 25;
+
 pub(crate) fn expandable_length<T>(text: &[T]) -> Result<i32> {
     if text.len() > MAX_EXPANDABLE_LENGTH {
         return Err(Error::MEMORY_ALLOCATION);
     }
     length(text)
 }
-
-pub(crate) const MAX_EXPANDABLE_LENGTH: usize = 1 << 25;
 
 fn printable_ascii_length(text: &[u16], longest: usize) -> Result<i32> {
     require(text.len() <= longest && text.iter().all(|unit| matches!(unit, 0x20..=0x7e)))?;

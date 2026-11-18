@@ -28,12 +28,19 @@ pub(super) fn initialize_slot(cx: &Cx, slot: RealmSlot) -> bool {
             global.init_array_constructor(constructor);
         }
         RealmSlot::private_is_array => {
-            let function = hidden_function(cx, names::isArray, is_array, 1, Intrinsic::ArrayIsArray);
+            let function =
+                hidden_function(cx, names::isArray, is_array, 1, Intrinsic::ArrayIsArray);
             global.init_private_is_array(function);
         }
         RealmSlot::private_array_from_fast => {
             let name = private_names::arrayFromFastWithoutMapFn;
-            global.init_private_array_from_fast(hidden_function(cx, name, from_fast, 2, Intrinsic::None));
+            global.init_private_array_from_fast(hidden_function(
+                cx,
+                name,
+                from_fast,
+                2,
+                Intrinsic::None,
+            ));
         }
         _ => return false,
     }

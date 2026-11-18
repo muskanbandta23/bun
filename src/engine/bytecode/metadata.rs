@@ -1,5 +1,7 @@
 //! The mutable state that an instruction keeps in its code block: caches and profiles.
 
+use core::ops::Range;
+
 macro_rules! metadata_kinds {
     ($($(#[$doc:meta])* $name:ident = $words:literal $($profiled:ident)?,)*) => {
         /// Entries of one kind are adjacent in the buffer, in the order of their instructions.
@@ -73,35 +75,79 @@ metadata_kinds! {
     Coverage = 1,
 }
 
+const _: () = assert!(MetadataKind::COUNT < 64);
+
 /// How many entries of each kind a code block has.
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct MetadataLayout {
-    /// Where the entries of each kind start, and where the last end.
-    starts: [u32; MetadataKind::COUNT + 1],
+#[derive(Clone, Copy)]
+pub struct MetadataLayout<'a> {
+    /// A bit for each kind that has entries.
+    kinds: u64,
+    is_wide: bool,
+    /// For each of those, the word at which its entries end.
+    ends: &'a [u8],
 }
 
-impl MetadataLayout {
-    /// `None` if the words do not fit in 32 bits.
-    pub(crate) fn new(counts: &[u32; MetadataKind::COUNT]) -> Option<MetadataLayout> {
-        let mut starts = [0u32; MetadataKind::COUNT + 1];
-        for kind in MetadataKind::ALL {
-            let words = counts[kind as usize].checked_mul(kind.words())?;
-            starts[kind as usize + 1] = starts[kind as usize].checked_add(words)?;
-        }
-        Some(MetadataLayout { starts })
+impl<'a> MetadataLayout<'a> {
+    /// And the bytes after it.
+    pub(crate) fn read(
+        kinds: u64,
+        is_wide: bool,
+        bytes: &'a [u8],
+    ) -> Option<(MetadataLayout<'a>, &'a [u8])> {
+        let size = kinds.count_ones() as usize * if is_wide { 4 } else { 2 };
+        let (ends, rest) = bytes.split_at_checked(size)?;
+        let layout = MetadataLayout {
+            kinds,
+            is_wide,
+            ends,
+        };
+        Some((layout, rest))
     }
 
-    pub fn words(&self) -> u32 {
-        self.starts[MetadataKind::COUNT]
+    /// Where the first `present` kinds that have entries end.
+    #[inline]
+    fn end_of(self, present: u32) -> u32 {
+        let Some(index) = (present as usize).checked_sub(1) else {
+            return 0;
+        };
+        if self.is_wide {
+            u32::from_le_bytes(self.ends.as_chunks().0[index])
+        } else {
+            u32::from(u16::from_le_bytes(self.ends.as_chunks().0[index]))
+        }
+    }
+
+    pub fn words(self) -> u32 {
+        self.end_of(self.kinds.count_ones())
     }
 
     /// The words that hold the entries of `kind`.
-    pub fn range(&self, kind: MetadataKind) -> core::ops::Range<u32> {
-        self.starts[kind as usize]..self.starts[kind as usize + 1]
+    pub fn range(self, kind: MetadataKind) -> Range<u32> {
+        let bit = 1 << kind as u32;
+        let below = self.kinds & (bit - 1);
+        self.end_of(below.count_ones())..self.end_of((below | self.kinds & bit).count_ones())
     }
 
-    pub fn count(&self, kind: MetadataKind) -> u32 {
+    pub fn count(self, kind: MetadataKind) -> u32 {
         let range = self.range(kind);
         (range.end - range.start) / kind.words()
+    }
+
+    /// The kinds that have entries, in the order of the buffer.
+    pub fn ranges(self) -> impl Iterator<Item = (MetadataKind, Range<u32>)> + 'a {
+        let (mut rest, mut present) = (self.kinds, 0);
+        core::iter::from_fn(move || {
+            let kind = *MetadataKind::ALL.get(rest.trailing_zeros() as usize)?;
+            rest &= rest - 1;
+            present += 1;
+            Some((kind, self.end_of(present - 1)..self.end_of(present)))
+        })
+    }
+
+    pub(crate) fn is_valid(self) -> bool {
+        self.kinds >> MetadataKind::COUNT == 0
+            && self.ranges().all(|(kind, range)| {
+                range.start < range.end && (range.end - range.start) % kind.words() == 0
+            })
     }
 }

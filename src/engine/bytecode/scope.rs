@@ -90,7 +90,7 @@ impl Slot {
 pub struct StaticScope {
     pub(crate) parent: Option<Rc<StaticScope>>,
     pub(crate) kind: ScopeKind,
-    pub(crate) is_extensible: bool,
+    pub(crate) eval_variables_slot: Option<u32>,
     /// Of the outermost scope of a function: where that function was created.
     pub(crate) entered_at: Option<u32>,
     pub(crate) slot_count: u32,
@@ -133,7 +133,7 @@ impl StaticScope {
         Rc::new(StaticScope {
             parent,
             kind,
-            is_extensible: false,
+            eval_variables_slot: None,
             entered_at: None,
             slot_count: slots.len() as u32,
             undefined_slots: slots.len() as u32,
@@ -169,9 +169,9 @@ impl StaticScope {
         self.kind
     }
 
-    /// Whether `eval` code may add variables.
-    pub fn is_extensible(&self) -> bool {
-        self.is_extensible
+    /// Where the object with the variables that `eval` code adds goes, if it may add any. Starts empty.
+    pub fn eval_variables_slot(&self) -> Option<u32> {
+        self.eval_variables_slot
     }
 
     pub fn slot_count(&self) -> u32 {

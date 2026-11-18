@@ -11,8 +11,7 @@ workspace = true
 
 [dependencies]
 bun_engine_asm.workspace = true
+bun_alloc.workspace = true
 bun_threading.workspace = true
 libc.workspace = true
-
-[dev-dependencies]
-bun_engine_standalone.workspace = true
+smallvec.workspace = true

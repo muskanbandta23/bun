@@ -54,4 +54,10 @@ private:
 // Once, before anything else. The options have their defaults when the function is called.
 void initialize(const ScopedLambda<void()>& customizeOptions);
 
+inline uintptr_t startOfExecutableMemory() { return Engine::executable_memory_start(); }
+#if OS(WINDOWS)
+// Once. For the structured exceptions that get to a frame of generated code.
+inline void setExceptionHandlerOfGeneratedCode(int32_t (*handler)(void* record, void* frame, void* context, void* dispatcher)) { Engine::executable_memory_set_exception_handler(handler); }
+#endif
+
 } // namespace JSC

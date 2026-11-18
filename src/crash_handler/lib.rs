@@ -1855,8 +1855,8 @@ mod draft {
                 // Backstop for exceptions the VEH passed on: runs only after
                 // every frame-based (SEH) handler has declined, so an
                 // exception a foreign module handles itself never reaches it.
-                // The handler JSC registers for JIT frames
-                // (ZigGlobalObject.cpp -> setJITExceptionHandlerWin) catches
+                // The handler for JIT frames (ZigGlobalObject.cpp ->
+                // setExceptionHandlerOfGeneratedCode) catches
                 // the under-JIT case before this.
                 bun_sys::windows::kernel32::SetUnhandledExceptionFilter(Some(
                     bun_ptr::cast_fn_ptr::<
@@ -2245,7 +2245,7 @@ mod draft {
         );
     }
 
-    /// Called from JSC's `jscJITSEHHandler` when SEH dispatch reaches a JIT
+    /// Called when SEH dispatch reaches a JIT
     /// frame with an unhandled exception. Reports the crash if the reason is
     /// one we classify; otherwise continues the search so an outer handler
     /// (or UEF) can claim it.

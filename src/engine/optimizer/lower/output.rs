@@ -3,13 +3,21 @@
 use bun_engine_asm::Code;
 use bun_engine_bytecode::Register;
 
-use crate::graph::{Assumption, ExitKind, Format, FrameIndex, Layout};
+use crate::graph::{Assumption, ExitKind, Format, FrameIndex, Layout, Position};
 
 /// The addresses that [`bun_engine_exec_memory::link`] is asked for.
 pub(crate) mod symbol {
     /// The thunk that an exit jumps to, with the number of the exit in [`super::EXIT_REGISTER`].
     pub(crate) const EXIT: u32 = 0;
 }
+
+/// Where the code of an exit leaves its number.
+#[cfg(target_arch = "x86_64")]
+pub(crate) const EXIT_REGISTER: bun_engine_asm::Gpr = bun_engine_asm::abi::SCRATCH_GPR;
+
+/// Not the first of them: a jump that leaves the code may overwrite that one.
+#[cfg(target_arch = "aarch64")]
+pub(crate) const EXIT_REGISTER: bun_engine_asm::Gpr = bun_engine_asm::abi::SCRATCH_GPRS[1];
 
 /// Where a value is when the code stops.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -103,6 +111,8 @@ pub(crate) struct Output {
     pub(crate) frames: Vec<crate::graph::FrameInfo>,
     pub(crate) layouts: Vec<Layout>,
     pub(crate) layout_registers: Vec<Register>,
+    /// By `Origin`, which is what [`Layout::resume`] is.
+    pub(crate) positions: Vec<Position>,
 }
 
 /// An [`Assumption`] with its shape resolved to an address.

@@ -304,7 +304,7 @@ impl Survivors {
 
     /// Of a cell that was alive when the collection began.
     #[inline]
-    pub(crate) fn contains_address(&self, cell: usize) -> bool {
+    pub fn contains_address(&self, cell: usize) -> bool {
         container::of(cell).is_marked(cell)
     }
 
@@ -328,7 +328,7 @@ impl Survivors {
     }
 
     /// Nothing may be allocated.
-    pub(crate) fn vm(&self) -> &crate::Vm {
+    pub fn vm(&self) -> &crate::Vm {
         // SAFETY: the collection runs inside a call that has it.
         unsafe { &*self.vm }
     }

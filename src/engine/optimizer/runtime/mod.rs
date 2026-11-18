@@ -1,1 +1,18 @@
+//! What runs on the thread of the `Vm`: compiling, installing, leaving and walking optimized frames.
+
 pub(crate) mod cells;
+mod code;
+mod exits;
+mod machine;
+mod plan;
+#[cfg_attr(target_arch = "aarch64", path = "stubs_aarch64.rs")]
+#[cfg_attr(target_arch = "x86_64", path = "stubs_x86_64.rs")]
+mod stubs;
+mod values;
+
+pub use plan::{jettison, tier_up};
+
+/// What an exit jumps to. It is reached through [`crate::lower::output::symbol::EXIT`].
+pub(crate) fn exit_thunk() -> usize {
+    stubs::exit as *const () as usize
+}

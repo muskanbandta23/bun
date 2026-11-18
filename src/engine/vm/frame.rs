@@ -19,6 +19,7 @@ pub struct CallFrame {
 impl !GcFree for CallFrame {}
 
 impl CallFrame {
+    pub const OFFSET_OF_CALLER: usize = offset_of!(CallFrame, caller);
     pub const OFFSET_OF_RETURN_ADDRESS: usize = offset_of!(CallFrame, return_address);
     pub const OFFSET_OF_CODE_BLOCK: usize = offset_of!(CallFrame, code_block);
     pub const OFFSET_OF_CALLEE: usize = offset_of!(CallFrame, callee);

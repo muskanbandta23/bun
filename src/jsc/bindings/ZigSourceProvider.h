@@ -7,7 +7,6 @@ namespace JSC {
 class Structure;
 class Identifier;
 class SourceCode;
-class SourceCodeKey;
 class SourceProvider;
 } // namespace JSC
 
@@ -21,8 +20,6 @@ namespace Zig {
 
 class GlobalObject;
 
-// A provider that wraps another one has a SourceID of its own, which `bun test --coverage` has to learn of.
-void addCodeCoverageSourceID(JSC::VM&, JSC::SourceProvider& provider);
 JSC::SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin);
 class SourceProvider final : public JSC::SourceProvider {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(SourceProvider);
@@ -36,8 +33,6 @@ public:
         JSC::SourceProviderSourceType sourceType = JSC::SourceProviderSourceType::Module,
         bool isBuiltIn = false);
     ~SourceProvider();
-    unsigned hash() const override;
-    StringView source() const override;
 
     RefPtr<JSC::CachedBytecode> cachedBytecode() const final
     {
@@ -52,61 +47,59 @@ public:
     uint64_t m_madeFromHash { 0 };
 
 private:
-    SourceProvider(void* bunVM, ResolvedSource& resolvedSource, Ref<WTF::StringImpl>&& sourceImpl,
-        JSC::SourceTaintedOrigin taintedness,
+    SourceProvider(void* bunVM, ResolvedSource& resolvedSource, const WTF::String& source,
         const SourceOrigin& sourceOrigin, WTF::String&& sourceURL,
         const TextPosition& startPosition, JSC::SourceProviderSourceType sourceType)
-        : Base(sourceOrigin, WTF::move(sourceURL), String(), taintedness, startPosition, sourceType, resolvedSource.is_static ? JSC::SourceProvenance::Static : JSC::SourceProvenance::GeneratedAtRuntime)
+        : Base(source, sourceOrigin, WTF::move(sourceURL), startPosition, sourceType, resolvedSource.is_static ? JSC::SourceProvenance::Static : JSC::SourceProvenance::GeneratedAtRuntime)
         , m_moduleInfo(WTF::move(resolvedSource.module_info))
         , m_tag(resolvedSource.tag)
         , m_alreadyBundled(resolvedSource.already_bundled)
         , m_dependsOnMoreThanSource(resolvedSource.depends_on_more_than_source)
         , m_bunVM(bunVM)
-        , m_source(WTF::move(sourceImpl))
+        , m_cachedBytecode(resolvedSource.bytecode_cache.take())
     {
+        if (m_cachedBytecode)
+            setHash(resolvedSource.source_code_hash);
     }
 
     // Stored directly (not via the creating global) so the destructor stays
     // valid when the provider outlives its global under --isolate caching.
     void* m_bunVM;
     RefPtr<JSC::CachedBytecode> m_cachedBytecode;
-    Ref<WTF::StringImpl> m_source;
-    unsigned m_hash = 0;
 };
 
 } // namespace Zig
 
 namespace Bun {
 
-// JSC's bytecode encoder aborts on a string of 2^27 or more characters unless it encodes against a string table.
-// Call this after `source`'s unlinked code is generated.
-bool hasStringTooLongForBytecodeCache(JSC::VM&, const JSC::SourceCode& source);
-
-// Bytecode that is a section of the executable: not owned, and there for the life of the process. `entryOffset` is where
-// the module's cache entry starts in `bytes` when they are the one payload of a link.
-inline Ref<JSC::CachedBytecode> embeddedBytecode(std::span<uint8_t> bytes, uint32_t entryOffset)
-{
-    Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(bytes, nullptr, {});
-    bytecode->setPayloadIsPersistent();
-    bytecode->setEntryOffset(entryOffset);
-    return bytecode;
-}
-
-// bun_bundler::bytecode_order::CodeNamesRef. `functions` is sorted by (start, kind), each once; none for a text without names.
+// bun_bundler::bytecode_order::CodeNamesRef
 struct BytecodeOrderNamesRef {
-    uint64_t module;
-    const JSC::BytecodeOrderNames::Function* functions;
-    size_t functionCount;
+    struct Function {
+        uint32_t start;
+        uint32_t kind;
+        uint64_t name;
+    };
 
-    JSC::BytecodeOrderNames view() const
-    {
-        static_assert(sizeof(JSC::BytecodeOrderNames::Function) == 16 && offsetof(JSC::BytecodeOrderNames::Function, key) == 0 && offsetof(JSC::OrderFunctionKey, kind) == 4 && offsetof(JSC::BytecodeOrderNames::Function, name) == 8, "FunctionIdentity");
-        static_assert(!static_cast<uint8_t>(JSC::OrderFunctionKind::Function) && static_cast<uint8_t>(JSC::OrderFunctionKind::InnerBody) == 1 && static_cast<uint8_t>(JSC::OrderFunctionKind::ClassFields) == 2 && static_cast<uint8_t>(JSC::OrderFunctionKind::DefaultConstructor) == 3, "FunctionKind");
-        std::span span { functions, functionCount };
-        ASSERT(std::ranges::is_sorted(span, {}, &JSC::BytecodeOrderNames::Function::key));
-        ASSERT(std::ranges::adjacent_find(span, {}, &JSC::BytecodeOrderNames::Function::key) == span.end());
-        return { module, span };
-    }
+    uint64_t module;
+    const Function* functions;
+    size_t functionCount;
+};
+
+// The bytecode of all modules of an executable in one payload (--bytecode-order), in the order in which they are added.
+// Each entry follows its size.
+class BytecodeLinkEncoder {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(BytecodeLinkEncoder);
+
+public:
+    // False if there is none.
+    bool add(RefPtr<JSC::CachedBytecode>&&, const BytecodeOrderNamesRef&);
+    // `entryOffset` is zero for bytecode that is on its own.
+    static std::span<const uint8_t> entry(std::span<const uint8_t> payload, uint32_t entryOffset);
+
+    Vector<uint64_t> sortedHotFunctions;
+    uint32_t namedHotFunctions { 0 };
+    Vector<uint32_t> entryOffsets;
+    Vector<uint8_t> payload;
 };
 
 JSC_DECLARE_HOST_FUNCTION(jsSourceHasLineStarts);

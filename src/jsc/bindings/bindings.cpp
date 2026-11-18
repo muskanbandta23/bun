@@ -33,7 +33,6 @@
 #include "JavaScriptCore/AggregateError.h"
 #include "JavaScriptCore/ArrayBufferView.h"
 #include "JavaScriptCore/ArrayStorage.h"
-#include "JavaScriptCore/SourceProviderCache.h"
 #include "JavaScriptCore/SparseArrayValueMap.h"
 #include "JavaScriptCore/BytecodeIndex.h"
 #include "JavaScriptCore/CodeBlock.h"
@@ -117,22 +116,7 @@
 #include "wtf/text/StringView.h"
 #include "wtf/text/WTFString.h"
 #include "wtf/PlainGregorianDateTime.h"
-#include "JavaScriptCore/IntlObject.h"
-#include "JavaScriptCore/ISO8601.h"
-#include "JavaScriptCore/JSCTimeZone.h"
-#include "JavaScriptCore/InstantCore.h"
-#include "JavaScriptCore/TemporalCoreTypes.h"
-#include "JavaScriptCore/TemporalDuration.h"
-#include "JavaScriptCore/TemporalEnums.h"
-#include "JavaScriptCore/TemporalInstant.h"
-#include "JavaScriptCore/TemporalPlainDate.h"
-#include "JavaScriptCore/TemporalPlainDateTime.h"
-#include "JavaScriptCore/TemporalPlainMonthDay.h"
-#include "JavaScriptCore/TemporalPlainTime.h"
-#include "JavaScriptCore/TemporalPlainYearMonth.h"
-#include "JavaScriptCore/TemporalZonedDateTime.h"
 #include "JavaScriptCore/TemporalObject.h"
-#include "JavaScriptCore/TimeZoneICUBridge.h"
 
 #include "JavaScriptCore/FunctionPrototype.h"
 #include "JSFetchHeaders.h"
@@ -332,11 +316,8 @@ extern "C" __attribute__((minsize)) JSC::EncodedJSValue ExpectStringMatching__co
     auto scope = DECLARE_THROW_SCOPE(vm);
     String source = JSValue::decode(encodedSource).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    RegExp* regExp = RegExp::create(vm, source, {});
-    if (!regExp->isValid()) {
-        throwException(globalObject, scope, regExp->errorToThrow(globalObject));
-        return {};
-    }
+    RegExp* regExp = RegExp::create(globalObject, source, {});
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(RegExpObject::create(vm, globalObject->regExpStructure(), regExp));
 }
 
@@ -1582,18 +1563,6 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     return true;
 }
 
-static bool isTemporalObject(JSC::JSObject* object)
-{
-    return object->inherits<JSC::TemporalInstant>()
-        || object->inherits<JSC::TemporalPlainDate>()
-        || object->inherits<JSC::TemporalPlainDateTime>()
-        || object->inherits<JSC::TemporalPlainTime>()
-        || object->inherits<JSC::TemporalZonedDateTime>()
-        || object->inherits<JSC::TemporalPlainYearMonth>()
-        || object->inherits<JSC::TemporalPlainMonthDay>()
-        || object->inherits<JSC::TemporalDuration>();
-}
-
 // Temporal objects keep their state in internal slots and have no own
 // properties, so the generic own-property walk would call any two instances
 // of a class equal. Compare the internal fields instead, the way JSDateType
@@ -1601,50 +1570,9 @@ static bool isTemporalObject(JSC::JSObject* object)
 // object.
 static std::optional<bool> temporalObjectsDequal(JSC::JSObject* o1, JSC::JSObject* o2)
 {
-    if (auto* instant1 = dynamicDowncast<JSC::TemporalInstant>(o1)) {
-        auto* instant2 = dynamicDowncast<JSC::TemporalInstant>(o2);
-        return instant2 && instant1->exactTime() == instant2->exactTime();
-    }
-    if (auto* date1 = dynamicDowncast<JSC::TemporalPlainDate>(o1)) {
-        auto* date2 = dynamicDowncast<JSC::TemporalPlainDate>(o2);
-        return date2 && date1->plainDate() == date2->plainDate() && date1->calendarID() == date2->calendarID();
-    }
-    if (auto* dateTime1 = dynamicDowncast<JSC::TemporalPlainDateTime>(o1)) {
-        auto* dateTime2 = dynamicDowncast<JSC::TemporalPlainDateTime>(o2);
-        return dateTime2 && dateTime1->plainDate() == dateTime2->plainDate() && dateTime1->plainTime() == dateTime2->plainTime() && dateTime1->calendarID() == dateTime2->calendarID();
-    }
-    if (auto* time1 = dynamicDowncast<JSC::TemporalPlainTime>(o1)) {
-        auto* time2 = dynamicDowncast<JSC::TemporalPlainTime>(o2);
-        return time2 && time1->plainTime() == time2->plainTime();
-    }
-    if (auto* zoned1 = dynamicDowncast<JSC::TemporalZonedDateTime>(o1)) {
-        auto* zoned2 = dynamicDowncast<JSC::TemporalZonedDateTime>(o2);
-        return zoned2 && zoned1->exactTime() == zoned2->exactTime() && zoned1->timeZone() == zoned2->timeZone() && zoned1->calendarID() == zoned2->calendarID();
-    }
-    if (auto* yearMonth1 = dynamicDowncast<JSC::TemporalPlainYearMonth>(o1)) {
-        auto* yearMonth2 = dynamicDowncast<JSC::TemporalPlainYearMonth>(o2);
-        return yearMonth2 && yearMonth1->plainYearMonth() == yearMonth2->plainYearMonth() && yearMonth1->calendarID() == yearMonth2->calendarID();
-    }
-    if (auto* monthDay1 = dynamicDowncast<JSC::TemporalPlainMonthDay>(o1)) {
-        auto* monthDay2 = dynamicDowncast<JSC::TemporalPlainMonthDay>(o2);
-        return monthDay2 && monthDay1->plainMonthDay() == monthDay2->plainMonthDay() && monthDay1->calendarID() == monthDay2->calendarID();
-    }
-    if (auto* duration1 = dynamicDowncast<JSC::TemporalDuration>(o1)) {
-        auto* duration2 = dynamicDowncast<JSC::TemporalDuration>(o2);
-        if (!duration2)
-            return false;
-        // Field-wise: PT1H and PT60M are different Duration values.
-        for (size_t i = 0; i < JSC::numberOfTemporalUnits; i++) {
-            if (duration1->duration()[i] != duration2->duration()[i])
-                return false;
-        }
-        return true;
-    }
-    // `o1` is not a Temporal object; a Temporal `o2` can then never be equal
-    // (and must not reach the own-property walk).
-    if (isTemporalObject(o2))
-        return false;
-    return std::nullopt;
+    if (JSC::temporalType(o1) == JSC::TemporalType::None && JSC::temporalType(o2) == JSC::TemporalType::None)
+        return std::nullopt;
+    return JSC::temporalObjectsHoldTheSame(o1, o2);
 }
 
 // A KeyObject or CryptoKey keeps its key in an internal slot and has no own properties
@@ -1793,7 +1721,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 return false;
             }
 
-            if (left->regExp()->key() != right->regExp()->key()) {
+            if (left->regExp()->flags() != right->regExp()->flags() || left->regExp()->pattern() != right->regExp()->pattern()) {
                 return false;
             }
             if (mode.checkPrototypes) {
@@ -1848,12 +1776,6 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
 
             // Vitest compares the causes only if the expected error has one, and the `errors` of an AggregateError.
             bool isLikeVitest = mode.enableAsymmetricMatchers && Bun__VM__isRunningVitestEntry(bunVM(globalObject));
-
-            if (mode.isStrict && !isLikeVitest) {
-                if (left->runtimeTypeForCause() != right->runtimeTypeForCause()) {
-                    return false;
-                }
-            }
 
             VM& vm = JSC::getVM(globalObject);
 
@@ -3471,8 +3393,7 @@ bool JSC__JSFunction__getSourceCode(JSC::EncodedJSValue JSValue0, BunString* out
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     if (JSC::JSFunction* func = dynamicDowncast<JSC::JSFunction>(value)) {
-        auto* sourceCode = func->sourceCode();
-        if (sourceCode != nullptr) { // native functions have no source code
+        if (auto sourceCode = func->sourceCode()) { // native functions have no source code
             *outSourceCode = Bun::toStringRef(sourceCode->view().toString()).leak();
             return true;
         }
@@ -5435,7 +5356,7 @@ BunString JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlo
             return toStringAdopt(WTF::move(actualName));
         }
 
-        return Bun::toStringRef(function->jsExecutable()->name().string()).leak();
+        return Bun::toStringRef(function->jsExecutable()->name()).leak();
     }
 
     if (JSC::InternalFunction* function = dynamicDowncast<JSC::InternalFunction>(obj)) {
@@ -5539,9 +5460,6 @@ size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
 #endif
 
     vm->finalizeSynchronousJSExecution();
-
-    // A full collection only drops the caches that nothing has used since the one before it.
-    vm->sourceProviderCacheMap.clear();
 
     if (sync) {
         vm->heap.deleteAllUnlinkedCodeBlocks(JSC::PreventCollectionAndDeleteAllCode);
@@ -6263,7 +6181,7 @@ restart:
             }
 
             // reuse memory
-            properties.data()->propertyNameVector().shrink(0);
+            properties.clear();
             if (iterating->isCallable())
                 break;
             if (iterating == globalObject || isOtherGlobal)
@@ -6345,7 +6263,7 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
         RETURN_IF_EXCEPTION(scope, );
     }
 
-    auto vector = properties.data()->propertyNameVector();
+    auto vector = properties.releaseData()->propertyNameVector();
     std::sort(vector.begin(), vector.end(), [](const Identifier& a, const Identifier& b) { return codePointCompare(a.impl(), b.impl()) < 0; });
     auto clientData = WebCore::clientData(vm);
 
@@ -6691,45 +6609,6 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__msToGregorianDateTime(JSC::JSGlobal
     *weekday = dt.weekDay();
 }
 
-extern "C" [[ZIG_EXPORT(nothrow)]] uint32_t Bun__resolveTimeZoneID(const uint8_t* name, size_t len)
-{
-    auto id = JSC::intlResolveTimeZoneID(StringView { std::span(reinterpret_cast<const Latin1Character*>(name), len) });
-    return id ? *id : std::numeric_limits<uint32_t>::max();
-}
-
-extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__msToGregorianDateTimeInZone(JSC::JSGlobalObject* globalObject, double ms, uint32_t tzID,
-    int* year, int* month, int* day, int* hour, int* minute, int* second, int* weekday)
-{
-    UNUSED_PARAM(globalObject);
-    auto tz = JSC::TimeZone::fromID(tzID);
-    auto exact = JSC::ISO8601::ExactTime::fromEpochMilliseconds(static_cast<int64_t>(ms));
-    auto off = JSC::TemporalCore::getOffsetNanosecondsFor(tz, exact);
-    int64_t offNs = off ? *off : 0;
-    auto dt = JSC::TemporalCore::exactTimeToLocalDateAndTime(exact, offNs);
-    *year = dt.date.year();
-    *month = dt.date.month();
-    *day = dt.date.day();
-    *hour = static_cast<int>(dt.time.hour());
-    *minute = static_cast<int>(dt.time.minute());
-    *second = static_cast<int>(dt.time.second());
-    // ISO8601::dayOfWeek: 1=Mon..7=Sun; GregorianDateTime consumers expect 0=Sun..6=Sat.
-    *weekday = JSC::ISO8601::dayOfWeek(dt.date) % 7;
-}
-
-extern "C" [[ZIG_EXPORT(nothrow)]] double Bun__gregorianDateTimeToMSInZone(JSC::JSGlobalObject* globalObject,
-    int year, int month, int day, int hour, int minute, int second, int millisecond, uint32_t tzID)
-{
-    UNUSED_PARAM(globalObject);
-    auto tz = JSC::TimeZone::fromID(tzID);
-    JSC::ISO8601::PlainDate date { year, static_cast<unsigned>(month), static_cast<unsigned>(day) };
-    JSC::ISO8601::PlainTime time { static_cast<unsigned>(hour), static_cast<unsigned>(minute),
-        static_cast<unsigned>(second), static_cast<unsigned>(millisecond), 0, 0 };
-    auto r = JSC::TemporalCore::getEpochNanosecondsFor(tz, date, time, JSC::TemporalDisambiguation::Compatible);
-    if (!r)
-        return std::numeric_limits<double>::quiet_NaN();
-    return static_cast<double>(r->epochMilliseconds());
-}
-
 // Materializes a date/time literal as a Temporal object through the same
 // paths `Temporal.*.from(string)` takes. `kind` mirrors the Rust
 // `bun_ast::E::TomlDateTimeKind` discriminants.
@@ -6748,26 +6627,9 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] EncodedJSValue Bun__Temporal__fromDateT
     WTF::String string { std::span(reinterpret_cast<const Latin1Character*>(text), len) };
     JSC::JSValue item = JSC::jsString(vm, string);
 
-    JSC::JSObject* result = nullptr;
-    switch (kind) {
-    case 1:
-        result = JSC::TemporalInstant::toInstant(globalObject, item);
-        break;
-    case 2:
-        result = JSC::TemporalPlainDateTime::from(globalObject, item, JSC::jsUndefined());
-        break;
-    case 3:
-        result = JSC::TemporalPlainDate::from(globalObject, item, JSC::jsUndefined());
-        break;
-    case 4:
-        result = JSC::TemporalPlainTime::from(globalObject, item, JSC::jsUndefined());
-        break;
-    default:
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-    RETURN_IF_EXCEPTION(scope, {});
-    ASSERT(result);
-    return JSValue::encode(result);
+    static_assert(static_cast<uint8_t>(JSC::TemporalType::Instant) == 1 && static_cast<uint8_t>(JSC::TemporalType::PlainDateTime) == 2);
+    static_assert(static_cast<uint8_t>(JSC::TemporalType::PlainDate) == 3 && static_cast<uint8_t>(JSC::TemporalType::PlainTime) == 4);
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::temporalObjectFrom(globalObject, static_cast<JSC::TemporalType>(kind), item)));
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] JSC::TemporalType Bun__JSValue__temporalType(JSC::EncodedJSValue encodedValue)
@@ -6787,29 +6649,31 @@ static Int128 floorToMultiple(Int128 ns, Int128 unit)
     return rem == 0 ? ns : ns - rem - (ns < 0 ? unit : 0);
 }
 
-// The `±HH:MM` offset to spell `exactTime` with so its local year has TOML's
+static constexpr int64_t nsPerSecond = 1000 * 1000 * 1000;
+static constexpr int64_t nsPerMinute = 60 * nsPerSecond;
+static constexpr int64_t nsPerHour = 60 * nsPerMinute;
+
+// The `±HH:MM` offset to spell `epoch` with so its local year has TOML's
 // four digits: `preferredNs` if that fits, else the closest whole-hour (then
 // whole-minute) offset that does; nullopt if none within ±23:59 does.
-static std::optional<int64_t> tomlOffsetForInstant(JSC::ISO8601::ExactTime exactTime, int64_t preferredNs)
+static std::optional<int64_t> tomlOffsetForInstant(Int128 epoch, int64_t preferredNs)
 {
-    using JSC::ISO8601::ExactTime;
-    constexpr Int128 minLocal = Int128 { -62167219200 } * ExactTime::nsPerSecond; // 0000-01-01T00:00:00
-    constexpr Int128 maxLocal = Int128 { 253402300800 } * ExactTime::nsPerSecond; // +010000-01-01T00:00:00
-    constexpr Int128 maxOffset = ExactTime::nsPerHour * 23 + ExactTime::nsPerMinute * 59;
+    constexpr Int128 minLocal = Int128 { -62167219200 } * nsPerSecond; // 0000-01-01T00:00:00
+    constexpr Int128 maxLocal = Int128 { 253402300800 } * nsPerSecond; // +010000-01-01T00:00:00
+    constexpr Int128 maxOffset = nsPerHour * 23 + nsPerMinute * 59;
 
-    Int128 epoch = exactTime.epochNanoseconds();
     // Whole-minute offsets o with minLocal <= epoch + o < maxLocal.
-    Int128 lo = std::max(ceilToMultiple(minLocal - epoch, ExactTime::nsPerMinute), -maxOffset);
-    Int128 hi = std::min(floorToMultiple(maxLocal - Int128 { 1 } - epoch, ExactTime::nsPerMinute), maxOffset);
+    Int128 lo = std::max(ceilToMultiple(minLocal - epoch, nsPerMinute), -maxOffset);
+    Int128 hi = std::min(floorToMultiple(maxLocal - Int128 { 1 } - epoch, nsPerMinute), maxOffset);
     if (lo > hi)
         return std::nullopt;
     Int128 preferred { preferredNs };
     if (preferred < lo) {
-        Int128 hour = ceilToMultiple(lo, ExactTime::nsPerHour);
+        Int128 hour = ceilToMultiple(lo, nsPerHour);
         return static_cast<int64_t>(hour <= hi ? hour : lo);
     }
     if (preferred > hi) {
-        Int128 hour = floorToMultiple(hi, ExactTime::nsPerHour);
+        Int128 hour = floorToMultiple(hi, nsPerHour);
         return static_cast<int64_t>(hour >= lo ? hour : hi);
     }
     return preferredNs;
@@ -6819,56 +6683,25 @@ static std::optional<int64_t> tomlOffsetForInstant(JSC::ISO8601::ExactTime exact
 // returns the length written, or -1 if its year is outside TOML's
 // 0000..9999. The `[u-ca=...]` and `[Time/Zone]` annotations, which TOML
 // cannot carry, are dropped.
-extern "C" [[ZIG_EXPORT(check_slow)]] int32_t Bun__Temporal__toTOMLDateTime(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, JSC::TemporalType temporalType, uint8_t* buf, size_t bufLen)
+extern "C" [[ZIG_EXPORT(nothrow)]] int32_t Bun__Temporal__toTOMLDateTime(JSC::EncodedJSValue encodedValue, JSC::TemporalType temporalType, uint8_t* buf, size_t bufLen)
 {
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    JSC::JSCell* cell = JSC::JSValue::decode(encodedValue).asCell();
-    constexpr JSC::PrecisionData autoPrecision { { JSC::Precision::Auto, 0 }, JSC::TemporalUnit::Nanosecond, 1 };
+    JSC::JSObject* object = JSC::asObject(JSC::JSValue::decode(encodedValue));
 
     WTF::String string;
-    switch (temporalType) {
-    case JSC::TemporalType::Instant: {
-        auto exactTime = uncheckedDowncast<JSC::TemporalInstant>(cell)->exactTime();
-        std::optional<int64_t> offsetNs = tomlOffsetForInstant(exactTime, 0);
-        if (!offsetNs)
-            return -1;
-        if (!*offsetNs)
-            offsetNs = std::nullopt; // `Z`
-        string = JSC::TemporalCore::instantToString(exactTime, offsetNs, autoPrecision);
-        break;
-    }
-    case JSC::TemporalType::PlainDateTime: {
-        auto* dateTime = uncheckedDowncast<JSC::TemporalPlainDateTime>(cell);
-        string = JSC::ISO8601::temporalDateTimeToString(dateTime->plainDate(), dateTime->plainTime(), { JSC::Precision::Auto, 0 });
-        break;
-    }
-    case JSC::TemporalType::PlainDate:
-        string = JSC::ISO8601::temporalDateToString(uncheckedDowncast<JSC::TemporalPlainDate>(cell)->plainDate());
-        break;
-    case JSC::TemporalType::PlainTime:
-        string = JSC::ISO8601::temporalTimeToString(uncheckedDowncast<JSC::TemporalPlainTime>(cell)->plainTime(), { JSC::Precision::Auto, 0 });
-        break;
-    case JSC::TemporalType::ZonedDateTime: {
-        auto* zoned = uncheckedDowncast<JSC::TemporalZonedDateTime>(cell);
-        std::optional<int64_t> zoneOffsetNs = zoned->getOffsetNanoseconds(globalObject);
-        RETURN_IF_EXCEPTION(scope, 0);
-        ASSERT(zoneOffsetNs);
+    if (temporalType == JSC::TemporalType::Instant || temporalType == JSC::TemporalType::ZonedDateTime) {
+        int64_t zoneOffsetNs = temporalType == JSC::TemporalType::Instant ? 0 : JSC::temporalOffsetNanoseconds(object);
         // TOML offsets are `HH:MM`; a historic sub-minute (LMT) offset is
         // spelled as `Z` instead.
-        bool wholeMinutes = *zoneOffsetNs % 60000000000ll == 0;
-        std::optional<int64_t> offsetNs = tomlOffsetForInstant(zoned->exactTime(), wholeMinutes ? *zoneOffsetNs : 0);
+        bool keepsZoneOffset = temporalType == JSC::TemporalType::ZonedDateTime && zoneOffsetNs % nsPerMinute == 0;
+        std::optional<int64_t> offsetNs = tomlOffsetForInstant(JSC::temporalEpochNanoseconds(object), keepsZoneOffset ? zoneOffsetNs : 0);
         if (!offsetNs)
             return -1;
-        if (!wholeMinutes && !*offsetNs)
-            offsetNs = std::nullopt;
-        string = JSC::TemporalCore::instantToString(zoned->exactTime(), offsetNs, autoPrecision);
-        break;
-    }
-    default:
-        RELEASE_ASSERT_NOT_REACHED();
-    }
+        std::optional<int16_t> offsetMinutes;
+        if (keepsZoneOffset || *offsetNs)
+            offsetMinutes = *offsetNs / nsPerMinute;
+        string = JSC::temporalExactTimeToString(object, offsetMinutes);
+    } else
+        string = JSC::temporalPlainValueToString(object);
 
     // The expanded-year form of a PlainDate/PlainDateTime (`+010000-…`, `-000001-…`).
     if (!isASCIIDigit(string[0]))
@@ -6913,40 +6746,6 @@ extern "C" int JSC__JSValue__toISOString(EncodedJSValue dateValue, JSC::JSGlobal
     auto& vm = JSC::getVM(globalObject);
 
     return static_cast<int>(Bun::toISOString(vm, thisDateObj->internalNumber(), buf));
-}
-
-extern "C" int JSC__JSValue__DateNowISOString(JSC::JSGlobalObject* globalObject, char* buf)
-{
-    char buffer[29];
-    JSC::DateInstance* thisDateObj = JSC::DateInstance::create(globalObject->vm(), globalObject->dateStructure(), globalObject->jsDateNow());
-
-    if (!std::isfinite(thisDateObj->internalNumber()))
-        return -1;
-
-    auto& vm = JSC::getVM(globalObject);
-
-    auto gregorianDateTime = thisDateObj->gregorianDateTimeUTC(vm.dateCache);
-    if (!gregorianDateTime)
-        return -1;
-
-    // If the year is outside the bounds of 0 and 9999 inclusive we want to use the extended year format (ES 15.9.1.15.1).
-    int ms = static_cast<int>(fmod(thisDateObj->internalNumber(), msPerSecond));
-    if (ms < 0)
-        ms += msPerSecond;
-
-    int charactersWritten;
-    if (gregorianDateTime.year() > 9999 || gregorianDateTime.year() < 0)
-        charactersWritten = snprintf(buffer, sizeof(buffer), "%+07d-%02d-%02dT%02d:%02d:%02d.%03dZ", gregorianDateTime.year(), gregorianDateTime.month() + 1, gregorianDateTime.monthDay(), gregorianDateTime.hour(), gregorianDateTime.minute(), gregorianDateTime.second(), ms);
-    else
-        charactersWritten = snprintf(buffer, sizeof(buffer), "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ", gregorianDateTime.year(), gregorianDateTime.month() + 1, gregorianDateTime.monthDay(), gregorianDateTime.hour(), gregorianDateTime.minute(), gregorianDateTime.second(), ms);
-
-    memcpy(buf, buffer, charactersWritten);
-
-    ASSERT(charactersWritten > 0 && static_cast<unsigned>(charactersWritten) < sizeof(buffer));
-    if (static_cast<unsigned>(charactersWritten) >= sizeof(buffer))
-        return -1;
-
-    return charactersWritten;
 }
 
 #pragma mark - WebCore::DOMFormData

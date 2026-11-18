@@ -2,7 +2,7 @@ use bun_engine_text::{Identifier, MAX_ARRAY_INDEX, PropertyName, names};
 
 use crate::{
     Attributes, CellType, ClonedArguments, CustomGetterSetter, Cx, DontEnumMode, Gc, GetterSetter,
-    InternalMethod, JsArray, JsArrayBufferView, JsObject, JsResult, JsTypedArray, MappedArguments,
+    InternalMethod, JsArrayBufferView, JsObject, JsResult, JsTypedArray, MappedArguments,
     PropertyDescriptor, PropertyNameList, PropertyNameMode, PropertyOffset, PropertySlot, Shape,
     TypeFlags, Value,
 };
@@ -341,7 +341,7 @@ impl JsObject {
     /// LengthOfArrayLike
     #[inline(always)]
     pub fn length_of_array_like(&self, cx: &mut Cx) -> JsResult<u64> {
-        if let Some(array) = self.downcast::<JsArray>() {
+        if let Some(array) = self.as_exact_array() {
             return Ok(array.length().into());
         }
         self.length_of_array_like_slow(cx)

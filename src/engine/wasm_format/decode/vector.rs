@@ -14,7 +14,7 @@ use crate::visitor::Visitor;
 pub(crate) const V128_CONST: u32 = 0x0c;
 
 #[derive(Clone, Copy)]
-enum Op {
+pub(crate) enum VectorOp {
     Invalid,
     Load(VectorLoadOp),
     Store,
@@ -37,9 +37,9 @@ const OP_COUNT: usize = 0x114;
 /// Each line has the number of its first operation. The others follow.
 macro_rules! table {
     ($($first:literal => $($op:expr),+;)*) => {{
-        let mut table = [Op::Invalid; OP_COUNT];
+        let mut table = [VectorOp::Invalid; OP_COUNT];
         $(let mut next = $first;
-        $(assert!(matches!(table[next], Op::Invalid));
+        $(assert!(matches!(table[next], VectorOp::Invalid));
         table[next] = $op;
         next += 1;)+
         let _ = next;)*
@@ -47,14 +47,14 @@ macro_rules! table {
     }};
 }
 
-static OPS: [Op; OP_COUNT] = {
+static OPS: [VectorOp; OP_COUNT] = {
     use FloatWidth::{F32, F64};
     use LaneType::{Float, Int};
-    use Op::*;
     use Sign::{Signed, Unsigned};
     use Size::{S8, S16, S32, S64};
     use VectorBinary as B;
     use VectorLoadOp as L;
+    use VectorOp::*;
     use VectorReduce as R;
     use VectorShift as S;
     use VectorTernary as T;
@@ -172,7 +172,14 @@ static OPS: [Op; OP_COUNT] = {
     }
 };
 
-impl<M: Mode> Decoder<'_, M> {
+impl VectorOp {
+    #[inline]
+    pub(crate) fn from_number(number: u32) -> Self {
+        OPS.get(number as usize).copied().unwrap_or(Self::Invalid)
+    }
+}
+
+impl<M: Mode> Decoder<'_, '_, M> {
     #[inline(never)]
     pub(super) fn vector<V: Visitor<Error = M::Error>>(
         &mut self,
@@ -180,24 +187,24 @@ impl<M: Mode> Decoder<'_, M> {
     ) -> Result<(), M::Error> {
         ensure!(
             self,
-            self.header.features.contains(Features::SIMD),
+            self.cx.header.features.contains(Features::SIMD),
             parse,
             "wasm-simd is not enabled"
         );
         let number = read!(self, self.reader.u32(), "can't parse wasm extended opcode");
-        match OPS.get(number as usize).copied().unwrap_or(Op::Invalid) {
-            Op::Invalid => fail!(self, parse, "invalid extended simd op {number}"),
-            Op::Load(op) => v.vector_load(op, self.mem_arg(Access::Vector, op.log2_bytes())?),
-            Op::Store => v.vector_store(self.mem_arg(Access::Vector, 4)?),
-            Op::LoadLane(size) => {
+        match VectorOp::from_number(number) {
+            VectorOp::Invalid => fail!(self, parse, "invalid extended simd op {number}"),
+            VectorOp::Load(op) => v.vector_load(op, self.mem_arg(Access::Vector, op.log2_bytes())?),
+            VectorOp::Store => v.vector_store(self.mem_arg(Access::Vector, 4)?),
+            VectorOp::LoadLane(size) => {
                 let (arg, lane) = self.lane_access(size)?;
                 v.vector_load_lane(size, lane, arg)
             }
-            Op::StoreLane(size) => {
+            VectorOp::StoreLane(size) => {
                 let (arg, lane) = self.lane_access(size)?;
                 v.vector_store_lane(size, lane, arg)
             }
-            Op::Const => {
+            VectorOp::Const => {
                 let bytes = read!(
                     self,
                     self.reader.array(),
@@ -205,7 +212,7 @@ impl<M: Mode> Decoder<'_, M> {
                 );
                 v.v128_const(u128::from_le_bytes(bytes))
             }
-            Op::Shuffle => {
+            VectorOp::Shuffle => {
                 let lanes: [u8; 16] = read!(
                     self,
                     self.reader.array(),
@@ -214,14 +221,14 @@ impl<M: Mode> Decoder<'_, M> {
                 ensure!(self, lanes.iter().all(|&lane| lane < 32), parse, "");
                 v.vector_shuffle(lanes)
             }
-            Op::Splat(ty) => v.vector_splat(ty),
-            Op::Extract(ty, sign) => v.vector_extract_lane(ty, sign, self.lane(ty.size())?),
-            Op::Replace(ty) => v.vector_replace_lane(ty, self.lane(ty.size())?),
-            Op::Unary(op) => v.vector_unary(op),
-            Op::Binary(op) => v.vector_binary(op),
-            Op::Ternary(op) => v.vector_ternary(op),
-            Op::Shift(op) => v.vector_shift(op),
-            Op::Reduce(op) => v.vector_reduce(op),
+            VectorOp::Splat(ty) => v.vector_splat(ty),
+            VectorOp::Extract(ty, sign) => v.vector_extract_lane(ty, sign, self.lane(ty.size())?),
+            VectorOp::Replace(ty) => v.vector_replace_lane(ty, self.lane(ty.size())?),
+            VectorOp::Unary(op) => v.vector_unary(op),
+            VectorOp::Binary(op) => v.vector_binary(op),
+            VectorOp::Ternary(op) => v.vector_ternary(op),
+            VectorOp::Shift(op) => v.vector_shift(op),
+            VectorOp::Reduce(op) => v.vector_reduce(op),
         }
     }
 
@@ -242,8 +249,12 @@ impl<M: Mode> Decoder<'_, M> {
         Ok(lane)
     }
 
+    pub(crate) fn vector_mem_arg(&mut self, size: Size) -> Result<MemArg, M::Error> {
+        self.mem_arg(Access::Vector, size.log2_bytes())
+    }
+
     fn lane_access(&mut self, size: Size) -> Result<(MemArg, u8), M::Error> {
-        let arg = self.mem_arg(Access::Vector, size.log2_bytes())?;
+        let arg = self.vector_mem_arg(size)?;
         Ok((arg, self.lane(size)?))
     }
 }

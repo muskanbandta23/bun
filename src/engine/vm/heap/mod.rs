@@ -226,7 +226,8 @@ pub struct DeferCollection<'a>(&'a Heap);
 impl Drop for DeferCollection<'_> {
     #[inline]
     fn drop(&mut self) {
-        self.0.end_deferral();
+        // SAFETY: begun by `defer_collection`.
+        unsafe { self.0.end_deferral() }
     }
 }
 
@@ -502,8 +503,10 @@ impl Heap {
         self.deferral_depth.update(|depth| depth + 1);
     }
 
+    /// # Safety
+    /// The caller has begun it.
     #[inline]
-    pub fn end_deferral(&self) {
+    pub unsafe fn end_deferral(&self) {
         self.deferral_depth.update(|depth| depth - 1);
     }
 

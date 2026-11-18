@@ -89,6 +89,7 @@ impl Callbacks for Rootcheck {
             }
             let calls = calls::Calls::new(&cx);
             let instantiations = calls::check(&calls, &cx);
+            items::check_visited(&cx, &calls);
             let trusting = calls::Calls::going_by_signatures(&cx);
             calls::check_signatures(&trusting, &instantiations);
             borrows::check(&cx, &calls, &trusting, &instantiations);

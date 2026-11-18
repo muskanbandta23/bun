@@ -117,7 +117,7 @@ fn object_with_keys(
     keys: &[Key],
     values: &mut [Value],
 ) -> Result<Gc<JsObject>, AllocError> {
-    let mut elements = Vec::new();
+    let mut elements = crate::root_vec();
     let mut named = 0;
     for (position, key) in keys.iter().enumerate() {
         if let Key::Index(index) = *key {

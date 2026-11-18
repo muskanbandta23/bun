@@ -1,7 +1,6 @@
 //! What takes lifetimes to tell: borrows of memory that a cell owns outside itself, which do not keep the cell alive,
 //! and borrows that promise that nothing is allocated.
 
-use rustc_abi::FIRST_VARIANT;
 use rustc_borrowck::consumers::{
     BodyWithBorrowckFacts, ConsumerOptions, get_bodies_with_borrowck_facts,
 };
@@ -20,7 +19,7 @@ use rustc_mir_dataflow::move_paths::MoveData;
 use rustc_mir_dataflow::{Analysis, ResultsCursor};
 use rustc_span::{Span, Spanned};
 
-use crate::bodies::{Frame, deferred_blocks};
+use crate::bodies::{Frame, deferred_blocks, field_of};
 use crate::calls::{Calls, Instantiations, Way};
 use crate::types::Types;
 
@@ -222,15 +221,9 @@ impl<'a, 'tcx> Function<'a, 'tcx> {
     }
 
     fn is_in_field_that_stays(&self, body: &Body<'tcx>, place: Place<'tcx>) -> bool {
-        place.iter_projections().any(|(base, projection)| {
-            let base = base.ty(body, self.cx.tcx);
-            let (ProjectionElem::Field(index, _), ty::Adt(def, _)) = (projection, base.ty.kind())
-            else {
-                return false;
-            };
-            let variant = def.variant(base.variant_index.unwrap_or(FIRST_VARIANT));
-            self.cx.allows.stays(self.cx.tcx, variant.fields[index].did)
-        })
+        let (tcx, places) = (self.cx.tcx, place.iter_projections());
+        let mut fields = places.filter_map(|(base, it)| field_of(base.ty(body, tcx), it));
+        fields.any(|it| self.cx.allows.stays(tcx, it))
     }
 
     /// The regions of what does not keep a cell alive by itself. If the type is that of what a function makes of

@@ -3,7 +3,7 @@
  * Runs tools/rootcheck over `bun_engine_vm` and the crates that name it as a dependency. See tools/rootcheck/README.md.
  *
  *   bun run rust:rootcheck                        # exits 1 on a finding
- *   bun run rust:rootcheck -p bun_engine_builtins # other arguments go to `cargo check`
+ *   bun run rust:rootcheck -p bun_engine_vm --lib # other arguments go to `cargo check`
  *   bun run rust:rootcheck --lenders              # lists the functions that lend what a cell owns
  *   bun run rust:rootcheck --all                  # also what baseline.json holds back
  *   bun run rust:rootcheck --baseline             # writes baseline.json
@@ -38,6 +38,11 @@ if (!readdirSync(join(sysroot, "lib/rustlib", host, "lib")).some(name => name.st
 const build = ["build", "--quiet", "--release", "--manifest-path", join(tool, "Cargo.toml"), "--target-dir", target];
 if (spawnSync("cargo", build, { cwd: repo, stdio: "inherit" }).status !== 0) process.exit(1);
 const driver = join(target, "release", process.platform === "win32" ? "rootcheck.exe" : "rootcheck");
+
+for (const name of ["RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS"]) {
+  if (process.env[name] !== undefined)
+    fail(`${name} would take the place of the flags that this needs\nnote: unset it`);
+}
 
 const flags = new Set(["--all", "--baseline", "--lenders", "--test"]);
 const args = process.argv.slice(2).filter(it => !flags.has(it));
@@ -88,9 +93,10 @@ function dependentsOfVm(): string[] {
 }
 
 function lint(): boolean {
-  const isScoped = args.some(it => it === "-p" || it === "--workspace" || it.startsWith("--package"));
-  const scope = isScoped ? [] : [...dependentsOfVm().flatMap(name => ["-p", name]), "--all-targets"];
-  const { messages, ok } = check([...scope, ...args]);
+  const names = (pattern: RegExp) => args.some(it => pattern.test(it));
+  const packages = names(/^(-p|--package|--workspace)/) ? [] : dependentsOfVm().flatMap(name => ["-p", name]);
+  const targets = names(/^--(lib|bin|test|bench|example)/) ? [] : ["--all-targets"];
+  const { messages, ok } = check([...packages, ...targets, ...args]);
   const diagnostics = messages.flatMap(it => (it.reason === "compiler-message" ? [it.message] : []));
   // A crate is checked as a library and as a test.
   const distinct = [
@@ -114,7 +120,8 @@ function lint(): boolean {
     process.stderr.write(it.rendered);
   }
   const known = distinct.filter(isKnown).length;
-  console.error(`rootcheck: ${ok ? `${findings.length} finding(s), ${known} in the baseline` : "does not compile"}`);
+  console.error(`rootcheck: ${findings.length} finding(s), ${known} in the baseline`);
+  if (!ok) console.error("rootcheck: what does not compile has not been checked");
   return ok && (findings.length === 0 || process.argv.includes("--lenders"));
 }
 
@@ -127,7 +134,7 @@ function test(): boolean {
       ? [{ name: it.target.name, path: it.filenames[0] }]
       : [],
   );
-  const named = ["bun_engine_vm", "bun_engine_macros", "bun_engine_text", "hashbrown", "smallvec"];
+  const named = ["bun_alloc", "bun_engine_vm", "bun_engine_macros", "bun_engine_text", "hashbrown", "smallvec"];
   const options = [
     ...["--edition=2024", "--crate-type=lib", "--emit=metadata", "--error-format=json", "-Cpanic=abort", "-Aunused"],
     ...["--out-dir", join(target, "tests")],

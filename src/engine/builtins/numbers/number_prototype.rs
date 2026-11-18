@@ -80,7 +80,8 @@ fn to_string(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 #[native_abi]
 fn to_locale_string(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let number = this_number(cx, frame)?;
-    Ok(JsString::from_number(cx, number).into())
+    let (locales, options) = (frame.argument(0), frame.argument(1));
+    bun_engine_intl::number_to_locale_string(cx, number, locales, options).map(Into::into)
 }
 
 #[native_abi]

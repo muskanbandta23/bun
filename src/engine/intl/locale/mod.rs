@@ -26,7 +26,7 @@ impl Locale {
             .ok_or(Error::Range("invalid language tag"))
     }
 
-    pub fn with_options(&self, options: &Options) -> Result<Locale> {
+    pub fn with_options(&self, mut options: Options) -> Result<Locale> {
         let mut id = self.parse()?;
         options.apply_to(&mut id);
         id.into_canonical().map(Locale)

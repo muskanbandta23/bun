@@ -607,7 +607,6 @@ dependencies = [
  "bitflags",
  "bun_engine_exec_memory",
  "libc",
- "smallvec",
 ]
 
 [[package]]
@@ -641,6 +640,7 @@ dependencies = [
  "bun_engine_bigint",
  "bun_engine_bytecode",
  "bun_engine_date",
+ "bun_engine_intl",
  "bun_engine_macros",
  "bun_engine_number",
  "bun_engine_regexp",
@@ -696,10 +696,14 @@ dependencies = [
 name = "bun_engine_embed"
 version = "0.0.0"
 dependencies = [
+ "bun_alloc",
+ "bun_core",
  "bun_engine",
  "bun_engine_standalone",
  "bun_engine_text",
  "bun_engine_vm",
+ "bun_threading",
+ "libc",
 ]
 
 [[package]]
@@ -748,11 +752,13 @@ version = "0.0.0"
 dependencies = [
  "bun_engine_bigint",
  "bun_engine_date",
+ "bun_engine_macros",
  "bun_engine_number",
  "bun_engine_standalone",
  "bun_engine_temporal",
  "bun_engine_text",
  "bun_engine_unicode",
+ "bun_engine_vm",
  "bun_highway",
  "bun_icu",
  "bun_pod",
@@ -826,7 +832,11 @@ name = "bun_engine_shell"
 version = "0.0.0"
 dependencies = [
  "bun_engine",
+ "bun_engine_bytecode",
+ "bun_engine_macros",
  "bun_engine_standalone",
+ "bun_engine_text",
+ "bun_engine_vm",
 ]
 
 [[package]]

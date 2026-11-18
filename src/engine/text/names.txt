@@ -187,6 +187,7 @@ code
 codePointAt
 collation
 column
+compactDisplay
 compare
 compareExchange
 compile
@@ -205,6 +206,9 @@ cosh
 count
 create
 css
+currency
+currencyDisplay
+currencySign
 customSections
 dateStyle
 day
@@ -229,6 +233,7 @@ deref
 description
 detached
 difference
+direction
 disambiguation
 displayName
 dispose
@@ -273,6 +278,7 @@ find
 findIndex
 findLast
 findLastIndex
+firstDay
 firstDayOfWeek
 fixed
 flags
@@ -725,6 +731,7 @@ unicode
 unicodeSets
 union
 unit
+unitDisplay
 unregister
 unscopables
 unshift
@@ -738,6 +745,7 @@ value
 valueOf
 values
 var
+variants
 void
 wait
 waitAsync
@@ -745,6 +753,7 @@ webassembly
 week
 weekOfYear
 weekday
+weekend
 weeks
 weeksDisplay
 while
@@ -781,6 +790,16 @@ dollarBacktick = $`
 dollarPlus = $+
 dollarStar = $*
 dollarUnderscore = $_
+intlCollator = Intl.Collator
+intlDateTimeFormat = Intl.DateTimeFormat
+intlDisplayNames = Intl.DisplayNames
+intlDurationFormat = Intl.DurationFormat
+intlListFormat = Intl.ListFormat
+intlLocale = Intl.Locale
+intlNumberFormat = Intl.NumberFormat
+intlPluralRules = Intl.PluralRules
+intlRelativeTimeFormat = Intl.RelativeTimeFormat
+intlSegmenter = Intl.Segmenter
 invalidDate = Invalid Date
 negativeInfinity = -Infinity
 notEqual = not-equal
@@ -796,6 +815,7 @@ objectObject = [object Object]
 objectRegExp = [object RegExp]
 objectString = [object String]
 objectUndefined = [object Undefined]
+segmenterStringIterator = Segmenter String Iterator
 starDefaultText = *default*
 stopBeforePartial = stop-before-partial
 timedOut = timed-out
@@ -888,6 +908,7 @@ useStrict = use strict
 @charCodeAt
 @clear
 @cloneObject
+@collectForSpread
 @constructor
 @copyDataProperties
 @create
@@ -1114,3 +1135,71 @@ useStrict = use strict
 @forEach
 @get
 @has
+plainTime
+relativeTo
+direction
+buddhist
+chinese
+coptic
+dangi
+ethioaa
+ethiopic
+gregory
+hebrew
+indian
+iso8601
+japanese
+persian
+roc
+islamicCivil = islamic-civil
+islamicTbla = islamic-tbla
+islamicUmalqura = islamic-umalqura
+aa
+ah
+am
+ap
+bce
+be
+bh
+broc
+ce
+heisei
+meiji
+reiwa
+shaka
+showa
+taisho
+M01
+M02
+M03
+M04
+M05
+M06
+M07
+M08
+M09
+M10
+M11
+M12
+M13
+M01L
+M02L
+M03L
+M04L
+M05L
+M06L
+M07L
+M08L
+M09L
+M10L
+M11L
+M12L
+temporalDuration = Temporal.Duration
+temporalInstant = Temporal.Instant
+temporalNow = Temporal.Now
+temporalPlainDate = Temporal.PlainDate
+temporalPlainDateTime = Temporal.PlainDateTime
+temporalPlainMonthDay = Temporal.PlainMonthDay
+temporalPlainTime = Temporal.PlainTime
+temporalPlainYearMonth = Temporal.PlainYearMonth
+temporalZonedDateTime = Temporal.ZonedDateTime

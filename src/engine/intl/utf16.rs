@@ -1,25 +1,35 @@
-use bun_engine_text::Text;
-use smallvec::SmallVec;
+use core::mem::MaybeUninit;
 
-use crate::Result;
+use bun_engine_text::Text;
+
+use crate::{Error, Result};
 
 /// Room for text in the width that ICU reads.
-#[derive(Default)]
-pub(crate) struct Utf16Buffer(SmallVec<[u16; 128]>);
+pub(crate) struct Utf16Buffer {
+    stack: [MaybeUninit<u16>; 128],
+    heap: Vec<u16>,
+}
 
 impl Utf16Buffer {
     #[inline]
-    pub(crate) fn widen<'a>(&'a mut self, text: Text<'a>) -> Result<&'a [u16]> {
-        match text {
-            Text::Utf16(units) => Ok(units),
-            Text::Latin1(characters) => {
-                self.0.try_reserve_exact(characters.len())?;
-                self.0.resize(characters.len(), 0);
-                for (unit, &character) in self.0.iter_mut().zip(characters) {
-                    *unit = character.into();
-                }
-                Ok(&self.0)
-            }
+    pub(crate) fn new() -> Utf16Buffer {
+        Utf16Buffer {
+            stack: [MaybeUninit::uninit(); _],
+            heap: Vec::new(),
         }
+    }
+
+    #[inline]
+    pub(crate) fn widen<'a>(&'a mut self, text: Text<'a>) -> Result<&'a [u16]> {
+        let characters = match text {
+            Text::Latin1(characters) => characters,
+            Text::Utf16(units) => return Ok(units),
+        };
+        if let Some(stack) = self.stack.get_mut(..characters.len()) {
+            return Ok(stack.write_with(|index| characters[index].into()));
+        }
+        (self.heap.try_reserve_exact(characters.len())).map_err(|_| Error::OutOfMemory)?;
+        (self.heap).extend(characters.iter().map(|&character| u16::from(character)));
+        Ok(&self.heap)
     }
 }

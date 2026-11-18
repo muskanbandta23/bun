@@ -7,7 +7,7 @@ use bun_engine_asm::{Bank, Reg, RegisterSet};
 
 use super::code::{AT_HOME, Class, NEVER, Operand, Place, Role, VReg};
 use super::emit::{Isa, Places};
-use super::moves::Move;
+use super::moves::{Move, MoveKind};
 use crate::analysis::Cfg;
 use crate::ir::{Block, Boundary, Edge, Location, Table};
 
@@ -74,7 +74,7 @@ impl<I: Isa> Checker<'_, I> {
                 .and_then(|cell| contents.0.get(&cell));
             let fits = |vreg: VReg| {
                 let class = self.class(vreg);
-                step.is_swap
+                step.kind == MoveKind::Swap
                     || class == step.class
                     || step.class == Class::Int64 && class == Class::Int32
             };
@@ -98,7 +98,7 @@ impl<I: Isa> Checker<'_, I> {
             }
         }
         cells(to, step.class).for_each(|cell| drop(contents.0.insert(cell, moved.clone())));
-        if step.is_swap {
+        if step.kind == MoveKind::Swap {
             cells(from, step.class)
                 .for_each(|cell| drop(contents.0.insert(cell, displaced.clone())));
         }

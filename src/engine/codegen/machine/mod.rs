@@ -69,7 +69,7 @@ impl<I: Isa> Machine<I> {
                 .next_multiple_of(slot.alignment.max(8));
             slot_offsets.push(-(taken as i32));
         }
-        let features = masm.features();
+        let (features, registers) = (masm.features(), I::registers(function));
         let Self {
             instructions,
             code,
@@ -83,6 +83,7 @@ impl<I: Isa> Machine<I> {
             cfg,
             frequencies,
             features,
+            registers.allocatable,
             &slot_offsets,
             code,
             instructions,
@@ -94,7 +95,7 @@ impl<I: Isa> Machine<I> {
             cfg,
             frequencies,
             liveness,
-            I::registers(function),
+            registers,
             code,
             allocation,
         );

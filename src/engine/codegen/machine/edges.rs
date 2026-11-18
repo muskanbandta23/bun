@@ -1,12 +1,14 @@
 //! The state of the registers where blocks start and end.
 
-use super::allocate::{Allocator, Mask, Snapshot, Stored, bit, registers_in};
+use bun_engine_asm::Reg;
+
+use super::allocate::{Allocator, Mask, SOON, Snapshot, Stored, bit, registers_in};
 use super::code::{AT_HOME, LOCAL, NEVER, VReg};
-use super::liveness::{BEYOND_LOOP, Distance};
+use super::liveness::{BEYOND_BARRIER, BEYOND_LOOP, Distance, FARTHEST};
 use super::moves::{Move, Spot};
 use crate::analysis::Loop;
 use crate::bitset;
-use crate::ir::{Block, Boundary, Edge, Entry};
+use crate::ir::{Block, Boundary, Edge, Entry, Op};
 
 /// An edge that is this many times less frequent than the main one adapts to it at any cost.
 const NEGLIGIBLE: f32 = 8.0;
@@ -117,7 +119,8 @@ impl Allocator<'_> {
         let headed = cfg.loop_headed_by(block);
         if let Some(headed) = headed {
             self.prepare_for_loop(headed);
-        } else if has_params {
+        } else {
+            self.drop_what_others_would_reload(main);
             self.place_params();
         }
         for index in self.code.blocks[block].params.range() {
@@ -222,15 +225,134 @@ impl Allocator<'_> {
         }
     }
 
-    /// Whether an instruction of this block takes all of `registers` before the position.
-    fn are_lost_before(&self, registers: Mask, position: Distance) -> bool {
-        let mut claims = self
-            .out
-            .claims
-            .iter()
-            .rev()
-            .take_while(|claim| claim.position < position);
-        claims.any(|claim| registers & !claim.registers == 0)
+    /// From the start of the block, whether all registers of the value's bank are clobbered before it is wanted.
+    fn is_lost_before_use(&self, vreg: VReg, next: Distance) -> bool {
+        let data = &self.code.blocks[self.block];
+        let barrier = data.barrier[self.code.vregs[vreg].class.bank() as usize];
+        barrier != 0 && next >= data.first + barrier
+            || (data.end + BEYOND_BARRIER..data.end + FARTHEST).contains(&next)
+    }
+
+    fn drop_what_others_would_reload(&mut self, main: Edge) {
+        let mut absent_somewhere = 0;
+        for &edge in self.cfg.predecessors(self.block) {
+            let matters =
+                self.frequencies.of_edge(edge) * NEGLIGIBLE > self.frequencies.of_edge(main);
+            if edge != main && matters && !self.cfg.is_backward(self.function, edge) {
+                let values =
+                    &self.out.snapshot_values[self.out.exits[self.function.source(edge)].values];
+                let present = values
+                    .iter()
+                    .map(|&vreg| self.out.statuses[vreg].reg)
+                    .filter(|&reg| reg != AT_HOME);
+                absent_somewhere |= !present.fold(0, |mask, reg| mask | bit(reg));
+            }
+        }
+        let entry = self.code.blocks[self.block].entry();
+        for reg in registers_in(self.occupied) {
+            let (vreg, next) = (self.value[usize::from(reg)], self.next[usize::from(reg)]);
+            let is_reloaded =
+                absent_somewhere & bit(reg) != 0 && self.code.vregs[vreg].start != entry;
+            if is_reloaded && next >= self.position + SOON || self.is_lost_before_use(vreg, next) {
+                self.vacate(reg);
+            }
+        }
+    }
+
+    /// Before a branch that goes back to a header, does what the edge would have to do, as far as the other edge does
+    /// not mind.
+    pub(super) fn anticipate_loop_header(&mut self) {
+        let mut edges = self.function.successors(self.block);
+        if edges.len() != 2
+            || !matches!(
+                self.function.op(self.function.last(self.block)),
+                Op::Branch(_)
+            )
+        {
+            return;
+        }
+        let Some(edge) = edges.find(|&edge| {
+            self.cfg.is_backward(self.function, edge) && !self.function.is_rare(edge)
+        }) else {
+            return;
+        };
+        let target = self.function.target(edge);
+        let entry = self.out.entries[target];
+        let mut wanted = [VReg::NONE; Reg::COUNT];
+        for (reg, index) in registers_in(entry.occupied).zip(entry.values.range()) {
+            wanted[usize::from(reg)] = self.out.snapshot_values.item(index);
+        }
+        for (param, arg) in self.code.blocks[target]
+            .params
+            .range()
+            .zip(self.code.edge_args[edge].range())
+        {
+            let (param, arg) = (
+                self.code.vreg_lists.item(param),
+                self.code.vreg_lists.item(arg),
+            );
+            if !self.is_used(param) {
+                continue;
+            }
+            let (entry_reg, reg) = (
+                self.out.statuses[param].entry_reg,
+                self.out.statuses[arg].reg,
+            );
+            if entry_reg != AT_HOME {
+                wanted[usize::from(entry_reg)] = arg;
+            } else if reg != AT_HOME && self.home(param) == self.home(arg) {
+                self.make_clean(reg);
+            }
+        }
+
+        let (mut targets, mut claimed_sources) = (0, 0);
+        let is_settled = |reg: u8| {
+            self.occupied & bit(reg) != 0
+                && self.value[usize::from(reg)] == wanted[usize::from(reg)]
+        };
+        for reg in registers_in(entry.occupied).filter(|&reg| !is_settled(reg)) {
+            let vreg = wanted[usize::from(reg)];
+            let current = self.out.statuses[vreg].reg;
+            let is_first =
+                current == AT_HOME || !is_settled(current) && claimed_sources & bit(current) == 0;
+            let is_repeated = registers_in(targets).any(|other| wanted[usize::from(other)] == vreg);
+            if is_first && !is_repeated {
+                targets |= bit(reg);
+                claimed_sources |= if current == AT_HOME { 0 } else { bit(current) };
+            }
+        }
+        // A register can be filled if it is free or its value moves on.
+        loop {
+            let currents =
+                registers_in(targets).map(|reg| self.out.statuses[wanted[usize::from(reg)]].reg);
+            let leaving = currents
+                .filter(|&reg| reg != AT_HOME)
+                .fold(0, |mask, reg| mask | bit(reg));
+            let blocked = targets & self.occupied & !leaving;
+            if blocked == 0 {
+                break;
+            }
+            targets &= !blocked;
+        }
+        let mut clean = 0;
+        for reg in registers_in(targets) {
+            let vreg = wanted[usize::from(reg)];
+            let current = self.out.statuses[vreg].reg;
+            self.know_next_use(vreg);
+            self.note_origin(vreg);
+            if current == AT_HOME || self.is_clean(current) {
+                clean |= bit(reg);
+            }
+            if current != AT_HOME {
+                self.vacate(current);
+            }
+        }
+        for reg in registers_in(targets) {
+            self.fetch(wanted[usize::from(reg)], reg);
+            self.occupy(reg, wanted[usize::from(reg)], clean & bit(reg) != 0);
+        }
+        self.flush_moves();
+        self.out.displaced.clear();
     }
 
     fn place_params(&mut self) {
@@ -239,7 +361,7 @@ impl Allocator<'_> {
         for index in 0..self.out.candidates.len() {
             let (next, param) = self.out.candidates[index];
             let bank = self.bank_of(param);
-            if self.are_lost_before(bank, next) {
+            if self.is_lost_before_use(param, next) {
                 continue;
             }
             let mut free = bank & !self.occupied;
@@ -271,7 +393,9 @@ impl Allocator<'_> {
                 let data = &self.code.vregs[self.value[usize::from(reg)]];
                 if data.start != entry && !bitset::contains(used, data.global as usize) {
                     waiting |= bit(reg);
-                } else if self.are_lost_before(bank, self.next[usize::from(reg)]) {
+                } else if self
+                    .is_lost_before_use(self.value[usize::from(reg)], self.next[usize::from(reg)])
+                {
                     self.vacate(reg);
                 }
             }
@@ -299,7 +423,10 @@ impl Allocator<'_> {
             for global in bitset::iter(&[live & used]) {
                 let vreg = self.code.globals[index * 64 + global];
                 if self.out.statuses[vreg].reg == AT_HOME {
-                    let next = self.know_next_use(vreg);
+                    let mut next = self.know_next_use(vreg);
+                    if self.code.vregs[vreg].is_floating() {
+                        next += (next - self.position).min(SOON) * 3;
+                    }
                     self.out.candidates.push((next, vreg));
                 }
             }
@@ -310,8 +437,8 @@ impl Allocator<'_> {
             let (next, vreg) = self.out.candidates[index];
             let bank = self.bank_of(vreg);
             let is_param = self.code.vregs[vreg].start == entry;
-            let is_lost_first =
-                self.are_lost_before(bank, next) || next >= end && bank & !claimed == 0;
+            let is_lost_first = self.is_lost_before_use(vreg, next)
+                || next >= end && bank & !claimed == 0 && !liveness.has_distances();
             if is_lost_first || next >= end + BEYOND_LOOP {
                 continue;
             }
@@ -384,9 +511,9 @@ impl Allocator<'_> {
                 && self.is_live_in(vreg, target)
                 && !self.try_to_store_at_definition(vreg, self.frequencies.of_edge(edge))
             {
-                self.out.pending.push(Move::new(
+                self.out.pending.push(Move::spill(
                     Spot::register(reg),
-                    self.home(vreg),
+                    vreg,
                     self.code.vregs[vreg].class,
                 ));
             }

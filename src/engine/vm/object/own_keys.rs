@@ -1,8 +1,8 @@
-use bun_engine_text::{Identifier, PropertyName};
+use bun_engine_text::PropertyName;
 
 use crate::{
     CellType, Cx, DontEnumMode, JsObject, JsResult, Properties, PropertyNameList, PropertyNameMode,
-    TypeFlags,
+    ShapeFlags, TypeFlags,
 };
 
 /// The own keys that an object had when it was asked. Those in the table of its shape are not copied.
@@ -10,23 +10,28 @@ pub struct OwnKeys {
     first: PropertyNameList,
     rest: Properties,
     mode: DontEnumMode,
+    /// Of `rest`.
+    has_only_enumerable_strings: bool,
 }
 
 impl OwnKeys {
     #[inline]
     pub fn iter(&self) -> impl Iterator<Item = PropertyName<'_>> {
-        let included = || {
-            (self.rest.iter())
-                .filter(|it| self.mode.includes(it.2))
-                .map(|it| it.0)
-        };
-        let strings =
-            (self.first.includes_strings()).then(|| included().filter(|it| !it.is_symbol()));
-        let symbols = (self.first.includes_symbols())
-            .then(|| included().filter(|it| it.is_symbol() && !it.is_private()));
-        (self.first.iter().map(Identifier::name))
-            .chain(strings.into_iter().flatten())
-            .chain(symbols.into_iter().flatten())
+        let (mut first, mut rest) = (
+            self.first.iter(),
+            self.rest.keys(self.first.mode(), self.mode),
+        );
+        core::iter::from_fn(move || match first.next() {
+            Some(name) => Some(name.name()),
+            None => rest.as_mut()?.next(),
+        })
+    }
+
+    pub fn count(&self) -> usize {
+        if self.has_only_enumerable_strings && self.first.includes_strings() {
+            return self.max_len();
+        }
+        self.iter().count()
     }
 
     /// At least as many as there are.
@@ -48,6 +53,7 @@ impl JsObject {
                 first: self.own_keys(cx, kinds, mode)?,
                 rest: Properties::NONE,
                 mode,
+                has_only_enumerable_strings: true,
             });
         }
         let mut indices = PropertyNameList::new(kinds);
@@ -88,6 +94,11 @@ impl JsObject {
             }
             shape.properties()
         };
-        Ok(OwnKeys { first, rest, mode })
+        Ok(OwnKeys {
+            first,
+            rest,
+            mode,
+            has_only_enumerable_strings: !shape.has(ShapeFlags::PREVENTS_QUICK_ENUMERATION),
+        })
     }
 }

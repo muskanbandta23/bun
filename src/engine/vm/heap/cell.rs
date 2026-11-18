@@ -281,8 +281,15 @@ impl JsCell {
     }
 
     #[inline(always)]
-    pub fn heap(&self) -> &Heap {
+    pub(crate) fn heap(&self) -> &Heap {
         container::of(self.address()).heap()
+    }
+
+    /// # Safety
+    /// The caller has the right to use it: see `Cx::from_global`.
+    #[inline(always)]
+    pub unsafe fn heap_unchecked(&self) -> &Heap {
+        self.heap()
     }
 
     pub fn cell_size(&self) -> usize {

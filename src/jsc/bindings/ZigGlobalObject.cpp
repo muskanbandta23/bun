@@ -276,9 +276,6 @@ extern "C" void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject*);
 extern "C" int32_t Bun__crashHandlerFromJSCFrame(void*, void*, void*, void*);
 #endif
 
-// bun_icu_default_locale.cpp
-extern "C" void Bun__ensureICUDefaultLocale();
-
 // LintHost.cpp
 namespace Bun {
 JSC::JSObject* createLintHost(JSC::VM&, JSC::JSGlobalObject*);
@@ -335,7 +332,6 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         locksBuiltinsWithoutImage = locksBuiltins;
         if (locksBuiltins)
             JSC::AOT::lockBuiltinsWithoutImage();
-        Bun__ensureICUDefaultLocale();
 
         std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
         WTF::initializeMainThread();
@@ -3451,7 +3447,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0 });
     for (auto& entry : privateFunctions)
         staticGlobals.append(GlobalPropertyInfo(builtinNames.privateName(entry.name), JSFunction::create(vm, this, entry.length, String(), entry.function, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
-    staticGlobals.append(GlobalPropertyInfo(vm.propertyNames->builtinNames().ArrayBufferPrivateName(), arrayBufferConstructor(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
     staticGlobals.append(GlobalPropertyInfo(builtinNames.internalModuleRegistryPrivateName(), this->internalModuleRegistry(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
     staticGlobals.append(GlobalPropertyInfo(builtinNames.processBindingConstantsPrivateName(), this->processBindingConstants(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
     staticGlobals.append(GlobalPropertyInfo(builtinNames.requireMapPrivateName(), this->requireMap(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0));

@@ -15,7 +15,7 @@ mod scope;
 mod source;
 mod token;
 
-pub use cache::SourceCache;
+pub use cache::{KnownCapture, KnownFunction, SourceCache};
 pub use error::{Error, ErrorKind, Recovery};
 pub use lines::LineTable;
 pub use names::{Name, NameKind, Names};

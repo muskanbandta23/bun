@@ -36,6 +36,8 @@ mod prelude {
 }
 
 fn main() {
+    // SAFETY: nothing has run yet.
+    unsafe { bun_icu::use_default_allocator() };
     let (command_line, options) = CommandLine::parse(std::env::args_os().skip(1));
     bun_engine_vm::set_options(options);
     let code = run::run(&command_line, |cx| run::run_scripts(cx, &command_line));

@@ -335,6 +335,7 @@ impl<K: WeakKind> WeakCollection<K> {
         if self.used.get() == self.capacity.get() {
             self.make_room()?;
         }
+        key.will_be_held_weakly();
         let used = self.used.get();
         // SAFETY: there is room, and the barrier follows.
         unsafe { self.write_entry(self.link_of(used), key.address(), payload) };

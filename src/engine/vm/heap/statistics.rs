@@ -1,10 +1,6 @@
-//! What is in the heap.
+//! How much is in the heap.
 
 use super::{BLOCK_SIZE, Heap};
-use crate::{FastHashMap, GlobalObject};
-
-/// By the name of the class.
-pub type TypeCounts = FastHashMap<&'static str, usize>;
 
 impl Heap {
     pub fn block_bytes(&self) -> usize {
@@ -37,35 +33,5 @@ impl Heap {
 
     pub fn object_count(&self) -> usize {
         self.survivors().0
-    }
-
-    pub fn object_type_counts(&self) -> TypeCounts {
-        let mut counts = TypeCounts::default();
-        self.for_each_live_cell(|cell| *counts.entry(cell.class().name()).or_default() += 1);
-        counts
-    }
-
-    pub fn protected_object_type_counts(&self) -> TypeCounts {
-        let mut counts = TypeCounts::default();
-        self.for_each_protected_cell(|cell| *counts.entry(cell.class().name()).or_default() += 1);
-        counts
-    }
-
-    pub fn protected_object_count(&self) -> usize {
-        let mut count = 0;
-        self.for_each_protected_cell(|_| count += 1);
-        count
-    }
-
-    pub fn global_object_count(&self) -> usize {
-        let mut count = 0;
-        self.for_each_live_cell(|cell| count += usize::from(cell.is::<GlobalObject>()));
-        count
-    }
-
-    pub fn protected_global_object_count(&self) -> usize {
-        let mut count = 0;
-        self.for_each_protected_cell(|cell| count += usize::from(cell.is::<GlobalObject>()));
-        count
     }
 }

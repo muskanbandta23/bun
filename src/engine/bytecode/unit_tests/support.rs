@@ -536,7 +536,7 @@ impl Builder<'_> {
                     let block = CoverageBlock {
                         start: 1,
                         end: 2,
-                        is_in_loop_header: false,
+                        kind: CoverageKind::Plain,
                     };
                     self.assembler.add_coverage_block(block).word()
                 }

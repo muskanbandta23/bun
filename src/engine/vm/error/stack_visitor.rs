@@ -256,8 +256,8 @@ impl<'a> Iterator for StackVisitor<'a> {
                     if self.return_address == 0
                         && origin.inline_frame.is_none()
                         && code_block.opcode_at(origin.bytecode_offset) == Some(Opcode::DirectEval)
-                        && let Some(eval) = (code_block.global())
-                            .slot_if_initialized(RealmSlot::eval_function)
+                        && let Some(eval) =
+                            (code_block.global()).slot_if_initialized(RealmSlot::eval_function)
                     {
                         self.next = Next::Origin(origin);
                         visited.callee = eval.as_object();

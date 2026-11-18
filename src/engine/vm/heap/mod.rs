@@ -32,7 +32,6 @@ pub mod virtual_memory;
 mod visitor;
 mod weak;
 mod weak_map;
-mod weak_table;
 
 use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
@@ -56,19 +55,19 @@ pub use once_box::OnceBox;
 pub use policy::{HeapKind, HeapSizes};
 pub use precise::{PRECISE_BIT, PreciseAllocation};
 pub use root_alloc::{
-    RootAlloc, free_root_words, try_allocate_root_words, RootBox, RootDeque, RootMap, RootSet, RootVec, root_box, root_vec,
+    RootAlloc, RootBox, RootDeque, RootMap, RootSet, RootVec, free_root_words, root_box, root_vec,
+    try_allocate_root_words,
 };
 pub use space::{
-    EXACT_CUTOFF, IsoSpace, LARGE_CUTOFF, SIZE_CLASS_CHECKSUM, SIZE_CLASS_COUNT, SIZE_CLASS_OF_STEP, Space, optimal_size, size_class,
+    EXACT_CUTOFF, IsoSpace, LARGE_CUTOFF, SIZE_CLASS_CHECKSUM, SIZE_CLASS_COUNT,
+    SIZE_CLASS_OF_STEP, Space, optimal_size, size_class,
 };
-pub use statistics::TypeCounts;
 pub use strong::{Strong, duplicate_strong_slot, free_strong_slot};
 pub use trace::{Trace, destroy, select_trace, visit_children_of};
 pub use value_vec::ValueVec;
 pub use visitor::{Survivors, Visitor};
 pub use weak::{Weak, WeakImpl, WeakOwner};
 pub(crate) use weak_map::WeakValueMap;
-pub use weak_table::WeakTable;
 
 use crate::{FastHashMap, JsRopeString, JsString, Shape, Value, Vm, object, options};
 use block::Version;
@@ -186,7 +185,6 @@ pub struct Heap {
     collection_scope: Cell<Option<Scope>>,
     last_collection_scope: Cell<Option<Scope>>,
     is_idle_collection: Cell<bool>,
-    collection_count: Cell<u64>,
     remembered: RefCell<Vec<usize>>,
     spare_mark_stack: Cell<Vec<usize>>,
     opaque_roots: marking::OpaqueRoots,
@@ -194,7 +192,6 @@ pub struct Heap {
 
     strong_set: strong::StrongSet,
     weak_set: weak::WeakSet,
-    weak_tables: weak_table::WeakTables,
     protected: RefCell<FastHashMap<usize, u32>>,
     observers: RefCell<Vec<*const HeapObserver>>,
     constraints: RefCell<Vec<MarkingConstraint>>,
@@ -279,14 +276,12 @@ impl Heap {
             collection_scope: Cell::new(None),
             last_collection_scope: Cell::new(None),
             is_idle_collection: Cell::new(false),
-            collection_count: Cell::new(0),
             remembered: RefCell::default(),
             spare_mark_stack: Cell::default(),
             opaque_roots: marking::OpaqueRoots::default(),
             analyzer: Cell::new(core::ptr::null_mut()),
             strong_set: strong::StrongSet::default(),
             weak_set: weak::WeakSet::default(),
-            weak_tables: weak_table::WeakTables::default(),
             protected: RefCell::default(),
             observers: RefCell::default(),
             constraints: RefCell::default(),
@@ -332,11 +327,6 @@ impl Heap {
     /// The one in progress has been asked for by `collect_when_idle`.
     pub fn is_idle_collection(&self) -> bool {
         self.is_idle_collection.get()
-    }
-
-    /// Changes whenever scripts may have run since marking last looked.
-    pub fn mutator_execution_version(&self) -> u64 {
-        self.collection_count.get()
     }
 
     fn enter_destruction(&self) -> DestructionGuard<'_> {

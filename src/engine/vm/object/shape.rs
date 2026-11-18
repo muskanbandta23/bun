@@ -6,7 +6,7 @@ use std::rc::Rc;
 use bun_engine_macros::{Trace, cell};
 use bun_engine_text::{Identifier, PropertyName, names};
 
-use super::property_table::PropertyTable;
+use super::property_table::{PropertyEntry, PropertyTable};
 use super::static_table::StaticProperty;
 use super::transition_table::{TransitionKey, TransitionKind, TransitionTable};
 use crate::heap::{CellState, OnceBox, Scope, Survivors, shape_base};
@@ -192,9 +192,17 @@ pub struct Shape {
 }
 
 /// The properties that a shape had when it was asked.
+#[repr(transparent)]
 pub struct Properties(Option<Rc<PropertyTable>>);
 
 impl Properties {
+    pub(super) const NONE: Properties = Properties(None);
+
+    /// With those that have been removed.
+    pub fn entries(&self) -> &[PropertyEntry] {
+        self.0.as_ref().map_or_default(|table| table.entries())
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = (PropertyName<'_>, PropertyOffset, Attributes)> {
         self.0.iter().flat_map(|table| table.iter())
     }
@@ -259,6 +267,11 @@ impl ShapeSpec {
         self
     }
 
+    pub(crate) const fn with_mutable_prototype(mut self) -> ShapeSpec {
+        self.flags = (self.flags).difference(TypeFlags::IS_IMMUTABLE_PROTOTYPE_EXOTIC_OBJECT);
+        self
+    }
+
     /// For `Array.prototype`.
     pub const fn array_without_elements(self) -> ShapeSpec {
         self.with_indexing_mode(IndexingMode::array(ElementKind::None))
@@ -273,6 +286,12 @@ impl ShapeSpec {
         assert!(capacity < PropertyOffset::FIRST_OUT_OF_LINE as usize);
         self.inline_capacity = capacity as u8;
         self
+    }
+
+    pub(super) fn identity(self) -> (&'static Class, u32) {
+        let header = instance_header(self.indexing_mode, self.cell_type, self.flags);
+        let capacity = u32::from(self.inline_capacity);
+        (self.class, header & 0x00ff_ffff | capacity << 24)
     }
 
     fn initial_flags(self) -> ShapeFlags {

@@ -22,7 +22,7 @@ fn hooks() -> Hooks {
         jettison: |_, _| {},
         debug: |_, _, _, _| Ok(()),
         debug_await: |_, _, _, _| Ok(()),
-        cover: |_, _, _, _| {},
+        cover: bun_engine_inspector::profiling::cover,
         access_handler: |_, _, _| 0,
         tier_up: |_, code_block, _, _| {
             code_block.execution_counter().set(i32::MIN);
@@ -50,7 +50,7 @@ fn hooks() -> Hooks {
         debugger_did_unwind_frame: |_, _| {},
         visit_roots: |_, _| {},
         visit_code_on_stack: |_, _, _| {},
-        reconcile_weak_references: |_, _| {},
+        reconcile_weak_references: bun_engine_inspector::profiling::reconcile_weak_references,
         did_collect: |_, _| {},
     }
 }

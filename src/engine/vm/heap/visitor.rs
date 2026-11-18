@@ -219,7 +219,7 @@ impl Visitor {
             if edge == Edge::Visible
                 && let Some(analyzer) = self.analyzer()
             {
-                analyzer.edge(from, cell);
+                analyzer.will_mark(from, cell);
             }
             self.mark_slow(cell)
         };
@@ -642,13 +642,12 @@ impl Visitor {
             }
             self.findings.visit_count += 1;
             self.visit_cell(entry, !self.is_verifying(), self.marking().is_concurrent);
-            let values = self.ephemerons.as_mut().and_then(|it| it.remove(&entry));
-            for value in values.into_iter().flatten() {
-                self.append_cell(value, Edge::Visible);
-            }
-            if let Some(analyzer) = self.analyzer() {
-                // SAFETY: marked.
-                analyzer.node(unsafe { Gc::from_address(entry) });
+            if let Some(values) = self.ephemerons.as_mut().and_then(|it| it.remove(&entry)) {
+                let reason = self.replace_root_reason(RootReason::Output);
+                for value in values {
+                    self.append_cell(value, Edge::Visible);
+                }
+                self.replace_root_reason(reason);
             }
         }
     }

@@ -496,7 +496,7 @@ impl JsObject {
         Ok(())
     }
 
-    pub(crate) fn convert_to_sparse(&self, vm: &Vm) -> Result<Gc<SparseElements>, AllocError> {
+    pub fn convert_to_sparse(&self, vm: &Vm) -> Result<Gc<SparseElements>, AllocError> {
         if let Some(sparse) = self.sparse_elements() {
             return Ok(sparse);
         }
@@ -662,7 +662,7 @@ impl JsObject {
 
     /// Adds or replaces a plain data element, whatever the attributes or prototypes say.
     #[inline(never)]
-    pub(crate) fn store_element(
+    pub fn store_element(
         &self,
         vm: &Vm,
         index: u32,

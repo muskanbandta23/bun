@@ -38,7 +38,6 @@
 #include "JavaScriptCore/JSWeakMapInlines.h"
 #include "JavaScriptCore/JSWithScope.h"
 #include "JavaScriptCore/JSGlobalProxyInlines.h"
-#include "GCDefferalContext.h"
 #include "JSBuffer.h"
 #include "xxhash3.h"
 
@@ -1142,7 +1141,7 @@ void NodeVMGlobalObject::drainOwnMicrotasks()
     VM& vm = this->vm();
     // Same drain mode as VM::drainMicrotasks so process.nextTick interop
     // (onEachMicrotaskTick) keeps working inside the checkpoint.
-    microtaskQueue().performMicrotaskCheckpoint</* useCallOnEachMicrotask */ true>(vm, [](JSGlobalObject*, JSGlobalObject*) {});
+    microtaskQueue().performMicrotaskCheckpoint(vm);
 }
 
 // The contextified object can itself be another context's global, so forwarding can recurse arbitrarily deep.
@@ -1565,9 +1564,7 @@ bool NodeVMGlobalObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* sandbox = thisObject->m_sandbox.get();
-    // Objects and functions of compiled code have properties that only their own method table finds. All other objects, including Proxies, take the same path as in bun run.
-    bool isCompiled = sandbox->type() == CompiledObjectType || sandbox->type() == SlimClosureType;
-    bool deleted = isCompiled ? sandbox->methodTable()->deleteProperty(sandbox, globalObject, propertyName, slot) : sandbox->deleteProperty(sandbox, globalObject, propertyName, slot);
+    bool deleted = sandbox->deleteProperty(sandbox, globalObject, propertyName, slot);
     RETURN_IF_EXCEPTION(scope, false);
     if (!deleted) {
         return false;

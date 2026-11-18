@@ -252,6 +252,12 @@ impl MicrotaskQueueRef {
         queue
     }
 
+    /// # Safety
+    /// The address of one that has been forgotten, whose count this takes over.
+    pub unsafe fn from_raw(queue: NonNull<MicrotaskQueue>) -> MicrotaskQueueRef {
+        MicrotaskQueueRef(queue)
+    }
+
     pub(crate) fn unregistered() -> MicrotaskQueueRef {
         let queue = Rc::into_raw(Rc::new(MicrotaskQueue::new()));
         // SAFETY: not null.

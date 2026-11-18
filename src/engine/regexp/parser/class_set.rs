@@ -4,10 +4,16 @@ use bun_engine_text::CodeUnit;
 use smallvec::SmallVec;
 
 use super::cursor::ascii;
-use super::escape::{ClassAtom, Context};
+use super::escape::Context;
 use super::quantifier::Atom;
-use super::{Cursor, MAX_DEPTH, Parser, SetOperator, Sink, try_push};
+use super::{ClassEscape, Cursor, MAX_DEPTH, Parser, SetOperator, Sink, try_push};
 use crate::Error;
+
+#[derive(Clone, Copy)]
+enum ClassAtom {
+    Character(u32),
+    Class(ClassEscape),
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Contents {
@@ -75,10 +81,7 @@ impl Class {
 impl<S: Sink> Parser<'_, S> {
     /// After the left bracket.
     #[inline(never)]
-    pub(super) fn class_set<C: CodeUnit>(
-        &mut self,
-        cursor: &mut Cursor<C>,
-    ) -> Result<Atom<S::Outer>, Error> {
+    pub(super) fn class_set<C: CodeUnit>(&mut self, cursor: &mut Cursor<C>) -> Result<Atom, Error> {
         let mut class = Class::new(cursor.eat(b'^'));
         let mut outer = SmallVec::<[Class; 8]>::new();
         loop {
@@ -90,8 +93,7 @@ impl<S: Sink> Parser<'_, S> {
                         return Err(Error::InvalidSetCharacter);
                     }
                     let Some(outer) = outer.pop() else {
-                        let negated = class.negated;
-                        return Ok(Atom::Class { negated });
+                        return Ok(Atom::class(class.negated));
                     };
                     self.sink.close_nested_class(class.negated)?;
                     let nested = core::mem::replace(&mut class, outer);
@@ -142,7 +144,10 @@ impl<S: Sink> Parser<'_, S> {
     ) -> Result<(), Error> {
         class.add_operand(matches!(first, ClassAtom::Class(escape) if escape.has_strings()));
         if !cursor.is_at_single_hyphen() {
-            return self.add_to_class(first);
+            return match first {
+                ClassAtom::Character(c) => self.sink.class_character(c),
+                ClassAtom::Class(escape) => self.sink.class_member(escape),
+            };
         }
         if let Contents::Operation(_) = class.contents {
             return Err(match first {
@@ -176,7 +181,7 @@ impl<S: Sink> Parser<'_, S> {
                     length = 0;
                     continue;
                 }
-                b'\\' => cursor.character_escape(Context::ClassSet)?,
+                b'\\' => cursor.class_set_character_escape()?,
                 _ => cursor.class_set_character(unit)?,
             };
             self.sink.class_string_character(c)?;
@@ -216,9 +221,16 @@ impl<C: CodeUnit> Cursor<'_, C> {
         }
     }
 
-    #[inline(never)]
     fn class_set_escape(&mut self) -> Result<ClassAtom, Error> {
-        self.escape(Context::ClassSet)
+        match self.class_escape()? {
+            Some(escape) => Ok(ClassAtom::Class(escape)),
+            None => self.class_set_character_escape().map(ClassAtom::Character),
+        }
+    }
+
+    #[inline(never)]
+    fn class_set_character_escape(&mut self) -> Result<u32, Error> {
+        self.character_escape(Context::ClassSet)
     }
 
     /// One that is not escaped. `unit` is before the cursor.

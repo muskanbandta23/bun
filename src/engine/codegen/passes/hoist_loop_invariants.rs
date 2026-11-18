@@ -3,9 +3,8 @@
 use bun_engine_asm::Sign;
 
 use super::Analyses;
-use super::copier::as_jump;
 use super::places::Place;
-use super::preheaders::{entering_edges, only_entering_edge};
+use super::preheaders::{edge_from_preheader, entering_edges};
 use super::writes::Writes;
 use crate::analysis::{Cfg, Frequencies, Loop};
 use crate::ir::{
@@ -26,7 +25,7 @@ const STAYS: u32 = u32::MAX;
 struct Level {
     id: Loop,
     first: u32,
-    /// The last position to which an edge leads from the blocks so far, but for those of the next level.
+    /// The last position to which an edge leads from the blocks so far that are in no further loop.
     furthest: u32,
     entries: f32,
     accepts: bool,
@@ -74,7 +73,7 @@ pub(super) fn run(function: &mut Function, analyses: &mut Analyses, target: Targ
         cfg,
         frequencies,
         target,
-        writes: Writes::collect(function, cfg, is_in_loop, |_, _| {}),
+        writes: Writes::collect(function, cfg, is_in_loop, |_, _, _| {}),
         writes_passed: 0,
         levels: Vec::new(),
         first_without_exit: 0,
@@ -119,14 +118,8 @@ impl Hoisting<'_> {
     }
 
     fn enter(&mut self, function: &Function, block: Block) {
-        while let Some(left) = self
-            .levels
-            .pop_if(|level| !self.cfg.includes(level.id, block))
-        {
-            if let Some(outer) = self.levels.last_mut() {
-                outer.furthest = outer.furthest.max(left.furthest);
-            }
-        }
+        let around = |level: &Level| self.cfg.includes(level.id, block);
+        self.levels.truncate(self.levels.partition_point(around));
         self.first_without_exit = self.first_without_exit.min(self.levels.len());
         self.first_without_effect = self.first_without_effect.min(self.levels.len());
         let position = self.cfg.position(block);
@@ -195,16 +188,10 @@ impl Hoisting<'_> {
     }
 
     fn try_to_hoist(&mut self, function: &mut Function, value: Value, effects: Effects) -> bool {
-        let exits = match *function.op(value) {
-            Op::Check(..) | Op::Checked(..) => true,
-            Op::Load { access, .. } | Op::LoadLane { access, .. }
-                if !access.has(AccessFlags::ATOMIC) =>
-            {
-                access.has(AccessFlags::TRAPS)
-            }
-            _ if effects.must_execute() => return false,
-            _ => false,
-        };
+        let exits = effects.must_execute();
+        if exits && (!effects.at_most_exits() || matches!(function.op(value), Op::Patchpoint(_))) {
+            return false;
+        }
         let Some(mut first) = self.first_level_after(function, function.operands(value)) else {
             return false;
         };
@@ -337,8 +324,7 @@ impl Hoisting<'_> {
     fn entering_edge(&mut self, function: &mut Function, level: usize) -> Edge {
         let level = &mut self.levels[level];
         if level.entering.is_none() {
-            let only = only_entering_edge(function, entering_edges(function, self.cfg, level.id));
-            level.entering = as_jump(function, only);
+            level.entering = edge_from_preheader(function, self.cfg, level.id);
             self.positions_of_new_blocks.resize(
                 function.block_count() - self.old_block_count,
                 level.first - 1,
@@ -371,7 +357,8 @@ fn enter_state(function: &mut Function, value: Value, entering: Edge) {
         _ => kept,
     };
     let values: Vec<Value> = function.state(state).iter().map(on_entry).collect();
-    let state = function.add_state(&values);
+    let state = function.map_state(state, |kept| kept);
+    function.state_mut(state).copy_from_slice(&values);
     function.set_state_of(value, state);
 }
 

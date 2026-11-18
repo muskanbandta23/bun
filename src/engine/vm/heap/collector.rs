@@ -8,8 +8,8 @@ use super::marking::{Marking, OpaqueRoots};
 use super::verifier::Verifier;
 use super::visitor::{Findings, REVISIT};
 use super::{
-    BLOCK_SIZE, Gc, Heap, HeapAnalyzer, JsCell, MutatorState, RootReason, Scope, Survivors,
-    Visitor, container, root_alloc, stack,
+    BLOCK_SIZE, DeferCollection, Gc, Heap, HeapAnalyzer, HeapGraphSink, JsCell, MutatorState,
+    RootReason, Scope, Survivors, Visitor, container, root_alloc, stack,
 };
 use crate::options;
 
@@ -39,6 +39,10 @@ impl Heap {
         if self.is_deferred() {
             return self.did_defer_collection.set(true);
         }
+        self.collect_now(scope);
+    }
+
+    fn collect_now(&self, scope: Option<Scope>) {
         self.vm().clear_dead_stack();
         stack::with_registers_on_stack(|stack_top| self.run_collection(scope, stack_top));
         stack::clear_what_the_collector_left();
@@ -59,18 +63,23 @@ impl Heap {
         self.is_idle_collection.set(false);
     }
 
-    /// A full collection that reports what it finds.
-    pub fn collect_and_analyze(&self, analyzer: &mut HeapAnalyzer) {
-        self.analyzer.set(analyzer);
-        self.collect(Some(Scope::Full));
-        self.analyzer.set(core::ptr::null_mut());
+    /// A full collection that reports what it finds, which is there for as long as the result is. Reports nothing
+    /// where a collection cannot run.
+    pub fn collect_and_analyze(&self, sink: &mut dyn HeapGraphSink) -> DeferCollection<'_> {
+        let can_collect = self.can_collect() && !self.is_deferred();
+        let deferral = self.defer_collection();
+        if can_collect {
+            // SAFETY: a local.
+            let mut analyzer = unsafe { HeapAnalyzer::new(sink) };
+            self.analyzer.set(&raw mut analyzer);
+            self.collect_now(Some(Scope::Full));
+            self.sweep_synchronously();
+        }
+        deferral
     }
 
     fn sweeps_synchronously(&self) -> bool {
-        options().sweep_synchronously
-            || options().force_mini_vm_mode
-            || options().use_zombie_mode
-            || self.policy.is_critical()
+        options().sweep_synchronously || options().force_mini_vm_mode || self.policy.is_critical()
     }
 
     #[inline(never)]
@@ -83,7 +92,6 @@ impl Heap {
         let capacity = self.capacity();
         let has_nothing_to_find = scope == Scope::Eden && self.policy.allocated() == 0;
         self.collection_scope.set(Some(scope));
-        self.collection_count.update(|count| count + 1);
         self.policy.will_collect(scope);
         self.activity.will_collect(scope);
         self.notify_observers(|observer| observer.will_collect());
@@ -176,6 +184,11 @@ impl Heap {
         stack.shrink_to(KEPT_ENTRIES);
         self.spare_mark_stack.set(stack);
 
+        // SAFETY: it outlives the collection, and the visitor is done with it.
+        if let Some(analyzer) = unsafe { self.analyzer.take().as_mut() } {
+            self.for_each_live_cell(|cell| analyzer.analyze(cell));
+        }
+
         let vm = self.vm();
         self.clear_weak_references(&Survivors { scope, vm }, &findings);
         self.policy
@@ -234,27 +247,25 @@ impl Heap {
         }
         visitor.replace_root_reason(RootReason::ExecutingCode);
         (self.vm()).visit_code_on_stack(&roots.code_addresses, visitor);
-        visitor.replace_root_reason(RootReason::StrongHandles);
-        self.strong_set.visit(visitor);
         visitor.replace_root_reason(RootReason::ProtectedValues);
         for &cell in self.protected.borrow().keys() {
             // SAFETY: kept alive so far.
             unsafe { visitor.append_word(cell as u64) };
         }
-        visitor.replace_root_reason(RootReason::StrongReferences);
+        visitor.replace_root_reason(RootReason::StrongHandles);
+        self.strong_set.visit(visitor);
         self.vm().visit_roots(visitor);
         self.execute_constraints(visitor, false);
         self.mark_to_fixpoint(marking, visitor);
     }
 
     fn execute_constraints(&self, visitor: &mut Visitor, depend_on_marking: bool) {
-        visitor.replace_root_reason(RootReason::Embedder);
+        visitor.replace_root_reason(RootReason::None);
         for constraint in self.constraints.borrow().iter() {
             if constraint.depends_on_marking == depend_on_marking {
                 constraint.execute(visitor);
             }
         }
-        visitor.replace_root_reason(RootReason::None);
     }
 
     fn drain(&self, marking: &Marking, visitor: &mut Visitor) {
@@ -339,7 +350,6 @@ impl Heap {
 
     fn clear_weak_references(&self, survivors: &Survivors, findings: &Findings) {
         self.weak_set.reap(survivors);
-        self.weak_tables.prune(survivors);
         for &address in &findings.weak_words {
             // SAFETY: inside a cell that has survived.
             let word =

@@ -1,6 +1,6 @@
 use bun_engine_text::{Identifier, PropertyName};
 
-use crate::{Attributes, FastHashSet, Storage};
+use crate::{Attributes, FastHashSet, JsResult, Storage};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -146,6 +146,38 @@ impl PropertyNameList {
         } else {
             indices.for_each(|index| self.add_index(index));
         }
+    }
+
+    pub fn clear(&mut self) {
+        self.names.clear();
+        self.seen.clear();
+        self.has_only_indices = true;
+        self.has_overflowed = false;
+    }
+
+    pub(crate) fn append(&mut self, mut other: PropertyNameList) {
+        if !self.is_empty() {
+            return other.iter().for_each(|name| self.add(name.name()));
+        }
+        other.names.retain(|name| self.accepts(name.name()));
+        self.has_only_indices = other.has_only_indices;
+        self.names = other.names;
+    }
+
+    pub(crate) fn try_retain(
+        &mut self,
+        mut keeps: impl FnMut(PropertyName<'_>) -> JsResult<bool>,
+    ) -> JsResult<()> {
+        self.seen.clear();
+        let mut kept = 0;
+        for index in 0..self.names.len() {
+            if keeps(self.names[index].name())? {
+                self.names.swap(kept, index);
+                kept += 1;
+            }
+        }
+        self.names.truncate(kept);
+        Ok(())
     }
 
     pub fn into_vec(self) -> Vec<Identifier> {

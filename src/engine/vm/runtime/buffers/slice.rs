@@ -82,7 +82,23 @@ impl<'a, T: Element> BufferSlice<'a, T> {
     #[inline(always)]
     pub fn get(self, index: usize) -> Option<T> {
         // SAFETY: inside.
-        (index < self.length).then(|| unsafe { unaligned_volatile_load(self.start.add(index)) })
+        (index < self.length).then(|| unsafe { self.get_unchecked(index) })
+    }
+
+    /// # Safety
+    /// Below the length.
+    #[inline(always)]
+    pub(super) unsafe fn get_unchecked(self, index: usize) -> T {
+        // SAFETY: the caller's.
+        unsafe { unaligned_volatile_load(self.start.add(index)) }
+    }
+
+    /// # Safety
+    /// Below the length.
+    #[inline(always)]
+    pub(super) unsafe fn set_unchecked(self, index: usize, value: T) {
+        // SAFETY: the caller's.
+        unsafe { unaligned_volatile_store(self.start.add(index), value) }
     }
 
     /// Panics past the end.
@@ -98,7 +114,7 @@ impl<'a, T: Element> BufferSlice<'a, T> {
             return false;
         }
         // SAFETY: inside.
-        unsafe { unaligned_volatile_store(self.start.add(index), value) };
+        unsafe { self.set_unchecked(index, value) };
         true
     }
 
@@ -151,7 +167,7 @@ impl<'a, T: Element> BufferSlice<'a, T> {
     #[inline(always)]
     pub fn iter(self) -> impl DoubleEndedIterator<Item = T> + ExactSizeIterator + Clone + 'a {
         // SAFETY: inside.
-        (0..self.length).map(move |index| unsafe { unaligned_volatile_load(self.start.add(index)) })
+        (0..self.length).map(move |index| unsafe { self.get_unchecked(index) })
     }
 
     #[inline(always)]

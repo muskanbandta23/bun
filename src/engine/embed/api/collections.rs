@@ -57,11 +57,6 @@ fn set_remove(set: &JsSet, cx: &Cx, key: Value) -> JsResult<bool> {
 }
 
 #[export]
-fn set_clear(set: &JsSet, vm: &Vm) {
-    set.clear(vm);
-}
-
-#[export]
 fn map_iterator_create(
     vm: &Vm,
     shape: Gc<Shape>,

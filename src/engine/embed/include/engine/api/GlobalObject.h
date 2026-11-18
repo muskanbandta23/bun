@@ -14,13 +14,15 @@ class JSModuleRecord;
 class WebAssemblyCompileOptions;
 enum class ArrayBufferSharingMode : bool;
 enum class CodeGenerationMode : uint8_t;
-enum class QueuedTaskResult : uint8_t;
 enum TypedArrayType : uint8_t;
 class ScriptFetchParameters;
 
 namespace AOT {
 struct ModuleHost;
 }
+
+enum class QueuedTaskResult : bool { Executed,
+    Discard };
 
 class RuntimeFlags {};
 enum class CompilationType { Eval };
@@ -183,7 +185,6 @@ public:
     ENGINE_LAZY_SLOT(JSFunction, performPromiseThenFunction, private_perform_promise_then)
     ENGINE_LAZY_SLOT(JSFunction, rejectPromiseFunction, private_reject_promise)
     ENGINE_LAZY_SLOT(JSModuleLoader, moduleLoader, module_loader)
-    ENGINE_LAZY_SLOT(Structure, asyncFromSyncIteratorStructure, async_from_sync_iterator_shape)
     ENGINE_LAZY_SLOT(Structure, booleanObjectStructure, boolean_object_shape)
     ENGINE_LAZY_SLOT(Structure, dateStructure, date_shape)
     ENGINE_LAZY_SLOT(Structure, errorStructure, error_shape)
@@ -217,9 +218,9 @@ public:
 
     MicrotaskQueue& microtaskQueue() const;
     void setMicrotaskQueue(Ref<MicrotaskQueue>&&);
-    QueuedTaskResult microtaskRunnability() const;
-    void setMicrotaskRunnability(QueuedTaskResult);
-    bool isAsyncContextTrackingEnabled() const;
+    QueuedTaskResult microtaskRunnability() const { return m_microtaskRunnability; }
+    void setMicrotaskRunnability(QueuedTaskResult runnability) { m_microtaskRunnability = runnability; }
+    bool isAsyncContextTrackingEnabled() const { return vm().isAsyncContextTrackingEnabled(); }
     void setAsyncContextTrackingEnabled(bool);
 
     void setEvalEnabled(bool enabled, const String& errorMessage = {}) { Engine::global_set_eval_enabled(this, enabled, errorMessage); }
@@ -273,6 +274,7 @@ public:
 
 private:
     ConsoleClient* m_consoleClient;
+    QueuedTaskResult m_microtaskRunnability;
     WriteBarrier<JSScope> m_scopeExtension;
     Structure* m_originalArrayStructures[16];
     Structure* m_arrayStructuresForAllocation[16];
@@ -303,6 +305,7 @@ inline void JSGlobalObject::checkLayout()
     ENGINE_CHECK_OFFSET(JSGlobalObject, m_methodTable, GlobalObject_embedder_methods);
     ENGINE_CHECK_OFFSET(JSGlobalObject, overridenDateNow, GlobalObject_overridden_date_now);
     ENGINE_CHECK_OFFSET(JSGlobalObject, m_consoleClient, GlobalObject_console_client);
+    ENGINE_CHECK_OFFSET(JSGlobalObject, m_microtaskRunnability, GlobalObject_discards_microtasks);
     ENGINE_CHECK_OFFSET(JSGlobalObject, m_scopeExtension, GlobalObject_scope_extension);
     ENGINE_CHECK_OFFSET(JSGlobalObject, m_originalArrayStructures, GlobalObject_original_array_shapes);
     ENGINE_CHECK_OFFSET(JSGlobalObject, m_arrayStructuresForAllocation, GlobalObject_array_shapes_for_allocation);

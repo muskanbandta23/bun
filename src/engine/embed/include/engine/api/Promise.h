@@ -16,9 +16,6 @@ enum class InternalMicrotask : uint8_t {
     ImportModuleNamespace = Engine::InternalMicrotask::ImportModuleNamespace,
 };
 
-enum class QueuedTaskResult : uint8_t { Executed,
-    Discard };
-
 class JSPromise final : public JSNonFinalObject {
 public:
     ENGINE_DECLARE_CLASS(Promise)
@@ -119,12 +116,8 @@ public:
     void ref() const { Engine::microtask_queue_retain(this); }
     void deref() const { Engine::microtask_queue_release(this); }
 
-    bool isEmpty() const { return position(Engine::Layout::MicrotaskQueue_start) == position(Engine::Layout::MicrotaskQueue_end); }
-    void clear() { position(Engine::Layout::MicrotaskQueue_start) = position(Engine::Layout::MicrotaskQueue_end); }
+    void clear() { Engine::microtask_queue_clear(*this); }
     void performMicrotaskCheckpoint(VM& vm) { Engine::microtask_queue_perform_checkpoint(this, vm); }
-
-private:
-    size_t& position(size_t offset) const { return Engine::fieldAt<size_t>(this, offset); }
 };
 
 inline MicrotaskQueue& VM::defaultMicrotaskQueue() { return *Engine::vm_default_microtask_queue(*this); }
@@ -150,9 +143,6 @@ private:
 
 inline MicrotaskQueue& JSGlobalObject::microtaskQueue() const { return *Engine::global_microtask_queue(this); }
 inline void JSGlobalObject::setMicrotaskQueue(Ref<MicrotaskQueue>&& queue) { Engine::global_set_microtask_queue(this, WTF::move(queue)); }
-inline QueuedTaskResult JSGlobalObject::microtaskRunnability() const { return Engine::global_discards_microtasks(this) ? QueuedTaskResult::Discard : QueuedTaskResult::Executed; }
-inline void JSGlobalObject::setMicrotaskRunnability(QueuedTaskResult result) { Engine::global_set_discards_microtasks(this, result == QueuedTaskResult::Discard); }
-inline bool JSGlobalObject::isAsyncContextTrackingEnabled() const { return vm().isAsyncContextTrackingEnabled(); }
 inline void JSGlobalObject::setAsyncContextTrackingEnabled(bool isEnabled)
 {
     if (isEnabled)

@@ -488,7 +488,13 @@ impl<'a> Generator<'a> {
 
     #[inline]
     fn position_of_name(&mut self, name: Name, start: u32) {
-        let end = start + self.name_length(name);
+        let is_written = name != Name::DEFAULT_EXPORT;
+        let end = start
+            + if is_written {
+                self.name_length(name)
+            } else {
+                0
+            };
         self.position(end, start, end);
     }
 

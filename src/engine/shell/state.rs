@@ -4,6 +4,7 @@ use core::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
+use bun_engine_inspector::Controller;
 use bun_engine_vm::{FastHashSet, JsPromise, Strong, TerminationDeadline, Vm};
 
 use crate::command_line::CommandLine;
@@ -21,6 +22,8 @@ pub(crate) struct State {
     /// Those that had no handler at the time.
     pub(crate) rejected_promises: RefCell<Vec<Strong<Gc<JsPromise>>>>,
     pub(crate) inbox: Inbox,
+    /// While a frontend is connected.
+    pub(crate) inspector: RefCell<Option<Rc<Controller>>>,
     /// Of the calls with a time limit that are under way.
     pub(crate) deadlines: RefCell<Vec<Arc<TerminationDeadline>>>,
 }

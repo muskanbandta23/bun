@@ -5,6 +5,8 @@ use bun_engine_vm::{CellType, IndexingMode, ShapeId, SpeculatedType, TypeFlags};
 #[derive(Clone, Copy)]
 pub(crate) struct ShapeFacts {
     pub(crate) id: ShapeId,
+    /// Of the shape itself, which the dependencies keep alive.
+    pub(crate) address: usize,
     pub(crate) cell_type: CellType,
     pub(crate) ty: SpeculatedType,
     pub(crate) indexing_mode: IndexingMode,

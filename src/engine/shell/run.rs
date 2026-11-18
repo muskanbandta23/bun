@@ -14,7 +14,7 @@ use bun_engine_vm::{
 use crate::command_line::{CommandLine, Script};
 use crate::functions::{drain_microtasks, to_console_text, to_utf8};
 use crate::prelude::*;
-use crate::{files, global};
+use crate::{files, global, inspector};
 
 pub(crate) const EXIT_EXCEPTION: i32 = 3;
 const COMMAND_LINE: &str = "[Command Line]";
@@ -243,9 +243,13 @@ pub(crate) fn run(command_line: &CommandLine, body: impl FnOnce(&mut Cx)) -> i32
         cx.add_termination_deadline(Duration::from_millis(milliseconds));
     }
 
+    if command_line.is_inspected {
+        inspector::connect(cx);
+    }
     body(cx);
     if !cx.is_execution_forbidden().get() {
-        let result = drain_microtasks(cx).and_then(|()| run_loop.run(cx));
+        let result = (drain_microtasks(cx).and_then(|()| run_loop.run(cx)))
+            .and_then(|()| inspector::serve(cx, &run_loop));
         if let Some(termination) = take_exception(cx, result) {
             check_exception(cx, Some(termination), false);
         }

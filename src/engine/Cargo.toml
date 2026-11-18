@@ -22,6 +22,7 @@ bun_engine_wasm.workspace = true
 bun_engine_inspector.workspace = true
 
 [dev-dependencies]
+bun_engine_bytecode.workspace = true
 bun_engine_macros.workspace = true
 bun_engine_number.workspace = true
 bun_engine_standalone.workspace = true

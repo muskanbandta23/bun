@@ -3,10 +3,10 @@ use bun_engine_text::{PropertyName, StringBuilder, names};
 
 use crate::caches::{get_megamorphic, is_known_to_be_absent};
 use crate::{
-    Attributes, CallData, CallFrame, Cx, DeletePropertySlot, DontEnumMode, FastHashSet, FieldArray,
-    Gc, GetterSetter, GlobalObject, InternalMethod, JsBoundFunction, JsFunction, JsObject,
-    JsObjectInit, JsResult, PropertyDescriptor, PropertyNameList, PropertyNameMode, PropertySlot,
-    PutPropertySlot, Shape, ShapeFlags, ShapeSpec, Thrown, TypeFlags, Value, Vm,
+    Attributes, CallData, CallFrame, CellType, Cx, DeletePropertySlot, DontEnumMode, FastHashSet,
+    FieldArray, Gc, GetterSetter, GlobalObject, InternalMethod, JsBoundFunction, JsFunction,
+    JsObject, JsObjectInit, JsResult, PropertyDescriptor, PropertyNameList, PropertyNameMode,
+    PropertySlot, PutPropertySlot, Shape, ShapeFlags, ShapeSpec, Thrown, TypeFlags, Value, Vm,
     for_each_in_array_like, validate_property_descriptor,
 };
 
@@ -79,8 +79,7 @@ impl ProxyObject {
         if !handler.is_object() {
             return Err(cx.throw_type_error("A Proxy's 'handler' should be an Object"));
         }
-        let is_callable = object.is_callable();
-        let shape = if is_callable {
+        let shape = if object.is_callable() {
             cx.callable_proxy_shape()
         } else {
             cx.proxy_shape()
@@ -89,7 +88,7 @@ impl ProxyObject {
             base: JsObjectInit::new(cx, shape),
             fields: [target, handler],
         });
-        if is_callable && object.is_constructor() {
+        if object.cell_type() != CellType::FinalObject && object.is_constructor() {
             proxy.set_per_cell_bit(true);
         }
         Ok(proxy)
@@ -374,6 +373,9 @@ impl ProxyObject {
             }
             keys.add(key.to_property_key(cx)?.name());
             count += 1;
+            if keys.has_overflowed() {
+                return Err(cx.throw_out_of_memory());
+            }
             Ok(())
         })?;
         if keys.len() != count {
@@ -713,7 +715,10 @@ impl ProxyObject {
         cx.check_traps()?;
         let target = self.target();
         let Route::Handler(trap) = self.route(cx, names::getPrototypeOf)? else {
-            return target.get_prototype_of(cx);
+            let prototype = target.get_prototype_of(cx);
+            // No tail call: each proxy on the way counts towards the limit of the stack.
+            target.keep_alive();
+            return prototype;
         };
         let result = trap.call(cx, &[target.into()])?;
         if !result.is_object() && !result.is_null() {

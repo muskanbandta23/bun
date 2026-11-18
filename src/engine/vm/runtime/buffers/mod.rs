@@ -1,5 +1,6 @@
 //! Array buffers and the views on them.
 
+mod accessor;
 mod array_buffer;
 mod atomics;
 mod borrow;
@@ -19,6 +20,7 @@ mod typed_array;
 mod view;
 mod waiters;
 
+pub use accessor::BufferAccessor;
 pub use array_buffer::{ArrayBuffer, ArrayBufferRef, HeldBuffer};
 pub use atomics::AtomicOperation;
 pub use borrow::Borrowed;

@@ -314,6 +314,11 @@ ENGINE_CONSTANT(JsArrayBufferView_declared_length, 48, JsArrayBufferView::OFFSET
 ENGINE_CONSTANT(byteOffsetMask, 0xffffffffffffff, JsArrayBufferView::BYTE_OFFSET_MASK)
 ENGINE_CONSTANT(maxSmallViewLength, 1000, JsArrayBufferView::MAX_SMALL_LENGTH)
 ENGINE_CONSTANT(packedElementSizeShifts, 0xfe6940, ElementType::PACKED_SIZE_SHIFTS)
+ENGINE_SIZE(BufferAccessor, 5)
+ENGINE_OFFSET(BufferAccessor, is_signed, 1)
+ENGINE_OFFSET(BufferAccessor, is_float, 2)
+ENGINE_OFFSET(BufferAccessor, is_little_endian, 3)
+ENGINE_OFFSET(BufferAccessor, is_write, 4)
 
 // Promises, collections, text and time
 ENGINE_CONSTANT(JsPromise_payload, 16, JsPromise::OFFSET_OF_PAYLOAD)

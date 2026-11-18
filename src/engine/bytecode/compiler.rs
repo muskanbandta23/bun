@@ -6,7 +6,7 @@ use std::rc::Rc;
 use bun_engine_syntax::ast::{Ast, Features};
 use bun_engine_syntax::{
     Error, EvalContext, FunctionFlags, FunctionKind, FunctionSource, Goal, Options, Parser,
-    SourceCache,
+    PausePosition, SourceCache,
 };
 use bun_engine_text::{Identifier, StringRef, Text};
 
@@ -111,6 +111,15 @@ impl<'a> Request<'a> {
         }
     }
 
+    fn options_for_program(&self, is_module: bool) -> Options<'static> {
+        if is_module {
+            self.options(Goal::Module, self.whole(), Origin::MODULE)
+        } else {
+            let goal = Goal::Script { strict: false };
+            self.options(goal, self.whole(), Origin::empty())
+        }
+    }
+
     fn whole(&self) -> Range<u32> {
         0..self.source.len() as u32
     }
@@ -191,6 +200,7 @@ impl Compiler {
             declarations,
             directives: directives(ast),
             is_reusable: !ast.root.features.contains(Features::TAGGED_TEMPLATE),
+            context,
         })
     }
 
@@ -238,13 +248,17 @@ impl Compiler {
     }
 
     pub fn check_syntax(&mut self, request: Request<'_>, is_module: bool) -> Result<(), Error> {
-        let (goal, origin) = if is_module {
-            (Goal::Module, Origin::MODULE)
-        } else {
-            (Goal::Script { strict: false }, Origin::empty())
-        };
-        let options = request.options(goal, request.whole(), origin);
+        let options = request.options_for_program(is_module);
         (self.parser).parse(request.source.text(), &options, request.cache)?;
         Ok(())
+    }
+
+    pub fn pause_positions(
+        &mut self,
+        request: &Request<'_>,
+        is_module: bool,
+    ) -> Result<Vec<PausePosition>, Error> {
+        let options = request.options_for_program(is_module);
+        (self.parser).pause_positions(request.source.text(), &options)
     }
 }

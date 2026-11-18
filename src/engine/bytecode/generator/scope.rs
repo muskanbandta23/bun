@@ -1,5 +1,6 @@
 //! Where bindings live and how names find them.
 
+use core::num::NonZeroU32;
 use std::rc::Rc;
 
 use bun_engine_syntax::ast::{
@@ -10,6 +11,7 @@ use bun_engine_text::Identifier;
 
 use super::intrinsic::Builtin;
 use super::{Dest, Generator};
+use crate::function::Origin;
 use crate::operand::{Operand, Register, ScopeIndex, StaticError, Unresolved};
 use crate::scope::{ScopeKind, Slot, SlotFlags, SlotKind, StaticScope};
 
@@ -117,6 +119,8 @@ pub(super) struct Layout {
     undefined_slots: u32,
     mapped_parameters: u32,
     eval_variables_slot: Option<u32>,
+    is_extensible_by_debugger_only: bool,
+    body_start: Option<NonZeroU32>,
 }
 
 impl Layout {
@@ -129,6 +133,8 @@ impl Layout {
             undefined_slots: 0,
             mapped_parameters: 0,
             eval_variables_slot: None,
+            is_extensible_by_debugger_only: false,
+            body_start: None,
         }
     }
 
@@ -147,6 +153,15 @@ impl Layout {
 
     pub(super) fn make_extensible(&mut self) {
         self.eval_variables_slot = Some(self.anonymous_slot());
+    }
+
+    /// The last step for the scope that `var` declares in.
+    pub(super) fn prepare_for_debugger(&mut self, body_start: Option<u32>) {
+        self.body_start = body_start.and_then(NonZeroU32::new);
+        if self.eval_variables_slot.is_none() {
+            self.make_extensible();
+            self.is_extensible_by_debugger_only = true;
+        }
     }
 
     pub(super) fn is_empty(&self) -> bool {
@@ -201,6 +216,13 @@ fn slot_flags(binding: &Binding) -> SlotFlags {
     flags.set(SlotFlags::STATIC, has(BindingFlags::STATIC));
     flags.set(SlotFlags::HAS_GETTER, has(BindingFlags::HAS_GETTER));
     flags.set(SlotFlags::HAS_SETTER, has(BindingFlags::HAS_SETTER));
+    flags.set(
+        SlotFlags::PARAMETER,
+        matches!(
+            binding.kind,
+            BindingKind::Parameter | BindingKind::Arguments
+        ),
+    );
     flags
 }
 
@@ -280,6 +302,8 @@ impl Generator<'_> {
             parent: self.chain.take(),
             kind: layout.kind,
             eval_variables_slot: layout.eval_variables_slot,
+            is_extensible_by_debugger_only: layout.is_extensible_by_debugger_only,
+            body_start: layout.body_start,
             entered_at,
             slot_count: layout.count,
             undefined_slots: layout.undefined_slots,
@@ -304,7 +328,27 @@ impl Generator<'_> {
         let scope = self.chain_scope(layout, register);
         let index = self.add_scope(scope);
         self.asm().create_scope(register, parent, index);
+        self.show_scope(register);
         index
+    }
+
+    /// Tells a debugger where the innermost scope is from here on.
+    #[inline]
+    pub(super) fn show_scope(&mut self, register: Register) {
+        if self.debugs {
+            self.asm().set_scope_register(register);
+        }
+    }
+
+    /// After a `resume`: a debugger may look at a scope that the code does not use again.
+    #[cold]
+    pub(super) fn keep_scopes(&mut self) {
+        let innermost = self.scope;
+        self.asm().mov(innermost, innermost);
+        for index in 0..self.b.open_scopes.len() {
+            let outer = self.b.open_scopes[index].scope;
+            self.asm().mov(outer, outer);
+        }
     }
 
     pub(super) fn open_scope(&mut self) {
@@ -331,7 +375,10 @@ impl Generator<'_> {
         self.b.bindings.truncate(open.bindings as usize);
         self.top = open.top;
         self.chain = open.chain;
-        self.scope = open.scope;
+        if self.scope != open.scope {
+            self.scope = open.scope;
+            self.show_scope(open.scope);
+        }
         self.barrier = open.barrier;
     }
 
@@ -394,16 +441,25 @@ impl Generator<'_> {
 
     /// A block, or the like. Ends with [`Generator::close_scope`]. Returns what it creates, if anything.
     pub(super) fn enter_block_scope(&mut self, id: ScopeId) -> Option<ScopeIndex> {
+        self.enter_lexical_scope(id, ScopeKind::Block)
+    }
+
+    pub(super) fn enter_catch_scope(&mut self, id: ScopeId) {
+        let kind = match self.ast[id].kind {
+            ast::ScopeKind::SimpleCatch => ScopeKind::SimpleCatch,
+            _ => ScopeKind::Catch,
+        };
+        self.enter_lexical_scope(id, kind);
+    }
+
+    fn enter_lexical_scope(&mut self, id: ScopeId, kind: ScopeKind) -> Option<ScopeIndex> {
         let ast = self.ast;
         let scope = &ast[id];
         self.open_scope();
         let mut created = None;
         if scope.flags.contains(ScopeFlags::HAS_CAPTURED) {
             let register = self.temp();
-            let mut layout = Layout::new(match scope.kind {
-                ast::ScopeKind::SimpleCatch => ScopeKind::SimpleCatch,
-                _ => ScopeKind::Block,
-            });
+            let mut layout = Layout::new(kind);
             for binding in ast.bindings(id) {
                 if binding.flags.contains(BindingFlags::CAPTURED) {
                     let slot = self.add_slot(&mut layout, binding);
@@ -429,6 +485,7 @@ impl Generator<'_> {
         let index = self.add_scope(scope);
         self.asm()
             .create_with_scope(register, parent, index, object);
+        self.show_scope(register);
         self.raise_barrier();
     }
 
@@ -601,8 +658,10 @@ impl Generator<'_> {
                 outer.private = self.private_of(scope, slot);
                 return;
             }
-            if !is_static && (scope.kind == ScopeKind::With || scope.eval_variables_slot.is_some())
-            {
+            let is_extensible = scope.eval_variables_slot.is_some()
+                && (!scope.is_extensible_by_debugger_only
+                    || self.origin.contains(Origin::DEBUGGER));
+            if !is_static && (scope.kind == ScopeKind::With || is_extensible) {
                 outer.variable.place = Place::Dynamic;
                 return;
             }

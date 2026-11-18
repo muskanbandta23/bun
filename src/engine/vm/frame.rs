@@ -114,6 +114,11 @@ impl CallFrame {
         unsafe { Value::from_bits_or_empty(self.this_value.get()) }.unwrap_or_default()
     }
 
+    pub(crate) fn this_value_or_empty(&self) -> Option<Value> {
+        // SAFETY: as above.
+        unsafe { Value::from_bits_or_empty(self.this_value.get()) }
+    }
+
     /// In a native function that is called by `new`.
     #[inline(always)]
     pub fn new_target(&self) -> Value {

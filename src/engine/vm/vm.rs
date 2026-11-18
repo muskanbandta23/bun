@@ -152,8 +152,8 @@ pub struct Vm {
     catch_frame: Cell<usize>,
     catch_address: Cell<usize>,
     catch_bytecode_offset: Cell<u32>,
-    /// Changes when a property of a prototype does.
-    prototype_chain_epoch: Cell<u32>,
+    /// Changes when a property of a prototype does, and with each collection. The low 31 bits are never zero.
+    prototype_chain_epoch: Cell<u64>,
     pub client_data: Cell<*mut c_void>,
     entry_global: Root<GlobalObject>,
     termination_exception: Root<Exception>,
@@ -329,6 +329,9 @@ impl Vm {
     pub const OFFSET_OF_CATCH_ADDRESS: usize = offset_of!(Vm, catch_address);
     pub const OFFSET_OF_CATCH_BYTECODE_OFFSET: usize = offset_of!(Vm, catch_bytecode_offset);
     pub const OFFSET_OF_PROTOTYPE_CHAIN_EPOCH: usize = offset_of!(Vm, prototype_chain_epoch);
+    /// Of a pointer to the `LookupTables`.
+    pub const OFFSET_OF_LOOKUP_TABLES: usize =
+        offset_of!(Vm, services.caches) + crate::caches::State::OFFSET_OF_TABLES;
     pub const OFFSET_OF_SCRATCH: usize = offset_of!(Vm, scratch);
     pub const OFFSET_OF_IS_ASYNC_CONTEXT_TRACKED: usize = offset_of!(Vm, is_async_context_tracked);
     pub const OFFSET_OF_DEBUGGER_COUNT: usize = offset_of!(Vm, debugger_count);
@@ -725,16 +728,21 @@ impl Vm {
 
     #[inline(always)]
     pub fn prototype_chain_epoch(&self) -> u32 {
+        self.prototype_chain_epoch.get() as u32
+    }
+
+    /// For what is not cleared when the other starts over.
+    #[inline(always)]
+    pub fn full_prototype_chain_epoch(&self) -> u64 {
         self.prototype_chain_epoch.get()
     }
 
     #[inline]
     pub fn invalidate_prototype_chain_caches(&self) {
-        let epoch = self.prototype_chain_epoch.get().wrapping_add(1);
-        self.prototype_chain_epoch.set(epoch);
-        if epoch == 0 {
+        self.prototype_chain_epoch.update(|epoch| epoch + 1);
+        if self.prototype_chain_epoch() << 1 == 0 {
             self.services.caches.did_wrap_epoch();
-            self.prototype_chain_epoch.set(1);
+            self.prototype_chain_epoch.update(|epoch| epoch + 1);
         }
     }
 

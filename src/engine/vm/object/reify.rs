@@ -4,9 +4,8 @@ use bun_engine_text::{PropertyName, StringRef, Text};
 use super::static_table::StaticValue;
 use crate::{
     Attributes, Class, CustomGetterSetter, Cx, DontEnumMode, GetterSetter, Intrinsic, JsFunction,
-    JsObject, JsResult, JsString, LazyClass, LazyField, NativeFunction, PropertyNameList,
-    PropertyOffset, PropertySlot, ShapeFlags, StaticProperty, StaticTable, TypeFlags,
-    call::native_not_a_constructor,
+    JsObject, JsResult, LazyClass, LazyField, NativeFunction, PropertyNameList, PropertyOffset,
+    PropertySlot, ShapeFlags, StaticProperty, StaticTable, Value, call::native_not_a_constructor,
 };
 
 /// What SetFunctionName makes of a key and a prefix.
@@ -44,7 +43,6 @@ impl JsObject {
         };
         let attributes = entry.attributes();
         match entry.value() {
-            StaticValue::Constant(value) => slot.set_value(self, attributes.for_shape(), value),
             StaticValue::Custom { getter, setter } => {
                 slot.set_custom(self, attributes.for_shape(), getter, setter);
                 slot.set_required_class(required_class(table.class_for_this(), entry));
@@ -132,7 +130,7 @@ impl JsObject {
                 JsFunction::builtin(cx, cx.builtin_executable(id)).into()
             }
             StaticValue::Constant(value) => value,
-            StaticValue::String(string) => JsString::from_name(cx, string).into(),
+            StaticValue::Name(name) => Value::from_name(cx, name),
             // SAFETY: as above.
             StaticValue::LazyCell(offset) => unsafe { LazyField::at(self, offset) }
                 .get(cx, self)
@@ -156,7 +154,18 @@ impl JsObject {
                 CustomGetterSetter::create(cx, getter, setter, class).into()
             }
         };
-        self.put_direct_stored(cx, name, value, attributes);
+        let shape = self.shape();
+        if shape.has(ShapeFlags::IS_CLAIMED)
+            && shape.get(name).is_none()
+            && shape
+                .find_static_property(name)
+                .is_some_and(|(_, own)| core::ptr::eq(own, entry))
+        {
+            // SAFETY: the only instance, and it has had the property all along.
+            unsafe { self.add_property_in_place(cx, name, value, attributes) };
+        } else {
+            self.put_direct_stored(cx, name, value, attributes);
+        }
         Ok(())
     }
 
@@ -208,19 +217,27 @@ impl JsObject {
         if !self.shape().has_non_reified_static_properties() {
             return Ok(());
         }
-        self.convert_to_dictionary(cx);
-        for table in self.class().ancestry().filter_map(Class::static_table) {
+        if !self.shape().has(ShapeFlags::IS_CLAIMED) {
+            self.convert_to_dictionary(cx);
+        }
+        let tables = || self.class().ancestry().filter_map(Class::static_table);
+        for table in tables() {
             for entry in table.iter() {
-                let name = entry.name();
-                if self.shape().get(name.name()).is_none() {
+                let (shape, name) = (self.shape(), entry.name());
+                // What makes a value may get here too, and then delete a property.
+                if !shape.has_non_reified_static_properties() {
+                    return Ok(());
+                }
+                if shape.get(name.name()).is_none() {
                     self.reify_static_property(cx, table, entry, name.name())?;
                 }
             }
         }
-        // What ran may have flattened the shape and shared it.
-        self.convert_to_dictionary(cx);
-        self.shape()
-            .set_flags(ShapeFlags::STATIC_PROPERTIES_REIFIED);
+        let shape = self.shape();
+        if shape.has_non_reified_static_properties() {
+            let entries = tables().flat_map(StaticTable::entries_and_positions);
+            shape.did_reify_static_properties(entries.map(StaticProperty::name));
+        }
         Ok(())
     }
 
@@ -231,18 +248,17 @@ impl JsObject {
         wants_symbols: bool,
     ) {
         let shape = self.shape();
-        debug_assert!(
-            shape
-                .type_flags()
-                .contains(TypeFlags::HAS_STATIC_PROPERTY_TABLE)
-        );
+        let looks_at_all = mode == DontEnumMode::Include
+            || (shape.properties().iter()).any(|(_, _, attributes)| attributes.is_enumerable());
         for table in shape.class().ancestry().filter_map(Class::static_table) {
-            for entry in table.iter().filter(|it| mode.includes(it.attributes())) {
+            let entries = table.entries_and_positions();
+            for entry in entries.filter(|it| looks_at_all || it.attributes().is_enumerable()) {
                 let name = entry.name();
                 if name.name().is_symbol() == wants_symbols
-                    && shape
-                        .get(name.name())
-                        .is_none_or(|(_, attributes)| mode.includes(attributes))
+                    && match shape.get(name.name()) {
+                        Some((_, attributes)) => mode.includes(attributes),
+                        None => !entry.is_position() && mode.includes(entry.attributes()),
+                    }
                 {
                     list.add(name.name());
                 }

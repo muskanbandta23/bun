@@ -50,7 +50,7 @@ pub struct PropertyCondition {
     kind: ConditionKind,
 }
 
-fn may_be_special_property(cell_type: CellType, name: PropertyName<'_>) -> bool {
+pub(crate) fn may_be_special_property(cell_type: CellType, name: PropertyName<'_>) -> bool {
     match cell_type {
         CellType::Array | CellType::DerivedArray => name == names::length,
         CellType::Function => {

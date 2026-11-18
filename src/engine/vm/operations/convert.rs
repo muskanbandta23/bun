@@ -186,7 +186,7 @@ impl Value {
         if let Some(integer) = self.as_int32() {
             return Ok(integer.max(0) as u64);
         }
-        Ok(self.to_number(cx)?.min(MAX_SAFE_INTEGER) as u64).map(|length| length.min((1 << 53) - 1))
+        Ok((self.to_number(cx)? as u64).min(MAX_SAFE_INTEGER as u64))
     }
 
     /// ToIndex. `name` is what the error calls the value.

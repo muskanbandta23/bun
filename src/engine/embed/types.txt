@@ -132,6 +132,7 @@ cell    JsArrayBufferView class JSC::JSArrayBufferView
 cell    JsTypedArray class JSC::JSArrayBufferView
 opaque  ArrayBuffer class JSC::ArrayBuffer
 opaque  ArrayBufferContents class JSC::ArrayBufferContents
+opaque  BufferAccessor struct JSC::BufferAccessorDescriptor
 counted ArrayBufferRef JSC::ArrayBuffer
 value   CopyOrder uint8_t
 value   FreeBytes std::add_pointer_t<void(void*, void*)>

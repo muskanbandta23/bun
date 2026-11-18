@@ -67,8 +67,7 @@ fn vm_delete_unlinked_code(vm: &Vm) {
 
 #[export]
 fn vm_delete_all_code(vm: &Vm) {
-    vm.clear_code_cache();
-    vm.clear_source_caches();
+    vm.discard_all_code();
 }
 
 #[export]

@@ -1,42 +1,53 @@
 use crate::{BigIntRef, Error, Fill, Filled, MAX_LENGTH, Outcome, Poll, Work, digits};
 
-#[inline]
+/// The most digits that the operands of a small product have together.
+const MAX_SMALL_LENGTH: usize = 2 * digits::MAX_WIDTH;
+
+#[inline(always)]
 pub fn multiply<'a>(x: BigIntRef<'a>, y: BigIntRef<'a>) -> Result<Outcome<impl Fill + 'a>, Error> {
     let is_negative = x.is_negative != y.is_negative;
-    let (x_top, y_top) = match (x.digits, y.digits) {
-        (&[a], &[b]) => return Ok(Outcome::small(is_negative, u128::from(a) * u128::from(b))),
-        ([], _) => return Ok(Outcome::First),
-        (_, []) => return Ok(Outcome::Second),
-        (_, [1]) if !y.is_negative => return Ok(Outcome::First),
-        ([1], _) if !x.is_negative => return Ok(Outcome::Second),
-        (&[low, high], &[factor]) | (&[factor], &[low, high]) => {
-            let (low, carry) = low.carrying_mul(factor, 0);
-            let (middle, top) = high.carrying_mul(factor, carry);
-            if top == 0 {
-                return Ok(Outcome::small(is_negative, digits::join(low, middle)));
+    if let (&[a], &[b]) = (x.digits, y.digits) {
+        return Ok(Outcome::small(is_negative, u128::from(a) * u128::from(b)));
+    }
+    let (long, short) = digits::long_and_short(x.digits, y.digits);
+    let short_top = match *short {
+        [_, .., top] => top,
+        [] if x.is_zero() => return Ok(Outcome::First),
+        [] => return Ok(Outcome::Second),
+        [factor] => {
+            if let [low, high] = *long {
+                let (low, carry) = low.carrying_mul(factor, 0);
+                if let (middle, 0) = high.carrying_mul(factor, carry) {
+                    return Ok(Outcome::small(is_negative, digits::join(low, middle)));
+                }
             }
-            (high, factor)
+            match (x.digits, y.digits) {
+                (_, [1]) if !y.is_negative => return Ok(Outcome::First),
+                ([1], _) if !x.is_negative => return Ok(Outcome::Second),
+                _ => factor,
+            }
         }
-        (&[.., x_top], &[.., y_top]) => (x_top, y_top),
     };
-    let length = x.digits.len() + y.digits.len();
-    if length - 1 > MAX_LENGTH {
+    let mut length = long.len() + short.len();
+    if length <= MAX_SMALL_LENGTH {
+        let top_bits = (long[long.len() - 1] | 1).ilog2() + (short_top | 1).ilog2();
+        length -= usize::from(top_bits < 63);
+    } else if length - 1 > MAX_LENGTH {
         return Err(Error::TooBig);
     }
-    // The product is less than (x_top + 1) * (y_top + 1) in the place of the top digits.
-    let top_is_zero = x_top.carrying_mul_add(y_top, x_top, y_top).1 == 0;
     Ok(Outcome::large(Product {
-        length: length - usize::from(top_is_zero),
-        a: x.digits,
-        b: y.digits,
+        length,
+        long,
+        short,
         is_negative,
     }))
 }
 
 struct Product<'a> {
+    /// That of a small product leaves out a top digit that is sure to be zero.
     length: usize,
-    a: &'a [u64],
-    b: &'a [u64],
+    long: &'a [u64],
+    short: &'a [u64],
     is_negative: bool,
 }
 
@@ -46,10 +57,21 @@ impl Fill for Product<'_> {
         self.length
     }
 
-    #[inline]
+    #[inline(always)]
     fn fill(self, out: &mut [u64], poll: Poll<'_>) -> Result<Filled, Error> {
         let out = &mut out[..self.length];
-        digits::multiply(out, self.a, self.b, &mut Work::new(poll))?;
+        let below_top = self.long.len() + self.short.len() - 1;
+        if below_top < MAX_SMALL_LENGTH {
+            let top = digits::multiply_narrow(out, self.long, self.short);
+            if let Some(out) = out.get_mut(below_top) {
+                *out = top;
+            }
+            return Ok(Filled {
+                length: (below_top + usize::from(top != 0)) as u32,
+                is_negative: self.is_negative,
+            });
+        }
+        digits::multiply(out, self.long, self.short, &mut Work::new(poll))?;
         Filled::whole_or_one_less(self.is_negative, out)
     }
 }

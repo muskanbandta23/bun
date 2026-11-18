@@ -43,11 +43,6 @@ pub fn parse_time_zone(text: Text<'_>) -> Result<TimeZone> {
     })
 }
 
-/// For a `timeZone` option with `Purpose::ZonedDateTime`.
-pub const TIME_ZONE_OPTION_NOT_ACCEPTED: Error = Error::Type(
-    "ZonedDateTime.toLocaleString does not accept a timeZone option; the ZonedDateTime's time zone is used",
-);
-
 /// In the order in which CreateDateTimeFormat reads them, less the time zone and those that are only validated.
 #[derive(Clone, PartialEq, Eq, Default, Debug)]
 pub struct Options {

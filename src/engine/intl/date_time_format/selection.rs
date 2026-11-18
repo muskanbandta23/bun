@@ -105,7 +105,7 @@ impl Clock {
 }
 
 impl HourCycle {
-    pub(super) fn is_twelve_hour(self) -> bool {
+    pub fn is_twelve_hour(self) -> bool {
         matches!(self, HourCycle::H11 | HourCycle::H12)
     }
 }

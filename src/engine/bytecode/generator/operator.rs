@@ -62,6 +62,7 @@ enum Test {
 const MOST_CONCATENATED: u32 = 64;
 
 impl Generator<'_> {
+    #[inline(never)]
     pub(super) fn unary(
         &mut self,
         start: u32,
@@ -114,6 +115,7 @@ impl Generator<'_> {
         value
     }
 
+    #[inline(never)]
     pub(super) fn type_of(&mut self, operand: ExprId, end: u32, dst: Dest) -> Operand {
         let mark = self.top;
         let value = self.typeof_operand(operand, end);
@@ -158,6 +160,7 @@ impl Generator<'_> {
         matches!(self.constant_of(value), Some(Constant::String(string)) if string.is_empty())
     }
 
+    #[inline(never)]
     fn apply(&mut self, operator: BinaryOperator, dst: Register, lhs: Operand, rhs: Operand) {
         if operator == BinaryOperator::Add
             && let Some(other) = [(lhs, rhs), (rhs, lhs)]
@@ -287,6 +290,7 @@ impl Generator<'_> {
         dst.into()
     }
 
+    #[inline(never)]
     pub(super) fn binary(&mut self, node: &Expr, dst: Dest) -> Operand {
         let ExprKind::Binary {
             operator,
@@ -331,6 +335,7 @@ impl Generator<'_> {
         dst.into()
     }
 
+    #[inline(never)]
     pub(super) fn relation(&mut self, node: &Expr, dst: Dest) -> Operand {
         let ExprKind::Relation {
             is_instanceof,
@@ -443,6 +448,7 @@ impl Generator<'_> {
         }
     }
 
+    #[inline(never)]
     fn equality(
         &mut self,
         start: u32,
@@ -484,6 +490,7 @@ impl Generator<'_> {
         (Test::Compare(BinaryOperator::Equal, lhs, rhs), is_negated)
     }
 
+    #[inline(never)]
     fn ordering(
         &mut self,
         start: u32,
@@ -532,6 +539,7 @@ impl Generator<'_> {
         }
     }
 
+    #[inline(never)]
     fn test_value(&mut self, test: Test, is_negated: bool, dst: Dest) -> Operand {
         let dst = self.final_dst(dst);
         match (test, is_negated) {
@@ -556,6 +564,7 @@ impl Generator<'_> {
         dst.into()
     }
 
+    #[inline(never)]
     fn jump_on_test(&mut self, test: Test, outcome: bool, target: Label) {
         use BinaryOperator::{Equal, Greater, GreaterEqual, Less, LessEqual};
         if let Test::Identical(a, b) = test
@@ -808,6 +817,7 @@ impl Generator<'_> {
         }
     }
 
+    #[inline(never)]
     fn logical_condition(
         &mut self,
         operator: LogicalOperator,
@@ -832,6 +842,7 @@ impl Generator<'_> {
         self.condition(rhs, branch);
     }
 
+    #[inline(never)]
     pub(super) fn logical(
         &mut self,
         operator: LogicalOperator,
@@ -870,6 +881,7 @@ impl Generator<'_> {
         self.deliver(dst, result)
     }
 
+    #[inline(never)]
     pub(super) fn conditional(&mut self, node: &Expr, dst: Dest, tail: Tail) -> Operand {
         let ExprKind::Conditional {
             test,

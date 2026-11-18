@@ -35,8 +35,14 @@ Vector<SamplingProfiler::StackTrace> SamplingProfiler::releaseStackTraces(const 
         trace.frames.reserveInitialCapacity(frameCount);
         static_cast<Vector<StackTrace>*>(traces)->append(WTF::move(trace));
     };
-    auto addFrame = [](void* traces, StringImpl* name, ExecutableBase* executable, int startLine, unsigned startColumn, LineColumn* position) {
-        static_cast<Vector<StackTrace>*>(traces)->last().frames.append({ name, executable, startLine, startColumn, position ? std::optional(*position) : std::nullopt });
+    auto addFrame = [](void* traces, StringImpl* name, ExecutableBase* executable, LineColumn* start, LineColumn* position) {
+        static_cast<Vector<StackTrace>*>(traces)->last().frames.append({
+            name,
+            executable,
+            start ? static_cast<int>(start->line) : -1,
+            start ? start->column : std::numeric_limits<unsigned>::max(),
+            position ? std::optional(*position) : std::nullopt,
+        });
     };
     Vector<StackTrace> traces;
     Engine::sampling_profiler_release_traces(vm(), &traces, addTrace, addFrame);

@@ -885,6 +885,10 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
             auto bytes = builder.jsonBytes();
             heapProfiler.clearSnapshots();
             RETURN_IF_EXCEPTION(throwScope, {});
+            if (!bytes) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, throwScope);
+                return {};
+            }
             auto span = bytes.leakSpan();
             auto buffer = ArrayBuffer::createFromBytes(std::span<const uint8_t> { span.data(), span.size() }, createSharedTask<void(void*)>([](void* p) {
                 fastFree(p);
@@ -896,6 +900,10 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
         auto json = builder.json();
         heapProfiler.clearSnapshots();
         RETURN_IF_EXCEPTION(throwScope, {});
+        if (json.isNull()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, throwScope);
+            return {};
+        }
         return JSC::JSValue::encode(jsString(vm, json));
     }
 

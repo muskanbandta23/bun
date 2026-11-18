@@ -3,6 +3,7 @@
 #include <root.h>
 #include "Map.h"
 #include <cinttypes>
+#include <cinttypes>
 
 namespace v8 {
 namespace shim {

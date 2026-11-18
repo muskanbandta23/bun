@@ -22,6 +22,7 @@ Usage: engine-shell [options] [files] [-- arguments]
   --watchdog-exception-ok     Succeeds if execution is terminated
   --can-block-is-false        Makes `Atomics.wait` throw on the main thread
   --destroy-vm                Frees the heap before exiting
+  --inspect                   Speaks the inspector protocol on the standard streams, and outlives errors
   --footprint                 Prints the memory footprint before exiting
   --useDollarVM               Defines `$vm`
   --sample                    Prints where the time went before exiting
@@ -52,6 +53,7 @@ pub(crate) struct CommandLine {
     pub(crate) expected_async_passes: u32,
     pub(crate) watchdog_milliseconds: Option<u64>,
     pub(crate) is_interactive: bool,
+    pub(crate) is_inspected: bool,
     pub(crate) runs_modules: bool,
     pub(crate) prints_exit_code: bool,
     pub(crate) prints_footprint: bool,
@@ -97,6 +99,7 @@ impl CommandLine {
                 "--watchdog-exception-ok" => line.accepts_termination = true,
                 "--can-block-is-false" => line.cannot_block = true,
                 "--destroy-vm" => line.destroys_vm = true,
+                "--inspect" => line.is_inspected = true,
                 "--footprint" => line.prints_footprint = true,
                 "--sample" => {
                     line.prints_samples = true;

@@ -1,0 +1,394 @@
+//! The methods that make a new array.
+
+use core::ops::Range;
+
+use bun_engine_vm::{
+    CellType, ElementKind, ElementWriter, Elements, HoleMode, JsArray, NoGc, RealmWatchpoint,
+    Storage, array_species_create, errors, is_array,
+};
+
+use super::mutate::splice_range;
+use super::{MAX_LENGTH, set_length, this_object};
+use crate::prelude::*;
+
+/// What ArrayCreate checks.
+pub(super) fn check_array_size(cx: &Cx, length: u64) -> JsResult<u32> {
+    u32::try_from(length).map_err(|_| cx.throw_range_error(errors::INVALID_ARRAY_SIZE))
+}
+
+/// An array without holes.
+pub(super) fn array_create(
+    cx: &mut Cx,
+    length: u32,
+    mut element: impl FnMut(&mut Cx, u64) -> JsResult<Value>,
+) -> JsResult<Gc<JsArray>> {
+    if length > Storage::MAX_VECTOR_LENGTH {
+        return Err(cx.throw_out_of_memory());
+    }
+    let array = cx.new_array_with_capacity(ElementKind::Undecided, length as usize)?;
+    for index in 0..length {
+        let value = element(cx, index.into())?;
+        array.append(cx, value)?;
+    }
+    Ok(array)
+}
+
+/// To the start of `target`, or of a new array.
+pub(super) fn copy_properties(
+    cx: &mut Cx,
+    source: &JsObject,
+    range: Range<u64>,
+    target: Option<Gc<JsObject>>,
+) -> JsResult<Gc<JsObject>> {
+    let count = range.end - range.start;
+    let target = match (target, u32::try_from(count)) {
+        (Some(target), _) => target,
+        (None, Ok(count)) => (cx.new_array_with_length(ElementKind::Undecided, count)?).upcast(),
+        (None, Err(_)) => return Err(cx.throw_range_error(errors::LENGTH_EXCEEDS_MAXIMUM)),
+    };
+    define_properties_from(cx, source, range, &target, 0)?;
+    set_length(cx, &target, count)?;
+    Ok(target)
+}
+
+fn define_properties_from(
+    cx: &mut Cx,
+    source: &JsObject,
+    range: Range<u64>,
+    target: &JsObject,
+    start: u64,
+) -> JsResult<()> {
+    for (to, from) in (start..).zip(range) {
+        if let Some(value) = source.get_index_if_has_property(cx, from)? {
+            target.create_data_index(cx, to, value, true)?;
+        }
+        cx.check_traps()?;
+    }
+    Ok(())
+}
+
+#[native_abi]
+pub(super) fn slice(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let object = frame.this_value().to_object(cx)?;
+    let length = object.length_of_array_like(cx)?;
+    let start = frame.argument(0).to_relative_index(cx, length, 0)?;
+    let end = frame.argument(1).to_relative_index(cx, length, length)?;
+    let range = start..end.max(start);
+    let species = array_species_create(cx, &object, range.end - start)?;
+    if species.is_none()
+        && let Some(copy) = JsArray::try_copy(cx, &object, range.clone(), HoleMode::Keep)?
+    {
+        return Ok(copy.into());
+    }
+    copy_properties(cx, &object, range, species).map(Into::into)
+}
+
+/// IsConcatSpreadable, if finding out runs no code.
+#[inline(always)]
+fn try_is_concat_spreadable(cx: &Cx, value: Value) -> Option<bool> {
+    let Some(object) = value.as_object() else {
+        return Some(false);
+    };
+    let (global, name) = (object.realm()?, symbols::isConcatSpreadable);
+    let array = object.downcast::<JsArray>();
+    let inherits = match array {
+        Some(array) => array.inherits_from_array_prototype(&global, name),
+        None => {
+            object.cell_type() == CellType::FinalObject
+                && object.prototype_direct() == global.object_prototype().into()
+                && object.shape().get(name).is_none()
+        }
+    };
+    (inherits && global.holds(cx, RealmWatchpoint::ArrayIsConcatSpreadable))
+        .then_some(array.is_some())
+}
+
+fn is_concat_spreadable(cx: &mut Cx, value: Value) -> JsResult<bool> {
+    if let Some(answer) = try_is_concat_spreadable(cx, value) {
+        return Ok(answer);
+    }
+    match value.get(cx, symbols::isConcatSpreadable)? {
+        Value::UNDEFINED => is_array(cx, value),
+        spreadable => Ok(spreadable.to_boolean(cx)),
+    }
+}
+
+fn try_concat(cx: &mut Cx, first: Value, rest: &[Value]) -> JsResult<Option<Gc<JsArray>>> {
+    let parts = || core::iter::once(&first).chain(rest).copied();
+    let (mut kind, mut length) = (ElementKind::Undecided, 0);
+    let mut longest = None;
+    for part in parts() {
+        let Some(is_spreadable) = try_is_concat_spreadable(cx, part) else {
+            return Ok(None);
+        };
+        if !is_spreadable {
+            kind = kind.max(ElementKind::for_value(part));
+            length += 1;
+            continue;
+        }
+        let array = part.cast::<JsArray>();
+        let count = u64::from(array.length());
+        if array.plain_elements(&cx.no_gc(), 0..count).is_none() {
+            return Ok(None);
+        }
+        if count != 0 {
+            kind = kind.max(array.element_kind()).max(ElementKind::Int32);
+            length += count;
+            longest = Some(array);
+        }
+    }
+    if let Some(only) = longest.filter(|it| u64::from(it.length()) == length) {
+        return JsArray::try_copy(cx, &only, 0..length, HoleMode::Keep);
+    }
+    if length > u64::from(Storage::MAX_VECTOR_LENGTH) {
+        return Ok(None);
+    }
+    JsArray::build(cx, kind, length as usize, |writer, no_gc| {
+        for part in parts() {
+            match part.downcast::<JsArray>() {
+                Some(array) if array.length() == 0 => {}
+                Some(array) => writer.extend(array.dense_elements(no_gc), HoleMode::Keep),
+                None => writer.push(part),
+            }
+        }
+    })
+    .map(Some)
+}
+
+#[native_abi]
+pub(super) fn concat(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let object = this_object!(cx, frame, "concat")?;
+    let species = array_species_create(cx, &object, 0)?;
+    if species.is_none()
+        && let Some(result) = try_concat(cx, object.into(), frame.arguments())?
+    {
+        return Ok(result.into());
+    }
+    let result = species.unwrap_or_else(|| cx.new_array().upcast());
+    let mut length = 0;
+    for &part in core::iter::once(&object.into()).chain(frame.arguments()) {
+        let source = is_concat_spreadable(cx, part)?.then(|| part.cast::<JsObject>());
+        let count = match source {
+            Some(source) => source.length_of_array_like(cx)?,
+            None => 1,
+        };
+        if length + count > MAX_LENGTH {
+            return Err(cx.throw_type_error(errors::LENGTH_EXCEEDS_MAXIMUM));
+        }
+        match (source, result.downcast::<JsArray>()) {
+            (None, _) => result.create_data_index(cx, length, part, true).map(|_| ())?,
+            (Some(source), Some(array))
+                if cx.or_out_of_memory(array.try_append_elements(cx, length, &source, count))? => {}
+            (Some(source), _) => define_properties_from(cx, &source, 0..count, &result, length)?,
+        }
+        length += count;
+    }
+    set_length(cx, &result, length)?;
+    Ok(result.into())
+}
+
+/// The kind of a copy of the first `length` elements with the holes filled, if it can be made at once.
+#[inline(always)]
+fn kind_of_filled_copy(cx: &mut Cx, object: &JsObject, length: u64) -> Option<ElementKind> {
+    let no_gc = cx.no_gc();
+    let elements = object.plain_elements(&no_gc, 0..length)?;
+    Some(elements.kind_with(HoleMode::FillWithUndefined))
+}
+
+#[native_abi]
+pub(super) fn to_reversed(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let object = this_object!(cx, frame, "toReversed")?;
+    let length = object.length_of_array_like(cx)?;
+    let size = check_array_size(cx, length)?;
+    match kind_of_filled_copy(cx, &object, length) {
+        Some(kind) => JsArray::build(cx, kind, size as usize, |writer, no_gc| {
+            let elements = object.dense_elements(no_gc).slice(0..size as usize);
+            writer.extend_reversed(elements, HoleMode::FillWithUndefined);
+        }),
+        None => array_create(cx, size, |cx, index| object.get_index(cx, length - index - 1)),
+    }
+    .map(Into::into)
+}
+
+/// The first `length` elements, with `items` in place of those in the range.
+fn copy_replacing(
+    cx: &mut Cx,
+    object: &JsObject,
+    length: u64,
+    range: Range<u64>,
+    items: &[Value],
+) -> JsResult<Value> {
+    let (removed, added) = (range.end - range.start, items.len() as u64);
+    let size = check_array_size(cx, length - removed + added)?;
+    match kind_of_filled_copy(cx, object, length) {
+        Some(kind) => {
+            let kind = kind.generalized_for(items.iter().copied());
+            JsArray::build(cx, kind, size as usize, |writer, no_gc| {
+                let (elements, holes) = (object.dense_elements(no_gc), HoleMode::FillWithUndefined);
+                writer.extend(elements.slice(0..range.start as usize), holes);
+                writer.extend_from_slice(items);
+                writer.extend(elements.slice(range.end as usize..length as usize), holes);
+            })
+        }
+        None => array_create(cx, size, |cx, index| match index.checked_sub(range.start) {
+            None => object.get_index(cx, index),
+            Some(offset) if offset < added => Ok(items[offset as usize]),
+            Some(_) => object.get_index(cx, index - added + removed),
+        }),
+    }
+    .map(Into::into)
+}
+
+#[native_abi]
+pub(super) fn to_spliced(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let object = this_object!(cx, frame, "toSpliced")?;
+    let length = object.length_of_array_like(cx)?;
+    let (start, removed) = splice_range(cx, frame, length)?;
+    let items = frame.rest(2);
+    if length - removed + items.len() as u64 > MAX_LENGTH {
+        return Err(cx.throw_type_error("Array length exceeds 2**53 - 1"));
+    }
+    copy_replacing(cx, &object, length, start..start + removed, items)
+}
+
+#[native_abi]
+pub(super) fn with(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let object = this_object!(cx, frame, "with")?;
+    let length = object.length_of_array_like(cx)?;
+    let relative = frame.argument(0).to_integer_or_infinity(cx)?;
+    let index = relative + if relative < 0.0 { length as f64 } else { 0.0 };
+    if !(0.0..length as f64).contains(&index) {
+        return Err(cx.throw_range_error("Array index out of range"));
+    }
+    let index = index as u64;
+    copy_replacing(cx, &object, length, index..index + 1, &[frame.argument(1)])
+}
+
+/// Deeper than this, flattening watches the stack.
+const MAX_PLAIN_NESTING: u32 = 64;
+
+struct Extent {
+    kind: ElementKind,
+    /// Counts the holes of elements that are numbers.
+    room: u64,
+}
+
+impl Extent {
+    /// `None` if flattening takes more than a look at the elements.
+    fn add(&mut self, no_gc: &NoGc<'_>, elements: Elements<'_>, depth: u64, nesting: u32) -> Option<()> {
+        match elements {
+            Elements::Contiguous(values) if depth != 0 => {
+                for &value in values.iter().flatten() {
+                    if let Some(array) = value.downcast::<JsArray>() {
+                        let inner = array.plain_elements(no_gc, 0..array.length().into())?;
+                        self.add(no_gc, inner, depth - 1, nesting.checked_sub(1)?)?;
+                    } else if value.as_cell().is_some_and(|it| it.cell_type() == CellType::Proxy) {
+                        return None;
+                    } else {
+                        self.kind = self.kind.generalized_for([value]);
+                        self.room += 1;
+                    }
+                }
+            }
+            _ if elements.is_empty() => {}
+            _ => {
+                self.kind = self.kind.max(elements.kind());
+                self.room += elements.len() as u64;
+            }
+        }
+        (self.room <= u64::from(Storage::MAX_VECTOR_LENGTH)).then_some(())
+    }
+}
+
+fn write_flattened(
+    writer: &mut ElementWriter<'_>,
+    no_gc: &NoGc<'_>,
+    elements: Elements<'_>,
+    depth: u64,
+) {
+    match elements {
+        Elements::Contiguous(values) if depth != 0 => {
+            for &value in values.iter().flatten() {
+                match value.downcast::<JsArray>() {
+                    Some(array) => {
+                        write_flattened(writer, no_gc, array.dense_elements(no_gc), depth - 1);
+                    }
+                    None => writer.push(value),
+                }
+            }
+        }
+        _ if elements.is_empty() => {}
+        _ => writer.extend_without_holes(elements),
+    }
+}
+
+fn try_flatten(
+    cx: &mut Cx,
+    source: &JsObject,
+    length: u64,
+    depth: u64,
+) -> JsResult<Option<Gc<JsArray>>> {
+    let mut extent = Extent {
+        kind: ElementKind::Undecided,
+        room: 0,
+    };
+    let no_gc = cx.no_gc();
+    let elements = source.plain_elements(&no_gc, 0..length);
+    if (elements.and_then(|it| extent.add(&no_gc, it, depth, MAX_PLAIN_NESTING))).is_none() {
+        return Ok(None);
+    }
+    JsArray::build(cx, extent.kind, extent.room as usize, |writer, no_gc| {
+        let elements = source.dense_elements(no_gc).slice(0..length as usize);
+        write_flattened(writer, no_gc, elements, depth);
+    })
+    .map(Some)
+}
+
+/// FlattenIntoArray
+fn flatten_into(
+    cx: &mut Cx,
+    target: &JsObject,
+    source: &JsObject,
+    length: u64,
+    mut target_index: u64,
+    depth: u64,
+) -> JsResult<u64> {
+    cx.check_stack()?;
+    for index in 0..length {
+        cx.check_traps()?;
+        let Some(element) = source.get_index_if_has_property(cx, index)? else {
+            continue;
+        };
+        if depth != 0 && is_array(cx, element)? {
+            let inner = element.cast::<JsObject>();
+            let length = inner.length_of_array_like(cx)?;
+            target_index = flatten_into(cx, target, &inner, length, target_index, depth - 1)?;
+        } else {
+            if target_index >= MAX_LENGTH {
+                return Err(cx.throw_type_error("flatten array exceeds 2**53 - 1"));
+            }
+            target.create_data_index(cx, target_index, element, true)?;
+            target_index += 1;
+        }
+    }
+    Ok(target_index)
+}
+
+#[native_abi]
+pub(super) fn flat(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let object = this_object!(cx, frame, "flat")?;
+    let length = object.length_of_array_like(cx)?;
+    let depth = match frame.argument(0) {
+        Value::UNDEFINED => 1,
+        depth => depth.to_integer_or_infinity(cx)? as u64,
+    };
+    let species = array_species_create(cx, &object, 0)?;
+    if species.is_none()
+        && let Some(result) = try_flatten(cx, &object, length, depth)?
+    {
+        return Ok(result.into());
+    }
+    let result = species.unwrap_or_else(|| cx.new_array().upcast());
+    flatten_into(cx, &result, &object, length, 0, depth)?;
+    Ok(result.into())
+}

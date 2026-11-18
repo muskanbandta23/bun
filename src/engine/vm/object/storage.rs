@@ -7,7 +7,7 @@ use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use bun_alloc::AllocError;
 
-use crate::heap::{barrier, optimal_size};
+use crate::heap::{LARGE_CUTOFF, PRECISE_BIT, barrier, optimal_size};
 use crate::{ElementKind, Field, GcFree, Value, Vm};
 
 const WORD: usize = size_of::<u64>();
@@ -99,14 +99,47 @@ impl Storage {
         public_length: u32,
         vector_length: u32,
     ) -> Result<Storage, AllocError> {
+        let size = Self::size(capacity, Some(vector_length));
+        if size > LARGE_CUTOFF && kind.hole() == 0 {
+            let base = vm.heap.auxiliary.try_allocate_large_zeroed(&vm.heap, size);
+            if base == 0 {
+                return Err(AllocError);
+            }
+            let storage = Storage::from_base(base, capacity);
+            // SAFETY: new, and of that size.
+            unsafe { storage.set_lengths(public_length, vector_length) };
+            return Ok(storage);
+        }
         let storage = Self::try_allocate(vm, 0, capacity, Some(vector_length))?;
-        // SAFETY: new, and of that size.
+        // SAFETY: as above.
         unsafe {
             storage.clear_slots(0, capacity);
             storage.set_lengths(public_length, vector_length);
             storage.clear_elements(kind, 0, vector_length);
         }
         Ok(storage)
+    }
+
+    /// The new elements are not initialized. `None` if it takes a copy. May collect.
+    ///
+    /// # Safety
+    /// As for `Heap::try_grow_precise`. There is no pre-capacity, and the vector gets longer.
+    #[inline]
+    pub(super) unsafe fn try_grow(
+        self,
+        vm: &Vm,
+        capacity: usize,
+        vector_length: u32,
+    ) -> Option<Storage> {
+        let (base, size) = (self.base(capacity), Self::size(capacity, Some(vector_length)));
+        if base & PRECISE_BIT == 0 {
+            return None;
+        }
+        // SAFETY: the caller's.
+        match unsafe { vm.heap.try_grow_precise(base, size) } {
+            0 => None,
+            base => Some(Storage::from_base(base, capacity)),
+        }
     }
 
     #[inline(always)]
@@ -235,6 +268,14 @@ impl Storage {
     pub(crate) unsafe fn copy_words_to(self, target: Storage, first: isize, count: usize) {
         // SAFETY: the caller's.
         unsafe { core::ptr::copy_nonoverlapping(self.word(first), target.word(first), count) }
+    }
+
+    /// The same, to another index.
+    #[inline(always)]
+    pub(super) unsafe fn copy_elements_to(self, from: u32, target: Storage, to: u32, count: u32) {
+        let (source, target) = (self.word(from as isize), target.word(to as isize));
+        // SAFETY: the caller's.
+        unsafe { core::ptr::copy_nonoverlapping(source, target, count as usize) }
     }
 
     /// The count is in the last of the unused words.

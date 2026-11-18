@@ -1128,6 +1128,7 @@ useStrict = use strict
 @toThis
 @typedArrayFromFast
 @typedArrayLength
+@typedArraySpeciesCreate
 @undefined
 @values
 @wrapForValidIteratorCreate

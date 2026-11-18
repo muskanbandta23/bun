@@ -182,6 +182,9 @@ pub unsafe trait Element: Copy + Default + GcFree + 'static {
     /// ToNumber or ToBigInt, and then the conversion operation of the type.
     fn from_value(cx: &mut Cx, value: Value) -> JsResult<Self>;
 
+    /// The same for a number or a BigInt, whichever the type takes. `None` for anything else.
+    fn from_numeric(value: Value) -> Option<Self>;
+
     /// The element that is the same value, if there is one. Any NaN stands for NaN.
     fn exactly(value: Value) -> Option<Self>;
 
@@ -240,15 +243,6 @@ pub trait NumberElement: Element {
     fn convert<T: NumberElement>(self) -> T;
 
     fn to_number_value(self) -> Value;
-
-    /// `None` if it is no number.
-    #[inline(always)]
-    fn from_number_value(value: Value) -> Option<Self> {
-        match value.as_int32() {
-            Some(integer) => Some(Self::from_int32(integer)),
-            None => value.as_double().map(Self::from_double),
-        }
-    }
 }
 
 macro_rules! number_methods {
@@ -263,6 +257,14 @@ macro_rules! number_methods {
             match value.as_int32() {
                 Some(integer) => Ok(Self::from_int32(integer)),
                 None => value.to_number(cx).map(Self::from_double),
+            }
+        }
+
+        #[inline(always)]
+        fn from_numeric(value: Value) -> Option<Self> {
+            match value.as_int32() {
+                Some(integer) => Some(Self::from_int32(integer)),
+                None => value.as_double().map(Self::from_double),
             }
         }
     };
@@ -432,7 +434,7 @@ float_elements! {
 }
 
 macro_rules! bigint_elements {
-    ($($type:ty, $name:ident, $wrapping:ident, $exact:ident;)*) => {$(
+    ($($type:ty, $name:ident, $exact:ident;)*) => {$(
         // SAFETY: an integer of that size.
         unsafe impl Element for $type {
             const TYPE: ElementType = ElementType::$name;
@@ -446,7 +448,12 @@ macro_rules! bigint_elements {
 
             #[inline]
             fn from_value(cx: &mut Cx, value: Value) -> JsResult<$type> {
-                value.$wrapping(cx)
+                value.to_biguint64(cx).map(|bits| bits as $type)
+            }
+
+            #[inline]
+            fn from_numeric(value: Value) -> Option<$type> {
+                Some(value.as_bigint()?.value().to_u64_wrapping() as $type)
             }
 
             #[inline]
@@ -458,6 +465,6 @@ macro_rules! bigint_elements {
 }
 
 bigint_elements! {
-    i64, BigInt64, to_bigint64, to_i64;
-    u64, BigUint64, to_biguint64, to_u64;
+    i64, BigInt64, to_i64;
+    u64, BigUint64, to_u64;
 }

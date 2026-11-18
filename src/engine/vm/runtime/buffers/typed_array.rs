@@ -276,7 +276,7 @@ impl JsTypedArray {
     #[inline(always)]
     pub fn try_set_number(&self, cx: &mut Cx, index: usize, value: Value) -> bool {
         with_element_type!(self.element_type(),
-            T => T::from_number_value(value).is_some_and(|it| self.typed::<T>().set(cx, index, it)),
+            T => T::from_numeric(value).is_some_and(|it| self.typed::<T>().set(cx, index, it)),
             bigint => false
         )
     }

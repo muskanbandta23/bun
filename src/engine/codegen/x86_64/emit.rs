@@ -11,7 +11,7 @@ use bun_engine_asm::{
 use smallvec::SmallVec;
 
 use super::instruction::{Amode, Inst, Source, Stored, Test};
-use crate::client::Client;
+use crate::client::{Client, Frame};
 use crate::ir::{Checked, Function, Load, Location, Op, Type, Unary, Wide};
 use crate::machine::{Class, Emitter, Isa, Operands, Registers, Shared, SharesInstructions};
 
@@ -441,6 +441,7 @@ impl Isa for Inst {
     fn emit_move(
         masm: &mut MacroAssembler,
         function: &Function,
+        _: &Frame,
         from: Location,
         to: Location,
         class: Class,
@@ -506,7 +507,7 @@ impl Isa for Inst {
             Self::Copy => {
                 let (class, to, from) = (o.class_of_next(), o.location(), o.location());
                 if from != to {
-                    Self::emit_move(emitter.masm, function, from, to, class);
+                    Self::emit_move(emitter.masm, function, emitter.frame, from, to, class);
                 }
             }
             Self::ZeroExtend => match (o.gpr(), o.location()) {

@@ -107,15 +107,13 @@ fn compile(code_block: &CodeBlock) -> Option<Arc<BaselineCode>> {
     Some(code)
 }
 
-/// For a code block that is being interpreted. Returns where the frame goes on with the instruction at its call site,
-/// or zero if it stays with the interpreter for good.
-pub fn compile_and_enter(code_block: &CodeBlock) -> usize {
+/// For a code block that is being interpreted. False if it has to stay that way.
+pub fn install(code_block: &CodeBlock) -> bool {
     let code = (options().use_jit && options().use_baseline_jit)
         .then(|| shared_code(code_block).or_else(|| compile(code_block)))
         .flatten();
     let Some(code) = code else {
-        code_block.execution_counter().set(i32::MIN);
-        return 0;
+        return false;
     };
     for &(word, seen) in &code.assumed {
         // SAFETY: from an instruction of the same code that has such an entry.
@@ -129,13 +127,27 @@ pub fn compile_and_enter(code_block: &CodeBlock) -> usize {
     }
     code_block.set_compiled(Tier::Baseline, Rc::new(Installed(code)));
     (code_block.execution_counter()).set(-options().threshold_for_quick_optimizer);
-    resume_entry()
+    true
 }
 
-/// To jump to with the frame pointer and the `Vm` in their registers, for a frame whose code block has baseline code.
-/// Runs the instruction at the call site.
-pub fn resume_entry() -> usize {
-    thunks::get().map_or(0, |thunks| thunks.resume)
+fn installed_code(code_block: &CodeBlock) -> Option<Arc<BaselineCode>> {
+    shared_code(code_block).filter(|_| code_block.tier() == Tier::Baseline)
+}
+
+/// For the executable. This and the others below fall back on the interpreter if there is no baseline code.
+pub fn entry(code_block: &CodeBlock) -> usize {
+    match installed_code(code_block) {
+        Some(code) => code.handle.address(code.entry),
+        None => bun_engine_interpreter::entry(),
+    }
+}
+
+/// To jump to with the frame pointer and the `Vm` in their registers. Runs the instruction at the call site.
+pub fn resume_entry(code_block: &CodeBlock) -> usize {
+    match thunks::get().filter(|_| code_block.tier() == Tier::Baseline) {
+        Some(thunks) => thunks.resume,
+        None => bun_engine_interpreter::resume_entry(),
+    }
 }
 
 pub fn catch_address(code_block: &CodeBlock, _: u32) -> usize {
@@ -145,9 +157,11 @@ pub fn catch_address(code_block: &CodeBlock, _: u32) -> usize {
     }
 }
 
-/// Where a function, a getter or a setter that the instruction has called returns to.
+/// Where a function that the instruction has called returns to. In baseline code, a getter or a setter too.
 pub fn return_point(code_block: &CodeBlock, offset: u32) -> Option<usize> {
-    let code = shared_code(code_block).filter(|_| code_block.tier() == Tier::Baseline)?;
+    let Some(code) = installed_code(code_block) else {
+        return bun_engine_interpreter::return_point(code_block.body().instructions(), offset);
+    };
     let index = (code.return_points).binary_search_by_key(&offset, |&(offset, _)| offset);
     Some(code.handle.address(code.return_points[index.ok()?].1))
 }

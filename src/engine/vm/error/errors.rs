@@ -1,8 +1,12 @@
 //! Errors that several places throw.
 
+use bun_engine_bytecode::{ErrorKind, Specialization, StaticError};
 use bun_engine_text::{PropertyName, StringBuilder, StringRef, Text};
 
-use crate::{Class, Cx, ErrorInstance, ErrorType, Gc, Message, SourceAppender, Thrown, Value};
+use crate::{
+    Class, Cx, ErrorInstance, ErrorType, Gc, JsFunction, JsObject, Message, SourceAppender, Thrown,
+    Value,
+};
 
 pub const TYPE_ERROR: &str = "Type error";
 pub const NON_EXTENSIBLE_DEFINE: &str =
@@ -48,7 +52,7 @@ pub const RESTRICTED_PROPERTY_ACCESS: &str =
 pub fn describe_value(cx: &Cx, value: Value, out: &mut StringBuilder) {
     if let Some(string) = value.as_string() {
         out.push_latin1(b'"');
-        out.push_text(string.to_string_without_resolving().text());
+        string.append_to(out);
         out.push_latin1(b'"');
     } else if let Some(symbol) = value.as_symbol() {
         match symbol.descriptive_string() {
@@ -63,7 +67,7 @@ pub fn describe_value(cx: &Cx, value: Value, out: &mut StringBuilder) {
         out.push_text(object.calculated_class_name(cx).text());
     } else {
         match value.primitive_to_string(cx) {
-            Ok(string) => out.push_text(string.to_string_without_resolving().text()),
+            Ok(string) => string.append_to(out),
             Err(thrown) => cx.discard_unless_termination(thrown),
         }
     }
@@ -111,6 +115,67 @@ errors_about_values! {
     create_has_instance_not_a_function, throw_has_instance_not_a_function,
         "[Symbol.hasInstance] is not a function, undefined, or null", HasInstanceNotAFunction;
     create_invalid_prototype, throw_invalid_prototype, "is not an object or null", InvalidPrototype;
+}
+
+/// For an instruction whose callee cannot be called in that way.
+#[cold]
+#[inline(never)]
+pub fn throw_failed_call(cx: &Cx, callee: Value, specialization: Specialization) -> Thrown {
+    let (message, appender) = match specialization {
+        Specialization::Call => ("is not a function", SourceAppender::FailedCall),
+        Specialization::Construct => ("is not a constructor", SourceAppender::FailedConstruct),
+    };
+    cx.throw(create_about(cx, callee, message, appender).into())
+}
+
+/// From a frame that `new` has made for a function which is no constructor.
+#[cold]
+pub(crate) fn throw_entered_as_constructor(cx: &Cx, callee: Gc<JsObject>) -> Thrown {
+    match callee.downcast::<JsFunction>() {
+        Some(function) if !function.is_native() => {
+            let cx = cx.in_realm_of_caller(0);
+            throw_failed_call(cx, callee.into(), Specialization::Construct)
+        }
+        _ => throw_not_a_constructor(cx.in_realm_of_caller(1), callee.into()),
+    }
+}
+
+/// `check_this`
+#[cold]
+pub fn throw_this_is_not_bound(cx: &Cx) -> Thrown {
+    let cx = if cx.is_leaving_constructor() {
+        cx.in_realm_of_caller(1)
+    } else {
+        cx
+    };
+    cx.throw_reference_error(
+        "'super()' must be called in derived constructor before accessing |this| or returning non-object.",
+    )
+}
+
+pub fn error_type_of(kind: ErrorKind) -> ErrorType {
+    match kind {
+        ErrorKind::TypeError => ErrorType::TypeError,
+        ErrorKind::RangeError | ErrorKind::OutOfMemory => ErrorType::RangeError,
+        ErrorKind::ReferenceError => ErrorType::ReferenceError,
+        ErrorKind::SyntaxError => ErrorType::SyntaxError,
+    }
+}
+
+/// `throw_static`
+#[cold]
+pub fn throw_static(cx: &Cx, error: StaticError, name: PropertyName<'_>) -> Thrown {
+    let cx = match error {
+        StaticError::DerivedConstructorResult => cx.in_realm_of_caller(1),
+        _ => cx,
+    };
+    let (error_type, message) = (error_type_of(error.kind()), error.message());
+    match error.message_around_name() {
+        Some((before, after)) if !name.text().is_empty() => {
+            throw_naming(cx, error_type, before, name, after, message)
+        }
+        _ => cx.throw_error(error_type, message),
+    }
 }
 
 /// With the text of the expression that failed.

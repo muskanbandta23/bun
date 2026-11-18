@@ -1,6 +1,7 @@
 //! The registry of modules, and where loading starts.
 
 use core::cell::Cell;
+use std::io::Write;
 use std::rc::Rc;
 
 use bun_engine_bytecode::ImportPhase;
@@ -14,12 +15,12 @@ use super::{handled_promise, react};
 use crate::scope::realm_of_scope;
 use crate::{
     AbstractModuleRecord, AnalysisError, CodeBlock, Cx, CyclicModuleRecord, Environment,
-    ErrorInstance, ErrorType, FetchParameters, Field, Gc, InternalMicrotask, JsCell, JsPromise,
-    JsResult, JsSourceCode, JsString, ModuleEnvironment, ModuleKey, ModuleKeyRef, ModuleName,
-    ModuleRegistryEntry, ModuleRequest, ModuleType, PromiseStatus, RegistryStatus, SourceCode,
-    SourceProvider, SourceProviderRef, SourceTextModuleRecord, SourceType, SyntheticExports,
-    SyntheticModuleRecord, TracedMap, TypeFlags, Value, Vm, create_compile_error_in,
-    origin_of_caller,
+    ErrorInstance, ErrorType, FetchParameters, Field, Gc, GlobalObject, InternalMicrotask, JsCell,
+    JsPromise, JsResult, JsSourceCode, JsString, ModuleEnvironment, ModuleKey, ModuleKeyRef,
+    ModuleName, ModuleRegistryEntry, ModuleRequest, ModuleType, PromiseStatus, RegistryStatus,
+    SourceCode, SourceProvider, SourceProviderRef, SourceTextModuleRecord, SourceType,
+    SyntheticExports, SyntheticModuleRecord, TracedMap, TypeFlags, Value, Vm,
+    create_compile_error_in, json, options, origin_of_caller,
 };
 
 /// The key of the referrer and the specifier.
@@ -66,6 +67,14 @@ pub(super) fn referrer_text(key: Option<&Identifier>) -> Option<StringRef> {
     })
 }
 
+/// Before the embedder is asked.
+pub(super) fn log(step: &str, name: Value) {
+    if options().log_module_loading {
+        let name = (name.as_string()).map_or_default(|it| it.to_string_without_resolving());
+        let _ = writeln!(std::io::stderr(), "Loader [{step}] {name}");
+    }
+}
+
 impl ModuleLoader {
     /// `module_scope` is what is around the modules: the global object, or an environment that is no `with` scope.
     pub fn create(vm: &Vm, module_scope: Gc<JsCell>) -> Gc<ModuleLoader> {
@@ -81,6 +90,10 @@ impl ModuleLoader {
 
     pub fn module_scope(&self) -> Gc<JsCell> {
         self.module_scope
+    }
+
+    pub fn realm(&self) -> Gc<GlobalObject> {
+        realm_of_scope(self.module_scope)
     }
 
     /// What `import()` in that scope uses. The embedder can bind `@moduleLoader`.
@@ -184,6 +197,7 @@ impl ModuleLoader {
             None => Value::UNDEFINED,
         };
         let (name, referrer) = (value(Some(name)), value(referrer));
+        log("resolve", name);
         (cx.global().hooks().modules.resolve)(cx, self.into(), name, referrer, kind)
     }
 
@@ -195,6 +209,7 @@ impl ModuleLoader {
         parameters: Parameters,
     ) -> JsResult<Gc<JsPromise>> {
         let key = Value::from_name(cx, key.name());
+        log("fetch", key);
         (cx.global().hooks().modules.fetch)(cx, self.into(), key, referrer, parameters)
     }
 
@@ -261,10 +276,11 @@ impl ModuleLoader {
         match source.provider.source_type() {
             SourceType::WebAssembly => (cx.hooks().make_wasm_module)(cx, this, key, code, promise)?,
             SourceType::AnalyzedModule => {
+                cx.ensure_can_run(&source.provider)?;
                 (hooks.make_analyzed_module)(cx, this, key, &source, promise)?;
             }
             SourceType::Json => {
-                let value = (cx.hooks().parse_json)(cx, source.text()).inspect_err(|_| {
+                let value = json::parse(cx, source.text().into()).inspect_err(|_| {
                     let error = cx.exception().map_or_default(|it| it.value());
                     let key = ModuleKeyRef::new(key.name(), ModuleType::Json);
                     failure::note(cx, error, key, FailureKind::Evaluation);
@@ -285,7 +301,10 @@ impl ModuleLoader {
                 };
                 promise.fulfill(cx, module.into());
             }
-            _ => self.make_source_text_module(cx, key, &source, promise),
+            _ => {
+                cx.ensure_can_run(&source.provider)?;
+                self.make_source_text_module(cx, key, &source, promise);
+            }
         }
         Ok(())
     }
@@ -432,6 +451,7 @@ impl ModuleLoader {
         origin: Option<&SourceProvider>,
         phase: ImportPhase,
     ) -> JsResult<Gc<JsPromise>> {
+        log("import", specifier.into());
         let parameters = FetchParameters::from_import_options(cx, options)?;
         let import = cx.global().hooks().modules.import;
         import(cx, self.into(), specifier, parameters, origin, phase)

@@ -27,7 +27,7 @@ fn find_group<'a>(membership: &'a [u8], controller: &[u8]) -> Group<'a> {
             return Group::Version1(Some(path.strip_prefix(b"/").unwrap_or(path)));
         }
         if id == b"0" && controllers.is_empty() {
-            unified = unified.or(path.strip_prefix(b"/"));
+            unified = unified.or_else(|| path.strip_prefix(b"/"));
         }
     }
     unified.map_or(Group::Version1(None), Group::Version2)

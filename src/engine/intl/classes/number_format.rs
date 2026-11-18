@@ -243,7 +243,7 @@ fn resolved_options(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let resolved = *this.format.options();
     let numbering_system = this.format.numbering_system().or_throw(cx)?;
 
-    let options = Record::with_locale(cx, this.format.locale());
+    let options = Record::with_locale(cx, this.format.locale().string().clone());
     options.put_string(names::numberingSystem, numbering_system.to_string_ref());
     options.put_named(names::style, resolved.style.style());
     match resolved.style {

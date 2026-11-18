@@ -44,17 +44,23 @@ fn executable(
     length: u32,
     function: NativeFunction,
 ) -> Gc<NativeExecutable> {
-    let (name, constructor) = (function_name("", name), native_not_a_constructor);
-    let (intrinsic, visibility) = (Intrinsic::None, Visibility::Public);
-    NativeExecutable::shared(
+    let executable = NativeExecutable::shared(
         cx,
         length,
-        name,
+        function_name("", name),
         function,
-        constructor,
-        intrinsic,
-        visibility,
-    )
+        native_not_a_constructor,
+        Intrinsic::None,
+        Visibility::Public,
+    );
+    // A name such as `$*` does not fit in the syntax of NativeFunction.
+    let is_punctuation = |unit: u16| {
+        u8::try_from(unit).is_ok_and(|it| it.is_ascii_punctuation() && it != b'$' && it != b'_')
+    };
+    if !name.is_symbol() && name.text().code_units().any(is_punctuation) {
+        executable.leave_name_out_of_source_text(cx);
+    }
+    executable
 }
 
 fn cached(

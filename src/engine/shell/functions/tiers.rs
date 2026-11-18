@@ -24,7 +24,6 @@ pub(super) const FUNCTIONS: Functions = &[
     ("effectful42", effectful_42, 0),
     ("resetSuperSamplerState", return_undefined, 0),
     ("disableRichSourceInfo", return_undefined, 0),
-    ("platformSupportsSamplingProfiler", return_false, 0),
 ];
 
 /// How often a test repeats JavaScript and WebAssembly code to reach the last tier.

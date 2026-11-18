@@ -1,6 +1,6 @@
 //! JSON that is written once, from start to end, and may not fit in memory.
 
-use bun_engine_number::{NUMBER_TEXT_CAPACITY, write_u64};
+use bun_engine_number::{NUMBER_TEXT_CAPACITY, NumberText, write_u64};
 use bun_engine_text::{AllocError, StringBuilder, StringRef, Text};
 
 pub(crate) trait JsonWriter: Default {
@@ -16,6 +16,10 @@ pub(crate) trait JsonWriter: Default {
         let mut digits = [0; NUMBER_TEXT_CAPACITY];
         let length = write_u64(integer, &mut digits);
         self.raw(&digits[..length]);
+    }
+
+    fn number(&mut self, number: f64) {
+        self.raw(&NumberText::from(number));
     }
 
     /// With commas between them.

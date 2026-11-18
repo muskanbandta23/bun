@@ -3,6 +3,7 @@
 mod cell;
 mod export;
 mod field_offsets;
+mod in_call_frame;
 mod native_abi;
 mod object_ops;
 mod trace;
@@ -36,6 +37,12 @@ pub fn derive_trace(item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn native_abi(_: TokenStream, item: TokenStream) -> TokenStream {
     expand(native_abi::expand(item.into()))
+}
+
+/// Puts a function among those of `bun_engine_vm::call::code_in_call_frames`. With `naked` for one that is.
+#[proc_macro_attribute]
+pub fn in_call_frame(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    in_call_frame::expand(&arguments.into(), &item.into()).into()
 }
 
 /// Makes a function of `bun_engine_embed` the C function `engine_<name>`. See `abi.rs` there.

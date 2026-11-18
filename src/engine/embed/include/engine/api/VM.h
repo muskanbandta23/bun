@@ -302,7 +302,10 @@ private:
     Exception* m_terminationException;
     Exception* m_lastException;
     ExecutableBase* m_internalFunctionExecutable;
-    mutable std::atomic<uint32_t> m_refCount;
+    // The constructor would reset it.
+    union {
+        mutable std::atomic<uint32_t> m_refCount;
+    };
 
 public:
     bool didEnterVM;
@@ -331,10 +334,14 @@ private:
     void (*m_onEachMicrotaskTick)(VM&) { nullptr };
     ExceptionScope* m_topExceptionScope { nullptr };
     ExceptionEventLocation m_simulatedThrowLocation;
+    std::unique_ptr<WTF::StackTrace> m_simulatedThrowStack;
     IsoSubspace* m_nativeStdFunctionSpace { nullptr };
 
 public:
-    alignas(Engine::Layout::Vm_embedder_members) Heap heap;
+    // Rust constructs and destroys it.
+    union {
+        alignas(Engine::Layout::Vm_embedder_members) Heap heap;
+    };
     SmallStrings smallStrings;
 };
 
@@ -381,6 +388,10 @@ ALWAYS_INLINE void JSCell::finishCreation(VM& vm) { vm.mutatorFence(); }
 template<typename T> ALWAYS_INLINE void* allocateCell(VM& vm, size_t size = sizeof(T))
 {
     return T::template subspaceFor<T, SubspaceAccess::OnMainThread>(vm)->allocate(vm.heap, size);
+}
+
+namespace Integrity {
+inline void auditCellFully(VM& vm, JSCell* cell) { RELEASE_ASSERT(&cell->vm() == &vm && !cell->isPendingDestruction()); }
 }
 
 // A collection that has become due runs at the end of the scope.

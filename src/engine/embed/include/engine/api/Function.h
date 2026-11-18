@@ -42,6 +42,12 @@ public:
 
     static constexpr unsigned StructureFlags = Engine::Layout::functionFlags;
 
+    template<typename CellType, SubspaceAccess> static IsoSubspace* subspaceFor(VM& vm)
+    {
+        static_assert(CellType::needsDestruction == DoesNotNeedDestruction);
+        return &vm.heap.cellSpace().allocatorFor<sizeof(CellType)>();
+    }
+
     static CallData getCallData(JSCell* cell) { return JSC::getCallData(cell); }
     static CallData getConstructData(JSCell* cell) { return JSC::getConstructData(cell); }
     static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&) ENGINE_SYMBOL(engine_Function_put);
@@ -161,15 +167,15 @@ public:
     template<typename, SubspaceAccess> static IsoSubspace* subspaceFor(VM& vm) { return &subspace(vm); }
 
     static JSNativeStdFunction* create(VM&, JSGlobalObject*, unsigned length, const String& name, NativeStdFunction&&, Intrinsic = NoIntrinsic, NativeFunction constructor = callHostFunctionAsConstructor);
-    // Keeps the cells that the closure refers to alive.
-    template<std::convertible_to<JSCell*>... Cells>
-        requires(sizeof...(Cells) > 0)
-    static JSNativeStdFunction* create(VM& vm, JSGlobalObject* globalObject, unsigned length, const String& name, NativeStdFunction&& function, Cells... captured)
+    // Keeps the values that the closure refers to alive.
+    template<typename... Values>
+        requires(sizeof...(Values) > 0 && ((std::convertible_to<Values, JSCell*> || std::same_as<Values, JSValue>) && ...))
+    static JSNativeStdFunction* create(VM& vm, JSGlobalObject* globalObject, unsigned length, const String& name, NativeStdFunction&& function, Values... captured)
     {
-        static_assert(sizeof...(Cells) <= maxCaptures);
+        static_assert(sizeof...(Values) <= maxCaptures);
         auto* result = create(vm, globalObject, length, name, WTF::move(function));
         auto* field = result->m_captures;
-        ((field++)->setMayBeNull(vm, result, captured), ...);
+        ((field++)->set(vm, result, captured), ...);
         return result;
     }
 
@@ -187,7 +193,7 @@ private:
     static IsoSubspace& subspace(VM&);
 
     NativeStdFunction m_function;
-    WriteBarrier<JSCell> m_captures[maxCaptures];
+    WriteBarrier<Unknown> m_captures[maxCaptures];
 };
 
 // A native function that is a class of its own, such as a constructor.
@@ -228,6 +234,7 @@ protected:
     {
     }
 
+    DECLARE_DEFAULT_FINISH_CREATION;
     void finishCreation(VM& vm, unsigned length, const String& name, PropertyAdditionMode mode = PropertyAdditionMode::WithStructureTransition) { Engine::internal_function_finish_creation(this, vm, length, name, mode == PropertyAdditionMode::WithStructureTransition); }
 
 private:

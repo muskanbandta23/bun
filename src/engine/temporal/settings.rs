@@ -198,6 +198,7 @@ impl Precision {
 }
 
 impl PrecisionOptions {
+    #[inline]
     pub(crate) fn resolve(self, largest_allowed: Unit, too_large: Error) -> Result<Precision> {
         let smallest_unit = match self.smallest_unit {
             Some(option) => Some(option.as_smallest_unit(UnitGroup::Time)?),

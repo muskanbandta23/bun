@@ -297,6 +297,12 @@ impl Class {
         core::ptr::fn_addr_eq(self.ops.prevent_extensions, ordinary)
     }
 
+    pub(super) fn has_properties_of_arrays(&self) -> bool {
+        let (ops, array) = (&self.ops, &JsArray::CLASS.ops);
+        core::ptr::fn_addr_eq(ops.get_own_property_slot, array.get_own_property_slot)
+            && core::ptr::fn_addr_eq(ops.define_own_property, array.define_own_property)
+    }
+
     /// That of ordinary objects, arrays or functions.
     pub(crate) fn has_builtin_define_own_property(&self) -> bool {
         [JsObject::CLASS, JsArray::CLASS, JsFunction::CLASS]

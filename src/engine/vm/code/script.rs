@@ -27,6 +27,7 @@ pub fn evaluate_script_in_scope(
     this: Value,
 ) -> JsResult<Value> {
     cx.check_stack()?;
+    cx.ensure_can_run(&source.provider)?;
     match cx.compile_script(&source.provider, static_scope_of(scope).as_ref()) {
         // SAFETY: just compiled for it.
         Ok(script) => unsafe { evaluate_compiled_script(cx, source, script, scope, this) },
@@ -47,6 +48,7 @@ pub unsafe fn evaluate_compiled_script(
     scope: Gc<JsCell>,
     this: Value,
 ) -> JsResult<Value> {
+    cx.ensure_can_run(&source.provider)?;
     let executable = ProgramExecutable::create(cx, source, script);
     declare_globals(cx, &executable.unit().declarations)
         .inspect_err(|_| cx.notify_debugger_of_exception())?;

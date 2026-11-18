@@ -30,7 +30,7 @@ impl CalendarId {
     /// CalendarDateFromFields
     pub(crate) fn date_from_fields(
         self,
-        fields: DateFields,
+        fields: &DateFields,
         overflow: Overflow,
     ) -> Result<IsoDate> {
         let out_of_range = Error::DateFieldsOutOfRange;
@@ -41,15 +41,15 @@ impl CalendarId {
     /// CalendarYearMonthFromFields
     pub(crate) fn year_month_from_fields(
         self,
-        fields: DateFields,
+        fields: &DateFields,
         overflow: Overflow,
     ) -> Result<IsoDate> {
         let out_of_range = Error::YearMonthFieldsOutOfRange;
         let fields = DateFields {
             day: Some(1),
-            ..fields
+            ..*fields
         };
-        let date = self.fields_to_iso(fields, overflow, out_of_range)?;
+        let date = self.fields_to_iso(&fields, overflow, out_of_range)?;
         (date.is_month_within_limits())
             .then_some(date)
             .ok_or(out_of_range)
@@ -59,7 +59,7 @@ impl CalendarId {
     #[inline]
     fn fields_to_iso(
         self,
-        fields: DateFields,
+        fields: &DateFields,
         overflow: Overflow,
         out_of_range: Error,
     ) -> Result<IsoDate> {
@@ -89,7 +89,7 @@ impl CalendarId {
     }
 
     #[inline]
-    pub(super) fn resolve(self, fields: DateFields, year_field: YearField) -> Result<Resolved> {
+    pub(super) fn resolve(self, fields: &DateFields, year_field: YearField) -> Result<Resolved> {
         if self != CalendarId::Iso8601 {
             return self.resolve_non_iso(fields, year_field);
         }
@@ -115,7 +115,7 @@ impl CalendarId {
     }
 
     /// NonISOResolveFields
-    fn resolve_non_iso(self, fields: DateFields, year_field: YearField) -> Result<Resolved> {
+    fn resolve_non_iso(self, fields: &DateFields, year_field: YearField) -> Result<Resolved> {
         let needs_year = year_field == YearField::Required
             || fields.month_code.is_none()
             || fields.month.is_some();

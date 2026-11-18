@@ -44,9 +44,11 @@ fn main() {
     println!("cargo:rerun-if-changed={}", transcoder.display());
 
     let mut native = cc::Build::new();
+    if env::var_os("CXX").is_none() {
+        native.compiler("clang++");
+    }
     native
         .cpp(true)
-        .compiler(env::var("CXX").unwrap_or_else(|_| "clang++".into()))
         .std("c++23")
         .opt_level(3)
         .warnings(false)

@@ -1,8 +1,8 @@
 //! `DisposableStack` and `AsyncDisposableStack`.
 
 use bun_engine_vm::{
-    CellKind, ErrorType, Extends, FieldArray, GlobalObject, JsArray, JsFunction,
-    JsFunctionWithFields, JsObjectInit, RealmSlot, Vm, get_dispose_method, new_suppressed_error,
+    CellKind, ErrorInstance, ErrorType, Extends, FieldArray, GlobalObject, JsArray, JsFunction,
+    JsFunctionWithFields, JsObjectInit, RealmSlot, Vm, errors, get_dispose_method,
 };
 
 use super::instance_shape;
@@ -148,10 +148,7 @@ pub(super) fn initialize_dispose_async(cx: &Cx) {
 
 #[native_abi]
 fn call<K: Kind>(cx: &mut Cx, _: &CallFrame) -> JsResult<Value> {
-    let class = K::CLASS.name();
-    Err(cx.throw_type_error(format_args!(
-        "calling {class} constructor without new is invalid"
-    )))
+    Err(errors::throw_called_without_new(cx, K::CLASS.name()))
 }
 
 #[native_abi]
@@ -263,7 +260,7 @@ fn dispose(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
         if let Err(thrown) = cx.call(method, value, &[]) {
             let caught = cx.catch_value(thrown)?;
             error = Some(match error {
-                Some(suppressed) => new_suppressed_error(cx, caught, suppressed).into(),
+                Some(suppressed) => ErrorInstance::suppressed(cx, caught, suppressed).into(),
                 None => caught,
             });
         }

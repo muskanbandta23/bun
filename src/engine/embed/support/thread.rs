@@ -39,7 +39,6 @@ unsafe extern "C" fn Support__Thread__spawn(
         .map(Box::new)
 }
 
-#[expect(clippy::boxed_local, reason = "C++ holds the pointer")]
 #[unsafe(no_mangle)]
 extern "C" fn Support__Thread__join(thread: Box<JoinHandle<()>>) {
     let _ = thread.join();

@@ -208,9 +208,14 @@ impl NativeExecutable {
         if let Some(text) = self.cached_source_text() {
             return Ok(text);
         }
-        let text = native_source_text(cx, self.name.text())?;
+        let text = native_source_text(cx, crate::anchor!(self).name.text())?;
         self.set_cached_source_text(Some(text));
         Ok(text)
+    }
+
+    pub(crate) fn leave_name_out_of_source_text(&self, vm: &Vm) {
+        let text = JsString::from_literal(vm, "function () { [native code] }");
+        self.set_cached_source_text(Some(text));
     }
 
     /// Whether scripts see `bound ` in front of the name.

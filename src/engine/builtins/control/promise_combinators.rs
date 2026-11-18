@@ -63,6 +63,7 @@ fn create_combinator(
 }
 
 /// `pass_on` makes the function that settles the result right away.
+#[inline(never)]
 fn invoke_then(
     cx: &mut Cx,
     task: InternalMicrotask,
@@ -87,7 +88,7 @@ fn invoke_then(
     cx.call(then, promise, &handlers).map(drop)
 }
 
-#[inline]
+#[inline(always)]
 fn add_element(
     cx: &mut Cx,
     combinator: Option<Gc<PromiseCombinator>>,
@@ -114,11 +115,21 @@ fn add_to_promise(
             }
             None => InternalReaction::new(task, Some(promise.cell()), promise.into()),
         };
-        if (value.as_object()).is_none_or(|object| is_definitely_not_thenable(&object))
-            && cx.holds(RealmWatchpoint::PromiseThen)
-            && cx.holds(RealmWatchpoint::PromiseSpecies)
+        let (global, then, species) = (
+            cx.global(),
+            RealmWatchpoint::PromiseThen,
+            RealmWatchpoint::PromiseSpecies,
+        );
+        if let Some(next) = value.downcast::<JsPromise>() {
+            if next.is_plain_in(&global, then) && next.is_plain_in(&global, species) {
+                next.react(cx, reaction);
+                return Ok(());
+            }
+        } else if (value.as_object()).is_none_or(|object| is_definitely_not_thenable(&object))
+            && cx.holds(then)
+            && cx.holds(species)
         {
-            reaction.queue(cx, &cx.global(), PromiseStatus::Fulfilled, value);
+            reaction.queue(cx, &global, PromiseStatus::Fulfilled, value);
             return Ok(());
         }
         let next = JsPromise::resolved(cx, value)?;

@@ -137,16 +137,14 @@ public:
     void clearData() { Engine::sampling_profiler_clear(vm()); }
     // Nothing keeps the executables alive.
     Vector<StackTrace> releaseStackTraces(const DeferGC&);
-    String stackTracesAsJSON() { return Engine::sampling_profiler_traces_json(vm()); }
+    // Releases them too. Null if it is too long.
+    String stackTracesAsJSON() { return Engine::sampling_profiler_take_traces_as_json(vm()); }
     String topFunctionsReport() { return Engine::sampling_profiler_top_functions(vm()); }
     String topBytecodesReport() { return Engine::sampling_profiler_top_bytecodes(vm()); }
 };
 
-inline SamplingProfiler& VM::ensureSamplingProfiler()
-{
-    Engine::sampling_profiler_create(*this);
-    return *reinterpret_cast<SamplingProfiler*>(this);
-}
+inline SamplingProfiler& VM::ensureSamplingProfiler() { return *reinterpret_cast<SamplingProfiler*>(this); }
+// Null until it has been used.
 inline SamplingProfiler* VM::samplingProfiler() { return Engine::sampling_profiler_exists(*this) ? reinterpret_cast<SamplingProfiler*>(this) : nullptr; }
 
 } // namespace JSC

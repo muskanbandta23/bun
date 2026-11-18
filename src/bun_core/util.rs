@@ -1871,7 +1871,7 @@ impl ThreadLock {
                     stored.trace(),
                     crate::DumpStackTraceOptions {
                         frame_count: 10,
-                        stop_at_jsc_llint: true,
+                        stop_at_interpreter: true,
                         ..Default::default()
                     },
                 );

@@ -154,7 +154,7 @@ JSC_DEFINE_HOST_FUNCTION(functionDescribe, (JSGlobalObject * globalObject, CallF
     VM& vm = globalObject->vm();
     if (callFrame->argumentCount() < 1)
         return JSValue::encode(jsUndefined());
-    return JSValue::encode(jsString(vm, toString(callFrame->argument(0))));
+    return JSValue::encode(jsString(vm, describeRepresentation(callFrame->argument(0))));
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionDescribeArray);
@@ -509,6 +509,17 @@ JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
     return JSC::JSValue::encode(jsUndefined());
 }
 
+static JSValue takeStackTraces(JSGlobalObject* globalObject, JSC::SamplingProfiler& samplingProfiler)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    String json = samplingProfiler.stackTracesAsJSON();
+    if (json.isNull()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    RELEASE_AND_RETURN(scope, JSONParse(globalObject, json));
+}
+
 JSC_DECLARE_HOST_FUNCTION(functionSamplingProfilerStackTraces);
 JSC_DEFINE_HOST_FUNCTION(functionSamplingProfilerStackTraces,
     (JSC::JSGlobalObject * globalObject,
@@ -523,8 +534,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSamplingProfilerStackTraces,
             globalObject, scope,
             createError(globalObject, "Sampling profiler was never started"_s)));
 
-    WTF::String jsonString = vm.samplingProfiler()->stackTracesAsJSON();
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSONParse(globalObject, jsonString)));
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(takeStackTraces(globalObject, *vm.samplingProfiler())));
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionGetRandomSeed);
@@ -742,7 +752,7 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
         auto& samplingProfiler = *vm.samplingProfiler();
         String topFunctions = samplingProfiler.topFunctionsReport();
         String byteCodes = samplingProfiler.topBytecodesReport();
-        JSValue stackTraces = JSONParse(globalObject, samplingProfiler.stackTracesAsJSON());
+        JSValue stackTraces = takeStackTraces(globalObject, samplingProfiler);
 
         samplingProfiler.pause();
         samplingProfiler.clearData();
@@ -814,19 +824,17 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshotForDebugging,
 
     Bun__Feature__heap_snapshot += 1;
 
-    String jsonString;
-    {
-        DeferGCForAWhile deferGC(vm); // Prevent concurrent GC from interfering with
-                                      // the full GC that the snapshot does.
+    HeapSnapshotBuilder snapshotBuilder(
+        vm.ensureHeapProfiler(),
+        HeapSnapshotBuilder::SnapshotType::GCDebuggingSnapshot);
+    snapshotBuilder.buildSnapshot();
 
-        HeapSnapshotBuilder snapshotBuilder(
-            vm.ensureHeapProfiler(),
-            HeapSnapshotBuilder::SnapshotType::GCDebuggingSnapshot);
-        snapshotBuilder.buildSnapshot();
-
-        jsonString = snapshotBuilder.json();
+    String jsonString = snapshotBuilder.json();
+    scope.assertNoException();
+    if (jsonString.isNull()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
     }
-    scope.releaseAssertNoException();
 
     RELEASE_AND_RETURN(scope, JSValue::encode(JSONParse(globalObject, WTF::move(jsonString))));
 }

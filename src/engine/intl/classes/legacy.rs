@@ -23,8 +23,7 @@ pub(super) fn chain(cx: &mut Cx, frame: &CallFrame, instance: Value) -> JsResult
         Some(object) if inherits_from(cx, this, &frame.callee())? => {
             let symbol = cx.intl_fallback_symbol();
             let descriptor = PropertyDescriptor::data(instance, Attributes::CONSTANT);
-            object.define_property_or_throw(cx, symbol.name(), &descriptor)?;
-            symbol.keep_alive();
+            object.define_property_or_throw(cx, symbol.anchor().name(), &descriptor)?;
             Ok(this)
         }
         _ => Ok(instance),
@@ -42,5 +41,5 @@ pub(super) fn unwrap<T: CellKind>(
         return Ok(this);
     }
     let symbol = cx.intl_fallback_symbol();
-    this.get(cx, symbol.name())
+    this.get(cx, symbol.anchor().name())
 }

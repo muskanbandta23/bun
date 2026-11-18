@@ -9,4 +9,4 @@ mod runtime;
 mod thunks;
 
 pub use ic::access_handler;
-pub use runtime::{catch_address, compile_and_enter, resume_entry, return_point};
+pub use runtime::{catch_address, entry, install, resume_entry, return_point};

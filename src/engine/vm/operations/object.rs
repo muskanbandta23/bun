@@ -1,8 +1,9 @@
 use bun_engine_text::{StringRef, names, symbols};
 
+use crate::function::name_for_instances;
 use crate::{
     CellType, Cx, Gc, InternalMethod, JsObject, JsResult, PropertySlot, ProxyObject, TypeFlags,
-    Value, display_name, errors,
+    Value, errors,
 };
 
 /// IsArray
@@ -130,12 +131,7 @@ impl JsObject {
     /// What messages call the class of the object. Runs no script.
     pub fn calculated_class_name(&self, cx: &mut Cx) -> StringRef {
         let cx = cx.in_realm_of(self);
-        let name_of = |constructor: Option<Value>| {
-            let constructor = constructor?.as_object()?;
-            CellType::FUNCTIONS
-                .contains(constructor.cell_type())
-                .then(|| display_name(&constructor))
-        };
+        let name_of = |constructor: Option<Value>| name_for_instances(&*constructor?.as_object()?);
         let mut slot = PropertySlot::new(self.as_value(), InternalMethod::Inquiry);
         let own = self.ordinary_get_own_property_slot(cx, names::constructor, &mut slot);
         if let Err(thrown) = own {
@@ -155,7 +151,7 @@ impl JsObject {
             .get_pure(cx, symbols::toStringTag)
             .and_then(Value::as_string)
         {
-            Some(tag) => tag.to_string_without_resolving(),
+            Some(tag) => tag.to_string_without_collecting(),
             None => StringRef::from_literal(self.class().name()),
         }
     }

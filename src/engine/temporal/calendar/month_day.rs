@@ -32,7 +32,7 @@ impl CalendarId {
     /// CalendarMonthDayFromFields
     pub(crate) fn month_day_from_fields(
         self,
-        fields: DateFields,
+        fields: &DateFields,
         overflow: Overflow,
     ) -> Result<IsoDate> {
         let mut resolved = self.resolve(fields, YearField::Optional)?;

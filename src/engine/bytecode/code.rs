@@ -106,6 +106,14 @@ pub struct SuspendPoint {
     pub(crate) registers: Range<u32>,
 }
 
+impl SuspendPoint {
+    /// In [`Body::all_saved_registers`].
+    #[inline(always)]
+    pub fn registers(&self) -> Range<usize> {
+        self.registers.start as usize..self.registers.end as usize
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum CoverageKind {
@@ -241,10 +249,11 @@ impl Body {
 
     /// What the generator keeps while it is suspended there, in the order of its slots.
     pub fn saved_registers(&self, point: SuspendPointIndex) -> &[Register] {
-        self.tables.as_ref().map_or(&[], |tables| {
-            let range = &tables.suspend_points[point.index()].registers;
-            &tables.saved_registers[range.start as usize..range.end as usize]
-        })
+        &self.all_saved_registers()[self.suspend_points()[point.index()].registers()]
+    }
+
+    pub fn all_saved_registers(&self) -> &[Register] {
+        (self.tables.as_ref()).map_or(&[], |tables| &tables.saved_registers)
     }
 
     /// The most that any point saves.

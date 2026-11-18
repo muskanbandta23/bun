@@ -45,7 +45,7 @@ pub use field::{
     TracedVec, WeakField,
 };
 pub(crate) use gc::keep_alive;
-pub use gc::{CellKind, Extends, Gc, GcFree};
+pub use gc::{CellKind, Extends, Gc, GcFree, Held};
 pub use once_box::OnceBox;
 pub use policy::{HeapKind, HeapSizes};
 pub use precise::{PRECISE_BIT, PreciseAllocation};

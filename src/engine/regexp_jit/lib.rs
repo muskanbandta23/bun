@@ -19,10 +19,13 @@ mod class;
 mod code_point;
 mod frame;
 mod generator;
+mod lanes;
 mod run;
+mod scan;
 mod stack;
 mod switch;
 mod tables;
+mod vector;
 
 use bun_engine_asm::{Code, CodeTooLarge, Features};
 use bun_engine_regexp::Outcome;

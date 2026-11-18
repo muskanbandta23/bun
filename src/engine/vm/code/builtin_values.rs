@@ -1,13 +1,13 @@
 //! What an `@name` means in the source of a built-in, besides the intrinsics of the bytecode generator and the slots
 //! of the realm.
 
-use bun_engine_bytecode::BuiltinValue::{self, Double, Int32};
+use bun_engine_bytecode::BuiltinValue::{self, Double, Int32, ShapeFlagsTest};
 use bun_engine_bytecode::ResumeMode;
 use bun_engine_text::{MAX_ARRAY_INDEX, MAX_LENGTH, PropertyName, private_names};
 
 use crate::{
     CellType, IterationKind, JsArrayIterator, JsIteratorHelper, JsWrapForValidIterator,
-    MAX_SAFE_INTEGER,
+    MAX_SAFE_INTEGER, ProxyObject, ShapeFlags,
 };
 
 const fn is(cell_type: CellType) -> BuiltinValue {
@@ -56,6 +56,10 @@ builtin_values! {
     wrapForValidIteratorFieldIteratedIterator = Int32(JsWrapForValidIterator::ITERATOR as i32),
     wrapForValidIteratorFieldIteratedNextMethod = Int32(JsWrapForValidIterator::NEXT_METHOD as i32),
 
-    proxyFieldTarget = Int32(0),
-    proxyFieldHandler = Int32(1),
+    proxyFieldTarget = Int32(ProxyObject::TARGET_FIELD as i32),
+    proxyFieldHandler = Int32(ProxyObject::HANDLER_FIELD as i32),
+    mustValidateResultOfProxyGetAndSetTraps =
+        ShapeFlagsTest(ShapeFlags::BINDS_GET_AND_SET_TRAPS.bits()),
+    mustValidateResultOfProxyTrapsExceptGetAndSet =
+        ShapeFlagsTest(ShapeFlags::BINDS_OTHER_TRAPS.bits()),
 }

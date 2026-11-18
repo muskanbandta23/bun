@@ -106,6 +106,16 @@ pub mod default_alloc {
         }
     }
 
+    #[inline]
+    pub fn zalloc(size: usize) -> *mut c_void {
+        if cfg!(bun_asan) {
+            // SAFETY: `libc::calloc` has no input preconditions; null on failure.
+            unsafe { libc::calloc(size, 1) }
+        } else {
+            crate::mimalloc::mi_zalloc(size)
+        }
+    }
+
     /// # Safety
     /// `ptr` must be null or a live allocation from the default allocator.
     #[inline]

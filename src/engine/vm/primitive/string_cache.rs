@@ -66,6 +66,11 @@ impl SmallStrings {
         })
     }
 
+    /// Panics unless the index is below `STATIC_ATOM_COUNT`.
+    pub fn of_static_atom(&self, vm: &Vm, index: usize) -> Gc<JsString> {
+        self.get_or_create(vm, index, || StringRef::static_atom(index))
+    }
+
     /// For generated code, which does not look whether one exists.
     pub fn create_all_single_characters(&self, vm: &Vm) {
         for character in 0..=u8::MAX {

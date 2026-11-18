@@ -101,6 +101,12 @@ impl Space {
         size_class(size) * size_of::<Allocator>()
     }
 
+    /// # Safety
+    /// As for `Allocator::try_allocate_uninitialized`.
+    pub unsafe fn try_allocate_uninitialized(&self, heap: &Heap, size: usize) -> usize {
+        self.try_allocate(heap, size)
+    }
+
     /// The address of a new cell, or zero if there is no memory. May collect.
     #[inline(always)]
     pub(crate) fn try_allocate(&self, heap: &Heap, size: usize) -> usize {

@@ -273,21 +273,12 @@ template<typename T> void weakClear(Weak<T>& weak, T* cell)
 
 namespace WTF {
 
-template<typename T> struct VectorTraits<JSC::WriteBarrier<T>> : SimpleClassVectorTraits {
-    static constexpr bool canCopyWithMemcpy = true;
-};
-template<typename T> struct VectorTraits<JSC::Strong<T>> : SimpleClassVectorTraits {
-    static constexpr bool canCompareWithMemcmp = false;
-};
-template<typename T> struct VectorTraits<JSC::Weak<T>> : SimpleClassVectorTraits {
-    static constexpr bool canCompareWithMemcmp = false;
-};
-template<typename T> struct HashTraits<JSC::Weak<T>> : SimpleClassHashTraits<JSC::Weak<T>> {
-    using EmptyValueType = std::nullptr_t;
-    static EmptyValueType emptyValue() { return nullptr; }
+template<typename T> struct VectorTraits<JSC::WriteBarrier<T>> : SimpleClassVectorTraits {};
+template<typename T> struct VectorTraits<JSC::Strong<T>> : MovableClassVectorTraits {};
+template<typename T> struct VectorTraits<JSC::Weak<T>> : MovableClassVectorTraits {};
+template<typename T> struct HashTraits<JSC::Weak<T>> : GenericHashTraits<JSC::Weak<T>> {
     using PeekType = T*;
     static PeekType peek(const JSC::Weak<T>& value) { return value.get(); }
-    static PeekType peek(EmptyValueType) { return nullptr; }
 };
 
 } // namespace WTF

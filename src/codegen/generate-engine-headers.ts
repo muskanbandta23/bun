@@ -183,7 +183,8 @@ function parameter(type: string, name: string): Parameter {
   const one = (cpp: string, pass: string) => ({ raw: [raw(type, true)], cpp, pass });
   const slice = /^&(mut )?\[(.*)\]$/.exec(type);
   if (slice) {
-    const element = `${raw(slice[2], false)}${slice[1] ? "" : " const"}`;
+    const isOpaque = types.get(slice[2])?.kind === "opaque";
+    const element = `${isOpaque ? named(slice[2]) : raw(slice[2], false)}${slice[1] ? "" : " const"}`;
     return { raw: [`${element}*`, "size_t"], cpp: `std::span<${element}>`, pass: `${name}.data(), ${name}.size()` };
   }
   if (type === "Text")

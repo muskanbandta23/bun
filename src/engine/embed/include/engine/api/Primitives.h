@@ -192,10 +192,8 @@ class JSBigInt final : public JSCell {
 public:
     using Digit = uint64_t;
     using ComparisonResult = JSBigIntComparisonResult;
-    enum class ErrorParseMode : bool { ThrowExceptions,
-        IgnoreExceptions };
-    enum class ParseIntSign : bool { Unsigned,
-        Signed };
+    enum class ErrorParseMode { IgnoreExceptions };
+    enum class ParseIntSign { Unsigned };
 
     ENGINE_DECLARE_CLASS(BigInt)
 
@@ -211,7 +209,11 @@ public:
     static JSBigInt* tryCreateFrom(JSGlobalObject* globalObjectToThrowIn, VM& vm, bool sign, std::span<const Digit> digits) { return globalObjectToThrowIn ? createFromWords(globalObjectToThrowIn, digits, sign) : Engine::bigint_try_from_digits(vm, digits, sign); }
     static JSBigInt* tryCreateZero(VM& vm) { return Engine::bigint_from_i64(vm, 0); }
     // Empty if the text is no such number.
-    static JSValue parseInt(JSGlobalObject* globalObject, VM&, StringView text, uint8_t radix, ErrorParseMode mode = ErrorParseMode::ThrowExceptions, ParseIntSign sign = ParseIntSign::Unsigned) { return Engine::bigint_parse(globalObject, text, radix, mode == ErrorParseMode::ThrowExceptions, sign == ParseIntSign::Signed); }
+    static JSValue parseInt(JSGlobalObject* globalObject, VM&, StringView text, uint8_t radix, ErrorParseMode, ParseIntSign)
+    {
+        ASSERT_UNUSED(radix, radix == 16);
+        return Engine::bigint_from_hexadecimal(globalObject, text);
+    }
     static JSValue stringToBigInt(JSGlobalObject* globalObject, StringView text) { return Engine::bigint_from_text(globalObject, text); }
 
     unsigned length() const { return Engine::fieldAt<uint32_t>(this, Engine::Layout::JsBigInt_length); }
@@ -390,7 +392,7 @@ inline bool JSValue::strictEqual(JSGlobalObject* globalObject, JSValue a, JSValu
 inline bool sameValue(JSGlobalObject* globalObject, JSValue a, JSValue b) { return Engine::value_same_value(a, globalObject, b); }
 inline bool sameValueZero(JSGlobalObject* globalObject, JSValue a, JSValue b) { return Engine::value_same_value_zero(a, globalObject, b); }
 
-JSValue jsAdd(JSGlobalObject*, JSValue, JSValue);
+inline JSValue jsAdd(JSGlobalObject* globalObject, JSValue a, JSValue b) { return Engine::value_add(globalObject, a, b); }
 inline JSString* jsTypeStringForValue(JSGlobalObject* globalObject, JSValue value) { return Engine::value_type_of(value, globalObject); }
 inline bool jsTypeofIsFunction(JSGlobalObject*, JSValue value) { return value.isCallable(); }
 inline bool jsTypeofIsObject(JSGlobalObject*, JSValue value) { return value.isNull() || (value.isObject() && !value.isCallable()); }

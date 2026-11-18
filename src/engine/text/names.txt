@@ -811,6 +811,7 @@ objectArguments = [object Arguments]
 objectArray = [object Array]
 objectBoolean = [object Boolean]
 objectDate = [object Date]
+mapIterator = Map Iterator
 objectError = [object Error]
 objectFunction = [object Function]
 objectNull = [object Null]
@@ -820,6 +821,7 @@ objectRegExp = [object RegExp]
 objectString = [object String]
 objectUndefined = [object Undefined]
 segmenterStringIterator = Segmenter String Iterator
+setIterator = Set Iterator
 starDefaultText = *default*
 stopBeforePartial = stop-before-partial
 timedOut = timed-out
@@ -987,6 +989,7 @@ useStrict = use strict
 @isDisposableStack
 @isFinite
 @isGenerator
+@isIterationPristine
 @isIteratorHelper
 @isJSArray
 @isMap
@@ -1043,7 +1046,6 @@ useStrict = use strict
 @newRejectedPromise
 @newResolvedPromise
 @newTargetLocal
-@orderedHashTableSentinel
 @ownKeys
 @performPromiseThen
 @pop

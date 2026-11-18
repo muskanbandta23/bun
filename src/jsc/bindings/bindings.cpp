@@ -2106,10 +2106,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
         return true;
     }
     case JSFunctionType:
-    case InternalFunctionType:
-    case CompiledClosureType:
-    case SlimClosureType:
-    case SlimClosureWithPropertiesType: {
+    case InternalFunctionType: {
         return false;
     }
 
@@ -2430,9 +2427,6 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
     case StringObjectType:
     case JSFunctionType:
     case InternalFunctionType:
-    case CompiledClosureType:
-    case SlimClosureType:
-    case SlimClosureWithPropertiesType:
     case JSAsJSONType:
     case JSDOMWrapperType:
     case GlobalObjectType:

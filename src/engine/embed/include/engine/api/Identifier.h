@@ -4,10 +4,11 @@
 
 #include "engine/api/Value.h"
 
-extern "C" const Engine::Opaque<Engine::Layout::sizeOfStaticString> engine_static_atoms[];
-extern "C" const Engine::Opaque<Engine::Layout::sizeOfStaticString> engine_empty_string;
-extern "C" const Engine::Opaque<Engine::Layout::sizeOfStaticSymbol> engine_symbols[];
-extern "C" const Engine::Opaque<Engine::Layout::sizeOfStaticSymbol> engine_private_names[];
+extern "C" const WTF::StaticStringImpl engine_static_atoms[];
+extern "C" const WTF::SymbolImpl::StaticSymbolImpl engine_symbols[];
+extern "C" const WTF::SymbolImpl::StaticSymbolImpl engine_private_names[];
+ENGINE_CHECK_SIZE(WTF::StaticStringImpl, sizeOfStaticString);
+ENGINE_CHECK_SIZE(WTF::SymbolImpl::StaticSymbolImpl, sizeOfStaticSymbol);
 
 namespace JSC {
 
@@ -49,10 +50,6 @@ private:
 class Identifier {
 public:
     Identifier() = default;
-    Identifier(WTF::HashTableDeletedValueType)
-        : m_string(WTF::HashTableDeletedValue)
-    {
-    }
 
     static Identifier adopt(UniquedStringImpl* uid) { return Identifier(AtomString(adoptRef(static_cast<AtomStringImpl*>(uid)))); }
 
@@ -62,7 +59,7 @@ public:
     static Identifier fromString(VM&, const String& string) { return Identifier(AtomString(string)); }
     static Identifier fromString(VM&, const AtomString& atom) { return Identifier(AtomString(atom)); }
     static Identifier fromString(VM&, AtomStringImpl* atom) { return Identifier(AtomString(atom)); }
-    static Identifier fromString(VM&, Ref<AtomStringImpl>&& atom) { return Identifier(AtomString(WTF::move(atom))); }
+    static Identifier fromString(VM&, Ref<AtomStringImpl>&& atom) { return Identifier(AtomString(RefPtr<AtomStringImpl>(WTF::move(atom)))); }
     static Identifier fromUid(VM&, UniquedStringImpl* uid) { return Identifier(AtomString(static_cast<AtomStringImpl*>(uid))); }
     static Identifier fromUid(SymbolImpl& symbol) { return Identifier(AtomString(static_cast<AtomStringImpl*>(static_cast<UniquedStringImpl*>(&symbol)))); }
     static Identifier fromUid(const PrivateName& name) { return fromUid(name.uid()); }
@@ -80,7 +77,6 @@ public:
     bool isEmpty() const { return m_string.isEmpty(); }
     bool isSymbol() const { return !isNull() && impl()->isSymbol(); }
     bool isPrivateName() const { return isSymbol() && static_cast<const SymbolImpl*>(impl())->isPrivate(); }
-    bool isHashTableDeletedValue() const { return m_string.isHashTableDeletedValue(); }
 
     friend bool operator==(const Identifier& a, const Identifier& b) { return a.impl() == b.impl(); }
     friend bool operator==(const Identifier& a, ASCIILiteral b) { return !a.isSymbol() && WTF::equal(a.impl(), b); }
@@ -121,17 +117,13 @@ private:
 
 inline bool operator==(PropertyName a, PropertyName b) { return a.uid() == b.uid(); }
 inline bool operator==(PropertyName a, const Identifier& b) { return a.uid() == b.impl(); }
-inline bool operator==(PropertyName a, const char* b) { return !a.isSymbol() && WTF::equal(a.uid(), WTF::unsafeSpan8(b)); }
+inline bool operator==(PropertyName a, const char* b) { return !a.isSymbol() && WTF::equal(a.uid(), byteCast<Latin1Character>(unsafeSpan(b))); }
 
 ALWAYS_INLINE std::optional<uint32_t> parseIndex(PropertyName name)
 {
-#if ENGINE_CHECK_WITH_REFERENCE_SUPPORT
-    return parseIndex(*name.uid());
-#else
     if (!name.uid() || !name.uid()->isArrayIndexAtom()) [[likely]]
         return std::nullopt;
     return parseIndex(*name.uid());
-#endif
 }
 
 ALWAYS_INLINE std::optional<uint32_t> parseIndex(const Identifier& identifier) { return parseIndex(PropertyName(identifier)); }
@@ -148,17 +140,17 @@ struct IdentifierRepHash : PtrHash<RefPtr<UniquedStringImpl>> {
 
 using IdentifierSet = UncheckedKeyHashSet<RefPtr<UniquedStringImpl>, IdentifierRepHash>;
 
-#define ENGINE_FOR_EACH_COMMON_NAME(name, keyword, symbol, privateName)                                                          \
-    name(Loader) name(__esModule) name(arguments) name(byteLength) name(byteOffset) name(caller) name(cause) name(column)        \
-    name(constructor) name(detail) name(done) name(entries) name(error) name(errors) name(from) name(get) name(id) name(input)   \
-    name(length) name(line) name(message) name(name) name(next) name(origin) name(parse) name(prototype) name(resolve) name(set) \
-    name(size) name(sourceURL) name(stack) name(stackTraceLimit) name(target) name(then) name(toJSON) name(toString) name(type)  \
-    name(value) name(values)                                                                                                     \
-    keyword(default) keyword(delete) keyword(private) keyword(public) keyword(return) keyword(throw) keyword(undefined)          \
-    symbol(asyncDispose) symbol(asyncIterator) symbol(dispose) symbol(iterator) symbol(species) symbol(toPrimitive)              \
-    symbol(toStringTag)                                                                                                          \
-    privateName(ArrayBuffer) privateName(meta) privateName(moduleLoader) privateName(starDefault) privateName(starNamespace)     \
-    privateName(then)
+// Names, keywords, well-known symbols and private names.
+// clang-format off
+#define ENGINE_FOR_EACH_COMMON_NAME(N, K, S, P) \
+    N(Loader) N(__esModule) N(arguments) N(byteLength) N(byteOffset) N(caller) N(cause) N(column) \
+    N(constructor) N(detail) N(done) N(entries) N(error) N(errors) N(from) N(get) N(id) N(input) N(length) \
+    N(line) N(message) N(name) N(next) N(origin) N(parse) N(prototype) N(resolve) N(set) N(size) N(sourceURL) \
+    N(stack) N(stackTraceLimit) N(target) N(then) N(toJSON) N(toString) N(type) N(value) N(values) K(default) \
+    K(delete) K(private) K(public) K(return) K(throw) K(undefined) S(asyncDispose) S(asyncIterator) S(dispose) \
+    S(iterator) S(species) S(toPrimitive) S(toStringTag) P(ArrayBuffer) P(meta) P(moduleLoader) P(starDefault) \
+    P(starNamespace) P(then)
+// clang-format on
 
 class BuiltinNames;
 

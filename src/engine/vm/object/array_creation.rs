@@ -122,6 +122,21 @@ impl JsArray {
         cx.or_out_of_memory(array)
     }
 
+    /// Only holes, and dense however long it is.
+    pub fn try_create_dense(
+        vm: &Vm,
+        shape: Gc<Shape>,
+        length: u32,
+    ) -> Result<Gc<JsArray>, AllocError> {
+        if length > Storage::MAX_VECTOR_LENGTH {
+            return Err(AllocError);
+        }
+        let array = Self::try_create(vm, shape, 0, length)?;
+        // SAFETY: at most the vector length.
+        unsafe { array.storage().set_public_length(length) };
+        Ok(array)
+    }
+
     /// The kind of the elements becomes as general as the values need.
     #[inline]
     pub fn try_from_values_with_shape(

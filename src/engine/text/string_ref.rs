@@ -30,6 +30,11 @@ impl StringRef {
         Self::from_static(&ATOMS[usize::from(character)])
     }
 
+    /// Panics unless the index is below `STATIC_ATOM_COUNT`.
+    pub fn static_atom(index: usize) -> StringRef {
+        Self::from_static(&ATOMS[index])
+    }
+
     /// Does not copy.
     pub fn from_literal(ascii: &'static str) -> StringRef {
         debug_assert!(ascii.is_ascii());
@@ -58,6 +63,14 @@ impl StringRef {
     ) -> StringRef {
         // SAFETY: the caller's.
         StringRef(unsafe { StringImpl::external(units, context, free) })
+    }
+
+    /// For a new string: `hash` is what `hash()` would compute.
+    pub fn with_hash(self, hash: u32) -> StringRef {
+        if self.existing_hash() == 0 {
+            self.set_hash(hash);
+        }
+        self
     }
 
     /// Takes the allocation over.
@@ -212,10 +225,7 @@ impl StringRef {
         } else {
             StringRef::retain(string)
         };
-        if shared.can_become_atom() && !shared.is_static() {
-            shared.hash();
-            shared.set_never_atomize();
-        }
+        shared.set_never_atomize();
         SharedString(shared)
     }
 }

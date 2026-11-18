@@ -7,3 +7,4 @@ mod abi;
 mod api;
 mod layout;
 mod support;
+mod text;

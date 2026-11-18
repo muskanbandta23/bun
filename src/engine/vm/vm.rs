@@ -140,6 +140,10 @@ pub struct Embedder {
     pub microtasks: crate::MicrotaskHooks,
 }
 
+/// Room for what only the class that C++ sees has. The alignment keeps it in place when the fields before it change.
+#[repr(C, align(256))]
+struct EmbedderMembers(UnsafeCell<MaybeUninit<[usize; 32]>>);
+
 /// All that the scripts of one thread share.
 #[derive(FieldOffsets)]
 #[repr(C)]
@@ -148,26 +152,28 @@ pub struct Vm {
     traps: Traps,
     top_call_frame: Cell<usize>,
     top_entry_frame: Cell<usize>,
-    shape_base: usize,
-    catch_frame: Cell<usize>,
-    catch_address: Cell<usize>,
-    catch_bytecode_offset: Cell<u32>,
-    /// Changes when a property of a prototype does.
-    prototype_chain_epoch: Cell<u32>,
     pub client_data: Cell<*mut c_void>,
     entry_global: Root<GlobalObject>,
     termination_exception: Root<Exception>,
     last_exception: Root<Exception>,
-    /// For generated code to pass values through.
-    scratch: [Cell<u64>; 4],
     internal_function_executable: Root<Executable>,
     ref_count: AtomicU32,
     pub did_enter: Cell<bool>,
     is_execution_forbidden: Cell<bool>,
     deletes_unconfigurable_properties: Cell<bool>,
     pub(crate) is_async_context_tracked: Cell<bool>,
-    /// Members of the class that C++ sees.
-    embedder_members: UnsafeCell<MaybeUninit<[usize; 48]>>,
+
+    // C++ does not know of these.
+    shape_base: usize,
+    catch_frame: Cell<usize>,
+    catch_address: Cell<usize>,
+    catch_bytecode_offset: Cell<u32>,
+    /// Changes when a property of a prototype does, and with each collection. The low 31 bits are never zero.
+    prototype_chain_epoch: Cell<u64>,
+    /// For generated code to pass values through.
+    scratch: [Cell<u64>; 4],
+
+    embedder_members: EmbedderMembers,
     pub heap: Heap,
     heap_padding: MaybeUninit<[u8; Heap::SIZE_LIMIT - size_of::<Heap>()]>,
     /// The last field whose offset C++ knows.
@@ -190,6 +196,7 @@ pub struct Vm {
     shapes_by_class: RefCell<FastHashMap<usize, usize>>,
     extensions: RefCell<FastHashMap<TypeId, Rc<dyn Any>>>,
     default_microtask_queue: MicrotaskQueueRef,
+    divisor_cache: bun_engine_bigint::DivisorCache,
     pub(crate) string_caches: StringCaches,
     pub(crate) shape_cache: ShapeCache,
     pub(crate) symbols: WeakValueMap<usize, JsSymbol>,
@@ -227,7 +234,7 @@ impl VmRef {
             last_exception: Root::new(),
             scratch: Default::default(),
             shapes: VmShapes::new(),
-            embedder_members: UnsafeCell::new(MaybeUninit::zeroed()),
+            embedder_members: EmbedderMembers(UnsafeCell::new(MaybeUninit::zeroed())),
             heap,
             heap_padding: MaybeUninit::uninit(),
             small_strings: SmallStrings::new(),
@@ -253,6 +260,7 @@ impl VmRef {
             shapes_by_class: RefCell::default(),
             extensions: RefCell::default(),
             default_microtask_queue: MicrotaskQueueRef::unregistered(),
+            divisor_cache: Default::default(),
             string_caches: StringCaches::new(),
             shape_cache: ShapeCache::default(),
             symbols: WeakValueMap::default(),
@@ -327,6 +335,9 @@ impl Vm {
     pub const OFFSET_OF_CATCH_ADDRESS: usize = offset_of!(Vm, catch_address);
     pub const OFFSET_OF_CATCH_BYTECODE_OFFSET: usize = offset_of!(Vm, catch_bytecode_offset);
     pub const OFFSET_OF_PROTOTYPE_CHAIN_EPOCH: usize = offset_of!(Vm, prototype_chain_epoch);
+    /// Of a pointer to the `LookupTables`.
+    pub const OFFSET_OF_LOOKUP_TABLES: usize =
+        offset_of!(Vm, services.caches) + crate::caches::State::OFFSET_OF_TABLES;
     pub const OFFSET_OF_SCRATCH: usize = offset_of!(Vm, scratch);
     pub const OFFSET_OF_IS_ASYNC_CONTEXT_TRACKED: usize = offset_of!(Vm, is_async_context_tracked);
     pub const OFFSET_OF_DEBUGGER_COUNT: usize = offset_of!(Vm, debugger_count);
@@ -477,6 +488,10 @@ impl Vm {
     }
 
     #[inline(always)]
+    pub fn divisor_cache(&self) -> &bun_engine_bigint::DivisorCache {
+        &self.divisor_cache
+    }
+
     pub fn default_microtask_queue(&self) -> &MicrotaskQueueRef {
         &self.default_microtask_queue
     }
@@ -555,6 +570,30 @@ impl Vm {
         if !self.is_termination_deferred() && self.did_defer_termination.take() {
             self.traps.fire(crate::Trap::TERMINATION);
         }
+    }
+
+    /// As `end_termination_deferral`, but does not wait for the next look at the traps.
+    pub fn end_termination_deferral_and_throw(&self) {
+        self.end_termination_deferral();
+        if !self.is_termination_deferred() {
+            self.handle_termination_trap();
+        }
+    }
+
+    /// For native code that has no realm at hand.
+    pub fn handle_termination_trap(&self) {
+        if !self.traps.clear(crate::Trap::TERMINATION) {
+            return;
+        }
+        if self.is_termination_deferred() {
+            self.did_defer_termination();
+        } else {
+            self.raise_termination();
+        }
+    }
+
+    pub fn raise_termination(&self) {
+        self.set_exception(self.termination_exception());
     }
 
     pub fn is_termination_deferred(&self) -> bool {
@@ -655,6 +694,9 @@ impl Vm {
 
     pub(crate) fn did_leave(&self) {
         self.entry_global.set(None);
+        if !self.traps.is_pending(crate::Trap::TERMINATION) {
+            self.traps.termination_flag().store(false, Ordering::Relaxed);
+        }
         if !self.when_idle.borrow().is_empty() {
             for callback in self.when_idle.take() {
                 callback(self);
@@ -719,16 +761,21 @@ impl Vm {
 
     #[inline(always)]
     pub fn prototype_chain_epoch(&self) -> u32 {
+        self.prototype_chain_epoch.get() as u32
+    }
+
+    /// For what is not cleared when the other starts over.
+    #[inline(always)]
+    pub fn full_prototype_chain_epoch(&self) -> u64 {
         self.prototype_chain_epoch.get()
     }
 
     #[inline]
     pub fn invalidate_prototype_chain_caches(&self) {
-        let epoch = self.prototype_chain_epoch.get().wrapping_add(1);
-        self.prototype_chain_epoch.set(epoch);
-        if epoch == 0 {
+        self.prototype_chain_epoch.update(|epoch| epoch + 1);
+        if self.prototype_chain_epoch() << 1 == 0 {
             self.services.caches.did_wrap_epoch();
-            self.prototype_chain_epoch.set(1);
+            self.prototype_chain_epoch.update(|epoch| epoch + 1);
         }
     }
 

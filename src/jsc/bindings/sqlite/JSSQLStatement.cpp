@@ -869,7 +869,6 @@ static bool holdsNamedParameters(JSC::JSObject* object)
     switch (object->type()) {
     case FinalObjectType:
     case ObjectType:
-    case CompiledObjectType:
     case ProxyObjectType:
     case DirectArgumentsType:
     case ScopedArgumentsType:

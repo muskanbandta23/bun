@@ -178,7 +178,7 @@ impl JsCell {
     /// # Safety
     /// `shape` has the class and type of the old one and describes the slots and elements that the cell has.
     #[inline]
-    pub(crate) unsafe fn set_shape(&self, shape: &Shape) {
+    pub unsafe fn set_shape(&self, shape: &Shape) {
         debug_assert!(shape.instance_type() == self.cell_type());
         self.shape_id_atomic()
             .store(shape.id().bits(), Ordering::Relaxed);
@@ -214,6 +214,11 @@ impl JsCell {
     #[inline(always)]
     pub(crate) fn state(&self) -> u8 {
         self.state.load(Ordering::Relaxed)
+    }
+
+    #[inline(always)]
+    pub fn state_bits(&self) -> u8 {
+        self.state()
     }
 
     #[inline(always)]
@@ -270,7 +275,7 @@ impl JsCell {
     }
 
     #[inline(always)]
-    pub(crate) fn heap(&self) -> &Heap {
+    pub fn heap(&self) -> &Heap {
         container::of(self.address()).heap()
     }
 

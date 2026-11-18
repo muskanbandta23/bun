@@ -1,9 +1,10 @@
 use bun_engine_text::{Identifier, MAX_ARRAY_INDEX, PropertyName, names};
 
 use crate::{
-    Attributes, CellType, CustomGetterSetter, Cx, DontEnumMode, Gc, GetterSetter, InternalMethod,
-    JsArray, JsArrayBufferView, JsObject, JsResult, PropertyDescriptor, PropertyNameList,
-    PropertyNameMode, PropertyOffset, PropertySlot, Shape, TypeFlags, Value,
+    Attributes, CellType, ClonedArguments, CustomGetterSetter, Cx, DontEnumMode, Gc, GetterSetter,
+    InternalMethod, JsArray, JsArrayBufferView, JsObject, JsResult, MappedArguments,
+    PropertyDescriptor, PropertyNameList, PropertyNameMode, PropertyOffset, PropertySlot, Shape,
+    TypeFlags, Value,
 };
 
 impl JsObject {
@@ -22,7 +23,7 @@ impl JsObject {
 
     /// From the shape and the static tables.
     #[inline(always)]
-    pub(crate) fn get_own_non_index_property_slot(
+    pub fn get_own_non_index_property_slot(
         &self,
         cx: &mut Cx,
         shape: &Shape,
@@ -43,7 +44,7 @@ impl JsObject {
     }
 
     #[inline(always)]
-    pub(super) fn fill_slot(
+    pub(crate) fn fill_slot(
         &self,
         offset: PropertyOffset,
         attributes: Attributes,
@@ -60,7 +61,12 @@ impl JsObject {
     }
 
     #[inline(never)]
-    fn fill_accessor_slot(&self, value: Value, attributes: Attributes, slot: &mut PropertySlot) {
+    pub(crate) fn fill_accessor_slot(
+        &self,
+        value: Value,
+        attributes: Attributes,
+        slot: &mut PropertySlot,
+    ) {
         if let Some(accessor) = value.downcast::<GetterSetter>() {
             slot.set_getter(self, attributes, &accessor);
         } else if let Some(custom) = value.downcast::<CustomGetterSetter>() {
@@ -274,6 +280,20 @@ impl JsObject {
         self.get_property_slot_by_index(cx, index, &mut slot)
     }
 
+    /// Whether the property that a lookup finds is enumerable.
+    pub fn has_enumerable_property(&self, cx: &mut Cx, name: PropertyName<'_>) -> JsResult<bool> {
+        let mut slot = PropertySlot::new(self.as_value(), InternalMethod::GetOwnProperty);
+        Ok(self.get_property_slot(cx, name, &mut slot)? && is_enumerable(&slot))
+    }
+
+    pub fn has_enumerable_index(&self, cx: &mut Cx, index: u32) -> JsResult<bool> {
+        if self.try_get_index_quickly(index).is_some() {
+            return Ok(true);
+        }
+        let mut slot = PropertySlot::new(self.as_value(), InternalMethod::GetOwnProperty);
+        Ok(self.get_property_slot_by_index(cx, index, &mut slot)? && is_enumerable(&slot))
+    }
+
     pub fn has_own_property(&self, cx: &mut Cx, name: PropertyName<'_>) -> JsResult<bool> {
         let mut slot = PropertySlot::new(self.as_value(), InternalMethod::GetOwnProperty);
         self.get_own_property_slot(cx, name, &mut slot)
@@ -315,7 +335,19 @@ impl JsObject {
         if let Some(array) = self.downcast::<JsArray>() {
             return Ok(array.length().into());
         }
-        self.get(cx, names::length)?.to_length(cx)
+        self.length_of_array_like_slow(cx)
+    }
+
+    #[inline(never)]
+    fn length_of_array_like_slow(&self, cx: &mut Cx) -> JsResult<u64> {
+        let length = match self.downcast::<MappedArguments>() {
+            Some(arguments) => arguments.original_length(),
+            None => (self.downcast::<ClonedArguments>()).and_then(|it| it.try_length()),
+        };
+        match length {
+            Some(length) => Ok(length.into()),
+            None => self.get(cx, names::length)?.to_length(cx),
+        }
     }
 
     #[inline(always)]
@@ -328,7 +360,7 @@ impl JsObject {
             let view = unsafe { self.as_object().cast_unchecked::<JsArrayBufferView>() };
             return view.try_get_number(index as usize);
         }
-        None
+        self.downcast::<MappedArguments>()?.try_get(index)
     }
 
     pub fn ordinary_own_property_names(
@@ -399,6 +431,12 @@ impl JsObject {
         }
         Err(cx.throw_stack_overflow())
     }
+}
+
+fn is_enumerable(slot: &PropertySlot) -> bool {
+    let unreliable = TypeFlags::GET_OWN_PROPERTY_SLOT_MAY_BE_WRONG_ABOUT_DONT_ENUM;
+    slot.attributes().is_enumerable()
+        || (slot.base()).is_some_and(|base| base.shape().type_flags().contains(unreliable))
 }
 
 #[inline(always)]

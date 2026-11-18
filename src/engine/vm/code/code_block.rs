@@ -232,8 +232,7 @@ impl CodeBlock {
                     _ => LiteralRadix::Decimal,
                 };
                 let digits = literal.digits.text();
-                let value = bun_engine_bigint::from_literal(digits, radix, literal.is_negative);
-                JsBigInt::from_new(cx, value)?.into()
+                JsBigInt::from_literal(cx, digits, radix, literal.is_negative)?.into()
             }
             Constant::RegExp(literal) => {
                 RegExp::for_literal(cx, literal.pattern.string(), literal.flags.text()).into()
@@ -425,6 +424,22 @@ impl CodeBlock {
 
     pub fn constant(&self, index: u32) -> Option<Value> {
         self.baseline().fields()[..self.code.constants.len()][index as usize].get()
+    }
+
+    /// # Safety
+    /// There is such a function.
+    #[inline(always)]
+    pub unsafe fn function_if_created(&self, index: FunctionIndex) -> Option<Gc<FunctionExecutable>> {
+        // SAFETY: the caller's, and only executables are stored there.
+        unsafe { (*self.functions.add(index.index()).cast::<Field<Option<_>>>()).get() }
+    }
+
+    /// # Safety
+    /// There is such a scope.
+    #[inline(always)]
+    pub unsafe fn scope_template_if_created(&self, index: ScopeIndex) -> Option<Gc<ScopeTemplate>> {
+        // SAFETY: the caller's, and only templates are stored there.
+        unsafe { (*self.scopes.add(index.index()).cast::<Field<Option<_>>>()).get() }
     }
 
     #[inline(always)]

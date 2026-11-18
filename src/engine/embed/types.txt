@@ -110,3 +110,10 @@ value   RealmSlot uint16_t
 value   RealmWatchpoint uint8_t
 value   PromiseRejectionOperation JSC::JSPromiseRejectionOperation
 value   ScriptExecutionStatus JSC::ScriptExecutionStatus
+opaque  PropertyEntry class JSC::PropertyTableEntry
+opaque  SourceProvider class JSC::SourceProvider
+opaque  SourceCode class JSC::SourceCode
+opaque  LineColumn struct JSC::LineColumn
+counted SourceProviderRef JSC::SourceProvider
+value   SourceType JSC::SourceProviderSourceType
+cell    JsPromise class JSC::JSPromise

@@ -163,7 +163,7 @@ public:
 
     static RefPtr<VM> tryCreate(HeapType = HeapType::Small, RunLoop* = nullptr);
     void ref() const { m_refCount.fetch_add(1, std::memory_order_relaxed); }
-    void deref() const { Engine::vm_release(*this); }
+    void deref() const { Engine::vm_release(this); }
     void refSuppressingSaferCPPChecking() const { ref(); }
     void derefSuppressingSaferCPPChecking() const { deref(); }
 
@@ -176,7 +176,7 @@ public:
 
     bool isEntered() const { return entryScope; }
     void whenIdle(Function<void()>&&);
-    void finalizeSynchronousJSExecution();
+    void finalizeSynchronousJSExecution() { Engine::vm_clear_kept_objects(*this); }
     void* softStackLimit() const { return m_traps.m_realStackLimit; }
     bool isSafeToRecurseSoft() const { return currentStackPointer() >= softStackLimit(); }
     bool isSafeToRecurse() const { return currentStackPointer() >= m_hardStackLimit; }
@@ -245,7 +245,7 @@ public:
     void queueMicrotask(QueuedTask&&);
     void drainMicrotasks();
     void setOnEachMicrotaskTick(Function<void(VM&)>&&);
-    bool isAsyncContextTrackingEnabled() const;
+    bool isAsyncContextTrackingEnabled() const { return m_isAsyncContextTracked; }
     SynchronousModuleQueue* synchronousModuleQueue() const { return m_synchronousModuleQueue; }
 
     Function<void(VM&, SourceProvider*, LineColumn&, String&)>& computeLineColumnWithSourcemap() { return m_computeLineColumnWithSourcemap; }
@@ -279,6 +279,7 @@ public:
 
 private:
     friend class ExceptionScope;
+    friend class JSNativeStdFunction;
     friend class SuspendExceptionScope;
     friend class ThrowScope;
     friend class TopExceptionScope;
@@ -293,11 +294,6 @@ private:
 public:
     CallFrame* topCallFrame;
     EntryFrame* topEntryFrame;
-
-private:
-    Engine::Opaque<32> m_catchTarget;
-
-public:
     ClientData* clientData;
     // The realm through which the outermost script was entered.
     JSGlobalObject* entryScope;
@@ -305,7 +301,6 @@ public:
 private:
     Exception* m_terminationException;
     Exception* m_lastException;
-    Engine::Opaque<32> m_scratch;
     ExecutableBase* m_internalFunctionExecutable;
     mutable std::atomic<uint32_t> m_refCount;
 
@@ -315,6 +310,8 @@ public:
 private:
     bool m_isExecutionForbidden;
     DeletePropertyMode m_deletePropertyMode;
+    bool m_isAsyncContextTracked;
+    Engine::Opaque<160> m_forGeneratedCode;
 
 public:
     // From here to the heap, what only C++ has.
@@ -337,7 +334,8 @@ private:
     Function<void(VM&)> m_onEachMicrotaskTick;
     ExceptionScope* m_topExceptionScope { nullptr };
     ExceptionEventLocation m_simulatedThrowLocation;
-    Engine::Opaque<256> m_unused;
+    IsoSubspace* m_nativeStdFunctionSpace { nullptr };
+    Engine::Opaque<120> m_unused;
 
 public:
     Heap heap;
@@ -365,6 +363,7 @@ inline void VM::checkLayout()
     ENGINE_CHECK_OFFSET(VM, didEnterVM, Vm_did_enter);
     ENGINE_CHECK_OFFSET(VM, m_isExecutionForbidden, Vm_is_execution_forbidden);
     ENGINE_CHECK_OFFSET(VM, m_deletePropertyMode, Vm_deletes_unconfigurable_properties);
+    ENGINE_CHECK_OFFSET(VM, m_isAsyncContextTracked, Vm_is_async_context_tracked);
     ENGINE_CHECK_OFFSET(VM, deferredWorkTimer, Vm_embedder_members);
     ENGINE_CHECK_OFFSET(VM, heap, Vm_heap);
     ENGINE_CHECK_OFFSET(VM, smallStrings, Vm_small_strings);

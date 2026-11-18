@@ -82,7 +82,7 @@ public:
     bool isNonBoundHostFunction() const;
     bool isHostOrBuiltinFunction() const { return Engine::function_is_native_or_builtin(this); }
     bool isBuiltinFunction() const { return !isHostFunction() && isHostOrBuiltinFunction(); }
-    bool isHostOrPrivateBuiltinFunction() const;
+    bool isHostOrPrivateBuiltinFunction() const { return Engine::function_is_native_or_private_builtin(this); }
     Intrinsic intrinsic() const { return Engine::function_intrinsic(this); }
 
     String name(VM&) { return Engine::function_name(this); }

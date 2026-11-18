@@ -229,7 +229,7 @@ public:
     void collectNow(Synchronousness, GCRequest = {});
     void collectIfNecessaryOrDefer(GCDeferralContext* = nullptr) { Engine::heap_collect_if_necessary(*this); }
     void deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort) { Engine::vm_delete_unlinked_code(vm()); }
-    void reportAbandonedObjectGraph() { Engine::heap_report_abandoned_object_graph(*this); }
+    void reportAbandonedObjectGraph() {}
     void setInitialAllocationBudget(size_t bytes) { Engine::heap_set_initial_allocation_budget(*this, bytes); }
 
     void reportExtraMemoryAllocated(const JSCell* cell, size_t bytes) { Engine::heap_report_extra_memory_allocated(*this, cell, bytes); }

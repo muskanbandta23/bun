@@ -136,6 +136,7 @@ pub(crate) unsafe fn slice<'a, T>(first: *const T, length: usize) -> &'a [T] {
 /// # Safety
 /// `length` elements that nothing else uses for `'a`.
 #[inline(always)]
+#[allow(dead_code)]
 pub(crate) unsafe fn slice_mut<'a, T>(first: *mut T, length: usize) -> &'a mut [T] {
     if length == 0 {
         return &mut [];

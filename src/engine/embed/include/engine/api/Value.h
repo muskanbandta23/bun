@@ -294,10 +294,6 @@ public:
 
 namespace WTF {
 
-template<> struct VectorTraits<JSC::JSValue> : VectorTraitsBase<JSC::JSValue> {
-    static constexpr bool canInitializeWithMemset = true;
-    static constexpr bool canMoveWithMemcpy = true;
-    static constexpr bool canCopyWithMemcpy = true;
-};
+template<> struct VectorTraits<JSC::JSValue> : SimpleClassVectorTraits {};
 
 } // namespace WTF

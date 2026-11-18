@@ -66,7 +66,7 @@ public:
     virtual RefPtr<CachedBytecode> cachedBytecode() const;
 
     void ref() const { m_refCount.fetch_add(1, std::memory_order_relaxed); }
-    void deref() const { Engine::source_provider_release(*this); }
+    void deref() const { Engine::source_provider_release(this); }
 
     StringView source() const { return m_source; }
     unsigned hash() const { return Engine::source_provider_hash(*this); }
@@ -180,7 +180,7 @@ public:
 private:
     static void checkLayout();
 
-    LineColumn start() const;
+    LineColumn start() const { return m_provider->documentLineColumnForOffset(m_start); }
 
     RefPtr<SourceProvider> m_provider;
     int m_start { 0 };

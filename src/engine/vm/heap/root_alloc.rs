@@ -124,6 +124,25 @@ unsafe impl Allocator for RootAlloc {
     }
 }
 
+/// Null if there is no memory.
+pub fn try_allocate_root_words(count: usize) -> *mut u64 {
+    let memory = Layout::array::<u64>(count).map(|layout| RootAlloc::default().allocate(layout));
+    match memory {
+        Ok(Ok(memory)) => memory.as_ptr().cast(),
+        _ => null_mut(),
+    }
+}
+
+/// # Safety
+/// What `try_allocate_root_words` returned for that count on this thread.
+pub unsafe fn free_root_words(words: *mut u64, count: usize) {
+    // SAFETY: the caller's.
+    unsafe {
+        let layout = Layout::array::<u64>(count).unwrap_unchecked();
+        RootAlloc::default().deallocate(NonNull::new_unchecked(words.cast()), layout);
+    }
+}
+
 /// The address range of each allocation of this thread.
 pub(super) fn for_each_range(mut visit: impl FnMut(usize, usize)) {
     let mut header = FIRST.get();

@@ -140,6 +140,33 @@ members = [
   "src/spawn_sys",
   "src/bunfig",
   "src/builtin_sources",
+  "src/icu",
+  "src/engine/text",
+  "src/engine/unicode",
+  "src/engine/number",
+  "src/engine/bigint",
+  "src/engine/date",
+  "src/engine/regexp",
+  "src/engine/regexp_jit",
+  "src/engine/syntax",
+  "src/engine/bytecode",
+  "src/engine/asm",
+  "src/engine/exec_memory",
+  "src/engine/codegen",
+  "src/engine/heap",
+  "src/engine/vm",
+  "src/engine/interpreter",
+  "src/engine/builtins",
+  "src/engine/intl",
+  "src/engine/temporal",
+  "src/engine/baseline",
+  "src/engine/optimizer",
+  "src/engine/wasm",
+  "src/engine/inspector",
+  "src/engine",
+  "src/engine/macros",
+  "src/engine/standalone",
+  "src/engine/shell",
 ]
 # `vendor/lolhtml` (the `lol_html` crate) is a non-member path dependency,
 # fetched into `vendor/` by `scripts/build/deps/lolhtml.ts` before cargo runs.
@@ -390,6 +417,32 @@ bun_base64 = { path = "src/base64" }
 bun_bundler = { path = "src/bundler" }
 bun_collections = { path = "src/collections" }
 bun_css = { path = "src/css" }
+bun_icu = { path = "src/icu" }
+bun_engine_text = { path = "src/engine/text" }
+bun_engine_unicode = { path = "src/engine/unicode" }
+bun_engine_number = { path = "src/engine/number" }
+bun_engine_bigint = { path = "src/engine/bigint" }
+bun_engine_date = { path = "src/engine/date" }
+bun_engine_regexp = { path = "src/engine/regexp" }
+bun_engine_regexp_jit = { path = "src/engine/regexp_jit" }
+bun_engine_syntax = { path = "src/engine/syntax" }
+bun_engine_bytecode = { path = "src/engine/bytecode" }
+bun_engine_asm = { path = "src/engine/asm" }
+bun_engine_exec_memory = { path = "src/engine/exec_memory" }
+bun_engine_codegen = { path = "src/engine/codegen" }
+bun_engine_heap = { path = "src/engine/heap" }
+bun_engine_vm = { path = "src/engine/vm" }
+bun_engine_interpreter = { path = "src/engine/interpreter" }
+bun_engine_builtins = { path = "src/engine/builtins" }
+bun_engine_intl = { path = "src/engine/intl" }
+bun_engine_temporal = { path = "src/engine/temporal" }
+bun_engine_baseline = { path = "src/engine/baseline" }
+bun_engine_optimizer = { path = "src/engine/optimizer" }
+bun_engine_wasm = { path = "src/engine/wasm" }
+bun_engine_inspector = { path = "src/engine/inspector" }
+bun_engine = { path = "src/engine" }
+bun_engine_macros = { path = "src/engine/macros" }
+bun_engine_standalone = { path = "src/engine/standalone" }
 bun_errno = { path = "src/errno" }
 bun_glob = { path = "src/glob" }
 bun_http = { path = "src/http" }

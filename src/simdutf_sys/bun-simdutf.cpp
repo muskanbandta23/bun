@@ -1,4 +1,4 @@
-#include "wtf/SIMDUTF.h"
+#include <simdutf.h>
 
 typedef struct SIMDUTFResult {
     int error;

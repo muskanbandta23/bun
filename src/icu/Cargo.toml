@@ -1,0 +1,16 @@
+[package]
+name = "bun_icu"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+libc.workspace = true
+
+[dev-dependencies]
+bun_engine_standalone.workspace = true

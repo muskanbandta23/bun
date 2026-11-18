@@ -1,0 +1,24 @@
+[package]
+name = "bun_engine"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_engine_text.workspace = true
+bun_engine_heap.workspace = true
+bun_engine_vm.workspace = true
+bun_engine_interpreter.workspace = true
+bun_engine_builtins.workspace = true
+bun_engine_intl.workspace = true
+bun_engine_temporal.workspace = true
+bun_engine_regexp_jit.workspace = true
+bun_engine_baseline.workspace = true
+bun_engine_optimizer.workspace = true
+bun_engine_wasm.workspace = true
+bun_engine_inspector.workspace = true

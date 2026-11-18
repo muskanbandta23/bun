@@ -1,0 +1,5 @@
+//! The native libraries that the engine's crates call, for programs that link the engine without the rest of Bun:
+//! the shell and the tests of each crate. A test names the crate (`use bun_engine_standalone as _;`) to link them.
+
+#[global_allocator]
+static ALLOCATOR: bun_alloc::Mimalloc = bun_alloc::Mimalloc;

@@ -184,6 +184,7 @@ impl Generator<'_> {
         }
     }
 
+    #[inline(never)]
     fn sequence(&mut self, list: List<ExprId>, dst: Dest, tail: Tail) -> Operand {
         let last = self.all_but_last(list);
         self.expr_in(last, dst, tail)
@@ -216,6 +217,7 @@ impl Generator<'_> {
         }
     }
 
+    #[inline(never)]
     fn identifier_value(&mut self, name: Name, start: u32, dst: Dest) -> Operand {
         if let Some(Builtin::Value(value)) = self.builtin(name) {
             return self.deliver(dst, value);
@@ -366,6 +368,7 @@ impl Generator<'_> {
         }
     }
 
+    #[inline(never)]
     fn member(&mut self, node: &Expr, dst: Dest) -> Operand {
         match node.kind {
             ExprKind::Dot {
@@ -412,6 +415,7 @@ impl Generator<'_> {
         }
     }
 
+    #[inline(never)]
     fn optional_chain(
         &mut self,
         chain: ExprId,
@@ -498,6 +502,7 @@ impl Generator<'_> {
         dst.into()
     }
 
+    #[inline(never)]
     fn dynamic_import(&mut self, node: &Expr, dst: Dest) -> Operand {
         let ExprKind::Import {
             specifier,

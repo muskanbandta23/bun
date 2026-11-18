@@ -323,6 +323,11 @@ impl ValType {
         StorageType(self.0).size_in_bytes()
     }
 
+    #[inline]
+    pub(crate) const fn bits(self) -> u32 {
+        self.0
+    }
+
     /// To compare two at once.
     #[inline(always)]
     pub(crate) const fn pair([low, high]: [Self; 2]) -> u64 {

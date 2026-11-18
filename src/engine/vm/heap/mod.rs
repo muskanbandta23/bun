@@ -37,7 +37,7 @@ use bun_threading::Guarded;
 
 pub use allocator::Allocator;
 pub use analyzer::{HeapAnalyzer, HeapGraphSink, HeapObserver, MarkingConstraint, RootReason};
-pub use block::{ATOM_SIZE, BLOCK_SIZE, Block};
+pub use block::{ATOM_SIZE, BLOCK_SIZE, Block, PAYLOAD_SIZE};
 pub use block_memory::shape_base;
 pub use cell::{CellState, JsCell};
 pub use field::{
@@ -46,16 +46,19 @@ pub use field::{
 };
 pub(crate) use gc::keep_alive;
 pub use gc::{CellKind, Extends, Gc, GcFree, Held};
+pub use marking::is_helper_thread;
 pub use once_box::OnceBox;
 pub use policy::{HeapKind, HeapSizes};
 pub use precise::{PRECISE_BIT, PreciseAllocation};
 pub use root_alloc::{
-    RootAlloc, RootBox, RootDeque, RootMap, RootSet, RootVec, root_box, root_vec,
+    RootAlloc, RootBox, RootDeque, RootMap, RootSet, RootVec, free_root_words, root_box, root_vec,
+    try_allocate_root_words,
 };
 pub use space::{
-    IsoSpace, LARGE_CUTOFF, SIZE_CLASS_COUNT, SIZE_CLASS_OF_STEP, Space, optimal_size, size_class,
+    EXACT_CUTOFF, IsoSpace, LARGE_CUTOFF, SIZE_CLASS_CHECKSUM, SIZE_CLASS_COUNT,
+    SIZE_CLASS_OF_STEP, Space, optimal_size, size_class,
 };
-pub use strong::{Strong, free_strong_slot};
+pub use strong::{Strong, duplicate_strong_slot, free_strong_slot};
 pub use trace::{Trace, destroy, select_trace, visit_children_of};
 pub use value_vec::ValueVec;
 pub use visitor::{Survivors, Visitor};
@@ -133,6 +136,7 @@ pub struct Heap {
 
     #[expect(clippy::vec_box, reason = "handed out by address")]
     iso_spaces: RefCell<Vec<Box<IsoSpace>>>,
+    spaces_with_output_constraints: RefCell<Vec<&'static IsoSpace>>,
     allocators: RefCell<Vec<&'static Allocator>>,
     steal_cursor: Cell<usize>,
     sweep_cursor: Cell<usize>,
@@ -221,6 +225,7 @@ impl Heap {
             ))),
             destructible_cells: Space::new(CellAttributes::cell(Some(object::destroy_by_shape))),
             iso_spaces: RefCell::default(),
+            spaces_with_output_constraints: RefCell::default(),
             allocators: RefCell::default(),
             steal_cursor: Cell::new(0),
             sweep_cursor: Cell::new(0),
@@ -250,7 +255,7 @@ impl Heap {
     }
 
     #[inline(always)]
-    pub(crate) fn vm(&self) -> &Vm {
+    pub fn vm(&self) -> &Vm {
         let address = core::ptr::from_ref(self).addr() - core::mem::offset_of!(Vm, heap);
         // SAFETY: a heap exists only as that field of a `Vm`, whose provenance is exposed.
         unsafe { &*core::ptr::with_exposed_provenance(address) }
@@ -326,6 +331,15 @@ impl Heap {
         self.iso_spaces.borrow_mut().push(space);
         // SAFETY: boxed, and kept until the heap goes.
         unsafe { &*address }
+    }
+
+    /// The cells get references without a barrier, which `visit_output_constraints` shows. Panics unless the heap made
+    /// the space.
+    pub fn constrain_by_cells_in(&self, space: &IsoSpace) {
+        assert!((self.iso_spaces.borrow().iter()).any(|it| core::ptr::eq(&raw const **it, space)));
+        // SAFETY: lives as long as the heap.
+        let space = unsafe { &*core::ptr::from_ref(space) };
+        self.spaces_with_output_constraints.borrow_mut().push(space);
     }
 
     fn steal_block(&self) -> Option<usize> {

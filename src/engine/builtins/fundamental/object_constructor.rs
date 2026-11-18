@@ -42,6 +42,11 @@ static_table!(static PROPERTIES = [
         .with_intrinsic(Intrinsic::ObjectCreate),
     StaticProperty::function(private_names::defineProperty, define_property, 3)
         .with_intrinsic(Intrinsic::ObjectDefineProperty),
+    StaticProperty::function(private_names::getOwnPropertyDescriptor, get_own_property_descriptor, 2),
+    StaticProperty::function(private_names::getOwnPropertyNames, get_own_property_names, 1)
+        .with_intrinsic(Intrinsic::ObjectGetOwnPropertyNames),
+    StaticProperty::function(private_names::getOwnPropertySymbols, get_own_property_symbols, 1)
+        .with_intrinsic(Intrinsic::ObjectGetOwnPropertySymbols),
     StaticProperty::function(private_names::getPrototypeOf, get_prototype_of, 1)
         .with_intrinsic(Intrinsic::ObjectGetPrototypeOf),
     StaticProperty::function(private_names::keys, keys, 1).with_intrinsic(Intrinsic::ObjectKeys),

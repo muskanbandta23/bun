@@ -5,7 +5,8 @@ use std::cell::RefCell;
 use rustc_ast::token::{LitKind, TokenKind};
 use rustc_ast::tokenstream::TokenTree;
 use rustc_attr_ir::{AttrArgs, AttrItem, Attribute};
-use rustc_data_structures::fx::FxHashSet;
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
+use rustc_hir::HirId;
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
 use rustc_lint_defs::Level;
@@ -13,11 +14,17 @@ use rustc_lint_defs::builtin::UNSAFE_CODE;
 use rustc_middle::ty::TyCtxt;
 use rustc_span::{Symbol, sym};
 
+use crate::engine::{Engine, init_of};
 use crate::types::Types;
 
-#[derive(Default)]
 pub struct Allows {
     used: RefCell<FxHashSet<DefId>>,
+    /// From a field of an `Init` to that of the cell, which is what has the attribute.
+    declared_at: FxHashMap<DefId, DefId>,
+}
+
+pub fn allows_unsafe(tcx: TyCtxt<'_>, hir_id: HirId) -> bool {
+    tcx.lint_level_spec_at_node(UNSAFE_CODE, hir_id).level() == Level::Allow
 }
 
 fn path() -> [Symbol; 2] {
@@ -25,14 +32,29 @@ fn path() -> [Symbol; 2] {
 }
 
 impl Allows {
+    pub fn new(tcx: TyCtxt<'_>, engine: &Engine) -> Allows {
+        let mut declared_at = FxHashMap::default();
+        for impl_id in tcx.all_impls(engine.cell_kind) {
+            if let Some(cell) = tcx.type_of(impl_id).skip_binder().ty_adt_def()
+                && let Some(init) = tcx.type_of(init_of(tcx, impl_id)).skip_binder().ty_adt_def()
+            {
+                declared_at.extend(init.all_fields().filter_map(|field| {
+                    Some((field.did, cell.all_fields().find(|it| it.name == field.name)?.did))
+                }));
+            }
+        }
+        Allows { used: RefCell::default(), declared_at }
+    }
+
     pub fn has(&self, tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+        let def_id = *self.declared_at.get(&def_id).unwrap_or(&def_id);
         tcx.tool_attrs(def_id, &path()).next().is_some()
     }
 
     /// To be asked only when there is something to report.
     pub fn is_on(&self, tcx: TyCtxt<'_>, def_id: DefId) -> bool {
         self.has(tcx, def_id) && {
-            self.used.borrow_mut().insert(def_id);
+            self.used.borrow_mut().insert(*self.declared_at.get(&def_id).unwrap_or(&def_id));
             true
         }
     }
@@ -63,7 +85,7 @@ pub fn check(cx: &Types<'_>) {
     let tcx = cx.tcx;
     for owner in tcx.hir_crate_items(()).owners() {
         for &(local_id, attributes) in tcx.hir_attr_map(owner).map.iter() {
-            let hir_id = rustc_hir::HirId { owner, local_id };
+            let hir_id = HirId { owner, local_id };
             // It repeats the attributes of its struct.
             if let rustc_hir::Node::Ctor(_) = tcx.hir_node(hir_id) {
                 continue;
@@ -76,11 +98,10 @@ pub fn check(cx: &Types<'_>) {
                     continue;
                 }
                 let def_id = tcx.hir_node(hir_id).associated_def_id();
-                let level = tcx.lint_level_spec_at_node(UNSAFE_CODE, hir_id).level();
                 let problem = match def_id {
                     _ if *attribute.path.segments != path() => "unknown attribute",
                     _ if !has_reason(attribute) => "`rootcheck::allow` takes a reason",
-                    _ if level != Level::Allow => {
+                    _ if !allows_unsafe(tcx, hir_id) => {
                         "`rootcheck::allow` is only for where `unsafe` is allowed"
                     }
                     None => "`rootcheck::allow` goes on a function, a static, a type or a field",

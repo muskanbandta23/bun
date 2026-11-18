@@ -8,11 +8,16 @@ use bun_engine_text::{Identifier, PropertyName, Text, names};
 
 use crate::{
     Attributes, BuiltinId, Class, CustomGetter, CustomSetter, FunctionExecutable, Gc, Intrinsic,
-    JsObject, JsResult, NativeFunction, RealmSlot, Value, Vm,
+    JsObject, NativeFunction, RealmSlot, Value, Vm,
 };
 
 pub type BuiltinGenerator = unsafe extern "C" fn(&Vm) -> Gc<FunctionExecutable>;
-pub type PropertyCallback = unsafe extern "C" fn(&Vm, &JsObject) -> JsResult<Value>;
+#[cfg(not(windows))]
+pub type PropertyCallback = unsafe extern "C" fn(&Vm, &JsObject) -> Option<Value>;
+/// C++ returns a class that has a constructor through memory.
+#[cfg(windows)]
+pub type PropertyCallback =
+    for<'a> unsafe extern "C" fn(&'a mut Option<Value>, &Vm, &JsObject) -> &'a Option<Value>;
 /// For a value that takes no script to make.
 pub type PropertyMaker = fn(&crate::Cx, &JsObject) -> Value;
 
@@ -238,6 +243,10 @@ impl StaticProperty {
         }
     }
 
+    pub fn is_entry(&self) -> bool {
+        self.key_size != 0
+    }
+
     pub fn name(&self) -> Identifier {
         if self.key_size == KEY_IS_NAME {
             Self::static_name(self.key).to_identifier()
@@ -312,6 +321,7 @@ pub struct StaticIndex {
 pub struct StaticTable {
     count: i32,
     index_mask: i32,
+    /// Only of a table that is made in Rust.
     seen_attributes: u8,
     class_for_this: Option<&'static Class>,
     values: *const StaticProperty,
@@ -397,6 +407,10 @@ impl StaticTable {
     }
 
     pub fn seen_attributes(&self) -> Attributes {
+        if (self.values().first()).is_some_and(|first| first.key_size != KEY_IS_NAME) {
+            let seen = self.iter().map(|entry| entry.attributes().for_shape());
+            return seen.fold(Attributes::NONE, Attributes::union);
+        }
         Attributes::from_bits_retain(u32::from(self.seen_attributes))
     }
 

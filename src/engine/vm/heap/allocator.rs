@@ -65,6 +65,12 @@ impl Allocator {
         self.try_allocate_sized(heap, self.cell_size())
     }
 
+    /// # Safety
+    /// The cell is initialized, as what the allocator is for, before the next allocation.
+    pub unsafe fn try_allocate_uninitialized(&self, heap: &Heap) -> usize {
+        self.try_allocate(heap)
+    }
+
     /// `cell_size` is that of the allocator, which the caller may know as a constant.
     #[inline(always)]
     pub(crate) fn try_allocate_sized(&self, heap: &Heap, cell_size: usize) -> usize {

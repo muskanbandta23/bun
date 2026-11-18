@@ -22,6 +22,7 @@ bun_engine_asm.workspace = true
 bun_engine_syntax.workspace = true
 bun_engine_bytecode.workspace = true
 bun_engine_exec_memory.workspace = true
+bun_engine_platform.workspace = true
 bun_alloc.workspace = true
 bun_highway.workspace = true
 bun_simdutf_sys.workspace = true

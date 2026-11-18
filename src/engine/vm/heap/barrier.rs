@@ -51,7 +51,7 @@ pub fn slow_path(cell: &JsCell) {
 /// # Safety
 /// Both are valid and aligned for `count` words that only this thread writes.
 #[inline]
-pub(crate) unsafe fn move_words(source: *const u64, target: *mut u64, count: usize) {
+pub unsafe fn move_words(source: *const u64, target: *mut u64, count: usize) {
     if !is_fenced() {
         // SAFETY: the caller's, and no other thread is reading.
         return unsafe { core::ptr::copy(source, target, count) };

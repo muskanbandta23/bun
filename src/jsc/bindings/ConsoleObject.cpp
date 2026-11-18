@@ -15,7 +15,6 @@
 #include <JavaScriptCore/JSGlobalObjectDebuggable.h>
 #include <JavaScriptCore/ConsoleClient.h>
 
-#include "GCDefferalContext.h"
 #include <JavaScriptCore/InspectorScriptProfilerAgent.h>
 #include <JavaScriptCore/InspectorDebuggerAgent.h>
 #include <JavaScriptCore/InspectorConsoleAgent.h>

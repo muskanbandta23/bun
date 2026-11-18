@@ -51,6 +51,10 @@ fn set_length(cx: &mut Cx, object: &JsObject, length: u64) -> JsResult<()> {
 }
 
 pub(crate) fn initialize_slot(cx: &Cx, slot: RealmSlot) -> bool {
+    if slot == RealmSlot::array_prototype_to_string {
+        array::initialize_to_string(cx);
+        return true;
+    }
     constructor::initialize_slot(cx, slot) || iterator::initialize_slot(cx, slot)
 }
 

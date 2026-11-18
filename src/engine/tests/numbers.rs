@@ -5,7 +5,7 @@ use bun_engine_vm::heap::HeapKind;
 use bun_engine_vm::*;
 
 static HOOKS: RealmHooks = RealmHooks {
-    modules: ModuleHooks {},
+    modules: ModuleHooks::DEFAULT,
     promise_rejection_tracker: |_, _, _| {},
     report_uncaught_exception: |_, _| {},
     current_script_execution_owner: |cx| cx.global().upcast(),
@@ -174,6 +174,17 @@ fn math_functions() {
             let mut values = root_vec();
             values.extend(arguments.iter().map(|&it| Value::from(it)));
             assert_eq!(invoke(cx, math, name, &values), expected);
+        }
+        let text = JsString::from_literal(cx, "1").into();
+        let lists: [(&[Value], &str); 4] = [
+            (&[i32::MAX.into(), i32::MAX.into()], "4294967294"),
+            (&[0.1.into(), 0.2.into(), 0.3.into()], "0.6"),
+            (&[1.into(), Value::NAN], "NaN"),
+            (&[1.into(), text], "Math.sumPrecise was passed a non-number"),
+        ];
+        for (terms, expected) in lists {
+            let array = cx.new_array_from(terms).unwrap();
+            assert_eq!(invoke(cx, math, "sumPrecise", &[array.into()]), expected);
         }
         cx.global().random_state().set(Random::new(42));
         assert_eq!(invoke(cx, math, "random", &[]), "3.911585177984733e-8");

@@ -75,7 +75,7 @@ impl PropertyDescriptor {
     }
 
     /// Of what a slot or an entry of sparse elements has.
-    pub(crate) fn stored(value: Value, attributes: Attributes) -> PropertyDescriptor {
+    pub fn stored(value: Value, attributes: Attributes) -> PropertyDescriptor {
         match value.downcast::<GetterSetter>() {
             Some(accessor) => Self::accessor(accessor.getter(), accessor.setter(), attributes),
             None => Self::data(value, attributes),

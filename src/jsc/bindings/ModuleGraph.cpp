@@ -12,7 +12,6 @@
 #include "NodeValidator.h"
 #include "PathInlines.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
-#include "ExtendedDOMIsoSubspaces.h"
 
 #include <JavaScriptCore/CodeCache.h>
 #include <JavaScriptCore/BuiltinNames.h>

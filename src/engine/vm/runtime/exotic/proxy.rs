@@ -339,6 +339,11 @@ impl ProxyObject {
         Ok(())
     }
 
+    pub fn throw_falsy_set_result(cx: &Cx, name: PropertyName<'_>) -> Thrown {
+        let before = "Proxy object's 'set' trap returned falsy value for property '";
+        throw_naming(cx, before, name, "'")
+    }
+
     pub(crate) fn put_index_with_receiver(
         &self,
         cx: &mut Cx,
@@ -532,8 +537,7 @@ impl ProxyObject {
         let key = Value::from_name(cx, name);
         if !trap.test(cx, &[target.into(), key, value, receiver])? {
             if slot.is_strict() {
-                let before = "Proxy object's 'set' trap returned falsy value for property '";
-                return Err(throw_naming(cx, before, name, "'"));
+                return Err(Self::throw_falsy_set_result(cx, name));
             }
             return Ok(false);
         }

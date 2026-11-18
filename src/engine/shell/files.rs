@@ -132,12 +132,16 @@ pub(crate) fn read(path: &str) -> Option<Vec<u8>> {
     bytes
 }
 
-/// With `#!` at the start turned into a comment, for something may be put in front of it.
+/// For something may be put in front of it.
+pub(crate) fn comment_out_hashbang(code: &mut [u8]) {
+    if code.starts_with(b"#!") {
+        code[..2].fill(b'/');
+    }
+}
+
 pub(crate) fn read_code(path: &str) -> Option<Vec<u8>> {
     let mut bytes = read(path)?;
-    if bytes.starts_with(b"#!") {
-        bytes[..2].fill(b'/');
-    }
+    comment_out_hashbang(&mut bytes);
     Some(bytes)
 }
 
@@ -157,12 +161,7 @@ pub(crate) fn source(
     SourceCode::whole(provider.origin(origin).finish())
 }
 
-pub(crate) fn script(bytes: &[u8], path: &str) -> SourceCode {
+pub(crate) fn source_at(path: &str, bytes: &[u8], source_type: SourceType) -> SourceCode {
     let origin = origin(&absolute_url(path));
-    source(
-        decode(bytes),
-        Some(&origin),
-        Some(path),
-        SourceType::Program,
-    )
+    source(decode(bytes), Some(&origin), Some(path), source_type)
 }

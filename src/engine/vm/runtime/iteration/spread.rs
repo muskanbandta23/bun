@@ -1,11 +1,13 @@
 use bun_engine_text::{Text, symbols};
 
+use super::record::plain_length;
 use crate::{
-    Cx, ElementKind, ElementWriter, Gc, HoleMode, ImmutableArray, IterationMode, IteratorRecord,
-    JsArray, JsObject, JsResult, JsSet, JsString, RealmWatchpoint, Value, ValueVec, errors,
+    CellType, ClonedArguments, Cx, ElementKind, Gc, HoleMode, ImmutableArray, IterationMode,
+    IteratorRecord, JsArray, JsObject, JsResult, JsSet, JsString, JsTypedArray, MappedArguments,
+    PlainRange, RealmWatchpoint, Storage, Value, ValueVec, errors,
 };
 
-/// The elements up to `length`, unless getting them takes more than a look at the storage. Never raw doubles.
+/// The elements up to `length`, unless getting them runs code or allocates. Never raw doubles.
 pub(super) fn try_list_of_elements(
     cx: &mut Cx,
     source: &JsObject,
@@ -17,30 +19,21 @@ pub(super) fn try_list_of_elements(
     {
         return Ok(Some(shared));
     }
-    let (no_gc, holes) = (cx.no_gc(), HoleMode::FillWithUndefined);
-    let Some(elements) = source.plain_elements(&no_gc, 0..length) else {
+    let holes = HoleMode::FillWithUndefined;
+    let Some(plain) = PlainRange::of(&cx.no_gc(), source, 0..length, holes) else {
         return Ok(None);
     };
-    let kind = match elements.kind_with(holes) {
+    let kind = match plain.kind() {
         ElementKind::Int32 => ElementKind::Int32,
         _ => ElementKind::Contiguous,
     };
-    // SAFETY: an allocation leaves the elements as they are, and they are only copied. No hole is left.
-    let list = unsafe {
-        ImmutableArray::try_build(
-            cx,
-            kind,
-            length as usize,
-            |writer: &mut ElementWriter<'_>| {
-                let elements = source.elements_unchecked().expect("dense elements");
-                writer.extend(elements.slice(0..length as usize), holes);
-            },
-        )
-    };
+    // SAFETY: all that has happened since is allocation. The elements are only copied, and no hole is left.
+    let list =
+        unsafe { ImmutableArray::try_build(cx, kind, plain.len(), |writer| plain.write_to(writer)) };
     cx.or_out_of_memory(list).map(Some)
 }
 
-fn list_of_code_points(cx: &Cx, string: &JsString) -> JsResult<Gc<ImmutableArray>> {
+pub(super) fn list_of_code_points(cx: &Cx, string: &JsString) -> JsResult<Gc<ImmutableArray>> {
     let view = string.view(cx)?;
     cx.or_out_of_memory(match view.text() {
         Text::Latin1(characters) => ImmutableArray::try_from_fn(cx, characters.len(), |index| {
@@ -57,20 +50,28 @@ fn list_of_code_points(cx: &Cx, string: &JsString) -> JsResult<Gc<ImmutableArray
 
 /// What `iterable` yields, if no script can tell how that was found out.
 pub fn try_spread_directly(cx: &mut Cx, iterable: Value) -> JsResult<Option<Gc<ImmutableArray>>> {
-    if let Some(array) = iterable.downcast::<JsArray>() {
-        if array.is_iteration_pristine() {
-            return try_list_of_elements(cx, &array, array.length().into());
+    let Some(cell) = iterable.as_cell() else {
+        return Ok(None);
+    };
+    let is_pristine = match cell.cell_type() {
+        CellType::Array => cell.cast::<JsArray>().is_iteration_pristine(),
+        CellType::String if cx.holds(RealmWatchpoint::StringIteratorProtocol) => {
+            return list_of_code_points(cx, &cell.cast()).map(Some);
         }
-    } else if let Some(string) = iterable.as_string()
-        && cx.holds(RealmWatchpoint::StringIteratorProtocol)
-    {
-        return list_of_code_points(cx, &string).map(Some);
-    } else if let Some(set) = iterable.downcast::<JsSet>()
-        && set.is_iteration_pristine(cx)
-    {
-        return set.to_immutable_array(cx).map(Some);
+        CellType::Set if cell.cast::<JsSet>().is_iteration_pristine(cx) => {
+            return cell.cast::<JsSet>().to_immutable_array(cx).map(Some);
+        }
+        CellType::DirectArguments | CellType::ScopedArguments => {
+            cell.cast::<MappedArguments>().is_iteration_pristine()
+        }
+        CellType::ClonedArguments => cell.cast::<ClonedArguments>().is_iteration_pristine(),
+        _ => (cell.downcast::<JsTypedArray>()).is_some_and(|it| it.is_iteration_pristine(cx)),
+    };
+    let object = is_pristine.then(|| cell.cast::<JsObject>());
+    match object.and_then(|object| Some((object, plain_length(&object)?))) {
+        Some((object, length)) => try_list_of_elements(cx, &object, length),
+        None => Ok(None),
     }
-    Ok(None)
 }
 
 /// `spread`. The elements of the list are values, not raw doubles.
@@ -112,9 +113,17 @@ fn spread_slow(cx: &mut Cx, iterable: Value) -> JsResult<Gc<ImmutableArray>> {
         let list = try_list_of_elements(cx, &array, array.length().into())?;
         return list.ok_or_else(|| cx.throw_out_of_memory());
     }
+    if record.mode() == IterationMode::TypedArray {
+        let array = iterable.cast::<JsTypedArray>();
+        if let Some(list) = try_list_of_elements(cx, &array, array.length() as u64)? {
+            return Ok(list);
+        }
+    }
     let mut values = ValueVec::new();
     while let Some(value) = record.step_builtin(cx)? {
-        cx.or_out_of_memory(values.try_push(value))?;
+        if values.len() == Storage::MAX_VECTOR_LENGTH as usize || values.try_push(value).is_err() {
+            return Err(cx.throw_out_of_memory());
+        }
     }
     cx.or_out_of_memory(ImmutableArray::try_from_values(cx, &values))
 }

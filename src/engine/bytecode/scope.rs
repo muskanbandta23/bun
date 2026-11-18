@@ -122,6 +122,23 @@ impl StaticScope {
         parent: Option<Rc<StaticScope>>,
         names: Box<[Identifier]>,
     ) -> Rc<StaticScope> {
+        let undefined_slots = names.len() as u32;
+        Self::without_source(kind, parent, names, SlotFlags::empty(), undefined_slots)
+    }
+
+    /// For a module that has no code. The slots start empty.
+    pub fn of_exports(names: Box<[Identifier]>) -> Rc<StaticScope> {
+        let flags = SlotFlags::IMMUTABLE | SlotFlags::EXPORTED;
+        Self::without_source(ScopeKind::Module, None, names, flags, 0)
+    }
+
+    fn without_source(
+        kind: ScopeKind,
+        parent: Option<Rc<StaticScope>>,
+        names: Box<[Identifier]>,
+        flags: SlotFlags,
+        undefined_slots: u32,
+    ) -> Rc<StaticScope> {
         let slots: Box<[Slot]> = (0..)
             .zip(&names)
             .map(|(index, name)| Slot {
@@ -131,7 +148,7 @@ impl StaticScope {
                 index,
                 detail: 0,
                 kind: SlotKind::Variable,
-                flags: SlotFlags::empty(),
+                flags,
             })
             .collect();
         Rc::new(StaticScope {
@@ -140,7 +157,7 @@ impl StaticScope {
             eval_variables_slot: None,
             entered_at: None,
             slot_count: slots.len() as u32,
-            undefined_slots: slots.len() as u32,
+            undefined_slots,
             mapped_parameters: 0,
             table: Self::table_for(&slots),
             slots,

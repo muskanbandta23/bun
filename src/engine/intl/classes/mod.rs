@@ -19,6 +19,7 @@ mod results;
 mod segmenter;
 mod state;
 mod string;
+mod temporal;
 
 use bun_engine_vm::{Cx, RealmSlot};
 pub use collator::locale_compare;
@@ -26,6 +27,7 @@ pub use date_time_format::date_to_locale_string;
 pub use number_format::{bigint_to_locale_string, number_to_locale_string};
 pub use state::set_preferred_languages;
 pub use string::{normalize_string, to_locale_case};
+pub use temporal::temporal_to_locale_string;
 
 /// Sets the slot, and those that come with it. False if it belongs to another crate.
 pub fn initialize_slot(cx: &Cx, slot: RealmSlot) -> bool {

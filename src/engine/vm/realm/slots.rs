@@ -6,8 +6,7 @@ use bun_engine_text::{PropertyName, private_names};
 
 use crate::{
     Cx, Gc, GetterSetter, GlobalObject, GlobalProxy, InternalFieldTuple, JsCell, JsFunction,
-    JsObject, JsSymbol,
-    ModuleLoader, Shape, Vm,
+    JsObject, JsSymbol, ModuleLoader, Shape, Vm,
 };
 
 macro_rules! realm_slots {

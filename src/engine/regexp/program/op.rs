@@ -30,7 +30,7 @@ macro_rules! ids {
     )*};
 }
 
-ids!(ClassId, LoopId, ScopeId, SwitchId);
+ids!(ClassId, LoopId, ScanId, ScopeId, SwitchId);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Direction {
@@ -237,8 +237,19 @@ pub enum Op {
     SkipToTail {
         length: u32,
     },
+    /// Moves to the first position from here on that the scan accepts. A failure leaves the position where it is, or
+    /// at the first that has fewer units after it than the scan needs.
+    Scan {
+        id: ScanId,
+        fail: Target,
+    },
     Save {
         slot: Slot,
+    },
+    /// The position is the start of the subject, and goes into the slot.
+    SaveStart {
+        slot: Slot,
+        fail: Target,
     },
     /// A metered load counts the distance as work.
     Load {
@@ -256,6 +267,8 @@ pub enum Op {
     Run {
         direction: Direction,
         code_points: bool,
+        /// Many members are expected.
+        is_long: bool,
         class: ClassId,
         max: u32,
         reserve: u32,
@@ -400,6 +413,8 @@ impl Op {
             | Op::Class { fail, .. }
             | Op::ClassCount { fail, .. }
             | Op::Pair { fail, .. }
+            | Op::Scan { fail, .. }
+            | Op::SaveStart { fail, .. }
             | Op::GiveBack { fail, .. }
             | Op::CodePoint { fail, .. }
             | Op::BackReference { fail, .. } => Some(fail),

@@ -3,7 +3,8 @@ use core::ops::Range;
 use bun_engine_text::{CodeUnit, Text};
 use bun_engine_unicode::IgnoreCase;
 
-use crate::program::{Class, Direction, Program, Stride};
+use crate::program::{Class, Direction, Probe, Program, RowProbe, Scan, Stride};
+use crate::search::find_member;
 use crate::surrogate;
 
 #[derive(Clone, Copy)]
@@ -166,6 +167,35 @@ impl<'a, U: CodeUnit> Subject<'a, U> {
                 return true;
             }
         }
+    }
+
+    #[inline]
+    pub(super) fn scan(self, position: &mut usize, scan: &Scan, program: &Program) -> bool {
+        let at = |position: usize, offset: i16| position.wrapping_add_signed(offset.into());
+        let end = (self.len() + 1).saturating_sub(scan.need() as usize);
+        let (first, class) = (scan.first(), program.class(scan.first().class));
+        while *position < end {
+            let units = self
+                .units
+                .get(at(*position, first.offset)..at(end, first.offset));
+            let Some(skipped) = find_member(units.unwrap_or_default(), class) else {
+                *position = end;
+                return false;
+            };
+            *position += skipped;
+            let passes = |it: &Probe| self.is_in(at(*position, it.offset), program.class(it.class));
+            let rows = |it: &RowProbe| {
+                self.unit(at(*position, it.offset))
+                    .map_or(0, |unit| it.rows(unit))
+            };
+            if scan.others().iter().all(passes)
+                && scan.rows().iter().fold(u8::MAX, |all, it| all & rows(it)) != 0
+            {
+                return true;
+            }
+            *position += 1;
+        }
+        false
     }
 
     /// The position after a second occurrence of the captured text.

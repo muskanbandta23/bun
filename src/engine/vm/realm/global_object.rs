@@ -131,7 +131,6 @@ pub struct GlobalObject {
     microtask_queue: RealmMicrotaskQueue,
     regexp_state: RegExpGlobalState,
     random: Cell<Random>,
-    stack_trace_limit: Cell<Option<u32>>,
     eval_disabled_message: RefCell<Option<StringRef>>,
     webassembly_disabled_message: RefCell<Option<StringRef>>,
     inspector: OnceCell<Box<dyn InspectorState>>,
@@ -269,7 +268,6 @@ impl GlobalObject {
             microtask_queue: RealmMicrotaskQueue::new(vm.default_microtask_queue().clone()),
             regexp_state: RegExpGlobalState::default(),
             random: Cell::new(Random::new(vm.random_seed() as u32)),
-            stack_trace_limit: Cell::new(Some(crate::options().default_error_stack_trace_limit)),
             overridden_date_now: Cell::new(f64::NAN),
             eval_disabled_message: RefCell::new(None),
             webassembly_disabled_message: RefCell::new(None),
@@ -515,10 +513,6 @@ impl GlobalObject {
     /// That of `Math.random`.
     pub fn random_state(&self) -> &Cell<Random> {
         &self.random
-    }
-
-    pub fn stack_trace_limit(&self) -> &Cell<Option<u32>> {
-        &self.stack_trace_limit
     }
 
     /// NaN if it is not.

@@ -128,6 +128,7 @@ fn length_of_other(cx: &mut Cx, object: Gc<JsObject>) -> JsResult<u64> {
 }
 
 #[inline(always)]
-pub(super) fn typed_array_length(_: &Cx, view: &JsArrayBufferView) -> JsResult<usize> {
-    Ok(view.length())
+pub(super) fn typed_array_length(cx: &Cx, view: &JsArrayBufferView) -> JsResult<usize> {
+    view.checked_length()
+        .ok_or_else(|| JsArrayBufferView::throw_out_of_bounds(cx))
 }

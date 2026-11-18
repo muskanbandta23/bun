@@ -14,9 +14,9 @@ use super::output::{
 use super::sites::{Site, Sites};
 use crate::graph::{Entry, ExitKind, Format, Graph, NO_LAYOUT, Position};
 
-/// For code before and after which no register but the pinned ones has a value.
-const PROLOGUE_SCRATCH: Gpr = abi::ARGUMENT_GPRS[0];
-const PROLOGUE_TEMP: Gpr = abi::ARGUMENT_GPRS[1];
+/// The prologue runs where the parameters are still in the places they arrived in, so it keeps off those.
+const PROLOGUE_SCRATCH: Gpr = abi::NON_ARGUMENT_GPRS[0];
+const PROLOGUE_TEMP: Gpr = abi::NON_ARGUMENT_GPRS[1];
 
 fn in_frame(offset: i32) -> Address {
     Address::new(abi::FRAME_POINTER, offset)

@@ -11,6 +11,8 @@ mod places;
 mod runtime_calls;
 mod sites;
 mod strings;
+#[cfg(test)]
+mod tests;
 mod types;
 mod values;
 

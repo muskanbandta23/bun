@@ -3,12 +3,13 @@
 use core::cmp::Ordering;
 use core::ffi::{CStr, c_char};
 
+use crate::argument::{expandable_length, locale_id};
 use crate::enumeration::UEnumeration;
 use crate::error::Status;
-use crate::ffi::{call, length, open};
+use crate::ffi::{call, open};
 use crate::locale::listed;
 use crate::normalizer::{decompose_stream_safe, has_long_run_of_marks};
-use crate::{Buffer, Enumeration, Error, Result};
+use crate::{Buffer, Enumeration, Result};
 
 bun_opaque::opaque_ffi! { struct UCollator; }
 
@@ -58,8 +59,9 @@ icu_handle! {
 
 impl Collator {
     pub fn open(locale: &CStr) -> Result<Collator> {
+        let locale = locale_id(locale)?;
         // SAFETY: `locale` is terminated.
-        open(|status| unsafe { ucol_open(locale.as_ptr(), status) }).map(Collator)
+        open(|status| unsafe { ucol_open(locale, status) }).map(Collator)
     }
 
     pub fn set(&mut self, attribute: Attribute, value: Value) -> Result<()> {
@@ -92,7 +94,7 @@ impl Collator {
     }
 
     fn compare_as_is(&self, a: &[u16], b: &[u16]) -> Result<Ordering> {
-        let (a_length, b_length) = lengths(a, b)?;
+        let (a_length, b_length) = (expandable_length(a)?, expandable_length(b)?);
         // SAFETY: the collator is open, and the strings have these lengths.
         let order =
             unsafe { ucol_strcoll(self.0.as_ptr(), a.as_ptr(), a_length, b.as_ptr(), b_length) };
@@ -101,7 +103,7 @@ impl Collator {
 
     /// An ill-formed sequence counts as U+FFFD.
     pub fn compare_utf8(&self, a: &[u8], b: &[u8]) -> Result<Ordering> {
-        let (a_length, b_length) = lengths(a, b)?;
+        let (a_length, b_length) = (expandable_length(a)?, expandable_length(b)?);
         // SAFETY: the collator is open, and the strings have these lengths.
         call(|status| unsafe {
             ucol_strcollUTF8(
@@ -119,25 +121,25 @@ impl Collator {
 
 #[inline]
 fn needs_decomposition(text: &[u16]) -> Result<bool> {
-    // One form of supplementary text for all releases that macOS has.
-    if cfg!(system_icucore) && text.iter().any(|unit| unit & 0xf800 == 0xd800) {
+    #[cfg(icu_before_79)]
+    if has_mark_after_pair(text) {
         return Ok(true);
     }
     has_long_run_of_marks(text)
 }
 
-#[inline]
-fn lengths<T: PartialEq>(a: &[T], b: &[T]) -> Result<(i32, i32)> {
-    /// Of what follows the common prefix, whose collation elements are all kept in memory.
-    const MAX_COMPARED_LENGTH: usize = 1 << 26;
-
-    let longer = a.len().max(b.len());
-    if longer > MAX_COMPARED_LENGTH
-        && longer - a.iter().zip(b).take_while(|(a, b)| a == b).count() > MAX_COMPARED_LENGTH
-    {
-        return Err(Error::MEMORY_ALLOCATION);
+/// Whether the decomposition of a unit that follows a surrogate pair starts with a combining mark.
+#[cfg(icu_before_79)]
+fn has_mark_after_pair(text: &[u16]) -> bool {
+    const UCHAR_LEAD_CANONICAL_COMBINING_CLASS: i32 = 0x1010;
+    icu_functions! {
+        fn u_getIntPropertyValue(code_point: i32, property: i32) -> i32;
     }
-    Ok((length(a)?, length(b)?))
+    text.array_windows().any(|&[trail, next]| {
+        matches!(trail, 0xdc00..=0xdfff)
+            // SAFETY: it takes any code point.
+            && unsafe { u_getIntPropertyValue(next.into(), UCHAR_LEAD_CANONICAL_COMBINING_CLASS) } != 0
+    })
 }
 
 pub fn available_locales() -> impl Iterator<Item = &'static CStr> {
@@ -153,8 +155,9 @@ pub fn all_types() -> Result<Enumeration> {
 
 /// The values of the `collation` keyword that `locale` has, its default first.
 pub fn types_for_locale(locale: &CStr) -> Result<Enumeration> {
+    let locale = locale_id(locale)?;
     // SAFETY: both strings are terminated.
     Enumeration::open(|status| unsafe {
-        ucol_getKeywordValuesForLocale(c"collation".as_ptr(), locale.as_ptr(), 0, status)
+        ucol_getKeywordValuesForLocale(c"collation".as_ptr(), locale, 0, status)
     })
 }

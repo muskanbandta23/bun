@@ -2,6 +2,7 @@
 
 use core::ffi::{CStr, c_char};
 
+use crate::argument::locale_id;
 use crate::error::Status;
 use crate::ffi::filled;
 use crate::{Buffer, Result};
@@ -57,29 +58,26 @@ pub fn unicode_type(key: &CStr, value: &CStr) -> Option<&'static [u8]> {
 
 /// Add Likely Subtags of UTS #35.
 pub fn add_likely_subtags(locale: &CStr) -> Result<Buffer<u8>> {
+    let locale = locale_id(locale)?;
     // SAFETY: `locale` is terminated, and `out` has room for `capacity`.
-    filled(|out, capacity, status| unsafe {
-        uloc_addLikelySubtags(locale.as_ptr(), out, capacity, status)
-    })
+    filled(|out, capacity, status| unsafe { uloc_addLikelySubtags(locale, out, capacity, status) })
 }
 
 /// Remove Likely Subtags of UTS #35, which favors the region over the script.
 pub fn minimize_subtags(locale: &CStr) -> Result<Buffer<u8>> {
+    let locale = locale_id(locale)?;
     // SAFETY: `locale` is terminated, and `out` has room for `capacity`.
-    filled(|out, capacity, status| unsafe {
-        uloc_minimizeSubtags(locale.as_ptr(), out, capacity, status)
-    })
+    filled(|out, capacity, status| unsafe { uloc_minimizeSubtags(locale, out, capacity, status) })
 }
 
 /// Of the script that `locale` names, or of its likely one.
 pub fn is_right_to_left(locale: &CStr) -> bool {
     // SAFETY: `locale` is terminated.
-    unsafe { uloc_isRightToLeft(locale.as_ptr()) != 0 }
+    locale_id(locale).is_ok_and(|locale| unsafe { uloc_isRightToLeft(locale) } != 0)
 }
 
 pub fn to_language_tag(locale: &CStr) -> Result<Buffer<u8>> {
+    let locale = locale_id(locale)?;
     // SAFETY: `locale` is terminated, and `out` has room for `capacity`.
-    filled(|out, capacity, status| unsafe {
-        uloc_toLanguageTag(locale.as_ptr(), out, capacity, 0, status)
-    })
+    filled(|out, capacity, status| unsafe { uloc_toLanguageTag(locale, out, capacity, 0, status) })
 }

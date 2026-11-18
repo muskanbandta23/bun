@@ -36,6 +36,12 @@ pub(crate) enum Script {
     Text(String),
 }
 
+impl Script {
+    pub(crate) fn is_module(&self) -> bool {
+        matches!(self, Script::File { is_module, .. } if *is_module)
+    }
+}
+
 #[derive(Clone, Default)]
 pub(crate) struct CommandLine {
     pub(crate) scripts: Vec<Script>,
@@ -43,7 +49,6 @@ pub(crate) struct CommandLine {
     pub(crate) expected_exception: Option<String>,
     pub(crate) expected_async_passes: u32,
     pub(crate) watchdog_milliseconds: Option<u64>,
-    pub(crate) is_worker: bool,
     pub(crate) is_interactive: bool,
     pub(crate) runs_modules: bool,
     pub(crate) prints_exit_code: bool,
@@ -102,7 +107,6 @@ impl CommandLine {
 
     pub(crate) fn for_worker(&self) -> CommandLine {
         CommandLine {
-            is_worker: true,
             destroys_vm: true,
             accepts_termination: self.accepts_termination,
             ignores_uncaught_exceptions: self.ignores_uncaught_exceptions,

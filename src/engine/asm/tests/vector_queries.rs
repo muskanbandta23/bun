@@ -211,6 +211,7 @@ fn check_scratch<M: VectorAssembly>(features: M::Features, case: &Case<M>) {
         }
     }
     let ScratchNeeds { gprs, fprs } = case.needs;
+    assert!(gprs <= 1 && fprs <= 2, "{}", case.name);
     let declared = [gprs > 0, gprs > 1, fprs > 0, fprs > 1];
     assert_eq!(used, declared, "{}", case.name);
 }

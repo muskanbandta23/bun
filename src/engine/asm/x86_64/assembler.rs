@@ -1062,6 +1062,11 @@ impl Assembler {
 
     /// Clears the rest of a register.
     pub fn pextr(&mut self, lanes: Size, dst: impl Into<GprMem>, vector: Fpr, lane: u8) {
+        let dst = dst.into();
+        if let (Size::S16, Rm::Reg(dst)) = (lanes, dst) {
+            let shorter = Encoding(Encoding::PREFIX_66 | Encoding::MAP_0F | 0xc5);
+            return self.sse_two(shorter, dst.0, Rm::Reg(vector.0), Immediate::byte(lane));
+        }
         let opcode = match lanes {
             Size::S8 => 0x14,
             Size::S16 => 0x15,
@@ -1069,12 +1074,7 @@ impl Assembler {
             Size::S64 => 0x16 | Encoding::WIDE,
         };
         let encoding = Encoding(Encoding::PREFIX_66 | Encoding::MAP_3A | opcode);
-        self.sse_two(
-            encoding,
-            vector.0,
-            dst.into().untyped(),
-            Immediate::byte(lane),
-        );
+        self.sse_two(encoding, vector.0, dst.untyped(), Immediate::byte(lane));
     }
 
     // Control

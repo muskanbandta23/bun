@@ -227,6 +227,11 @@ fn binary(is_included: impl Fn(&str) -> bool) {
         let is_exact = op.is_relaxed()
             && MacroAssembler::relaxed(Features::host()).contains(Relaxed::SECOND_OPERAND_MIN_MAX);
         let width = op.nan_lanes().filter(|_| !is_exact);
+        let mut all = operands.of(op).to_vec();
+        if format!("{op:?}").contains("ExtMul") {
+            let other_halves = |item: &[u128; 3]| item.map(|vector| vector.rotate_left(64));
+            all.extend(operands.of(op).iter().map(other_halves));
+        }
         Case {
             name: &op,
             vectors: 3,
@@ -234,7 +239,7 @@ fn binary(is_included: impl Fn(&str) -> bool) {
             emit: &|masm, [dst, a, b, _], _| masm.vector_binary(op, dst, a, b),
         }
         .check_with(
-            &inputs(operands.of(op), random),
+            &inputs(&all, random),
             random,
             |relaxed, [a, b, _], _| (Some(op.evaluate_with(relaxed, a, b)), None),
             |sources, expected, actual| {
@@ -496,6 +501,18 @@ fn searching_text() {
     })
     .check(&set_masks, random, |[a, ..], _| {
         (None, Some((a.trailing_zeros() / 8).into()))
+    });
+    let mut in_registers = random_inputs(16, random);
+    for (byte, input) in in_registers.iter_mut().enumerate() {
+        input.scalars[1] =
+            u64::MAX >> (64 - 16 * bits_for_byte) & u64::MAX << (byte * bits_for_byte);
+    }
+    without_scratch(&"first", 1, &|masm, _, [dst, mask, ..]| {
+        masm.first_in_byte_mask(dst, mask);
+    })
+    .check(&in_registers, random, |_, mask| {
+        let byte = mask.trailing_zeros() >> MacroAssembler::BYTE_MASK_SHIFT;
+        (None, Some(byte.into()))
     });
     let even = std::array::from_fn(|byte| 2 * byte as u8);
     for (sign, inputs) in SIGNS.into_iter().zip([signed, unsigned]) {

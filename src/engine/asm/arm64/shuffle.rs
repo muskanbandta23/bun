@@ -285,15 +285,14 @@ impl Single {
         if pattern.accepts(Pattern::IDENTITY) {
             return Self::Move;
         }
-        let has_zero = pattern.has_zero();
-        let without_zero = |find: &dyn Fn() -> Option<Self>| if has_zero { None } else { find() };
-        without_zero(&|| Self::permutation(pattern, index))
-            .or_else(|| Self::filling_in_zeros(pattern, place, index))
-            .or_else(|| {
-                without_zero(&|| Pair::insertion(pattern, Pattern::folded).map(Self::WithItself))
-            })
-            .or_else(|| Self::with_zero(pattern).filter(|_| has_zero))
-            .unwrap_or(Self::Lookup(pattern))
+        let found = if pattern.has_zero() {
+            Self::filling_in_zeros(pattern, place, index).or_else(|| Self::with_zero(pattern))
+        } else {
+            Self::permutation(pattern, index)
+                .or_else(|| Self::filling_in_zeros(pattern, place, index))
+                .or_else(|| Pair::insertion(pattern, Pattern::folded).map(Self::WithItself))
+        };
+        found.unwrap_or(Self::Lookup(pattern))
     }
 
     fn permutation(pattern: Pattern, index: u8) -> Option<Self> {

@@ -11,8 +11,10 @@ use crate::vector::pattern::{
     ANY, Pattern, Side, ZERO, highest, lanes_with, lowest, mask_of, whole_lanes,
 };
 
-const INSTRUCTION: u8 = 2;
-const CONSTANT: u8 = 1;
+const INSTRUCTION: u8 = 4;
+const WITH_CONSTANT: u8 = 6;
+/// Fewer ports run it than run `pand`.
+const LOOKUP: u8 = 7;
 
 /// An instruction that reads one vector.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -126,20 +128,33 @@ impl Single {
         }
         let down = index as i8 - place as i8;
         let found = if pattern.has_zero() {
-            Self::extension(pattern)
+            Self::extension(pattern).or_else(|| Self::shift(pattern, down))
         } else {
-            Self::permutation(features, pattern, down)
+            Self::permutation(features, pattern)
+                .or_else(|| Self::shift(pattern, down))
+                .or_else(|| Self::with_itself(pattern, down))
         };
-        if let Some(found) = found.or_else(|| Self::shift(pattern, down)) {
+        if let Some(found) = found {
             found
         } else if pattern.keeps_places(16) {
             Self::Keep(pattern.taken_from(Side::First))
         } else {
-            Self::Lookup(pattern)
+            Self::insertion(pattern).unwrap_or(Self::Lookup(pattern))
         }
     }
 
-    fn permutation(features: X64Features, pattern: Pattern, down: i8) -> Option<Self> {
+    /// Not all bytes keep their places.
+    fn insertion(pattern: Pattern) -> Option<Self> {
+        let lanes: [u8; 4] = pattern.widen()?;
+        let taken = whole_lanes(Size::S32, pattern.taken_from(Side::First));
+        let to = lowest(pattern.missed_by(Pattern::IDENTITY) & taken) / 4;
+        let (pair, result) = insertps(lanes[usize::from(to)], to, !taken);
+        pattern
+            .accepts(result.folded())
+            .then_some(Self::WithItself(pair))
+    }
+
+    fn permutation(features: X64Features, pattern: Pattern) -> Option<Self> {
         if let Some(lanes) = pattern.widen() {
             return Some(Self::Permute(SseUnaryImm::Pshufd, order(lanes)));
         }
@@ -155,14 +170,16 @@ impl Single {
                 return Some(Self::Permute(SseUnaryImm::Pshufhw, order([e, f, g, h])));
             }
         }
-        for (size, op) in [
+        [
             (Size::S8, AvxUnary::Vpbroadcastb),
             (Size::S16, AvxUnary::Vpbroadcastw),
-        ] {
-            if has_avx2(features) && pattern.accepts(Pattern::duplicate(size, 0)) {
-                return Some(Self::Broadcast(op));
-            }
-        }
+        ]
+        .into_iter()
+        .find(|&(size, _)| has_avx2(features) && pattern.accepts(Pattern::duplicate(size, 0)))
+        .map(|(_, op)| Self::Broadcast(op))
+    }
+
+    fn with_itself(pattern: Pattern, down: i8) -> Option<Self> {
         unpacks()
             .chain([palignr(down as u8 % 16)])
             .find(|(_, result)| pattern.accepts(result.folded()))
@@ -198,7 +215,8 @@ impl Single {
     fn cost(self) -> u8 {
         match self {
             Self::Move => 0,
-            Self::Keep(_) | Self::Lookup(_) => INSTRUCTION + CONSTANT,
+            Self::Keep(_) => WITH_CONSTANT,
+            Self::Lookup(_) => LOOKUP,
             _ => INSTRUCTION,
         }
     }
@@ -240,16 +258,16 @@ impl Pair {
 
     /// Those that leave these bytes of the operands in one vector.
     fn gathering(first: u16, second: u16) -> impl Iterator<Item = (Self, Pattern)> {
-        let [few, more] = [first, second].map(|bytes| lanes_with(Size::S32, bytes));
-        let ends = [lowest(few), highest(few), lowest(more), highest(more)];
+        let [a, b] = [first, second].map(|bytes| lanes_with(Size::S32, bytes));
+        let ends = [lowest(a), highest(a), lowest(b), highest(b)];
         let unpacks = match (first | second).to_le_bytes() {
             [_, 0] => &LOW_UNPACKS[..],
             [0, _] => &HIGH_UNPACKS[..],
             _ => &[],
         };
         let others = [
-            (few.count_ones() <= 2 && more.count_ones() <= 2).then(|| shufps(ends)),
-            (few != 0xf && more.is_power_of_two()).then(|| insertps(ends[2], lowest(!few), 0)),
+            (a.count_ones() <= 2 && b.count_ones() <= 2).then(|| shufps(ends)),
+            (a != 0xf && b.is_power_of_two()).then(|| insertps(lowest(b), lowest(!a), 0)),
             (highest(first) < lowest(second)).then(|| palignr(lowest(second))),
         ];
         unpacks.iter().copied().chain(others.into_iter().flatten())
@@ -257,7 +275,7 @@ impl Pair {
 
     fn cost(self) -> u8 {
         match self {
-            Self::Blend(Size::S8, _) => 2 * INSTRUCTION + CONSTANT,
+            Self::Blend(Size::S8, _) => INSTRUCTION + WITH_CONSTANT,
             _ => INSTRUCTION,
         }
     }

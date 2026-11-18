@@ -14,6 +14,7 @@ pub struct Engine {
     pub gc: DefId,
     pub owned: DefId,
     pub no_gc: DefId,
+    pub gc_ref_mut: DefId,
     pub call_frame: DefId,
     pub ref_cell_guards: [Option<DefId>; 2],
     /// `Cell` and `RefCell`
@@ -80,6 +81,7 @@ impl Engine {
             gc,
             owned: find_item(&["heap", "Owned"]),
             no_gc: find_item(&["NoGc"]),
+            gc_ref_mut: find_item(&["heap", "GcRefMut"]),
             call_frame: find_item(&["CallFrame"]),
             ref_cell_guards: ["RefCellRef", "RefCellRefMut"].map(diagnostic_item),
             lend_nothing: ["Cell", "RefCell", "Atomic"].map(diagnostic_item),

@@ -74,7 +74,7 @@ fn heap_create_iso_space(
 #[export]
 unsafe fn cell_is_live(cell: *const JsCell) -> bool {
     // SAFETY: it has not been destroyed.
-    unsafe { (*cell).heap().is_live(cell.addr()) }
+    unsafe { (*cell).heap_unchecked().is_live(cell.addr()) }
 }
 
 #[export]
@@ -267,9 +267,8 @@ unsafe fn weak_allocate(
     owner: *const WeakOwner,
     context: *mut c_void,
 ) -> &'static WeakImpl {
-    let heap: *const Heap = cell.heap();
-    // SAFETY: the heap outlives the call, and an owner its handles.
-    unsafe { (*heap).allocate_weak_handle(cell, owner, context) }
+    // SAFETY: C++ has the right to use the heap, and an owner outlives its handles.
+    unsafe { (cell.heap_unchecked()).allocate_weak_handle(cell, owner, context) }
 }
 
 #[export]

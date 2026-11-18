@@ -7,12 +7,12 @@ use crate::{Error, Result};
 
 /// Declares functions of ICU under the names that the linked release gives them.
 macro_rules! icu_functions {
-    ($($(#[$attribute:meta])* fn $name:ident($($argument:ident: $type:ty),* $(,)?) $(-> $result:ty)?;)*) => {
+    ($($(#[$attribute:meta])* $visibility:vis fn $name:ident($($argument:ident: $type:ty),* $(,)?) $(-> $result:ty)?;)*) => {
         unsafe extern "C" {
             $(
                 $(#[$attribute])*
                 #[link_name = concat!(stringify!($name), env!("BUN_ICU_SYMBOL_SUFFIX"))]
-                fn $name($($argument: $type),*) $(-> $result)?;
+                $visibility fn $name($($argument: $type),*) $(-> $result)?;
             )*
         }
     };
@@ -41,7 +41,7 @@ pub type Buffer<T> = SmallVec<[T; 32]>;
 
 #[inline]
 pub(crate) fn call<T>(function: impl FnOnce(&mut Status) -> T) -> Result<T> {
-    let mut status = Status::default();
+    let mut status = Status::new();
     let value = function(&mut status);
     status.result().map(|()| value)
 }
@@ -56,7 +56,7 @@ pub(crate) fn adopt<T, O>(
     function: impl FnOnce(&mut Status) -> *mut T,
     own: impl FnOnce(NonNull<T>) -> O,
 ) -> Result<O> {
-    let mut status = Status::default();
+    let mut status = Status::new();
     let object = NonNull::new(function(&mut status)).map(own);
     status.result()?;
     object.ok_or(Error::MEMORY_ALLOCATION)
@@ -95,7 +95,7 @@ where
     buffer.clear();
     for _ in 0..2 {
         let capacity = i32::try_from(buffer.capacity()).unwrap_or(i32::MAX);
-        let mut status = Status::default();
+        let mut status = Status::new();
         let needed = function(buffer.as_mut_ptr(), capacity, &mut status);
         match (status.result(), usize::try_from(needed)) {
             (Ok(()), Ok(written)) if needed <= capacity => {

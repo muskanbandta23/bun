@@ -58,7 +58,7 @@ pub(super) fn executable_of(function: Value) -> Option<Gc<FunctionExecutable>> {
     function.downcast::<JsFunction>()?.script_executable()
 }
 
-fn code_block_of(function: Value) -> Option<Gc<CodeBlock>> {
+pub(super) fn code_block_of(function: Value) -> Option<Gc<CodeBlock>> {
     let executable = executable_of(function)?;
     (executable.code_block(Specialization::Call))
         .or_else(|| executable.code_block(Specialization::Construct))

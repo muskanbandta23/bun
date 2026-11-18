@@ -263,15 +263,16 @@ fn to_string(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 }
 
 fn initialize_make_type_error(cx: &Cx) {
-    cx.global().init_private_make_type_error(JsFunction::native_with(
-        cx,
-        0,
-        &StringRef::from_literal("makeTypeError"),
-        make_type_error,
-        native_not_a_constructor,
-        Intrinsic::None,
-        Visibility::Private,
-    ));
+    cx.global()
+        .init_private_make_type_error(JsFunction::native_with(
+            cx,
+            0,
+            &StringRef::from_literal("makeTypeError"),
+            make_type_error,
+            native_not_a_constructor,
+            Intrinsic::None,
+            Visibility::Private,
+        ));
 }
 
 #[native_abi]

@@ -14,9 +14,9 @@ use bun_engine_vm::{
     describe_builtin, options, origin_of_caller,
 };
 
-use super::tiers::executable_of;
+use super::tiers::{code_block_of, executable_of};
+use super::{coverage, define_functions, return_undefined, tiers, values};
 use super::{dollar, heap, io, object_with, return_false, scripts, string, tasks, test_objects};
-use super::{return_undefined, tiers, values};
 use crate::files;
 use crate::prelude::*;
 
@@ -44,6 +44,8 @@ const FUNCTIONS: Functions = &[
     ("isWasmSupported", is_wasm_supported, 0),
     ("noInline", tiers::no_inline, 1),
     ("OSRExit", return_undefined, 0),
+    ("codeBlockFor", describe_code_block, 1),
+    ("codeBlockForFrame", code_block_of_frame, 1),
     ("deleteAllCodeWhenIdle", delete_all_code, 0),
     ("shrinkFootprintWhenIdle", shrink_footprint, 1),
     ("lineStartTableIsBuilt", has_lines, 1),
@@ -104,7 +106,9 @@ const FUNCTIONS: Functions = &[
 
 pub(super) fn create(cx: &Cx) -> Gc<JsObject> {
     let vm = object_with(cx, FUNCTIONS, Attributes::CONSTANT);
-    super::add_functions(cx, &vm, test_objects::FUNCTIONS, Attributes::CONSTANT);
+    for functions in [coverage::VM_FUNCTIONS, test_objects::FUNCTIONS] {
+        define_functions(cx, &vm, functions, Attributes::CONSTANT);
+    }
     vm
 }
 
@@ -179,6 +183,28 @@ fn caller_is_in<const TIER: u8>(cx: &mut Cx, _: &CallFrame) -> JsResult<Value> {
     let caller = StackVisitor::frames(cx).nth(1);
     let code_block = caller.and_then(|it| it.machine_frame.code_block());
     Ok(code_block.is_some_and(|it| it.tier() as u8 == TIER).into())
+}
+
+/// Of a function, or what `codeBlockForFrame` has returned.
+#[native_abi]
+fn describe_code_block(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let argument = frame.argument(0);
+    let Some(code_block) = argument.downcast().or_else(|| code_block_of(argument)) else {
+        return Ok(Value::UNDEFINED);
+    };
+    let (address, executable) = (code_block.address(), code_block.executable().address());
+    let (tier, size) = (code_block.tier(), code_block.body().instructions().len());
+    let text = format!("[{address:#x}->{executable:#x}, {tier:?}, {size}]");
+    Ok(string(cx, &text))
+}
+
+#[native_abi]
+fn code_block_of_frame(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let depth = frame.argument(0).as_index_int32().unwrap_or(0) as usize;
+    let visited = StackVisitor::frames(cx).nth(depth + 1);
+    Ok(visited
+        .and_then(|it| it.code_block)
+        .map_or_default(Value::from))
 }
 
 #[native_abi]

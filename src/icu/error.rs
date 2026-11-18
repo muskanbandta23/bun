@@ -11,6 +11,7 @@ impl Error {
     pub const INDEX_OUT_OF_BOUNDS: Error = Error(8);
     pub const BUFFER_OVERFLOW: Error = Error(15);
     pub const UNSUPPORTED: Error = Error(16);
+    pub const RESOURCE_TYPE_MISMATCH: Error = Error(17);
 }
 
 /// The `UErrorCode` that a call reads and writes. Below zero is a warning.

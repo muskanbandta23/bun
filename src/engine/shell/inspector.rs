@@ -94,10 +94,6 @@ static CONSOLE: ConsoleHooks = ConsoleHooks {
     time: |_, _| Ok(()),
     time_log: |_, _, _| Ok(()),
     time_end: |_, _| Ok(()),
-    time_stamp: |_, _| Ok(()),
-    record: |_, _| Ok(()),
-    record_end: |_, _| Ok(()),
-    screenshot: |_, _| Ok(()),
 };
 
 /// Returns when the frontend has sent `Inspector.initialized`.

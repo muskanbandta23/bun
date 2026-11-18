@@ -52,14 +52,14 @@ fn is_indistinguishable(cx: &Cx, a: &SourceProvider, b: &SourceProvider) -> bool
 }
 
 impl ModuleLoader {
-    fn shares_code(&self, cx: &Cx) -> bool {
-        !cx.module_loader().is_same(self)
+    fn shares_code(&self, vm: &Vm) -> bool {
+        !self.realm().module_loader(vm).is_same(self)
     }
 
-    fn executable_key(&self, cx: &Cx, key: &Identifier) -> ExecutableKey {
+    fn executable_key(&self, key: &Identifier) -> ExecutableKey {
         let scope = static_scope_of(self.module_scope());
         let scope = scope.map_or(0, |it| Rc::as_ptr(&it).addr());
-        ((cx.global().address(), scope), key.clone())
+        ((self.realm().address(), scope), key.clone())
     }
 
     /// What another loader has for the same module.
@@ -73,7 +73,7 @@ impl ModuleLoader {
             return None;
         }
         let executables = &cx.services.modules.executables;
-        let executable = executables.get(cx, &self.executable_key(cx, key))?;
+        let executable = executables.get(cx, &self.executable_key(key))?;
         let (flags, wanted) = (executable.flags(), cx.global().instrumentation(cx));
         let is_alike = flags.contains(CodeFlags::HAS_DEBUG_HOOKS)
             == wanted.contains(Instrumentation::DEBUGGER)
@@ -85,7 +85,7 @@ impl ModuleLoader {
 
     /// While something keeps it alive, the records of later loaders run the code that it has.
     pub fn shareable_executable(&self, cx: &Cx, key: &Identifier) -> Option<Gc<ModuleExecutable>> {
-        (cx.services.modules.executables).get(cx, &self.executable_key(cx, key))
+        (cx.services.modules.executables).get(cx, &self.executable_key(key))
     }
 
     fn compile(
@@ -109,7 +109,8 @@ impl SourceTextModuleRecord {
         key: Identifier,
         source: SourceCode,
     ) -> Gc<SourceTextModuleRecord> {
-        let (shape, module_type) = (cx.module_record_shape(), ModuleType::JavaScript);
+        let shape = loader.realm().module_record_shape(cx);
+        let module_type = ModuleType::JavaScript;
         cx.allocate::<SourceTextModuleRecord>(SourceTextModuleRecordInit {
             base: CyclicModuleRecord::init(cx, shape, loader, key, module_type, None),
             source,
@@ -127,6 +128,7 @@ impl SourceTextModuleRecord {
         key: Identifier,
         source: SourceCode,
     ) -> Result<Gc<SourceTextModuleRecord>, AnalysisError> {
+        let cx = cx.in_realm_shared(loader.realm());
         let unit = (loader.compile(cx, &key, &source.provider)).map_err(AnalysisError::Compile)?;
         let entries = ModuleEntries::of_module(&unit).map_err(AnalysisError::Attributes)?;
         let has_live_exports = source.provider.has_live_exports().get();
@@ -169,7 +171,7 @@ impl SourceTextModuleRecord {
             let is_shareable = loader.shares_code(cx);
             let executable = ModuleExecutable::create(cx, &self.source, unit, is_shareable);
             if is_shareable {
-                let key = loader.executable_key(cx, self.key());
+                let key = loader.executable_key(self.key());
                 cx.services.modules.executables.insert(key, executable);
             }
             executable
@@ -196,7 +198,7 @@ impl SourceTextModuleRecord {
         let environment = self.ensure_environment(cx)?;
         let template = environment.template();
         for import in self.entries().imports() {
-            let imported = self.imported_module(import.module.borrow());
+            let imported = self.require_imported_module(cx, import.module.borrow())?;
             let slot = template.scope().find(import.local.name());
             if import.kind == ImportKind::Namespace {
                 let namespace = imported.namespace(cx, import.phase)?;

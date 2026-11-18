@@ -223,7 +223,7 @@ impl Builder<'_> {
             .checked_metadata::<GetImport>(MetadataKind::GetImport, op.metadata)
             .slot
             .get();
-        if slot == 0 || self.has_exited(ExitKind::BadType) {
+        if slot <= GetImport::VARIES || self.has_exited(ExitKind::BadType) {
             return self.interpret_or_exit(op.metadata);
         }
         let Some(prediction) = self.prediction_or_exit(op.metadata) else {

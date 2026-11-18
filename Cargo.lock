@@ -587,6 +587,7 @@ version = "0.0.0"
 dependencies = [
  "bun_engine_baseline",
  "bun_engine_builtins",
+ "bun_engine_bytecode",
  "bun_engine_inspector",
  "bun_engine_interpreter",
  "bun_engine_intl",

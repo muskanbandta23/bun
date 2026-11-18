@@ -3,12 +3,12 @@
 use core::time::Duration;
 use std::io::{BufRead, Write};
 
-use bun_engine_inspector::profiling::Coverage;
+use bun_engine_inspector::profiling::{Coverage, SamplingProfiler};
 use bun_engine_text::{StringBuilder, names};
 use bun_engine_vm::heap::{HeapKind, Scope};
 use bun_engine_vm::{
     JsFunctionWithFields, RunLoop, SourceType, errors, evaluate_module_source, evaluate_script,
-    load_and_evaluate_module,
+    load_and_evaluate_module, options,
 };
 
 use crate::command_line::{CommandLine, Script};
@@ -223,8 +223,11 @@ pub(crate) fn run(command_line: &CommandLine, body: impl FnOnce(&mut Cx)) -> i32
         let _ = State::of(vm.get()).command_line.set(command_line.clone());
         Cx::from_global(global::create(vm.get()))
     };
-    if command_line.collects_coverage {
+    if options().collect_coverage {
         Coverage::of(cx).enable(cx);
+    }
+    if options().use_sampling_profiler {
+        SamplingProfiler::start(cx);
     }
     let run_loop = RunLoop::install(cx);
     let state = State::of(cx);
@@ -268,6 +271,10 @@ pub(crate) fn run(command_line: &CommandLine, body: impl FnOnce(&mut Cx)) -> i32
             );
         }
         println!();
+    }
+    if command_line.prints_samples {
+        eprint!("{}", SamplingProfiler::top_functions_report(cx));
+        eprint!("{}", SamplingProfiler::top_bytecodes_report(cx));
     }
     if command_line.collects_at_end {
         cx.heap.collect_and_sweep(Some(Scope::Full));

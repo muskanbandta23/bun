@@ -117,7 +117,7 @@ pub(crate) unsafe extern "C" fn clear_below_stack_pointer(lowest: usize) {
 /// # Safety
 /// The address is mapped and aligned.
 #[inline(always)]
-pub(super) unsafe fn load_word(address: usize) -> usize {
+pub unsafe fn load_word(address: usize) -> usize {
     let word: usize;
     // SAFETY: the caller's.
     unsafe {

@@ -19,6 +19,24 @@ pub struct WasmFrame {
     pub is_inlined: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum WasmTier {
+    Interpreter,
+    Baseline,
+    Optimized,
+    OptimizedForLoopEntry,
+    StubFromScript,
+    StubToScript,
+}
+
+/// What a profiler has seen WebAssembly code run.
+pub struct SampledWasmFrame {
+    pub name: bun_engine_text::StringRef,
+    pub tier: WasmTier,
+    /// Of the instruction in the module.
+    pub offset: Option<u32>,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum FrameKind {

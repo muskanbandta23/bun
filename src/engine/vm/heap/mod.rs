@@ -567,6 +567,23 @@ impl Heap {
         }
     }
 
+    /// The cell that starts at `word`, which may be anything, if `is_live` holds for it. No marker is running.
+    pub fn live_cell_at(&self, word: usize) -> Option<Gc<JsCell>> {
+        let kind = if word & PRECISE_BIT != 0 {
+            let precise = self.precise.borrow();
+            precise.iter().find(|it| it.cell() == word)?.attributes.kind
+        } else {
+            let block = self.blocks.borrow().block_containing(word)?;
+            (block.cell_containing(word) == Some(word)).then_some(block.attributes.kind)?
+        };
+        // SAFETY: the start of a cell in memory of the heap.
+        unsafe {
+            let is_cell = kind == AllocationKind::Cell && self.is_live(word);
+            let cell = is_cell.then(|| Gc::<JsCell>::from_address(word));
+            cell.filter(|cell| !cell.shape_id().is_none())
+        }
+    }
+
     fn stop_allocating(&self) {
         for allocator in self.allocators.borrow().iter() {
             allocator.stop_allocating(self);

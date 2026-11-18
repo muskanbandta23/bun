@@ -170,6 +170,8 @@ pub struct EntryRecord {
 
 impl EntryRecord {
     pub const DISTANCE: usize = size_of::<EntryRecord>();
+    pub const OFFSET_OF_TOP_ENTRY_FRAME: usize = offset_of!(EntryRecord, previous_top_entry_frame);
+    pub const OFFSET_OF_TOP_CALL_FRAME: usize = offset_of!(EntryRecord, previous_top_call_frame);
 
     /// # Safety
     /// The address of an entry frame that is there for `'a`.

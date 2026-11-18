@@ -18,7 +18,6 @@ flag breakOnThrow
 flag clobberAllRegsInFTLICSlowPath
 flag coalesceSpillSlots
 flag collectContinuously
-flag collectExtraSamplingProfilerData
 flag countParseTimes
 flag crashIfCantAllocateJITMemory
 flag crashIfInterpreterIsUsed
@@ -501,8 +500,6 @@ number relaxedProfileCoverageFactorForQuickDFGTierUp
 number reoptimizationRetryCounterMax
 number repatchBufferingCountdown
 number repatchCountForCoolDown
-number samplingProfilerTopBytecodesCount
-number samplingProfilerTopFunctionsCount
 number seedForLICMFuzzer
 number seedOfRandomizingFuzzerAgent
 number seedOfVMRandomForFuzzer

@@ -2,13 +2,15 @@
 
 use core::cell::{Cell, RefCell};
 use core::cmp::Reverse;
+use core::ops::Range;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use bun_engine_bytecode::{Code, CoverageKind, FunctionInfo, FunctionKind};
+use bun_engine_bytecode::{
+    Code, CodeKind, CoverageBlock, CoverageKind, FunctionInfo, FunctionKind,
+};
 use bun_engine_vm::{
-    CoverageCount, FastHashMap, FunctionExecutable, ModuleExecutable, ProgramExecutable,
-    ScriptExecutable, Vm,
+    CoverageCount, FastHashMap, FunctionExecutable, ProgramExecutable, ScriptExecutable, Vm,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -18,7 +20,7 @@ struct Span {
 }
 
 impl Span {
-    fn of(range: core::ops::Range<u32>) -> Span {
+    fn of(range: Range<u32>) -> Span {
         Span {
             start: range.start as i32,
             end: range.end as i32 - 1,
@@ -240,16 +242,13 @@ impl Coverage {
             };
             (function.is_written()).then(|| (Span::of(function.range()), kind))
         };
-        let own = if let Some(function) = executable.downcast::<FunctionExecutable>() {
-            of_function(function.info())
-        } else if let Some(script) = executable.downcast::<ProgramExecutable>() {
-            Some((
-                Span::of(0..script.range().len() as u32),
-                CodeRangeKind::Script,
-            ))
-        } else {
-            (executable.downcast::<ModuleExecutable>())
-                .map(|it| (Span::of(0..it.range().len() as u32), CodeRangeKind::Module))
+        let whole = |kind| Some((Span::of(0..range_of(executable).len() as u32), kind));
+        let own = match code.body.kind() {
+            CodeKind::Script => whole(CodeRangeKind::Script),
+            CodeKind::Module => whole(CodeRangeKind::Module),
+            CodeKind::Eval => None,
+            CodeKind::Call | CodeKind::Construct => (executable.downcast::<FunctionExecutable>())
+                .and_then(|function| of_function(function.info())),
         };
         if own.is_none() && code.functions.is_empty() {
             return;
@@ -269,7 +268,7 @@ impl Coverage {
         }
         let spans = descriptions.iter().map(|block| {
             let end = match block.end {
-                0 => end_of(executable) as i32 - 1,
+                0 => range_of(executable).end as i32 - 1,
                 end => end - 1,
             };
             // A text without a token starts after its end.
@@ -284,7 +283,7 @@ impl Coverage {
 
         let mut blocks = self.blocks.borrow_mut();
         let blocks = blocks.entry(executable.provider().id()).or_default();
-        let add = |(span, description): (Span, &bun_engine_bytecode::CoverageBlock)| {
+        let add = |(span, description): (Span, &CoverageBlock)| {
             let block = blocks.0.entry(span).or_insert_with(|| Block {
                 count: CoverageCount::default(),
                 kind: description.kind,
@@ -300,13 +299,13 @@ impl Coverage {
     }
 }
 
-fn end_of(executable: &ScriptExecutable) -> u32 {
+fn range_of(executable: &ScriptExecutable) -> Range<u32> {
     if let Some(function) = executable.downcast::<FunctionExecutable>() {
-        function.info().range().end
+        function.info().range()
     } else if let Some(script) = executable.downcast::<ProgramExecutable>() {
-        script.range().end
+        script.range()
     } else {
-        (executable.downcast::<ModuleExecutable>()).map_or(0, |module| module.range().end)
+        0..executable.provider().text().len() as u32
     }
 }
 

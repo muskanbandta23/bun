@@ -1,5 +1,6 @@
 //! Families of instructions that share a form.
 
+use crate::family::family;
 use crate::operand::{Cond, ResultCond, Shift, TestCond};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -92,21 +93,6 @@ impl From<ResultCond> for Cc {
             ResultCond::NoCarry => Self::Ae,
         }
     }
-}
-
-macro_rules! family {
-    ($(#[$meta:meta])* $name:ident: $repr:ty { $($variant:ident = $value:expr,)* }) => {
-        $(#[$meta])*
-        #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-        #[repr($repr)]
-        pub enum $name {
-            $($variant = $value,)*
-        }
-
-        impl $name {
-            pub const ALL: &'static [Self] = &[$(Self::$variant,)*];
-        }
-    };
 }
 
 family! {

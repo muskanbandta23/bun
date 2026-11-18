@@ -6,6 +6,7 @@ pub mod arm64;
 mod assembly;
 mod blinding;
 mod buffer;
+mod family;
 mod features;
 mod label;
 mod operand;
@@ -30,11 +31,12 @@ pub use vector::{
     Relaxed, VectorBinary, VectorReduce, VectorShift, VectorTernary, VectorUnary, lanes,
 };
 
+#[cfg(target_arch = "aarch64")]
+pub use {arm64 as host, features::Arm64Features as Features};
 #[cfg(target_arch = "x86_64")]
 pub use {features::X64Features as Features, x64 as host};
 
 /// That of the processor that runs the engine.
-#[cfg(target_arch = "x86_64")]
 pub use host::{MacroAssembler, abi, patch};
 
 /// What code that generates code for the host needs in scope.

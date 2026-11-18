@@ -180,116 +180,122 @@ struct Entry {
     kind: NameKind,
 }
 
-/// A short text is in `head` and `tail`. Of another, `head` is the hash and `tail` says whether it is wide.
+/// A short text is in there as it is, with its length and kind in the last byte. Of another, `head` is the hash and
+/// `tail` has the length, the kind and whether it is wide.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-struct Key {
+pub(crate) struct Key {
     head: u64,
     tail: u64,
-    /// The length. Of a short text also the kind, and `SHORT`.
-    shape: u32,
 }
 
 #[derive(Clone, Copy, Default)]
 struct Slot {
-    head: u64,
-    tail: u64,
-    shape: u32,
+    key: Key,
     name: u32,
 }
 
-const SHORT: u32 = 1 << 31;
-const SHORT_LENGTH: usize = 16;
+/// What it takes to make the key of a short text.
+pub(crate) type Chunk = [u8; 16];
+
+pub(crate) const LONGEST_SHORT: usize = size_of::<Chunk>() - 1;
+const SHORT: u64 = 1 << 63;
+const WIDE: u64 = 1 << 34;
 const INITIAL_SLOTS: usize = 512;
 /// A table of up to this size is emptied for the next parse.
 const KEPT_SLOTS: usize = 8192;
 /// A literal that is longer is not worth looking up.
 const LONGEST_INTERNED_LITERAL: usize = 64;
 
-static SHORT_MASKS: [[u64; 2]; SHORT_LENGTH + 1] = {
-    let mut masks = [[0; 2]; SHORT_LENGTH + 1];
-    let mut length = 1;
-    while length <= SHORT_LENGTH {
-        let mask = u128::MAX >> (128 - 8 * length);
-        masks[length] = [mask as u64, (mask >> 64) as u64];
+/// By length: which bits of a chunk are text, and the last byte.
+static SHORT_SHAPES: [[u64; 4]; LONGEST_SHORT + 1] = {
+    let mut shapes = [[0; 4]; LONGEST_SHORT + 1];
+    let mut length = 0;
+    while length <= LONGEST_SHORT {
+        let mask = (1u128 << (8 * length)) - 1;
+        let last = SHORT | (length as u64) << 56;
+        shapes[length] = [mask as u64, (mask >> 64) as u64, last, 0];
         length += 1;
     }
-    masks
+    shapes
 };
 
 #[inline(always)]
-fn mix(a: u64, b: u64) -> u64 {
-    let product = u128::from(a ^ 0x2d35_8dcc_aa6c_78a5) * u128::from(b ^ 0x8bb8_4b93_962e_acc9);
-    product as u64 ^ (product >> 64) as u64
+fn words(chunk: &Chunk) -> (u64, u64) {
+    let both = u128::from_le_bytes(*chunk);
+    (both as u64, (both >> 64) as u64)
 }
 
 #[inline(always)]
-fn words(chunk: &[u8; SHORT_LENGTH]) -> (u64, u64) {
-    let both = u128::from_le_bytes(*chunk);
-    (both as u64, (both >> 64) as u64)
+fn mix(hash: u64, chunk: &Chunk) -> u64 {
+    let (head, tail) = words(chunk);
+    let product = u128::from(head ^ hash) * u128::from(tail ^ 0x8bb8_4b93_962e_acc9);
+    product as u64 ^ (product >> 64) as u64
 }
 
 impl Key {
     /// Of the first `length` bytes of `chunk`.
     #[inline(always)]
-    fn short(chunk: &[u8; SHORT_LENGTH], length: usize, kind: NameKind) -> Key {
+    pub(crate) fn short(chunk: &Chunk, length: usize) -> Key {
         let (head, tail) = words(chunk);
-        let [head_mask, tail_mask] = SHORT_MASKS[length];
+        let [head_mask, tail_mask, last, _] = SHORT_SHAPES[length];
         Key {
             head: head & head_mask,
-            tail: tail & tail_mask,
-            shape: SHORT | (kind as u32) << 8 | length as u32,
+            tail: tail & tail_mask | last,
         }
     }
 
+    #[inline(always)]
     fn narrow(characters: &[u8], kind: NameKind) -> Key {
-        match characters.last_chunk() {
-            Some(last) if characters.len() > SHORT_LENGTH => {
-                let step = |hash: u64, chunk| {
-                    let (head, tail) = words(chunk);
-                    mix(head ^ hash, tail)
-                };
-                let (chunks, _) = characters.as_chunks();
-                Key {
-                    head: step(chunks.iter().fold(0, step), last),
-                    tail: kind as u64,
-                    shape: characters.len() as u32,
-                }
-            }
-            _ => {
-                let mut chunk = [0; SHORT_LENGTH];
-                chunk[..characters.len()].copy_from_slice(characters);
-                Key::short(&chunk, characters.len(), kind)
-            }
+        let Some(last) = characters.last_chunk() else {
+            let mut chunk = Chunk::default();
+            chunk[..characters.len()].copy_from_slice(characters);
+            let mut key = Key::short(&chunk, characters.len());
+            key.tail |= (kind as u64) << 60;
+            return key;
+        };
+        let (chunks, _) = characters.as_chunks();
+        Key {
+            head: mix(chunks.iter().fold(0x2d35_8dcc_aa6c_78a5, mix), last),
+            tail: (kind as u64) << 32 | characters.len() as u64,
         }
     }
 
     fn wide(units: &[u16]) -> Key {
         Key {
-            head: mix(u64::from(Text::Utf16(units).hash()), 0),
-            tail: u64::MAX,
-            shape: units.len() as u32,
+            head: u64::from(Text::Utf16(units).hash()),
+            tail: WIDE | units.len() as u64,
         }
     }
 
     #[inline(always)]
-    fn hash(self) -> usize {
-        if self.shape & SHORT != 0 {
-            mix(self.head, self.tail) as usize
+    fn is_short(self) -> bool {
+        self.tail & SHORT != 0
+    }
+
+    fn length(self) -> usize {
+        if self.is_short() {
+            (self.tail >> 56) as usize & LONGEST_SHORT
         } else {
-            self.head as usize
+            self.tail as u32 as usize
         }
+    }
+
+    /// The upper bits of the product are the ones that all of the key has gone into.
+    #[inline(always)]
+    fn hash(self) -> usize {
+        (self.head ^ self.tail.rotate_left(29))
+            .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+            .swap_bytes() as usize
     }
 }
 
-impl Slot {
-    #[inline(always)]
-    fn key(self) -> Key {
-        Key {
-            head: self.head,
-            tail: self.tail,
-            shape: self.shape,
-        }
+/// `a` and `b` have the same length, which is no less than that of a chunk.
+#[inline(always)]
+fn are_equal(a: &[u8], b: &[u8]) -> bool {
+    if a.len() > 2 * size_of::<Chunk>() {
+        return a == b;
     }
+    a.first_chunk::<16>() == b.first_chunk() && a.last_chunk::<16>() == b.last_chunk()
 }
 
 pub struct Names {
@@ -338,12 +344,7 @@ impl Names {
         while self.slots[index].name != 0 {
             index = (index + 1) & mask;
         }
-        self.slots[index] = Slot {
-            head: key.head,
-            tail: key.tail,
-            shape: key.shape,
-            name,
-        };
+        self.slots[index] = Slot { key, name };
         index
     }
 
@@ -354,7 +355,7 @@ impl Names {
         }
         for entry in self.entries.drain(..) {
             if let Some(slot) = self.slots.get_mut(entry.slot as usize) {
-                (slot.shape, slot.name) = (0, 0);
+                *slot = Slot::default();
             }
         }
         self.room = self.slots.len() / 2 - KNOWN.len();
@@ -422,26 +423,24 @@ impl Names {
         }
     }
 
-    /// A range of the source of up to `SHORT_LENGTH` Latin-1 characters that is not at its very end.
+    /// If it is where it is looked for first.
     #[inline(always)]
-    pub(crate) fn intern_short(
-        &mut self,
-        source: Source<'_>,
-        start: usize,
-        length: usize,
-    ) -> Option<Name> {
-        if length > SHORT_LENGTH {
-            return None;
-        }
-        let chunk = source.bytes.get(start..)?.first_chunk()?;
-        let key = Key::short(chunk, length, NameKind::Ordinary);
-        Some(match self.find(key, |_| true) {
+    pub(crate) fn find_at_once(&self, key: Key) -> Option<u32> {
+        let slot = (self.slots).get(key.hash() & self.slots.len().wrapping_sub(1))?;
+        ((slot.key.head ^ key.head) | (slot.key.tail ^ key.tail) == 0).then_some(slot.name)
+    }
+
+    /// `key` is that of a short text at `start` in the source.
+    #[inline(always)]
+    pub(crate) fn intern_short(&mut self, key: Key, start: usize) -> Name {
+        match self.find(key, |_| true) {
             Ok(name) => name,
             Err(slot) => self.insert(key, slot, start, Storage::Source, NameKind::Ordinary),
-        })
+        }
     }
 
     /// A range of the source that has only Latin-1 characters.
+    #[inline]
     pub(crate) fn intern_narrow(
         &mut self,
         source: Source<'_>,
@@ -464,8 +463,12 @@ impl Names {
         {
             return self.intern_wide(source, start, &units[start..end]);
         }
-        self.intern_short(source, start, end - start)
-            .unwrap_or_else(|| self.intern_narrow(source, start, end, NameKind::Ordinary))
+        match source.bytes[start..].first_chunk() {
+            Some(chunk) if end - start <= LONGEST_SHORT => {
+                self.intern_short(Key::short(chunk, end - start), start)
+            }
+            _ => self.intern_narrow(source, start, end, NameKind::Ordinary),
+        }
     }
 
     fn intern_wide(&mut self, source: Source<'_>, start: usize, units: &[u16]) -> Name {
@@ -549,13 +552,13 @@ impl Names {
     #[inline(always)]
     fn find_narrow(&self, source: Source<'_>, key: Key, characters: &[u8]) -> Result<Name, usize> {
         self.find(key, |name| {
-            key.shape & SHORT != 0
+            key.is_short()
                 || self.entry(name).is_some_and(|entry| {
                     let storage = match entry.storage {
                         Storage::Source => source.bytes,
                         Storage::Latin1 | Storage::Utf16 => &self.latin1,
                     };
-                    storage[entry.start as usize..][..characters.len()] == *characters
+                    are_equal(&storage[entry.start as usize..][..characters.len()], characters)
                 })
         })
     }
@@ -570,7 +573,7 @@ impl Names {
             let Some(name) = Name::from_word(slot.name) else {
                 return Err(index);
             };
-            if slot.key() == key && has_same_text(name) {
+            if slot.key == key && has_same_text(name) {
                 return Ok(name);
             }
             index = (index + 1) & mask;
@@ -586,16 +589,9 @@ impl Names {
         storage: Storage,
         kind: NameKind,
     ) -> Name {
-        let length = if key.shape & SHORT != 0 {
-            key.shape & 0xff
-        } else {
-            key.shape
-        };
-        let name = self.add_entry(start, length as usize, slot, storage, kind);
+        let name = self.add_entry(start, key.length(), slot, storage, kind);
         self.slots[slot] = Slot {
-            head: key.head,
-            tail: key.tail,
-            shape: key.shape,
+            key,
             name: name.index() as u32,
         };
         self.room -= 1;
@@ -629,7 +625,7 @@ impl Names {
     fn grow(&mut self) {
         for slot in self.allocate(self.slots.len() * 4) {
             if let Some(index) = (slot.name as usize).checked_sub(KNOWN.len()) {
-                self.entries[index].slot = self.put(slot.key(), slot.name) as u32;
+                self.entries[index].slot = self.put(slot.key, slot.name) as u32;
                 self.room -= 1;
             }
         }

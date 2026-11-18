@@ -168,7 +168,7 @@ impl Session<'_> {
     /// Whether the token can be a name here. For `await` that is left to [`Session::refuse_await`].
     #[inline(always)]
     pub(super) fn is_name(&self, token: Token) -> bool {
-        token.kind == TokenKind::Identifier || self.is_contextual_name(token)
+        token.kind() == TokenKind::Identifier || self.is_contextual_name(token)
     }
 
     #[inline(always)]
@@ -213,7 +213,7 @@ impl Session<'_> {
     /// Fails if the token is an `await` that cannot be a name.
     #[inline(always)]
     pub(super) fn refuse_await(&mut self, token: Token, role: &'static str) -> Parsed<()> {
-        if token.kind == TokenKind::Identifier {
+        if token.kind() == TokenKind::Identifier {
             return Ok(());
         }
         self.refuse_await_among_keywords(token, role)
@@ -239,7 +239,7 @@ impl Session<'_> {
     ) -> Parsed<()> {
         let quoting = [token.into(), role.into(), suffix.into()];
         let explaining = |reason: &'static str| [role.into(), suffix.into(), reason.into()];
-        let (sentence, parts) = match token.kind {
+        let (sentence, parts) = match token.kind() {
             TokenKind::ReservedInStrictCode if self.is_strict() => (
                 "Cannot use the reserved word '%' as a %% in strict mode",
                 quoting,

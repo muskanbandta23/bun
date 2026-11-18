@@ -245,7 +245,7 @@ impl JsString {
     }
 
     #[inline(always)]
-    pub(super) fn fiber(&self) -> usize {
+    pub(crate) fn fiber(&self) -> usize {
         // SAFETY: only this thread writes it.
         unsafe { *self.fiber.get() }
     }
@@ -422,6 +422,12 @@ impl JsString {
         // SAFETY: the reference that the cell held.
         let old = unsafe { StringRef::from_raw(impl_at(old)) };
         vm.string_caches.retire(self.address(), old);
+    }
+
+    /// `None` unless both are atoms.
+    #[inline(always)]
+    pub fn equals_if_atoms(&self, other: &JsString) -> Option<bool> {
+        (self.is_atom() && other.is_atom()).then(|| self.fiber() == other.fiber())
     }
 
     #[inline(always)]

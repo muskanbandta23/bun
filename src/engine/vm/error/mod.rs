@@ -1,6 +1,5 @@
 //! Exceptions, error objects and stack traces.
 
-mod async_stack_trace;
 mod error_info;
 mod error_instance;
 pub mod errors;

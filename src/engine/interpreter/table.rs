@@ -3,7 +3,7 @@
 use bun_engine_bytecode::{Narrow, Opcode, Wide16, Wide32, Width, op};
 
 use crate::fast::{
-    allocation::*, calls::*, control::*, elements::*, frames::*, operators::*, properties::*,
+    allocation::*, calls::*, control::*, elements::*, exotic::*, frames::*, operators::*, properties::*,
     scopes::*,
 };
 use crate::machine::Handler;
@@ -106,6 +106,9 @@ fast_handlers! {
     GetArgument get_argument,
     GetArgumentsLength get_arguments_length,
     GetArgumentByVal get_argument_by_val,
+    GetFromArguments get_from_arguments,
+    PutToArguments put_to_arguments,
+    EnsureArguments ensure_arguments,
     CreateScope create_scope,
     GetScoped get_scoped,
     GetOuter get_outer,
@@ -129,6 +132,16 @@ fast_handlers! {
     InstanceofCustom instanceof_custom,
     GetInternalField get_internal_field,
     PutInternalField put_internal_field,
+    GetPrivateName get_private_name,
+    PutPrivateName put_private_name,
+    DefinePrivateName define_private_name,
+    SetPrivateBrand set_private_brand,
+    CheckPrivateBrand check_private_brand,
+    ForInNext for_in_next,
+    ForInGet for_in_get,
+    ForInPut for_in_put,
+    ForInHas for_in_has,
+    ForInHasOwn for_in_has_own,
     NewObject new_object,
     NewObjectLiteral new_object_literal,
     NewFunction new_function,

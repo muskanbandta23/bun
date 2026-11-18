@@ -45,7 +45,7 @@ static FEATURE_SETS: LazyLock<Vec<Features>> = LazyLock::new(|| {
         Features::AVX,
         Features::AVX | Features::AVX2,
         Features::AVX | Features::FMA,
-        Features::AVX | Features::AVX2 | Features::FMA,
+        Features::AVX | Features::AVX2 | Features::FMA | Features::BMI1,
     ];
     #[cfg(target_arch = "aarch64")]
     let all = [Features::empty(), Features::DOTPROD, Features::SHA3];
@@ -450,6 +450,68 @@ fn float_lanes() {
             );
         }
     }
+}
+
+fn with_one_scratch<'a>(name: &'a dyn Debug, vectors: usize, emit: Emit<'a>) -> Case<'a> {
+    Case {
+        name,
+        vectors,
+        needs: &|_| ScratchNeeds { gprs: 0, fprs: 1 },
+        emit,
+    }
+}
+
+#[test]
+fn searching_text() {
+    let random = &mut Random(seed());
+    let mut changed = |sources: usize, change: &dyn Fn(u128) -> u128| {
+        let mut inputs = inputs(&sparse_and_dense(), random);
+        inputs.extend(random_inputs(count(400), random));
+        for input in &mut inputs {
+            for vector in &mut input.vectors[1..=sources] {
+                *vector = change(*vector);
+            }
+        }
+        inputs
+    };
+    let masks = changed(1, &|a| VectorShift::I8x16ShrS.evaluate(a, 7));
+    let set_masks = changed(1, &|a| VectorShift::I8x16ShrS.evaluate(a | 1 << 127, 7));
+    let signed = changed(2, &|a| VectorShift::I16x8ShrS.evaluate(a, 8));
+    let unsigned = changed(2, &|a| VectorShift::I16x8ShrU.evaluate(a, 8));
+    let bits = changed(1, &|a| {
+        u128::from_le_bytes(a.to_le_bytes().map(|byte| 1 << (byte % 8)))
+    });
+
+    let bits_for_byte = 1 << MacroAssembler::BYTE_MASK_SHIFT;
+    with_one_scratch(&"mask", 1, &|masm, [_, a, ..], [dst, ..]| {
+        masm.move_byte_mask(dst, a);
+    })
+    .check(&masks, random, |[a, ..], _| {
+        let append = |mask, byte| mask << bits_for_byte | u64::from(byte) >> (8 - bits_for_byte);
+        (None, Some(a.to_be_bytes().into_iter().fold(0, append)))
+    });
+    with_one_scratch(&"first", 1, &|masm, [_, a, ..], [dst, ..]| {
+        masm.move_byte_mask(dst, a);
+        masm.first_in_byte_mask(dst, dst);
+    })
+    .check(&set_masks, random, |[a, ..], _| {
+        (None, Some((a.trailing_zeros() / 8).into()))
+    });
+    let even = std::array::from_fn(|byte| 2 * byte as u8);
+    for (sign, inputs) in SIGNS.into_iter().zip([signed, unsigned]) {
+        with_one_scratch(&sign, 3, &|masm, [dst, a, b, _], _| {
+            masm.narrow_to_bytes(sign, dst, a, b);
+        })
+        .check(&inputs, random, |[a, b, _], _| {
+            (Some(lanes::shuffle(a, b, even)), None)
+        });
+    }
+    with_one_scratch(&"test", 3, &|masm, [dst, bit, value, _], _| {
+        masm.test_bit_in_bytes(dst, value, bit);
+    })
+    .check(&bits, random, |[a, b, _], _| {
+        (Some(VectorBinary::I8x16Ne.evaluate(a & b, 0)), None)
+    });
 }
 
 #[test]

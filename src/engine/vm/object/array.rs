@@ -2,11 +2,10 @@ use bun_alloc::AllocError;
 use bun_engine_macros::{cell, object_ops};
 use bun_engine_text::{PropertyName, names, symbols};
 
-use super::elements::{MIN_SPARSE_INDEX, is_dense_enough, store_unchecked};
-use crate::heap::barrier;
+use super::elements::{MIN_SPARSE_INDEX, is_dense_enough};
 use crate::{
-    Attributes, CellKind, CellType, Cx, DeletePropertySlot, DontEnumMode, ElementKind, Elements,
-    Gc, GlobalObject, IndexingMode, JsObject, JsObjectInit, JsResult, PropertyDescriptor,
+    Attributes, CellKind, CellType, Cx, DeletePropertySlot, DontEnumMode, Elements, Gc,
+    GlobalObject, IndexingMode, JsObject, JsObjectInit, JsResult, PropertyDescriptor,
     PropertyNameList, PropertySlot, PutPropertySlot, Shape, ShapeFlags, ShapeSpec, Storage,
     TransitionKind, TypeFlags, Value, Vm, errors,
 };
@@ -15,9 +14,6 @@ use crate::{
 pub struct JsArray {
     base: JsObject,
 }
-
-/// Up to here, moving the elements is cheaper than what it takes to avoid that.
-const MAX_MOVED_BY_SHIFT: u32 = 32;
 
 fn to_array_length(cx: &mut Cx, value: Value) -> JsResult<u32> {
     let length = value.to_uint32(cx)?;
@@ -61,6 +57,9 @@ impl JsArray {
             return JsObject::define_property_on_receiver(cx, name, value, slot);
         }
         let length = to_array_length(cx, value)?;
+        if length == self.length() {
+            return Ok(true);
+        }
         self.set_length(cx, length, slot.is_strict())
     }
 
@@ -168,8 +167,7 @@ impl JsArray {
             {
                 return self.set_sparse_length(cx, length, should_throw);
             }
-            self.ensure_public_length(cx, length)
-                .map_err(|_| cx.throw_out_of_memory())?;
+            cx.or_out_of_memory(self.ensure_public_length(cx, length))?;
             return Ok(true);
         }
         let mut kept = length;
@@ -177,7 +175,7 @@ impl JsArray {
             let last = (length..old).rfind(|&index| self.try_get_dense(index).is_some());
             kept = last.map_or(length, |last| last + 1);
         }
-        self.truncate(cx, kept);
+        cx.or_out_of_memory(self.truncate(cx, kept))?;
         if kept != length {
             return cx.reject(should_throw, errors::UNABLE_TO_DELETE_PROPERTY);
         }
@@ -185,9 +183,14 @@ impl JsArray {
     }
 
     /// The elements are dense, and `length` is at most the current one.
-    fn truncate(&self, vm: &Vm, length: u32) {
+    fn truncate(&self, vm: &Vm, length: u32) -> Result<(), AllocError> {
         const WORTH_RECLAIMING: u32 = 64;
-        self.ensure_writable_elements(vm);
+        if length == self.length() {
+            return Ok(());
+        }
+        if self.indexing_mode().is_copy_on_write() {
+            return self.copy_shared_elements(vm, length);
+        }
         let (kind, capacity) = (self.element_kind(), self.shape().out_of_line_capacity());
         // SAFETY: all ranges are inside the vectors.
         unsafe {
@@ -199,33 +202,36 @@ impl JsArray {
                     old.copy_words_to(new, -1 - capacity as isize, count);
                     new.set_lengths(length, vector_length);
                     new.clear_elements(kind, length, vector_length);
-                    return self.set_storage(new);
+                    self.set_storage(new);
+                    return Ok(());
                 }
             }
             old.clear_elements(kind, length, old.public_length());
             old.set_public_length(length);
         }
+        Ok(())
     }
 
     fn set_sparse_length(&self, cx: &mut Cx, length: u32, should_throw: bool) -> JsResult<bool> {
-        let sparse = self
-            .convert_to_sparse(cx)
-            .map_err(|_| cx.throw_out_of_memory())?;
-        let mut kept = length;
-        if length < self.length() {
-            let entries = sparse.sorted_entries();
-            for &(index, entry) in entries.iter().rev().take_while(|entry| entry.0 >= length) {
-                if !entry.attributes.is_configurable() {
-                    kept = index + 1;
-                    break;
-                }
-                sparse.remove(index);
+        let sparse = cx.or_out_of_memory(self.convert_to_sparse(cx))?;
+        let (old, mut kept) = (self.length(), length);
+        for index in sparse.sorted_indices(length..old).into_iter().rev() {
+            if sparse
+                .get(index)
+                .is_some_and(|it| !it.attributes.is_configurable())
+            {
+                kept = index + 1;
+                break;
             }
+            sparse.remove(index);
         }
         // SAFETY: not dense.
         unsafe { self.storage().set_public_length(kept) };
         if kept != length {
             return cx.reject(should_throw, errors::UNABLE_TO_DELETE_PROPERTY);
+        }
+        if length < old {
+            self.convert_to_dense_if_worthwhile(cx, &sparse);
         }
         Ok(true)
     }
@@ -242,14 +248,14 @@ impl JsArray {
     #[inline(never)]
     fn push_slow(&self, cx: &mut Cx, value: Value) -> JsResult<()> {
         let length = self.length();
+        if self.has_unrestricted_elements() {
+            return cx.or_out_of_memory(self.store_element(cx, length, value));
+        }
         self.put_by_index(cx, length, value, true)?;
         if length == u32::MAX {
             return Err(cx.throw_range_error(errors::LENGTH_EXCEEDS_MAXIMUM));
         }
-        if self.indexing_mode().is_slow_put() || !self.element_kind().is_dense() {
-            self.set_length(cx, length + 1, true)?;
-        }
-        Ok(())
+        self.set_length(cx, length + 1, true).map(|_| ())
     }
 
     /// CreateDataPropertyOrThrow at the end, for an array that the engine is filling.
@@ -267,18 +273,7 @@ impl JsArray {
                 .shape()
                 .has(ShapeFlags::DID_PREVENT_EXTENSIONS | ShapeFlags::LENGTH_IS_READ_ONLY)
         );
-        let kind = self.element_kind().generalized_for(values.iter().copied());
-        self.ensure_element_kind(vm, kind);
-        let start = self.length();
-        let end = u32::try_from(start as usize + values.len()).map_err(|_| AllocError)?;
-        self.ensure_public_length(vm, end)?;
-        let storage = self.storage();
-        for (index, &value) in (start..end).zip(values) {
-            // SAFETY: inside, the kind can represent the value, and the barrier follows.
-            unsafe { store_unchecked(storage, kind, index, value) };
-        }
-        self.write_barrier_for_cell();
-        Ok(())
+        self.store_elements(vm, self.length(), values)
     }
 
     /// `Array.prototype.pop`
@@ -306,150 +301,6 @@ impl JsArray {
         self.delete_index_or_throw(cx, last.into())?;
         self.set_length(cx, last, true)?;
         Ok(value)
-    }
-
-    /// Whether elements can be moved around as words: nothing would see a hole being read or written.
-    #[inline]
-    pub fn can_move_elements(&self, vm: &Vm) -> bool {
-        let mode = self.indexing_mode();
-        if !mode.kind().is_dense() || mode.is_slow_put() {
-            return false;
-        }
-        self.ensure_writable_elements(vm);
-        // SAFETY: only reads.
-        !self.holes_must_forward_to_prototype()
-            || unsafe { self.elements_unchecked() }.is_some_and(|it| !it.has_holes())
-    }
-
-    /// Removes `count` elements from `start` on. False, having done nothing, if it cannot be done in place.
-    pub fn try_remove_range(&self, vm: &Vm, start: u32, count: u32) -> bool {
-        if !self.can_move_elements(vm) {
-            return false;
-        }
-        let length = self.length();
-        assert!(start <= length && count <= length - start);
-        let (kind, tail) = (self.element_kind(), length - start - count);
-        let storage = self.storage();
-        // SAFETY: all ranges are inside the vector, and the words that the header moves to have been vacated.
-        unsafe {
-            if count != 0 && tail > MAX_MOVED_BY_SHIFT && start < tail && !barrier::is_fenced() {
-                let capacity = self.shape().out_of_line_capacity();
-                let pre_capacity = self.pre_capacity(capacity) + count as usize;
-                let vector_length = storage.vector_length() - count;
-                storage.move_elements(0, count, start);
-                let moved = storage.shift_header(capacity, count as isize);
-                moved.set_lengths(length - count, vector_length);
-                moved.set_pre_capacity(capacity, pre_capacity);
-                self.nuke_shape_and_set_storage(moved, true);
-            } else {
-                storage.move_elements(start + count, start, tail);
-                storage.clear_elements(kind, length - count, length);
-                storage.set_public_length(length - count);
-            }
-        }
-        self.write_barrier_for_cell();
-        true
-    }
-
-    fn pre_capacity(&self, capacity: usize) -> usize {
-        if self.inline_flags().contains(TypeFlags::HAS_PRE_CAPACITY) {
-            // SAFETY: the flag says that there is a count.
-            unsafe { self.storage().pre_capacity(capacity) }
-        } else {
-            0
-        }
-    }
-
-    /// Makes `count` holes at `start`. False, having done nothing, if it cannot be done in place.
-    pub fn try_insert_holes(&self, vm: &Vm, start: u32, count: u32) -> Result<bool, AllocError> {
-        if !self.can_move_elements(vm) {
-            return Ok(false);
-        }
-        let length = self.length();
-        assert!(start <= length);
-        let Some(new_length) = length
-            .checked_add(count)
-            .filter(|&it| it <= Storage::MAX_VECTOR_LENGTH)
-        else {
-            return Ok(false);
-        };
-        let (kind, tail) = (self.element_kind(), length - start);
-        if tail <= MAX_MOVED_BY_SHIFT || start >= tail || barrier::is_fenced() {
-            self.ensure_public_length(vm, new_length)?;
-            // SAFETY: inside the new length.
-            unsafe {
-                self.storage().move_elements(start, start + count, tail);
-                self.storage().clear_elements(kind, start, start + count);
-            }
-            self.write_barrier_for_cell();
-            return Ok(true);
-        }
-        let capacity = self.shape().out_of_line_capacity();
-        // SAFETY: the header moves into unused words of the same allocation.
-        unsafe {
-            if self.pre_capacity(capacity) < count as usize
-                || self.vector_length() + count > Storage::MAX_VECTOR_LENGTH
-            {
-                let pre_capacity = (count + length / 2) as usize;
-                let new = Storage::try_allocate(vm, pre_capacity, capacity, Some(length))?;
-                let words = capacity + 1 + length as usize;
-                self.storage()
-                    .copy_words_to(new, -1 - capacity as isize, words);
-                new.set_lengths(length, length);
-                new.set_pre_capacity(capacity, pre_capacity);
-                self.set_shape_and_storage(&self.shape(), new, true);
-            }
-            let left = self.pre_capacity(capacity) - count as usize;
-            let vector_length = self.vector_length() + count;
-            let moved = self.storage().shift_header(capacity, -(count as isize));
-            moved.set_lengths(new_length, vector_length);
-            moved.move_elements(count, 0, start);
-            moved.clear_elements(kind, start, start + count);
-            if left != 0 {
-                moved.set_pre_capacity(capacity, left);
-            }
-            self.nuke_shape_and_set_storage(moved, left != 0);
-        }
-        self.write_barrier_for_cell();
-        Ok(true)
-    }
-
-    /// Copies all elements of `source`, holes included, to `start`, which is at least the length. False, having done
-    /// nothing, if that is not what defining them one by one would do.
-    pub fn try_append_elements(&self, cx: &Cx, start: u32, source: &JsObject) -> JsResult<bool> {
-        let (from, count) = (source.element_kind(), source.public_length());
-        let mode = self.indexing_mode();
-        let end = u64::from(start) + u64::from(count);
-        if !from.is_dense()
-            || !mode.kind().is_dense()
-            || mode.is_slow_put()
-            || start < self.length()
-            || start - self.length() > MIN_SPARSE_INDEX
-            || end > u64::from(Storage::MAX_VECTOR_LENGTH)
-            || source.holes_must_forward_to_prototype()
-        {
-            return Ok(false);
-        }
-        self.ensure_element_kind(cx, from);
-        self.ensure_public_length(cx, end as u32)
-            .map_err(|_| cx.throw_out_of_memory())?;
-        let (to, from) = (self.element_kind(), source.element_kind());
-        // SAFETY: inside both, and `to` is at least as general as `from`.
-        unsafe {
-            let target = self.storage();
-            if (to == ElementKind::Double) == (from == ElementKind::Double) {
-                let first = target.elements_ptr().add(start as usize);
-                barrier::move_words(source.storage().elements_ptr(), first, count as usize);
-            } else {
-                for index in 0..count {
-                    if let Some(value) = source.try_get_dense(index) {
-                        store_unchecked(target, to, start + index, value);
-                    }
-                }
-            }
-        }
-        self.write_barrier_for_cell();
-        Ok(true)
     }
 
     /// Whether iterating over it comes down to getting its length and its elements.

@@ -776,6 +776,7 @@ dependencies = [
  "bun_highway",
  "bun_icu",
  "bun_pod",
+ "bun_threading",
  "hashbrown 0.15.5",
  "smallvec",
 ]

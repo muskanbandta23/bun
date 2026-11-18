@@ -181,9 +181,12 @@ pub(super) fn concat(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
             return Err(cx.throw_type_error(errors::LENGTH_EXCEEDS_MAXIMUM));
         }
         match (source, result.downcast::<JsArray>()) {
-            (None, _) => result.create_data_index(cx, length, part, true).map(|_| ())?,
+            (None, _) => result
+                .create_data_index(cx, length, part, true)
+                .map(|_| ())?,
             (Some(source), Some(array))
-                if cx.or_out_of_memory(array.try_append_elements(cx, length, &source, count))? => {}
+                if cx
+                    .or_out_of_memory(array.try_append_elements(cx, length, &source, count))? => {}
             (Some(source), _) => define_properties_from(cx, &source, 0..count, &result, length)?,
         }
         length += count;
@@ -210,7 +213,9 @@ pub(super) fn to_reversed(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
             let elements = object.dense_elements(no_gc).slice(0..size as usize);
             writer.extend_reversed(elements, HoleMode::FillWithUndefined);
         }),
-        None => array_create(cx, size, |cx, index| object.get_index(cx, length - index - 1)),
+        None => array_create(cx, size, |cx, index| {
+            object.get_index(cx, length - index - 1)
+        }),
     }
     .map(Into::into)
 }
@@ -280,14 +285,23 @@ struct Extent {
 
 impl Extent {
     /// `None` if flattening takes more than a look at the elements.
-    fn add(&mut self, no_gc: &NoGc<'_>, elements: Elements<'_>, depth: u64, nesting: u32) -> Option<()> {
+    fn add(
+        &mut self,
+        no_gc: &NoGc<'_>,
+        elements: Elements<'_>,
+        depth: u64,
+        nesting: u32,
+    ) -> Option<()> {
         match elements {
             Elements::Contiguous(values) if depth != 0 => {
                 for &value in values.iter().flatten() {
                     if let Some(array) = value.downcast::<JsArray>() {
                         let inner = array.plain_elements(no_gc, 0..array.length().into())?;
                         self.add(no_gc, inner, depth - 1, nesting.checked_sub(1)?)?;
-                    } else if value.as_cell().is_some_and(|it| it.cell_type() == CellType::Proxy) {
+                    } else if value
+                        .as_cell()
+                        .is_some_and(|it| it.cell_type() == CellType::Proxy)
+                    {
                         return None;
                     } else {
                         self.kind = self.kind.generalized_for([value]);

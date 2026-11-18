@@ -8,11 +8,11 @@ use super::array_iterator::typed_array_length;
 use super::protocol::{Caller, iterator_close_on_throw, iterator_close_quietly};
 use super::string_iterator::code_point_string_at;
 use crate::{
-    CellType, ClonedArguments, Cx, ElementKind, Gc, HoleMode, IterationKind, IterationMode, JsArray,
-    JsArrayBufferView, JsArrayIterator, JsCell, JsMap, JsMapIterator, JsObject, JsResult, JsSet,
-    JsSetIterator, JsString, JsStringIterator, MapKind, MappedArguments, OrderedCursor, RealmSlot, RealmWatchpoint,
-    SetKind, TableKind, Thrown, Value, errors, iterator_complete, iterator_value,
-    throw_not_iterable,
+    CellType, ClonedArguments, Cx, ElementKind, Gc, HoleMode, IterationKind, IterationMode,
+    JsArray, JsArrayBufferView, JsArrayIterator, JsCell, JsMap, JsMapIterator, JsObject, JsResult,
+    JsSet, JsSetIterator, JsString, JsStringIterator, MapKind, MappedArguments, OrderedCursor,
+    RealmSlot, RealmWatchpoint, SetKind, TableKind, Thrown, Value, errors, iterator_complete,
+    iterator_value, throw_not_iterable,
 };
 
 /// The Iterator Record of ECMA-262. Where nothing can tell the difference it has no iterator, or does not call its

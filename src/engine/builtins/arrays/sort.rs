@@ -101,7 +101,8 @@ fn collect<'a>(
 
 fn try_vec<T>(items: impl ExactSizeIterator<Item = T>) -> Result<Vec<T>, AllocError> {
     let mut list = Vec::new();
-    list.try_reserve_exact(items.len()).map_err(|_| AllocError)?;
+    list.try_reserve_exact(items.len())
+        .map_err(|_| AllocError)?;
     list.extend(items);
     Ok(list)
 }

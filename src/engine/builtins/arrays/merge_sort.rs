@@ -182,7 +182,8 @@ impl<F> Sorter<F> {
             return Ok(());
         }
         let right_length = items.len() - middle;
-        let end = middle + gallop_from_end(right_length, |at| is_less(items[middle + at], last_left))?;
+        let end =
+            middle + gallop_from_end(right_length, |at| is_less(items[middle + at], last_left))?;
         let left_items = &mut scratch[..middle - start];
         left_items.copy_from_slice(&items[start..middle]);
 
@@ -212,7 +213,8 @@ impl<F> Sorter<F> {
                     break 'merge;
                 }
                 let next_right = items[right];
-                left_wins = gallop_from_start(left.len(), |at| Ok(!is_less(next_right, left[at])?))?;
+                left_wins =
+                    gallop_from_start(left.len(), |at| Ok(!is_less(next_right, left[at])?))?;
                 items[target..][..left_wins].copy_from_slice(&left[..left_wins]);
                 left = &left[left_wins..];
                 items[target + left_wins] = next_right;

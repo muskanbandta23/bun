@@ -84,7 +84,11 @@ pub(super) fn last_index_of(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let mut end = length;
     if let Some(from) = frame.arguments().get(1) {
         let from = from.to_integer_or_infinity(cx)?;
-        let last = if from < 0.0 { from + length as f64 } else { from };
+        let last = if from < 0.0 {
+            from + length as f64
+        } else {
+            from
+        };
         end = ((last + 1.0) as u64).min(length);
     }
     find_index::<{ Direction::Backward }>(cx, &object, 0..end, frame.argument(0))

@@ -48,7 +48,12 @@ pub(super) fn initialize_slot(cx: &Cx, slot: RealmSlot) -> bool {
         }
         RealmSlot::private_array_from_fast => {
             let name = private_names::arrayFromFastWithoutMapFn;
-            global.init_private_array_from_fast(private_function(cx, name, from_fast, Intrinsic::None));
+            global.init_private_array_from_fast(private_function(
+                cx,
+                name,
+                from_fast,
+                Intrinsic::None,
+            ));
         }
         _ => return false,
     }
@@ -66,7 +71,8 @@ fn create(cx: &mut Cx, frame: &CallFrame, new_target: Value) -> JsResult<Value> 
         Some(_) => ElementKind::Undecided,
         None => ElementKind::Undecided.generalized_for(arguments.iter().copied()),
     };
-    let shape = cx.shape_from_new_target(new_target, &callee, |realm, _| realm.array_shape(kind))?;
+    let shape =
+        cx.shape_from_new_target(new_target, &callee, |realm, _| realm.array_shape(kind))?;
     let array = match size {
         Some(Some(size)) => JsArray::try_create(cx, shape, size, 0),
         Some(None) => return Err(cx.throw_range_error(errors::INVALID_ARRAY_SIZE)),

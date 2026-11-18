@@ -4,8 +4,8 @@ use bun_engine_text::{PropertyName, names, symbols};
 
 use super::elements::{MIN_SPARSE_INDEX, is_dense_enough};
 use crate::{
-    Attributes, CellKind, CellType, Cx, DeletePropertySlot, DontEnumMode, Elements,
-    Gc, GlobalObject, IndexingMode, JsObject, JsObjectInit, JsResult, PropertyDescriptor,
+    Attributes, CellKind, CellType, Cx, DeletePropertySlot, DontEnumMode, Elements, Gc,
+    GlobalObject, IndexingMode, JsObject, JsObjectInit, JsResult, PropertyDescriptor,
     PropertyNameList, PropertySlot, PutPropertySlot, Shape, ShapeFlags, ShapeSpec, Storage,
     TransitionKind, TypeFlags, Value, Vm, errors,
 };
@@ -216,7 +216,10 @@ impl JsArray {
         let sparse = cx.or_out_of_memory(self.convert_to_sparse(cx))?;
         let (old, mut kept) = (self.length(), length);
         for index in sparse.sorted_indices(length..old).into_iter().rev() {
-            if sparse.get(index).is_some_and(|it| !it.attributes.is_configurable()) {
+            if sparse
+                .get(index)
+                .is_some_and(|it| !it.attributes.is_configurable())
+            {
                 kept = index + 1;
                 break;
             }

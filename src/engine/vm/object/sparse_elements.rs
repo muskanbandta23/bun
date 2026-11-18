@@ -129,7 +129,9 @@ impl SparseElements {
     /// Those of the range that are in use, in ascending order.
     pub fn sorted_indices(&self, range: Range<u32>) -> Vec<u32> {
         if range.len() <= self.len() {
-            return range.filter(|index| self.map().contains_key(index)).collect();
+            return range
+                .filter(|index| self.map().contains_key(index))
+                .collect();
         }
         let mut indices = self.map().keys();
         indices.retain(|index| range.contains(index));

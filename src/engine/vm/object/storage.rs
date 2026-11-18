@@ -131,7 +131,10 @@ impl Storage {
         capacity: usize,
         vector_length: u32,
     ) -> Option<Storage> {
-        let (base, size) = (self.base(capacity), Self::size(capacity, Some(vector_length)));
+        let (base, size) = (
+            self.base(capacity),
+            Self::size(capacity, Some(vector_length)),
+        );
         if base & PRECISE_BIT == 0 {
             return None;
         }

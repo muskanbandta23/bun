@@ -65,7 +65,8 @@ pub(super) fn initialize_slot(cx: &Cx, slot: RealmSlot) -> bool {
     match slot {
         RealmSlot::iterator_constructor => {
             let parent = cx.function_prototype();
-            let constructor = IteratorConstructor::create(cx, parent, 0, names::Iterator, &iterator);
+            let constructor =
+                IteratorConstructor::create(cx, parent, 0, names::Iterator, &iterator);
             global.init_iterator_constructor(constructor);
         }
         RealmSlot::iterator_prototype_iterator => {
@@ -128,7 +129,8 @@ pub(super) fn initialize_slot(cx: &Cx, slot: RealmSlot) -> bool {
             global.init_private_is_iterator_instance(function);
         }
         RealmSlot::private_own_keys => {
-            let function = private_function(cx, names::ownKeys, own_keys, Intrinsic::ReflectOwnKeys);
+            let function =
+                private_function(cx, names::ownKeys, own_keys, Intrinsic::ReflectOwnKeys);
             global.init_private_own_keys(function);
         }
         _ => return false,

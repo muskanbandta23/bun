@@ -82,7 +82,8 @@ pub(super) fn to_string(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
         && array.inherits_from_array_prototype(&global, names::join)
         && global.holds(cx, RealmWatchpoint::ArrayJoin)
     {
-        let join = |cx: &mut Cx| join_with(cx, &array, array.length().into(), COMMA, push_as_string);
+        let join =
+            |cx: &mut Cx| join_with(cx, &array, array.length().into(), COMMA, push_as_string);
         return array.unless_being_joined(cx, join).map(Into::into);
     }
     let mut method = object.get(cx, names::join)?;

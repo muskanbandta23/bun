@@ -66,7 +66,12 @@ impl JsObject {
 
     /// From `start` on, which is at most the public length.
     #[inline]
-    pub fn try_set_elements(&self, vm: &Vm, start: u64, values: &[Value]) -> Result<bool, AllocError> {
+    pub fn try_set_elements(
+        &self,
+        vm: &Vm,
+        start: u64,
+        values: &[Value],
+    ) -> Result<bool, AllocError> {
         if !self.has_unrestricted_elements()
             || start > u64::from(self.public_length())
             || start + values.len() as u64 > u64::from(Storage::MAX_VECTOR_LENGTH)

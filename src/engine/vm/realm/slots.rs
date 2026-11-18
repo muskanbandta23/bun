@@ -5,7 +5,8 @@ use bun_engine_bytecode::LinkTimeConstant;
 use bun_engine_text::{PropertyName, private_names};
 
 use crate::{
-    Cx, Gc, GlobalObject, GlobalProxy, InternalFieldTuple, JsCell, JsFunction, JsObject, JsSymbol,
+    Cx, Gc, GetterSetter, GlobalObject, GlobalProxy, InternalFieldTuple, JsCell, JsFunction,
+    JsObject, JsSymbol,
     ModuleLoader, Shape, Vm,
 };
 
@@ -109,6 +110,7 @@ realm_slots! {
         function_prototype_apply: JsFunction = @applyFunction,
         function_prototype_has_instance: JsFunction,
         throw_type_error_function: JsFunction,
+        throw_type_error_accessor: GetterSetter,
         bound_function_shape: Shape,
         custom_getter_function_shape: Shape,
         custom_setter_function_shape: Shape,
@@ -371,7 +373,18 @@ realm_slots! {
         private_is_array: JsFunction = @isArray,
         private_collect_for_spread: JsFunction = @collectForSpread,
         private_flat_into_array: JsFunction = @flatIntoArray,
+        private_is_iteration_pristine: JsFunction = @isIterationPristine,
+        private_map_storage: JsFunction = @mapStorage,
+        private_map_iteration_next: JsFunction = @mapIterationNext,
+        private_map_iteration_entry: JsFunction = @mapIterationEntry,
+        private_map_iteration_entry_key: JsFunction = @mapIterationEntryKey,
+        private_map_iteration_entry_value: JsFunction = @mapIterationEntryValue,
+        private_set_storage: JsFunction = @setStorage,
+        private_set_iteration_next: JsFunction = @setIterationNext,
+        private_set_iteration_entry: JsFunction = @setIterationEntry,
+        private_set_iteration_entry_key: JsFunction = @setIterationEntryKey,
         private_is_typed_array_view: JsFunction = @isTypedArrayView,
+        private_json_parse: JsFunction = @jsonParse,
         private_make_type_error: JsFunction = @makeTypeError,
         private_min: JsFunction = @min,
         private_to_length: JsFunction = @toLength,

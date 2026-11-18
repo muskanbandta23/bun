@@ -2,7 +2,7 @@ use bun_engine_text::{Text, symbols};
 
 use crate::{
     Cx, ElementKind, ElementWriter, Gc, HoleMode, ImmutableArray, IterationMode, IteratorRecord,
-    JsArray, JsObject, JsResult, JsString, RealmWatchpoint, Value, ValueVec, errors,
+    JsArray, JsObject, JsResult, JsSet, JsString, RealmWatchpoint, Value, ValueVec, errors,
 };
 
 /// The elements up to `length`, unless getting them takes more than a look at the storage. Never raw doubles.
@@ -65,6 +65,10 @@ pub fn try_spread_directly(cx: &mut Cx, iterable: Value) -> JsResult<Option<Gc<I
         && cx.holds(RealmWatchpoint::StringIteratorProtocol)
     {
         return list_of_code_points(cx, &string).map(Some);
+    } else if let Some(set) = iterable.downcast::<JsSet>()
+        && set.is_iteration_pristine(cx)
+    {
+        return set.to_immutable_array(cx).map(Some);
     }
     Ok(None)
 }

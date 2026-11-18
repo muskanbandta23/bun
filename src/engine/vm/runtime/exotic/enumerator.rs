@@ -1,8 +1,515 @@
+//! `for`-`in`
+
+use core::mem::offset_of;
+
 use bun_engine_macros::cell;
 
-use crate::{JsCell, TypeFlags};
+use crate::{
+    CellType, Cx, DontEnumMode, Gc, ImmutableArray, JsArrayBufferView, JsCell, JsObject, JsResult,
+    JsString, MappedArguments, PropertyNameList, PropertyNameMode, PropertyOffset, Shape,
+    ShapeFlags, ShapeId, StringObject, TypeFlags, Value, Visitor, Vm, caches, errors, root_vec,
+};
 
-#[cell(cell_type = PropertyNameEnumerator, flags = TypeFlags::SHAPE_IS_IMMORTAL)]
+/// What the index of a loop is. Each is a bit, so that a profile can collect them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum EnumerationMode {
+    /// The key itself.
+    Indexed = 1,
+    /// That of a name, and the number of its slot in an object with the shape of the enumerator.
+    OwnShape = 2,
+    /// That of a name.
+    Generic = 4,
+}
+
+/// The keys that a loop goes through: the indices below `indexed_length`, and then the names. It does not change.
+#[cell(name = "JSPropertyNameEnumerator", cell_type = PropertyNameEnumerator, visit_children,
+    flags = TypeFlags::SHAPE_IS_IMMORTAL)]
 pub struct PropertyNameEnumerator {
     base: JsCell,
+    /// Strings that are atoms.
+    names: Gc<ImmutableArray>,
+    subject_shape: ShapeId,
+    indexed_length: u32,
+    /// How many names, from the first, have `OwnShape` for their mode.
+    own_shape_count: u32,
+    name_count: u32,
+    inline_capacity: u32,
+    /// The properties in the shape take any value, without any code having a say.
+    is_writable: bool,
+    /// The shapes of the prototypes, if the names follow from them and the shape of the subject.
+    chain: Option<Gc<ImmutableArray>>,
+}
+
+/// In `ShapeRareData::enumerator_epoch`: an instance may have indices, which the enumerator does not count.
+const LACKS_INDICES: u64 = 1 << 63;
+
+impl PropertyNameEnumerator {
+    pub const OFFSET_OF_NAMES: usize = offset_of!(Self, names);
+    pub const OFFSET_OF_SUBJECT_SHAPE: usize = offset_of!(Self, subject_shape);
+    pub const OFFSET_OF_INDEXED_LENGTH: usize = offset_of!(Self, indexed_length);
+    pub const OFFSET_OF_OWN_SHAPE_COUNT: usize = offset_of!(Self, own_shape_count);
+    pub const OFFSET_OF_NAME_COUNT: usize = offset_of!(Self, name_count);
+    pub const OFFSET_OF_INLINE_CAPACITY: usize = offset_of!(Self, inline_capacity);
+    pub const OFFSET_OF_IS_WRITABLE: usize = offset_of!(Self, is_writable);
+
+    #[inline(always)]
+    pub fn subject_shape(&self) -> ShapeId {
+        self.subject_shape
+    }
+
+    #[inline(always)]
+    pub fn indexed_length(&self) -> u32 {
+        self.indexed_length
+    }
+
+    #[inline(always)]
+    pub fn own_shape_count(&self) -> u32 {
+        self.own_shape_count
+    }
+
+    #[inline(always)]
+    pub fn names(&self) -> Gc<ImmutableArray> {
+        self.names
+    }
+
+    #[inline(always)]
+    pub fn is_empty(&self) -> bool {
+        self.indexed_length | self.name_count == 0
+    }
+
+    #[inline(always)]
+    fn name_at(&self, index: u32) -> Option<Gc<JsString>> {
+        let name = self.names.values()?.get(index as usize)?;
+        // SAFETY: only strings are in there.
+        Some(unsafe { Gc::from_address(name.to_bits() as usize) })
+    }
+
+    #[inline(always)]
+    pub fn for_object(cx: &mut Cx, object: &JsObject) -> JsResult<Gc<PropertyNameEnumerator>> {
+        if let Some(rare_data) = object.shape().rare_data()
+            && rare_data.enumerator_epoch.get() == cx.full_prototype_chain_epoch()
+            && let Some(enumerator) = rare_data.enumerator.get()
+        {
+            return Ok(enumerator);
+        }
+        Self::for_object_slow(cx, object)
+    }
+
+    #[inline(never)]
+    fn for_object_slow(cx: &mut Cx, object: &JsObject) -> JsResult<Gc<PropertyNameEnumerator>> {
+        let indexed_length = gapless_index_count(object);
+        let cached = indexed_length.and_then(|_| Self::cached_for(cx, &object.shape()));
+        let of_names = match cached {
+            Some(cached) => cached,
+            None => Self::create(cx, object, indexed_length)?,
+        };
+        Ok(match indexed_length {
+            Some(length @ 1..) => of_names.with_indexed_length(cx, length),
+            _ => of_names,
+        })
+    }
+
+    fn cached_for(vm: &Vm, shape: &Shape) -> Option<Gc<PropertyNameEnumerator>> {
+        let rare_data = shape.rare_data()?;
+        let (enumerator, epoch) = (rare_data.enumerator.get()?, &rare_data.enumerator_epoch);
+        let current = vm.full_prototype_chain_epoch() | epoch.get() & LACKS_INDICES;
+        if epoch.get() != current {
+            let chain = shape.prototype_object().map(|first| first.chain_direct());
+            let shapes = chain
+                .into_iter()
+                .flatten()
+                .map(|it| Value::from(it.shape()));
+            if !shapes.eq(enumerator.chain?.iter()) {
+                return None;
+            }
+            epoch.set(current);
+        }
+        Some(enumerator)
+    }
+
+    /// Of all but the first `indexed_length` indices.
+    fn create(
+        cx: &mut Cx,
+        object: &JsObject,
+        indexed_length: Option<u32>,
+    ) -> JsResult<Gc<PropertyNameEnumerator>> {
+        let shape = object.shape();
+        let mut list = PropertyNameList::new(PropertyNameMode::Strings);
+        let mut own_shape_count = 0;
+        if indexed_length.is_some() {
+            object.own_non_index_property_names(cx, &mut list, DontEnumMode::Exclude)?;
+            if names_are_in_slot_order(object) && list.len() == shape.slot_count() {
+                own_shape_count = list.len() as u32;
+            }
+        } else {
+            add_own_names(cx, object, &mut list)?;
+        }
+        add_inherited_names(cx, object, &mut list)?;
+        let mut names = list.into_vec();
+        if let Some(length @ 1..) = indexed_length {
+            names.retain(|name| name.name().as_index().is_none_or(|index| index >= length));
+        }
+        let names = ImmutableArray::try_from_fn(cx, names.len(), |index| {
+            JsString::from_name(cx, names[index].name()).into()
+        });
+        let names = cx.or_out_of_memory(names)?;
+        let is_same = object.shape() == shape;
+        let chain = (is_same && indexed_length.is_some())
+            .then(|| cacheable_chain(cx, &shape))
+            .flatten();
+        let enumerator = cx.allocate::<PropertyNameEnumerator>(PropertyNameEnumeratorInit {
+            base: cx.shapes.property_name_enumerator(),
+            names,
+            subject_shape: shape.id(),
+            indexed_length: 0,
+            own_shape_count: if is_same { own_shape_count } else { 0 },
+            name_count: names.len(),
+            inline_capacity: shape.inline_capacity() as u32,
+            is_writable: !shape.has(ShapeFlags::HAS_READ_ONLY_OR_ACCESSOR_EXCLUDING_PROTO)
+                && (!shape.type_flags().contains(TypeFlags::OVERRIDES_PUT)
+                    || shape.instance_type() == CellType::Array),
+            chain,
+        });
+        if chain.is_some() {
+            let rare_data = shape.ensure_rare_data();
+            let flag = if has_indices(&shape) {
+                LACKS_INDICES
+            } else {
+                0
+            };
+            // SAFETY: the shape traces its rare data.
+            unsafe { rare_data.enumerator.set(&shape, Some(enumerator)) };
+            (rare_data.enumerator_epoch).set(cx.full_prototype_chain_epoch() | flag);
+        }
+        Ok(enumerator)
+    }
+
+    fn with_indexed_length(&self, vm: &Vm, indexed_length: u32) -> Gc<PropertyNameEnumerator> {
+        vm.allocate::<PropertyNameEnumerator>(PropertyNameEnumeratorInit {
+            base: vm.shapes.property_name_enumerator(),
+            names: self.names,
+            subject_shape: self.subject_shape,
+            indexed_length,
+            own_shape_count: self.own_shape_count,
+            name_count: self.name_count,
+            inline_capacity: self.inline_capacity,
+            is_writable: self.is_writable,
+            chain: None,
+        })
+    }
+
+    fn visit_children(&self, visitor: &mut Visitor) {
+        visitor.append_shape(self.subject_shape);
+    }
+}
+
+fn has_indices(shape: &Shape) -> bool {
+    shape.instance_indexing_mode().has_elements() || shape.may_intercept_indexed_access()
+}
+
+fn overrides_names(shape: &Shape) -> bool {
+    (shape.type_flags()).contains(TypeFlags::OVERRIDES_OWN_PROPERTY_NAMES)
+}
+
+/// `Some(n)` if the own keys are the indices below `n`, all enumerable, and those of `own_non_index_property_names`.
+fn gapless_index_count(object: &JsObject) -> Option<u32> {
+    if !overrides_names(&object.shape()) {
+        // SAFETY: only reads.
+        let elements = unsafe { object.elements_unchecked() }?;
+        return (!elements.has_holes()).then_some(elements.len() as u32);
+    }
+    if object.indexing_mode().has_elements() {
+        return None;
+    }
+    if CellType::TYPED_ARRAYS.contains(object.cell_type()) {
+        let length = object.as_object().cast::<JsArrayBufferView>().length();
+        return i32::try_from(length).ok().map(|length| length as u32);
+    }
+    match object.downcast::<StringObject>() {
+        Some(wrapper) => Some(wrapper.string().len()),
+        None => Some(object.downcast::<MappedArguments>()?.plain_length()),
+    }
+}
+
+fn names_are_in_slot_order(object: &JsObject) -> bool {
+    !object.shape().has(
+        ShapeFlags::PREVENTS_QUICK_ENUMERATION
+            | ShapeFlags::HAS_ANY_ACCESSOR
+            | ShapeFlags::UNCACHEABLE_DICTIONARY,
+    ) && !object.shape().has_non_reified_static_properties()
+        && (!object.overrides_get_own_property_slot() || object.cell_type() == CellType::Array)
+}
+
+fn add_own_names(cx: &mut Cx, object: &JsObject, list: &mut PropertyNameList) -> JsResult<()> {
+    // A proxy is asked about each name when the loop gets there, and only then.
+    let mode = if object.cell_type() == CellType::Proxy {
+        DontEnumMode::Include
+    } else {
+        DontEnumMode::Exclude
+    };
+    object.own_property_names(cx, list, mode)
+}
+
+fn add_inherited_names(
+    cx: &mut Cx,
+    object: &JsObject,
+    list: &mut PropertyNameList,
+) -> JsResult<()> {
+    let mut object = object.as_object();
+    for _ in 0..=JsObject::MAX_PROTOTYPE_CHAIN_DEPTH {
+        match object.get_prototype_of(cx)?.as_object() {
+            Some(prototype) => object = prototype,
+            None => return Ok(()),
+        }
+        add_own_names(cx, &object, list)?;
+    }
+    Err(cx.throw_stack_overflow())
+}
+
+/// Whether the shape says which enumerable properties with a name an instance has, and what it inherits from.
+fn determines_names(shape: &Shape) -> bool {
+    let cell_type = shape.instance_type();
+    !shape.is_dictionary()
+        && !shape
+            .type_flags()
+            .intersects(TypeFlags::OVERRIDES_GET_PROTOTYPE | TypeFlags::PROHIBITS_PROPERTY_CACHING)
+        && (!(shape.type_flags()).contains(TypeFlags::OVERRIDES_OWN_SPECIAL_PROPERTY_NAMES)
+            || matches!(cell_type, CellType::Array | CellType::DerivedArray))
+}
+
+fn cacheable_chain(vm: &Vm, shape: &Shape) -> Option<Gc<ImmutableArray>> {
+    if !determines_names(shape) {
+        return None;
+    }
+    let mut shapes = root_vec();
+    for prototype in shape
+        .prototype_object()
+        .iter()
+        .flat_map(|it| it.chain_direct())
+    {
+        let is_flat = prototype.try_flatten_for_caching(vm);
+        let shape = prototype.shape();
+        if !is_flat || !determines_names(&shape) || has_indices(&shape) || overrides_names(&shape) {
+            return None;
+        }
+        shapes.push(shape.into());
+    }
+    ImmutableArray::try_from_values(vm, &shapes).ok()
+}
+
+/// The three registers of a loop.
+#[derive(Clone, Copy)]
+pub struct ForIn {
+    pub enumerator: Gc<PropertyNameEnumerator>,
+    pub mode: EnumerationMode,
+    /// That of the current key. All ones before the first.
+    pub index: u32,
+}
+
+impl ForIn {
+    /// # Safety
+    /// They are what `to_registers` returned.
+    #[inline(always)]
+    pub unsafe fn from_registers([enumerator, mode, index]: [Value; 3]) -> ForIn {
+        // SAFETY: the caller's.
+        unsafe {
+            ForIn {
+                enumerator: Gc::from_address(enumerator.to_bits() as usize),
+                mode: core::mem::transmute::<u8, EnumerationMode>(mode.to_bits() as u8),
+                index: index.to_bits() as u32,
+            }
+        }
+    }
+
+    #[inline(always)]
+    pub fn to_registers(self) -> [Value; 3] {
+        [
+            self.enumerator.into(),
+            Value::int32(self.mode as i32),
+            Value::int32(self.index as i32),
+        ]
+    }
+
+    /// `for_in_open`. `None` if there is nothing to enumerate.
+    #[inline]
+    pub fn open(cx: &mut Cx, base: Value) -> JsResult<Option<ForIn>> {
+        if base.is_undefined_or_null() {
+            return Ok(None);
+        }
+        let object = base.to_object(cx)?;
+        let enumerator = PropertyNameEnumerator::for_object(cx, &object)?;
+        let mode = if enumerator.indexed_length != 0 {
+            EnumerationMode::Indexed
+        } else {
+            EnumerationMode::OwnShape
+        };
+        Ok((!enumerator.is_empty()).then_some(ForIn {
+            enumerator,
+            mode,
+            index: u32::MAX,
+        }))
+    }
+
+    /// `base`, if the current key names the slot with the number of the index.
+    #[inline(always)]
+    fn object_with_slot(self, base: Value) -> Option<(Gc<JsObject>, PropertyOffset)> {
+        let (cell, enumerator) = (base.as_cell()?, self.enumerator);
+        (self.mode == EnumerationMode::OwnShape
+            && cell.shape_id() == enumerator.subject_shape
+            && self.index < enumerator.own_shape_count)
+            .then(|| {
+                let capacity = enumerator.inline_capacity as usize;
+                let offset = PropertyOffset::for_slot(self.index as usize, capacity);
+                // SAFETY: the shape is that of an object.
+                (unsafe { cell.cast_unchecked() }, offset)
+            })
+    }
+
+    /// `for_in_next`. `None` at the end. Changes nothing if it throws.
+    #[inline(always)]
+    pub fn next(&mut self, cx: &mut Cx, base: Value) -> JsResult<Option<Gc<JsString>>> {
+        let next = ForIn {
+            index: self.index.wrapping_add(1),
+            ..*self
+        };
+        if next.object_with_slot(base).is_some() {
+            *self = next;
+            return Ok(self.enumerator.name_at(next.index));
+        }
+        self.next_slow(cx, base)
+    }
+
+    #[inline(never)]
+    fn next_slow(&mut self, cx: &mut Cx, base: Value) -> JsResult<Option<Gc<JsString>>> {
+        let (enumerator, mut first) = (self.enumerator, self.index.wrapping_add(1));
+        if self.mode != EnumerationMode::Indexed && first >= enumerator.name_count {
+            return Ok(None);
+        }
+        let object = base.to_object(cx)?;
+        if self.mode == EnumerationMode::Indexed {
+            for index in first..enumerator.indexed_length {
+                if object.has_enumerable_index(cx, index)? {
+                    self.index = index;
+                    return Ok(Some(JsString::from_int32(cx, index as i32)));
+                }
+            }
+            first = 0;
+        }
+        for index in first.. {
+            let Some(name) = enumerator.name_at(index) else {
+                break;
+            };
+            let is_own = index < enumerator.own_shape_count;
+            if (is_own && object.shape_id() == enumerator.subject_shape)
+                || object.has_enumerable_property(cx, name.to_property_key(cx)?.name())?
+            {
+                self.index = index;
+                self.mode = if is_own {
+                    EnumerationMode::OwnShape
+                } else {
+                    EnumerationMode::Generic
+                };
+                return Ok(Some(name));
+            }
+        }
+        Ok(None)
+    }
+
+    /// The part of `get` that calls nothing.
+    #[inline(always)]
+    pub fn try_get(self, base: Value) -> Option<Value> {
+        match self.object_with_slot(base) {
+            // SAFETY: a slot of the shape, which has no accessor.
+            Some((object, offset)) => unsafe { object.slot_unchecked(offset) }.get(),
+            None if self.mode == EnumerationMode::Indexed => {
+                base.as_object()?.try_get_index_quickly(self.index)
+            }
+            None => None,
+        }
+    }
+
+    /// `for_in_get`
+    #[inline]
+    pub fn get(self, cx: &mut Cx, base: Value, name: Gc<JsString>) -> JsResult<Value> {
+        if let Some(value) = self.try_get(base) {
+            return Ok(value);
+        }
+        if self.mode == EnumerationMode::Indexed {
+            return base.get_index(cx, self.index);
+        }
+        caches::get_megamorphic(cx, base, name.to_property_key(cx)?.name())
+    }
+
+    /// The part of `put` that calls nothing.
+    #[inline(always)]
+    pub fn try_put(self, base: Value, value: Value) -> bool {
+        match self.object_with_slot(base) {
+            Some((object, offset))
+                if self.enumerator.is_writable
+                    && !object.shape().has(ShapeFlags::IS_WATCHING_REPLACEMENT) =>
+            {
+                // SAFETY: the slot of a writable data property.
+                unsafe { object.put_direct_unchecked(offset, value) };
+                true
+            }
+            None if self.mode == EnumerationMode::Indexed => base
+                .as_object()
+                .is_some_and(|object| object.try_set_dense(self.index, value)),
+            _ => false,
+        }
+    }
+
+    /// `for_in_put`
+    #[inline]
+    pub fn put(
+        self,
+        cx: &mut Cx,
+        base: Value,
+        name: Gc<JsString>,
+        value: Value,
+        is_strict: bool,
+    ) -> JsResult<()> {
+        if self.try_put(base, value) {
+            return Ok(());
+        }
+        if self.mode == EnumerationMode::Indexed {
+            return base.put_index(cx, self.index, value, is_strict).map(|_| ());
+        }
+        match base.as_object() {
+            Some(object) => {
+                let key = name.to_property_key(cx)?;
+                caches::put_megamorphic(cx, object, key.name(), value, is_strict)
+            }
+            None => (base.put_by_value(cx, name.into(), value, is_strict)).map(|_| ()),
+        }
+    }
+
+    /// `for_in_has`
+    #[inline]
+    pub fn has(self, cx: &mut Cx, base: Value, name: Gc<JsString>) -> JsResult<bool> {
+        if self.object_with_slot(base).is_some() {
+            return Ok(true);
+        }
+        let Some(object) = base.as_object() else {
+            return Err(errors::throw_invalid_in_parameter(cx, base));
+        };
+        if self.mode == EnumerationMode::Indexed {
+            return object.has_index(cx, self.index.into());
+        }
+        caches::has_megamorphic(cx, object, name.to_property_key(cx)?.name())
+    }
+
+    /// `for_in_has_own`
+    #[inline]
+    pub fn has_own(self, cx: &mut Cx, base: Value, name: Gc<JsString>) -> JsResult<bool> {
+        if self.object_with_slot(base).is_some() {
+            return Ok(true);
+        }
+        let object = base.to_object(cx)?;
+        if self.mode == EnumerationMode::Indexed {
+            return object.has_own_index(cx, self.index);
+        }
+        caches::has_own_property(cx, &object, name.to_property_key(cx)?.name())
+    }
 }

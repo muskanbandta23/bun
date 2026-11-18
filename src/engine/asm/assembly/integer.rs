@@ -87,6 +87,7 @@ pub trait MacroAssembly: Sized {
     fn call(&mut self, target: Label);
     fn call_indirect(&mut self, target: impl Into<RegOrMem>);
     fn ret(&mut self);
+    /// `label` is not external.
     fn move_label_address(&mut self, dst: Gpr, label: Label);
     fn breakpoint(&mut self);
     /// For what cannot be reached. Leaves `reason` where a crash report shows it.
@@ -126,6 +127,7 @@ pub trait MacroAssembly: Sized {
     fn pop(&mut self, dst: Gpr);
     /// Takes 16 bytes, `low` at the lower address.
     fn push_pair(&mut self, low: Gpr, high: Gpr);
+    /// The two differ.
     fn pop_pair(&mut self, low: Gpr, high: Gpr);
 
     // Moves
@@ -181,12 +183,12 @@ pub trait MacroAssembly: Sized {
     fn swap_bytes(&mut self, size: Size, dst: Gpr, src: Gpr);
     /// The `count` bits of `src` from bit `first` up, extended to `width`.
     fn extract_bits(&mut self, sign: Sign, width: Width, dst: Gpr, src: Gpr, first: u8, count: u8);
-    /// `dst = lhs + shift(rhs, amount)`. Not for rotations.
+    /// `dst = lhs + shift(rhs, amount)`, as by [`Self::shift`]. Not for rotations.
     fn add_shifted(&mut self, width: Width, dst: Gpr, lhs: Gpr, rhs: Gpr, shift: Shift, amount: u8);
-    /// `dst = lhs ^ shift(rhs, amount)`.
+    /// `dst = lhs ^ shift(rhs, amount)`, as by [`Self::shift`].
     fn xor_shifted(&mut self, width: Width, dst: Gpr, lhs: Gpr, rhs: Gpr, shift: Shift, amount: u8);
 
-    // Comparisons
+    // Comparisons. Arithmetic writes its result, wrapped around, whether it branches or not.
 
     fn branch(
         &mut self,

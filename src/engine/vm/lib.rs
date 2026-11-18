@@ -9,7 +9,9 @@
     macro_metavar_expr_concat,
     marker_trait_attr,
     maybe_uninit_fill,
+    naked_functions_rustic_abi,
     negative_impls,
+    rust_preserve_none_cc,
     offset_of_enum,
     thread_local
 )]

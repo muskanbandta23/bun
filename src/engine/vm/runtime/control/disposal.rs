@@ -1,12 +1,9 @@
 //! What `using` shares with the disposable stacks.
 
 use bun_engine_macros::native_abi;
-use bun_engine_text::{names, symbols};
+use bun_engine_text::symbols;
 
-use crate::{
-    Attributes, CallFrame, Cx, ErrorInstance, ErrorType, Gc, JsFunctionWithFields, JsPromise,
-    JsResult, Value,
-};
+use crate::{CallFrame, Cx, JsFunctionWithFields, JsPromise, JsResult, Value};
 
 /// GetDisposeMethod, and the checks of CreateDisposableResource. Undefined for undefined and null.
 pub fn get_dispose_method(cx: &mut Cx, value: Value, is_async: bool) -> JsResult<Value> {
@@ -43,11 +40,4 @@ fn dispose_for_await(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
         Ok(_) => Ok(JsPromise::fulfilled(cx, Value::UNDEFINED).into()),
         Err(thrown) => JsPromise::rejected_with_caught(cx, thrown).map(Into::into),
     }
-}
-
-pub fn new_suppressed_error(cx: &Cx, error: Value, suppressed: Value) -> Gc<ErrorInstance> {
-    let result = ErrorInstance::new(cx, ErrorType::SuppressedError, None);
-    result.put_direct(cx, names::error, error, Attributes::DONT_ENUM);
-    result.put_direct(cx, names::suppressed, suppressed, Attributes::DONT_ENUM);
-    result
 }

@@ -113,6 +113,7 @@ impl Emitter<'_> {
         let back = self.node(repeat.body, repeat.rest, turn_fails)?;
         self.end_turn(id, back, then)?;
         self.leave_loop(&outside);
+        self.repeats = true;
         Ok(())
     }
 

@@ -200,6 +200,10 @@ impl GlobalObject {
         unsafe { self.slot(vm, slot).cast_unchecked() }
     }
 
+    pub fn prototype_of_typed_array(&self, vm: &Vm, of: ElementType) -> Gc<JsObject> {
+        self.typed_array_shape(vm, of, false).prototype().cast()
+    }
+
     /// The type whose constructor in this realm is `constructor`.
     pub fn element_type_constructed_by(&self, constructor: Value) -> Option<ElementType> {
         ElementType::ALL.into_iter().find(|&it| {
@@ -276,7 +280,7 @@ impl JsTypedArray {
     #[inline(always)]
     pub fn try_set_number(&self, cx: &mut Cx, index: usize, value: Value) -> bool {
         with_element_type!(self.element_type(),
-            T => T::from_number_value(value).is_some_and(|it| self.typed::<T>().set(cx, index, it)),
+            T => T::from_numeric(value).is_some_and(|it| self.typed::<T>().set(cx, index, it)),
             bigint => false
         )
     }

@@ -1164,6 +1164,7 @@ useStrict = use strict
 @toThis
 @typedArrayFromFast
 @typedArrayLength
+@typedArraySpeciesCreate
 @undefined
 @values
 @wrapForValidIteratorCreate
@@ -1244,3 +1245,24 @@ temporalPlainTime = Temporal.PlainTime
 temporalPlainYearMonth = Temporal.PlainYearMonth
 temporalZonedDateTime = Temporal.ZonedDateTime
 colonAndSpace = : 
+debug
+info
+warn
+dir
+dirxml
+table
+trace
+assert
+countReset
+profile
+profileEnd
+timeLog
+timeEnd
+timeStamp
+takeHeapSnapshot
+group
+groupCollapsed
+groupEnd
+record
+recordEnd
+screenshot

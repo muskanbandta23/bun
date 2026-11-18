@@ -201,6 +201,7 @@ impl AccessCase {
         self.shape() == shape && (self.key.as_ref()).is_none_or(|it| it.name().address() == key)
     }
 
+    #[inline(always)]
     pub fn is_valid(&self) -> bool {
         self.lookup().is_none_or(|lookup| lookup.is_valid())
     }
@@ -273,7 +274,7 @@ impl AccessCases {
     }
 
     #[inline(always)]
-    pub(super) fn find(&self, shape: ShapeId, key: usize) -> Option<&AccessCase> {
+    pub fn find(&self, shape: ShapeId, key: usize) -> Option<&AccessCase> {
         self.iter().find(|case| case.matches(shape, key))
     }
 

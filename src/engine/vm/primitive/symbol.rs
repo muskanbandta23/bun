@@ -46,7 +46,7 @@ impl JsSymbol {
         Self::allocate(vm, symbol, None)
     }
 
-    pub fn create_with_description(cx: &Cx, description: Gc<JsString>) -> JsResult<Gc<JsSymbol>> {
+    pub fn with_description(cx: &Cx, description: Gc<JsString>) -> JsResult<Gc<JsSymbol>> {
         let symbol = SymbolRef::new(&*description.resolve(cx)?);
         Ok(Self::allocate(cx, symbol, Some(description)))
     }

@@ -57,7 +57,7 @@ pub(crate) fn generate(program: Verified<'_>, options: &Options) -> Result<Compi
         has_failed: false,
     };
     generator.enter();
-    let mut next = 0;
+    let mut next = usize::from(generator.skips_first_step());
     while next < ops.len() {
         if let Some(label) = generator.labels[next] {
             generator.masm.bind(label);
@@ -147,10 +147,12 @@ impl<'a> Generator<'a> {
         let end = Address::indexed(END, ORIGIN, self.unit_size().into(), 0);
         self.masm.compute_address(END, end);
         self.masm.neg64(ORIGIN, ORIGIN);
-        self.masm.add64(POSITION, POSITION, ORIGIN);
+        let before = -i32::from(self.skips_first_step());
+        let start = Address::indexed(POSITION, ORIGIN, Scale::One, before);
+        self.masm.compute_address(POSITION, start);
         if !self.starts_with_check_of_length() {
             let past_end = self.defer(|generator| generator.return_with(NO_MATCH));
-            self.masm.branch64(Cond::Gt, POSITION, 0, past_end);
+            self.masm.branch64(Cond::Gt, POSITION, before, past_end);
         }
         if let Some(stack) = self.frame.stack {
             self.load_stack_limit(stack, CONTEXT);
@@ -183,10 +185,26 @@ impl<'a> Generator<'a> {
     /// Which a start that is past the end fails too.
     fn starts_with_check_of_length(&self) -> bool {
         let ops = self.program.ops();
-        matches!(
-            ops[0],
-            Op::Need { direction: Direction::Forward, fail, .. } if ops[fail.index()] == Op::NoMatch
-        )
+        let first = match ops[0] {
+            Op::Jump { to } => ops[to.index()],
+            op => op,
+        };
+        match first {
+            Op::Need {
+                direction: Direction::Forward,
+                fail,
+                ..
+            }
+            | Op::Scan { fail, .. } => ops[fail.index()] == Op::NoMatch,
+            _ => false,
+        }
+    }
+
+    /// Whether the code starts by jumping over a step, which it can take as well from one unit before.
+    fn skips_first_step(&self) -> bool {
+        let ops = self.program.ops();
+        matches!(*ops, [Op::Jump { to }, Op::Advance { by: 1 }, ..] if to.index() == 2)
+            && self.labels[0].is_none()
     }
 
     /// The operation after `at`, if that is the only way to it.
@@ -216,8 +234,7 @@ impl<'a> Generator<'a> {
             Op::Jump { to } | Op::Turned { to, .. } => self.jump(at, to),
             Op::NoMatch => self.return_with(NO_MATCH),
             Op::Match { start, end } => {
-                let start = self.place_in_register(first, start);
-                self.masm.sub64(RESULT[0], start, ORIGIN);
+                self.index_of_place(RESULT[0], start);
                 self.masm.sub64(POSITION, POSITION, ORIGIN);
                 self.masm.add64(RESULT[1], POSITION, i32::from(end));
                 self.leave();
@@ -292,9 +309,7 @@ impl<'a> Generator<'a> {
                 fail,
             } => {
                 let (branch, taken) = self.branch_after(at, fail);
-                self.load_unit(first, POSITION, offset.into());
-                let test = self.plan_for_units(class);
-                self.test_class(test, first, branch);
+                self.test_unit(offset.into(), class, branch);
                 return taken;
             }
             Op::ClassCount {
@@ -324,10 +339,14 @@ impl<'a> Generator<'a> {
                 self.masm.move64(first, -i64::from(length));
                 (self.masm).select64(Cond::Lt, POSITION, POSITION, first, first, POSITION);
             }
-            Op::Save { slot } => match self.frame.cell(slot.cell) {
-                Location::Register(cell) => self.masm.move64(cell, POSITION),
-                Location::Memory(cell) => self.masm.store32(cell, POSITION),
-            },
+            Op::Scan { id, fail } => self.scan(self.program.scan(id), self.label(fail)),
+            Op::Save { slot } => self.save(slot),
+            Op::SaveStart { slot, fail } => {
+                (self.masm).branch64(Cond::Ne, POSITION, ORIGIN, self.label(fail));
+                if self.frame.cell(slot.cell) != Location::Register(ORIGIN) {
+                    self.save(slot);
+                }
+            }
             Op::Load { from, metered } => {
                 if metered {
                     let from = self.place_in_register(first, from);
@@ -378,8 +397,7 @@ impl<'a> Generator<'a> {
                 return self.capture(offset, entry, self.follower(at));
             }
             Op::CapturePlace { place, entry } => {
-                let position = self.place_in_register(first, place);
-                self.masm.sub32(first, position, ORIGIN);
+                self.index_of_place(first, place);
                 self.masm
                     .store32(self.capture_address(entry as usize), first);
             }
@@ -421,6 +439,22 @@ impl<'a> Generator<'a> {
             Op::Cut { slot } => self.cut(slot.cell),
         }
         1
+    }
+
+    fn save(&mut self, slot: Slot) {
+        match self.frame.cell(slot.cell) {
+            Location::Register(cell) => self.masm.move64(cell, POSITION),
+            Location::Memory(cell) => self.masm.store32(cell, POSITION),
+        }
+    }
+
+    /// From the start of the subject.
+    pub(crate) fn index_of_place(&mut self, dst: Gpr, place: Place) {
+        if self.frame.cell(place.slot.cell) == Location::Register(ORIGIN) {
+            return self.masm.move32(dst, place.delta);
+        }
+        let position = self.place_in_register(self.frame.temporary(0), place);
+        self.masm.sub32(dst, position, ORIGIN);
     }
 
     /// `base`, or `dst` with the sum.

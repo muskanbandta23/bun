@@ -4,7 +4,7 @@ use crate::prelude::*;
 use crate::{arrays, buffers, collections, control, functions, fundamental, js, numbers, text};
 
 pub fn initialize_realm(cx: &Cx) {
-    fundamental::object::initialize_prototype(cx);
+    fundamental::object_prototype::initialize(cx);
     functions::function::initialize_prototype(cx);
     arrays::iterator::initialize_prototype(cx);
     arrays::array::initialize_prototype(cx);

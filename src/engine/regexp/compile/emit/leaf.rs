@@ -32,6 +32,12 @@ impl Emitter<'_> {
             Kind::Open(pair) => self.capture(pair, direction.opposite()),
             Kind::Close(pair) => self.capture(pair, direction),
             Kind::Clear(pairs) => self.record(Op::Clear { pairs }),
+            Kind::Edge(Direction::Backward) if self.epoch_at_start == Some(self.state.epoch) => {
+                match self.state.offset {
+                    0 => Ok(()),
+                    _ => self.jump_to_fail(fail),
+                }
+            }
             Kind::Edge(direction) => {
                 self.write_tests()?;
                 let fail = self.target(fail)?;

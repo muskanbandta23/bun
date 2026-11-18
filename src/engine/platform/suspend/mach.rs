@@ -8,7 +8,12 @@ use super::Registers;
 unsafe extern "C" {
     safe fn thread_suspend(thread: mach_port_t) -> c_int;
     safe fn thread_resume(thread: mach_port_t) -> c_int;
-    fn thread_get_state(thread: mach_port_t, flavor: c_int, state: *mut u32, count: &mut u32) -> c_int;
+    fn thread_get_state(
+        thread: mach_port_t,
+        flavor: c_int,
+        state: *mut u32,
+        count: &mut u32,
+    ) -> c_int;
 }
 
 #[cfg(target_arch = "x86_64")]

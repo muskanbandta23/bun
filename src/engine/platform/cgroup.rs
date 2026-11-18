@@ -47,7 +47,11 @@ fn read<'a>(path: &[u8], buffer: &'a mut [u8]) -> Option<&'a [u8]> {
     Some(buffer[..length].trim_ascii())
 }
 
-fn read_setting<T>(directories: [&[u8]; 2], name: &[u8], parse: fn(&[u8]) -> Option<T>) -> Option<T> {
+fn read_setting<T>(
+    directories: [&[u8]; 2],
+    name: &[u8],
+    parse: fn(&[u8]) -> Option<T>,
+) -> Option<T> {
     let mut path = MOUNT_POINT.to_vec();
     for part in directories.into_iter().chain([name]) {
         if !part.is_empty() {
@@ -126,7 +130,10 @@ mod tests {
     fn finds_the_hierarchy_of_a_controller() {
         let find = find_group;
         assert_eq!(find(b"0::/", b"cpu"), Group::Version2(b""));
-        assert_eq!(find(b"0::/a/b.scope", b"cpu"), Group::Version2(b"a/b.scope"));
+        assert_eq!(
+            find(b"0::/a/b.scope", b"cpu"),
+            Group::Version2(b"a/b.scope")
+        );
         let mixed = b"5:cpuset:/x\n4:cpuacct,cpu:/y\n1:name=systemd:/\n0::/z";
         assert_eq!(find(mixed, b"cpu"), Group::Version1(Some(b"y")));
         assert_eq!(find(mixed, b"memory"), Group::Version2(b"z"));

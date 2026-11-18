@@ -244,7 +244,7 @@ impl JsBigInt {
 
     /// The result of an operation on `first` and `second`.
     #[inline(always)]
-    pub(crate) fn from_outcome(
+    fn from_outcome(
         cx: &Cx,
         first: &JsBigInt,
         second: &JsBigInt,

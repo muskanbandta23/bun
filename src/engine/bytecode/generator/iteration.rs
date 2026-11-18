@@ -1,11 +1,14 @@
 //! Loops over objects, and the points where code suspends.
 
 use bun_engine_syntax::Name;
-use bun_engine_syntax::ast::{Enumeration, Expr, ExprId, ExprKind, ForTarget, ScopeId};
+use bun_engine_syntax::ast::{
+    BindingFlags, Enumeration, Expr, ExprId, ExprKind, ForTarget, ScopeId,
+};
 use bun_engine_text::symbols;
 use smallvec::SmallVec;
 
 use super::control::{Control, Exit};
+use super::scope::Place;
 use super::{Dest, Generator, Suspension};
 use crate::assembler::Site;
 use crate::code::{CoverageKind, HandlerKind};
@@ -165,7 +168,15 @@ impl Generator<'_> {
     }
 
     /// Each turn has bindings of its own.
-    fn renew_loop_scope(&mut self, created: Option<(ScopeIndex, Register)>) {
+    fn renew_loop_scope(&mut self, it: &Enumeration, created: Option<(ScopeIndex, Register)>) {
+        for binding in it.scope.map_or(&[][..], |scope| self.ast.bindings(scope)) {
+            if binding.flags.contains(BindingFlags::USED_EARLY)
+                && let Place::Register(register) = self.resolve_declared(binding.name)
+            {
+                let empty = self.empty();
+                self.asm().mov(register, empty);
+            }
+        }
         if let Some((index, parent)) = created {
             let scope = self.scope;
             self.asm().create_scope(scope, parent, index);
@@ -216,7 +227,7 @@ impl Generator<'_> {
         self.asm().for_in_open(state, base, done);
         self.asm().bind_loop_head(next);
         self.asm().loop_hint();
-        self.renew_loop_scope(created);
+        self.renew_loop_scope(it, created);
         self.pause_at_target(it.target);
         self.asm().for_in_next(key, state, base, done);
         if !has_initializer {
@@ -305,7 +316,7 @@ impl Generator<'_> {
         let (on_break, done) = (self.asm().label(), self.asm().label());
         self.asm().bind_loop_head(next);
         self.asm().loop_hint();
-        self.renew_loop_scope(created);
+        self.renew_loop_scope(it, created);
         self.pause_at_target(it.target);
         self.debug_hook(DebugHook::WillExecuteExpression, start);
         self.position(divot, start, end);
@@ -419,7 +430,7 @@ impl Generator<'_> {
         let (next, on_break, done) = (self.asm().label(), self.asm().label(), self.asm().label());
         self.asm().bind_loop_head(next);
         self.asm().loop_hint();
-        self.renew_loop_scope(created);
+        self.renew_loop_scope(it, created);
         self.pause_at_target(it.target);
         self.call_async_next(value, state, None, range);
         self.await_value(value, value.into(), range.0);

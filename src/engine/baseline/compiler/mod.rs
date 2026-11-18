@@ -44,6 +44,7 @@ pub(crate) struct Start {
 pub(crate) struct Compiled {
     pub(crate) code: MachineCode,
     pub(crate) entry: Label,
+    pub(crate) cold: Label,
     pub(crate) starts: Vec<Start>,
     /// Where the callees of an instruction return to.
     pub(crate) return_points: Vec<(u32, Label)>,
@@ -94,6 +95,9 @@ pub(crate) struct Compiler<'a> {
     end: Option<Label>,
 }
 
+/// Of what is addressed from `METADATA`, to either side.
+const MOST_WORDS: usize = 1 << 26;
+
 pub(crate) fn compile(
     code_block: &CodeBlock,
     thunks: &Thunks,
@@ -101,6 +105,10 @@ pub(crate) fn compile(
 ) -> Result<Compiled, CodeTooLarge> {
     let (code, body): (&Code, _) = (code_block.code(), code_block.body());
     let size = body.instructions().len();
+    let linked = code.constants.len() + code.functions.len() + code.scopes.len();
+    if linked.max(body.metadata().words() as usize) > MOST_WORDS {
+        return Err(CodeTooLarge);
+    }
     let mut compiler = Compiler {
         m: new_assembler(seed),
         code,
@@ -127,10 +135,12 @@ pub(crate) fn compile(
     compiler.find_targets();
     let entry = compiler.prologue();
     compiler.main_pass();
+    let cold = compiler.m.mark();
     compiler.cold_pass();
     Ok(Compiled {
         code: compiler.m.finish()?,
         entry,
+        cold,
         starts: compiler.starts,
         return_points: compiler.return_points,
         assumed: compiler.assumed,

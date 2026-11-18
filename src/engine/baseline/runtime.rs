@@ -26,6 +26,8 @@ struct Start {
 struct BaselineCode {
     handle: CodeHandle,
     entry: u32,
+    /// Where the code for the unlikely cases starts.
+    cold: u32,
     starts: Box<[Start]>,
     return_points: Box<[(u32, u32)]>,
     assumed: Box<[(u32, Arithmetic)]>,
@@ -36,6 +38,24 @@ struct Installed(Arc<BaselineCode>);
 impl CompiledCode for Installed {
     fn origin_of_call_site(&self, _: u32) -> CodeOrigin {
         unreachable!()
+    }
+
+    fn has_call_site(&self, _: u32) -> bool {
+        false
+    }
+
+    /// Only for the likely cases.
+    fn origin_of_address(&self, address: usize) -> Option<CodeOrigin> {
+        let code = &self.0;
+        let offset = address.wrapping_sub(code.handle.start());
+        if offset >= code.cold as usize {
+            return None;
+        }
+        let after = (code.starts).partition_point(|start| start.code as usize <= offset);
+        Some(CodeOrigin {
+            bytecode_offset: code.starts[after.saturating_sub(1)].offset,
+            inline_frame: None,
+        })
     }
 
     fn inline_frame(&self, _: &Vm, _: u32) -> InlineFrame {
@@ -93,6 +113,7 @@ fn compile(code_block: &CodeBlock) -> Option<Arc<BaselineCode>> {
     let code = Arc::new(BaselineCode {
         handle,
         entry: place(compiled.entry),
+        cold: place(compiled.cold),
         starts: (compiled.starts.iter())
             .map(|start| Start {
                 offset: start.offset,

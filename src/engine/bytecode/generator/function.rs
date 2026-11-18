@@ -423,6 +423,7 @@ impl<'a> Generator<'a> {
         let root = &self.ast.root;
         if self.function_kind == FunctionKind::DerivedConstructor
             && !self.covers
+            && self.b.finallys.is_empty()
             && let Some(block) = self.ast.get(root.body, 0)
             && let StmtKind::Block { body, .. } = self.ast[block].kind
         {

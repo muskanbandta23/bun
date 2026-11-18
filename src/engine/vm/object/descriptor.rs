@@ -1,3 +1,4 @@
+use bun_engine_macros::FieldOffsets;
 use bun_engine_text::{PropertyName, names};
 
 use crate::{
@@ -16,7 +17,7 @@ bitflags::bitflags! {
 }
 
 /// The Property Descriptor of ECMA-262. An absent attribute reads as false.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, FieldOffsets)]
 #[repr(C)]
 pub struct PropertyDescriptor {
     value: Option<Value>,

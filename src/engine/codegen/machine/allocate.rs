@@ -6,7 +6,9 @@
 
 use bun_engine_asm::{Bank, Reg, RegisterSet};
 
-use super::code::{AT_HOME, Class, Code, Home, LOCAL, Operand, Place, Registers, Role, Site, VReg};
+use super::code::{
+    AT_HOME, Class, Code, Head, Home, LOCAL, Operand, Place, Registers, Role, Site, VReg,
+};
 use super::liveness::{BEYOND_LOOP, Distance, FARTHEST, Liveness};
 use super::moves::{Move, MoveKind, Sequencer, Spot, SpotKind};
 use super::slots::Slots;
@@ -86,8 +88,6 @@ pub(crate) struct Allocation {
     pub(super) live_out: Vec<u64>,
     pub(super) pending: Vec<Move>,
     pub(super) candidates: Vec<(Distance, VReg)>,
-    /// For each operand in the current block, last instruction first: what `next` becomes after it.
-    next_uses: Vec<Distance>,
     /// Descending by position.
     claims: Vec<Claim>,
     /// Values whose last use is in the state of the instruction at a position. Descending.
@@ -319,7 +319,6 @@ impl Allocator<'_> {
         let data = self.code.blocks[self.block];
         self.liveness
             .live_out(self.function, self.cfg, self.block, &mut self.out.live_out);
-        self.out.next_uses.clear();
         for edge in self.function.successors(self.block) {
             let wanted = data.end
                 + if self.function.is_rare(edge) {
@@ -340,45 +339,49 @@ impl Allocator<'_> {
             if let Some(site) = head.site.expand() {
                 self.scan_state(position, site);
             }
-            let mut claimed = 0;
-            let first_next = self.out.next_uses.len();
-            self.out
-                .next_uses
-                .resize(first_next + usize::from(head.operand_count), FARTHEST);
-            // Of two uses of one value, it is the late one after which it dies.
-            for is_late_pass in [true, false] {
-                for (offset, index) in head.operands().enumerate() {
-                    let operand = self.code.operands[index];
-                    if (operand.role == Role::Use) == is_late_pass {
-                        continue;
-                    }
-                    if operand.place == Place::Fixed {
-                        claimed |= bit(operand.fixed_register());
-                    }
-                    if !operand.vreg.is_none() {
-                        let dies = self.sight(operand.vreg);
-                        self.code.operands[index].set_dies(dies);
-                        self.out.next_uses[first_next + offset] =
-                            self.out.statuses[operand.vreg].next;
+            head.results()
+                .for_each(|index| self.scan_operand(index, position));
+            if head.has_late_uses {
+                // Of two uses of one value, it is the late one after which it dies.
+                for role in [Role::LateUse, Role::Use] {
+                    for index in head.uses() {
+                        if self.code.operands[index].role == role {
+                            self.scan_operand(index, position);
+                        }
                     }
                 }
-            }
-            for index in head.operands() {
-                let operand = self.code.operands[index];
-                if operand.is_use() && !matches!(operand.place, Place::ColdAnywhere | Place::Given)
-                {
-                    self.out.statuses[operand.vreg].next = position;
-                }
+            } else {
+                head.uses()
+                    .for_each(|index| self.scan_operand(index, position));
             }
             if head.is_constrained {
+                let fixed = self.code.operands[head.operands()]
+                    .iter()
+                    .filter(|operand| operand.place == Place::Fixed);
+                let mut registers =
+                    fixed.fold(0, |mask, operand| mask | bit(operand.fixed_register()));
                 if let Some(site) = head.site.expand() {
                     let site = &self.code.sites[site];
-                    claimed |= (site.clobbers_early | site.clobbers_late).bits();
+                    registers |= (site.clobbers_early | site.clobbers_late).bits();
                 }
                 self.out.claims.push(Claim {
                     position,
-                    registers: claimed,
+                    registers,
                 });
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn scan_operand(&mut self, index: usize, position: u32) {
+        let vreg = self.code.operands[index].vreg;
+        if !vreg.is_none() {
+            let dies = self.sight(vreg);
+            let (operand, status) = (&mut self.code.operands[index], &mut self.out.statuses[vreg]);
+            operand.set_dies(dies);
+            operand.next = status.next;
+            if operand.place != Place::ColdAnywhere {
+                status.next = position;
             }
         }
     }
@@ -673,51 +676,21 @@ impl Allocator<'_> {
 
     // Instructions
 
+    #[inline(always)]
     fn allocate_instruction(&mut self) {
         let head = self.code.heads[self.position as usize];
-        let operands = head.operands();
-        let first_next = self.out.next_uses.len() - operands.len();
         let mut taken = Taken::default();
-        if head.is_constrained {
-            self.make_way(operands.clone(), head.site, &mut taken);
+        if !head.is_plain || !self.find_uses_in_registers(head) {
+            self.place_what_is_there_at_the_start(head, &mut taken);
         }
-
-        let (mut has_absent_uses, mut has_temps) = (false, false);
-        for index in operands.clone() {
+        for index in head.uses() {
             let operand = self.code.operands[index];
-            match (operand.role, operand.place) {
-                (_, Place::Given | Place::Fixed) | (Role::Def, _) => {}
-                (Role::EarlyDef | Role::Temp, _) => has_temps = true,
-                (Role::Use | Role::LateUse, _) => {
-                    let reg = self.out.statuses[operand.vreg].reg;
-                    let is_late = operand.role == Role::LateUse;
-                    if reg == AT_HOME
-                        || is_late
-                            && taken.overwritten(self.code.vregs[operand.vreg].class) & bit(reg)
-                                != 0
-                    {
-                        has_absent_uses = true;
-                    } else {
-                        self.assign_use(index, reg, &mut taken);
-                    }
-                }
-            }
-        }
-        if has_absent_uses {
-            self.bring_uses(operands.clone(), first_next, &mut taken);
-        }
-        if has_temps {
-            self.assign_temps(operands.clone(), &mut taken);
-        }
-
-        for (index, next_index) in operands.clone().zip(first_next..) {
-            let operand = self.code.operands[index];
-            if operand.is_use() && operand.place != Place::Given {
+            if operand.place != Place::Given && operand.next != self.position {
                 let status = &mut self.out.statuses[operand.vreg];
-                status.next = self.out.next_uses[next_index];
+                status.next = operand.next;
                 let reg = status.reg;
                 if reg != AT_HOME {
-                    self.next[usize::from(reg & 63)] = status.next;
+                    self.next[usize::from(reg & 63)] = operand.next;
                     if operand.role == Role::Use && operand.dies() {
                         self.vacate(reg);
                     }
@@ -728,34 +701,31 @@ impl Allocator<'_> {
             self.drop_overwritten(&taken);
         }
         let mut results = 0;
-        for (index, next_index) in operands.clone().zip(first_next..) {
+        for index in head.results() {
             let operand = self.code.operands[index];
-            match operand.role {
-                Role::Def => {
-                    self.out.statuses[operand.vreg].next = self.out.next_uses[next_index];
-                    let reg = self.register_for_result(operand, &operands, &taken, results);
-                    self.code.operands[index].assign(reg);
-                    self.occupy(reg, operand.vreg, false);
-                    results |= bit(reg);
-                }
-                Role::EarlyDef => {
-                    self.out.statuses[operand.vreg].next = self.out.next_uses[next_index];
-                    self.next[usize::from(operand.assigned() & 63)] =
-                        self.out.next_uses[next_index];
-                    results |= bit(operand.assigned());
-                }
-                _ => {}
+            if operand.role == Role::Def {
+                self.out.statuses[operand.vreg].next = operand.next;
+                let reg = self.register_for_result(operand, &head.operands(), &taken, results);
+                self.code.operands[index].assign(reg);
+                self.occupy(reg, operand.vreg, false);
+                results |= bit(reg);
+            } else if operand.role == Role::EarlyDef {
+                results |= bit(operand.assigned());
             }
         }
         if let Some(site) = head.site.expand() {
-            self.record_state(site, operands.clone());
+            self.record_state(site, head.operands());
         }
         if !self.out.pending.is_empty() {
             self.flush_moves();
         }
         self.out.displaced.clear();
 
-        for index in operands {
+        for index in if head.has_late_uses {
+            head.operands()
+        } else {
+            head.results()
+        } {
             let operand = self.code.operands[index];
             if operand.dies() && operand.role != Role::Use {
                 let reg = self.out.statuses[operand.vreg].reg;
@@ -767,10 +737,46 @@ impl Allocator<'_> {
         if let Some(site) = head.site.expand() {
             self.leave_site(site, results);
         }
-        self.out.next_uses.truncate(first_next);
         if head.is_constrained {
             self.out.claims.pop();
         }
+    }
+
+    /// Returns whether all are.
+    #[inline(always)]
+    fn find_uses_in_registers(&mut self, head: Head) -> bool {
+        self.code.operands[head.uses()].iter_mut().all(|operand| {
+            if operand.place != Place::Given {
+                operand.assign(self.out.statuses[operand.vreg].reg);
+            }
+            operand.assigned() != AT_HOME
+        })
+    }
+
+    fn place_what_is_there_at_the_start(&mut self, head: Head, taken: &mut Taken) {
+        if head.is_constrained {
+            self.make_way(head.operands(), head.site, taken);
+        }
+        let mut has_absent_uses = false;
+        for index in head.uses() {
+            let operand = self.code.operands[index];
+            if matches!(operand.place, Place::Given | Place::Fixed) {
+                continue;
+            }
+            let reg = self.out.statuses[operand.vreg].reg;
+            let is_late = operand.role == Role::LateUse;
+            if reg == AT_HOME
+                || is_late && taken.overwritten(self.code.vregs[operand.vreg].class) & bit(reg) != 0
+            {
+                has_absent_uses = true;
+            } else {
+                self.assign_use(index, reg, taken);
+            }
+        }
+        if has_absent_uses {
+            self.bring_uses(head.uses(), taken);
+        }
+        self.assign_temps(head.results(), taken);
     }
 
     pub(super) fn flush_moves(&mut self) {
@@ -861,6 +867,7 @@ impl Allocator<'_> {
             self.code.operands[index].assign(reg);
             if !operand.is_use() {
                 if operand.role == Role::EarlyDef {
+                    self.out.statuses[operand.vreg].next = operand.next;
                     self.occupy(reg, operand.vreg, false);
                 }
                 continue;
@@ -911,18 +918,11 @@ impl Allocator<'_> {
         }
     }
 
-    fn bring_uses(
-        &mut self,
-        operands: core::ops::Range<usize>,
-        first_next: usize,
-        taken: &mut Taken,
-    ) {
+    fn bring_uses(&mut self, operands: core::ops::Range<usize>, taken: &mut Taken) {
         for needs_register in [true, false] {
-            for (index, next_index) in operands.clone().zip(first_next..) {
+            for index in operands.clone() {
                 let operand = self.code.operands[index];
-                let is_open = operand.is_use()
-                    && operand.place != Place::Fixed
-                    && operand.assigned() == AT_HOME;
+                let is_open = operand.place != Place::Fixed && operand.assigned() == AT_HOME;
                 if !is_open || self.can_be_read_at_home(operand) == needs_register {
                     continue;
                 }
@@ -943,7 +943,7 @@ impl Allocator<'_> {
                     let has_choice = !is_late && (operand.dies() || free_and_lasting == 0);
                     self.free_at_start(if has_choice { bank } else { lasting }, taken)
                 } else {
-                    let wanted_in = self.out.next_uses[next_index] - self.position;
+                    let wanted_in = operand.next - self.position;
                     if operand.place == Place::ColdAnywhere
                         || operand.dies()
                         || wanted_in >= SOON
@@ -990,6 +990,7 @@ impl Allocator<'_> {
                 let free = self.free_at_start(self.bank_of(operand.vreg) & lasting, taken);
                 let reg = self.choose(operand.vreg, free);
                 self.settle_preference(operand.vreg, reg);
+                self.out.statuses[operand.vreg].next = operand.next;
                 self.occupy(reg, operand.vreg, false);
                 reg
             };
@@ -1024,7 +1025,15 @@ impl Allocator<'_> {
             .out
             .state_assigned
             .add(self.code.vreg_lists[data.state_vregs].iter().map(place_of));
-        self.last_state = (data.state, self.epoch, data.state_assigned);
+        let has_left = data
+            .recoverable
+            .expand()
+            .is_some_and(|vreg| self.out.statuses[vreg].reg == AT_HOME);
+        self.last_state = (
+            if has_left { State::NONE } else { data.state },
+            self.epoch,
+            data.state_assigned,
+        );
     }
 
     fn drop_overwritten(&mut self, taken: &Taken) {
@@ -1079,6 +1088,9 @@ impl Allocator<'_> {
             if reg != AT_HOME {
                 self.vacate(reg);
             }
+        }
+        if self.code.sites[site].is_exit {
+            return;
         }
         let live = self.occupied & !results;
         let is_vector =

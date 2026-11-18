@@ -2,10 +2,11 @@
 
 use core::ffi::{CStr, c_char};
 
+use crate::argument::{locale_id, time_value, zone_id_length};
 use crate::enumeration::UEnumeration;
 use crate::error::Status;
-use crate::ffi::{call, filled, length, open};
-use crate::{Buffer, Enumeration, Error, Result};
+use crate::ffi::{call, filled, open};
+use crate::{Buffer, Enumeration, Result};
 
 bun_opaque::opaque_ffi! { pub(crate) struct UCalendar; }
 
@@ -109,22 +110,14 @@ icu_handle! {
     pub struct Calendar(UCalendar), ucal_close
 }
 
-fn time_value(time: f64) -> Result<f64> {
-    if time.is_nan() {
-        return Err(Error::ILLEGAL_ARGUMENT);
-    }
-    Ok(time)
-}
-
 impl Calendar {
     /// The calendar system that `locale` names or prefers. A zone that ICU does not know has the offset zero.
     pub fn open(zone: &[u16], locale: &CStr) -> Result<Calendar> {
-        let length = length(zone)?;
+        let locale = locale_id(locale)?;
+        let length = zone_id_length(zone)?;
         // SAFETY: `zone` has `length` units and `locale` is terminated. Both are copied.
-        open(|status| unsafe {
-            ucal_open(zone.as_ptr(), length, locale.as_ptr(), UCAL_DEFAULT, status)
-        })
-        .map(Calendar)
+        open(|status| unsafe { ucal_open(zone.as_ptr(), length, locale, UCAL_DEFAULT, status) })
+            .map(Calendar)
     }
 
     pub(crate) fn as_mut_ptr(&mut self) -> *mut UCalendar {
@@ -137,7 +130,7 @@ impl Calendar {
     }
 
     pub fn set_time_zone(&mut self, zone: &[u16]) -> Result<()> {
-        let length = length(zone)?;
+        let length = zone_id_length(zone)?;
         // SAFETY: the calendar is open, and `zone`, which is copied, has `length` units.
         call(|status| unsafe { ucal_setTimeZone(self.0.as_ptr(), zone.as_ptr(), length, status) })
     }
@@ -237,29 +230,19 @@ impl Calendar {
 
     /// The long name: `Pacific Standard Time`.
     pub fn zone_name(&self, kind: ZoneName, locale: &CStr) -> Result<Buffer<u16>> {
+        let locale = locale_id(locale)?;
         // SAFETY: the calendar is open, `locale` is terminated, and `out` has room for `capacity`.
         filled(|out, capacity, status| unsafe {
-            ucal_getTimeZoneDisplayName(
-                self.0.as_ptr(),
-                kind,
-                locale.as_ptr(),
-                out,
-                capacity,
-                status,
-            )
+            ucal_getTimeZoneDisplayName(self.0.as_ptr(), kind, locale, out, capacity, status)
         })
     }
 }
 
 fn systems(locale: &CStr, commonly_used: bool) -> Result<Enumeration> {
+    let locale = locale_id(locale)?;
     // SAFETY: both strings are terminated.
     Enumeration::open(|status| unsafe {
-        ucal_getKeywordValuesForLocale(
-            c"calendar".as_ptr(),
-            locale.as_ptr(),
-            commonly_used.into(),
-            status,
-        )
+        ucal_getKeywordValuesForLocale(c"calendar".as_ptr(), locale, commonly_used.into(), status)
     })
 }
 

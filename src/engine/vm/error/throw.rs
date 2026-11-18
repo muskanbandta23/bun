@@ -39,9 +39,16 @@ impl Message for Arguments<'_> {
 impl Cx {
     #[cold]
     pub fn throw_exception(&self, exception: Gc<Exception>) -> Thrown {
-        if !self.has_pending_termination_exception() {
-            self.set_exception(exception);
+        if self.has_pending_termination_exception() {
+            return Thrown::new();
         }
+        if self.is_async_context_tracked()
+            && exception.async_context().is_none()
+            && !self.is_termination_exception(exception)
+        {
+            exception.set_async_context(Some(self.current_async_context()));
+        }
+        self.set_exception(exception);
         Thrown::new()
     }
 

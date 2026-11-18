@@ -25,31 +25,28 @@ pub fn find_time_zone(identifier: Text<'_>) -> Option<TimeZone> {
 
 /// ToTemporalTimeZoneIdentifier of a string.
 pub fn parse_time_zone(text: Text<'_>) -> Result<TimeZone, InputError<'_>> {
-    let in_date_or_time = || match parse::any_date_or_time(text)? {
-        (
-            _,
-            parse::Annotations {
-                time_zone: Some(identifier),
-                ..
-            },
-        ) => identifier.resolve(),
-        (Offset::Utc, _) => Some(TimeZone::Named(TimeZoneId::UTC)),
-        (
-            Offset::Numeric {
-                nanoseconds,
-                has_seconds: false,
-            },
-            _,
-        ) => Some(TimeZone::Offset {
+    match parse::time_zone_identifier(text) {
+        Some(identifier) => identifier.resolve(),
+        None => parse::any_date_or_time(text).and_then(|parsed| time_zone_of(&parsed)),
+    }
+    .ok_or(InputError::Text(TextError::TimeZone, text))
+}
+
+/// The last steps of ParseTemporalTimeZoneString.
+fn time_zone_of(parsed: &parse::DateTime<'_>) -> Option<TimeZone> {
+    if let Some(identifier) = parsed.annotations.time_zone {
+        return identifier.resolve();
+    }
+    match parsed.offset {
+        Offset::Utc => Some(TimeZone::Named(TimeZoneId::UTC)),
+        Offset::Numeric {
+            nanoseconds,
+            has_seconds: false,
+        } => Some(TimeZone::Offset {
             minutes: (nanoseconds / NANOSECONDS_PER_MINUTE) as i16,
         }),
         _ => None,
-    };
-    match parse::time_zone_identifier(text) {
-        Some(identifier) => identifier.resolve(),
-        None => in_date_or_time(),
     }
-    .ok_or(InputError::Text(TextError::TimeZone, text))
 }
 
 /// An instant, and what the clocks of a zone are ahead of UTC at it.

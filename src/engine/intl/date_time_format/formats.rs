@@ -94,9 +94,9 @@ impl Formats {
     ) -> Result<Formats> {
         let (locale, keywords, clock) = resolve_locale(cache, requested, options)?;
         let icu_locale = keywords.icu_locale(&locale, None)?;
-        let data = cache.dates.locale_data(icu_locale, |icu_locale| {
+        let data = (cache.dates.find_locale_data(&icu_locale)).unwrap_or_else(|| {
             cache.note_allocation(LocaleData::ESTIMATED_SIZE);
-            LocaleData::new(icu_locale, keywords)
+            Rc::new(LocaleData::new(icu_locale, keywords))
         });
         let patterns = Patterns {
             cache: &cache.dates,

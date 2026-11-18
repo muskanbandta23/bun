@@ -1,5 +1,11 @@
 //! Transformations of functions. Each leaves a valid function without aliases.
 
+mod bounds;
+mod construct_ssa;
+mod lower_switches;
+mod merges;
+mod reaching;
+
 use crate::analysis::{Cfg, Dominators, Frequencies};
 use crate::ir::{Function, validate};
 use crate::target::Target;
@@ -55,6 +61,12 @@ impl Analyses {
         }
         (&self.cfg, &self.frequencies)
     }
+
+    pub fn all(&mut self, function: &mut Function) -> (&Cfg, &Dominators, &Frequencies) {
+        self.dominators(function);
+        self.frequencies(function);
+        (&self.cfg, &self.dominators, &self.frequencies)
+    }
 }
 
 pub struct Pass {
@@ -62,8 +74,14 @@ pub struct Pass {
     run: fn(&mut Function, &mut Analyses, Target),
 }
 
-const QUICK: &[Pass] = &[];
-const FULL: &[Pass] = &[];
+macro_rules! passes {
+    ($($name:ident),* $(,)?) => {
+        &[$(Pass { name: stringify!($name), run: $name::run }),*]
+    };
+}
+
+const QUICK: &[Pass] = passes![construct_ssa, lower_switches];
+const FULL: &[Pass] = passes![construct_ssa, lower_switches];
 
 impl Pass {
     pub fn pipeline(level: Level) -> &'static [Pass] {

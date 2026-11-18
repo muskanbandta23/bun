@@ -280,7 +280,8 @@ impl Generator<'_> {
                         offset: 0,
                         size: 8,
                     };
-                    this.store_to(link, object, Purpose::Write);
+                    // What the link holds is read as an address that can be read, so it is one.
+                    this.store_to(link, holder, Purpose::Write);
                     let again = this.load_from(link, Load::Full, Type::I64);
                     this.load_trusted(again, position::LINK + 1, position::LINK + 1)
                 }),

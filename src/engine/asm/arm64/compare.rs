@@ -1,7 +1,8 @@
 //! Comparisons and tests, and the branches that need no flags.
 
-use super::immediate::BitmaskImm;
-use super::macro_assembler::{MacroAssembler, all_ones, arithmetic_imm, signed, unsigned};
+use super::constant::ConstantMove;
+use super::immediate::{ArithmeticImm, BitmaskImm};
+use super::macro_assembler::{MacroAssembler, all_ones, unsigned};
 use super::opcode::{AddSub, Bitfield, Cc};
 use super::registers::{SP, ZR};
 use crate::label::Label;
@@ -71,8 +72,8 @@ fn test_for_zero(cond: Cond) -> Option<TestCond> {
     }
 }
 
-/// The same comparison with the constant next to `value`. At the ends of the range there is none.
-fn with_neighbour(width: Width, cond: Cond, value: i64) -> Option<(Cond, i64)> {
+/// The same comparison with the constant next to `value`, unless that is at the end of the range.
+fn with_neighbour(cond: Cond, value: i64) -> Option<(Cond, i64)> {
     let (cond, step) = match cond {
         Cond::Eq | Cond::Ne => return None,
         Cond::Lt => (Cond::Le, -1),
@@ -84,13 +85,7 @@ fn with_neighbour(width: Width, cond: Cond, value: i64) -> Option<(Cond, i64)> {
         Cond::BelowEq => (Cond::Below, 1),
         Cond::Above => (Cond::AboveEq, 1),
     };
-    let neighbour = value.wrapping_add(step);
-    let grows = if cond.is_signed() {
-        signed(width, neighbour) > signed(width, value)
-    } else {
-        unsigned(width, neighbour) > unsigned(width, value)
-    };
-    (grows == (step > 0)).then_some((cond, neighbour))
+    Some((cond, value.wrapping_add(step)))
 }
 
 #[inline(always)]
@@ -125,7 +120,7 @@ impl MacroAssembler {
 
     #[inline(always)]
     fn compare_with_constant(&mut self, width: Width, cond: Cond, lhs: Gpr, rhs: i64) -> Cc {
-        match arithmetic_imm(AddSub::Subs, width, rhs) {
+        match AddSub::Subs.with_constant(width, rhs) {
             Some((op, imm)) => {
                 self.asm.add_sub_imm(op, width, ZR, lhs, imm);
                 cond.into()
@@ -135,14 +130,28 @@ impl MacroAssembler {
     }
 
     fn compare_with_long_constant(&mut self, width: Width, cond: Cond, lhs: Gpr, rhs: i64) -> Cc {
-        if let Some((cond, rhs)) = with_neighbour(width, cond, rhs)
-            && let Some((op, imm)) = arithmetic_imm(AddSub::Subs, width, rhs)
+        // The unsigned range ends at constants that are short, the signed range beside constants that are not.
+        if let Some((cond, rhs)) = with_neighbour(cond, rhs)
+            && let Some((op, imm)) = AddSub::Subs.with_constant(width, rhs)
         {
             self.asm.add_sub_imm(op, width, ZR, lhs, imm);
             return cond.into();
         }
-        let rhs = self.constant_beside(lhs, width, rhs);
-        self.add_sub_registers(AddSub::Subs, width, ZR, lhs, rhs);
+        let (temp, constant) = (
+            self.scratch_beside(lhs),
+            ConstantMove::new(width, rhs as u64),
+        );
+        if matches!(cond, Cond::Eq | Cond::Ne)
+            && constant.instructions() > 1
+            && let Some((op, high)) = AddSub::Sub.with_constant(width, rhs & !0xfff)
+            && let Some(low) = ArithmeticImm::new(rhs as u64 & 0xfff)
+        {
+            self.asm.add_sub_imm(op, width, temp, lhs, high);
+            self.asm.cmp_imm(width, temp, low);
+            return cond.into();
+        }
+        self.asm.move_constant(temp, constant);
+        self.add_sub_registers(AddSub::Subs, width, ZR, lhs, temp);
         cond.into()
     }
 
@@ -175,7 +184,11 @@ impl MacroAssembler {
         lhs: Memory,
         rhs: i32,
     ) -> (Gpr, i32) {
-        let fits = |value: i32| arithmetic_imm(AddSub::Subs, Width::W32, value.into()).is_some();
+        let fits = |value: i32| {
+            AddSub::Subs
+                .with_constant(Width::W32, value.into())
+                .is_some()
+        };
         let (with_zeros, with_sign) = (
             low_bytes(size, rhs) as i32,
             with_sign_of_low_bytes(size, rhs),

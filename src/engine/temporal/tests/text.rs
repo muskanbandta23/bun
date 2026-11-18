@@ -162,7 +162,8 @@ fn precision() {
     let value = date_time("1999-12-31T23:59:59.987654321");
     let write = |options| {
         let precision = PlainDateTime::precision(options).unwrap();
-        string(&value.to_text(precision, ShowCalendar::Auto).unwrap())
+        let rounded = value.round_for_text(precision).unwrap();
+        string(&rounded.to_text(precision, ShowCalendar::Auto))
     };
     for count in 1..=9 {
         assert_eq!(
@@ -183,7 +184,8 @@ fn precision() {
 
     let write = |source, options| {
         let precision = Duration::precision(options).unwrap();
-        string(&duration(source).to_text(precision).unwrap())
+        let rounded = duration(source).round_for_text(precision).unwrap();
+        string(&rounded.to_text(precision))
     };
     assert_eq!(
         write("PT1H90M", digits(9, RoundingMode::Trunc)),

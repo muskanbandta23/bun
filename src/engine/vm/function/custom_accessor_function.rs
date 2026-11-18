@@ -2,7 +2,7 @@
 
 use bun_engine_bytecode::Visibility;
 use bun_engine_macros::{cell, native_abi};
-use bun_engine_text::{Identifier, PropertyName, names};
+use bun_engine_text::{Identifier, PropertyName, StringRef, names};
 
 use crate::call::native_not_a_constructor;
 use crate::object::function_name;
@@ -44,7 +44,16 @@ fn executable(
     length: u32,
     function: NativeFunction,
 ) -> Gc<NativeExecutable> {
-    let (name, constructor) = (function_name("", name), native_not_a_constructor);
+    // What `toString` returns has the syntax of NativeFunction, which a name such as `$*` does not fit in.
+    let is_in_name = |unit: u16| {
+        u8::try_from(unit).is_ok_and(|it| it.is_ascii_alphanumeric() || b"$_".contains(&it))
+            || unit >= 0x80
+    };
+    let name = match name.is_symbol() || name.text().code_units().all(is_in_name) {
+        true => function_name("", name),
+        false => StringRef::empty(),
+    };
+    let constructor = native_not_a_constructor;
     let (intrinsic, visibility) = (Intrinsic::None, Visibility::Public);
     NativeExecutable::shared(
         cx,

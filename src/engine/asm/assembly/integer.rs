@@ -188,7 +188,8 @@ pub trait MacroAssembly: Sized {
     /// `dst = lhs ^ shift(rhs, amount)`, as by [`Self::shift`].
     fn xor_shifted(&mut self, width: Width, dst: Gpr, lhs: Gpr, rhs: Gpr, shift: Shift, amount: u8);
 
-    // Comparisons. Arithmetic writes its result, wrapped around, whether it branches or not.
+    // Comparisons. Arithmetic writes its result, wrapped around, whether it branches or not. A test may leave bytes
+    // of memory unread that its mask does not cover.
 
     fn branch(
         &mut self,

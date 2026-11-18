@@ -1098,12 +1098,11 @@ export const sourceHasLineStarts: (fn: Function) => boolean = $newCppFunction(
   1,
 );
 
-// The bytecode `bun build --compile --bytecode` embeds for a builtin module, plus the external string table it embeds
-// beside it: internal module number `index` (null past the last), or `source` written in builtin syntax (@-intrinsics,
-// a function expression) compiled under `name`.
+// The bytecode `bun build --compile --bytecode` embeds for a builtin module: internal module number `index` (null past
+// the last), or `source` written in builtin syntax (@-intrinsics, a function expression) compiled under `name`.
 export const internalModuleBytecode: {
-  (index: number): { name: string; bytecode: Uint8Array; strings: Uint8Array; lazyFunctionCount: number } | null;
-  (source: string, name: string): { name: string; bytecode: Uint8Array; strings: Uint8Array };
+  (index: number): { name: string; bytecode: Uint8Array; lazyFunctionCount: number } | null;
+  (source: string, name: string): { name: string; bytecode: Uint8Array };
 } = $newCppFunction("InternalModuleRegistry.cpp", "jsInternalModuleBytecode", 2);
 
 /** All paths are absolute native paths. */

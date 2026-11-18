@@ -1,5 +1,7 @@
 //! Conversions between numeric types (ECMA-262, Type Conversion).
 
+use core::hint::select_unpredictable;
+
 use bun_engine_text::MAX_ARRAY_INDEX;
 
 use crate::double::{FRACTION_MASK, IMPLICIT_BIT, SIGN_BIT, SIGNIFICAND_BIAS, biased_exponent};
@@ -61,16 +63,13 @@ pub fn to_uint64(value: f64) -> u64 {
     let bits = value.to_bits();
     let significand = bits & FRACTION_MASK | IMPLICIT_BIT;
     let exponent = biased_exponent(bits) as i32 - SIGNIFICAND_BIAS;
-    let magnitude = if exponent < 0 {
-        significand.unbounded_shr(exponent.unsigned_abs())
-    } else {
-        significand.unbounded_shl(exponent as u32)
-    };
-    if bits & SIGN_BIT != 0 {
-        magnitude.wrapping_neg()
-    } else {
-        magnitude
-    }
+    let magnitude = select_unpredictable(
+        exponent < 0,
+        significand.unbounded_shr(exponent.wrapping_neg() as u32),
+        significand.unbounded_shl(exponent as u32),
+    );
+    let sign = (bits as i64 >> 63) as u64;
+    (magnitude ^ sign).wrapping_sub(sign)
 }
 
 #[inline]

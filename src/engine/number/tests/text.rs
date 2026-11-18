@@ -270,7 +270,8 @@ fn canonical_numeric_indices() {
 
 #[test]
 fn fixed_exponential_and_precision() {
-    let text = |result: Result<FixedText, FormatError>| result.unwrap().to_string();
+    let text = |result: Result<&[u8], FormatError>| Text::Latin1(result.unwrap()).to_string();
+    let out = &mut [0; FIXED_TEXT_CAPACITY];
     for (value, digits, expected) in [
         (0.0, 0, "0"),
         (-0.0, 2, "0.00"),
@@ -289,7 +290,7 @@ fn fixed_exponential_and_precision() {
         (1e21, 2, "1e+21"),
         (f64::NAN, 2, "NaN"),
     ] {
-        assert_eq!(text(to_fixed(value, digits)), expected);
+        assert_eq!(text(to_fixed(value, digits, out)), expected);
     }
     for (value, digits, expected) in [
         (0.0, None, "0e+0"),
@@ -302,7 +303,7 @@ fn fixed_exponential_and_precision() {
         (f64::MAX, Some(20), "1.79769313486231570815e+308"),
         (f64::INFINITY, Some(-1), "Infinity"),
     ] {
-        assert_eq!(text(to_exponential(value, digits)), expected);
+        assert_eq!(text(to_exponential(value, digits, out)), expected);
     }
     for (value, digits, expected) in [
         (0.0, 3, "0.00"),
@@ -316,20 +317,23 @@ fn fixed_exponential_and_precision() {
         (1.5, 20, "1.5000000000000000000"),
         (f64::NAN, 0, "NaN"),
     ] {
-        assert_eq!(text(to_precision(value, digits)), expected);
+        assert_eq!(text(to_precision(value, digits, out)), expected);
     }
-    assert_eq!(to_fixed(-999999999999999900000.0, 100).unwrap().len(), 123);
+    assert_eq!(
+        to_fixed(-999999999999999900000.0, 100, out).unwrap().len(),
+        123
+    );
     for digits in [-1, 101] {
         assert_eq!(
-            to_fixed(f64::NAN, digits).err(),
+            to_fixed(f64::NAN, digits, out).err(),
             Some(FormatError::FixedDigits)
         );
-        let error = to_exponential(1.0, Some(digits)).err();
+        let error = to_exponential(1.0, Some(digits), out).err();
         assert_eq!(error, Some(FormatError::ExponentialDigits));
     }
     for digits in [0, 101] {
         assert_eq!(
-            to_precision(1.0, digits).err(),
+            to_precision(1.0, digits, out).err(),
             Some(FormatError::Precision)
         );
     }
@@ -337,25 +341,26 @@ fn fixed_exponential_and_precision() {
 
 #[test]
 fn fixed_digits_are_those_of_the_exact_value() {
+    let out = &mut [0; FIXED_TEXT_CAPACITY];
     for word in random_words().take(3000) {
         // An odd significand this far below one is never a tie at these lengths.
         let value = f64::from_bits(word >> 1 | 1);
         let digits = (word % 40) as usize;
         if value.is_finite() && !(1e-20..1e60).contains(&value) {
-            let text = to_exponential(value, Some(digits as i32))
-                .unwrap()
-                .to_string();
+            let text =
+                Text::Latin1(to_exponential(value, Some(digits as i32), out).unwrap()).to_string();
             let text: String = text.chars().filter(|&character| character != '+').collect();
             assert_eq!(text, format!("{value:.digits$e}"));
         }
         let value = (word >> 11 | 1) as f64 / 2f64.powi(45 + (word % 50) as i32);
-        let text = to_fixed(value, digits as i32).unwrap().to_string();
+        let text = Text::Latin1(to_fixed(value, digits as i32, out).unwrap()).to_string();
         assert_eq!(text, format!("{value:.digits$}"));
     }
 }
 
 #[test]
 fn radix_text() {
+    let out = &mut [0; RADIX_INTEGER_CAPACITY];
     for (value, radix, expected) in [
         (-0.0, 2, "0"),
         (255.0, 16, "ff"),
@@ -379,10 +384,11 @@ fn radix_text() {
     for (value, length) in [(-f64::MAX, 1025), (-5e-324, 1077)] {
         assert_eq!(with_radix_text(value, Radix::BINARY, <[u8]>::len), length);
     }
-    assert_eq!(integer_to_radix(i64::MIN, Radix::BINARY).len(), 65);
+    assert_eq!(integer_to_radix(i64::MIN, Radix::BINARY, out).len(), 65);
     for (word, radix) in random_words().zip((2..=36).cycle()).take(2000) {
         let number = word as i64 >> (word % 64);
-        let text = integer_to_radix(number, Radix::new(radix).unwrap()).to_string();
+        let text = integer_to_radix(number, Radix::new(radix).unwrap(), out);
+        let text = Text::Latin1(text).to_string();
         assert_eq!(i64::from_str_radix(&text, radix as u32), Ok(number));
     }
     assert_eq!(Radix::new(1), Err(FormatError::Radix));

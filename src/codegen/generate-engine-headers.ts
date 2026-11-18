@@ -1,5 +1,5 @@
 // Writes what C++ needs to know of the engine's Rust sources:
-//   EngineConstants.h  the enums, flags, static names and realm slots that src/engine/embed/types.txt lists
+//   EngineConstants.h  the enums, flags, static names and realm slots that src/engine/embed/types.txt lists, and the options
 //   EngineExports.h    a declaration and a typed wrapper for each `#[export]` function of src/engine/embed/api, and a
 //                      declaration for each function that Rust expects of C++
 import { readdirSync, readFileSync } from "node:fs";
@@ -112,9 +112,16 @@ function staticNames(): string {
   ].join("\n");
 }
 
+/** The fields have the names by which the options are set. */
+function options(): string {
+  const list = [...read("vm/options.rs").matchAll(/^ +\w+ \/ (\w+): (\w+) =/gm)];
+  const fields = list.map(([, name, type]) => `    ${integers[type] ?? { bool: "bool", f64: "double" }[type]} ${name};\n`);
+  return `struct Options {\n${fields.join("")}    bool wereSet[${list.length}];\n};\n`;
+}
+
 writeIfNotChanged(
   join(outDir, "EngineConstants.h"),
-  `${header("src/engine")}\nnamespace Engine {\n\n${[...mirrors.map(it => mirror(...it)), staticNames()].join("\n")}\n}\n`,
+  `${header("src/engine")}\nnamespace Engine {\n\n${[...mirrors.map(it => mirror(...it)), staticNames(), options()].join("\n")}\n}\n`,
 );
 
 // ─── Functions ───

@@ -119,11 +119,34 @@ value   SourceType JSC::SourceProviderSourceType
 cell    JsPromise class JSC::JSPromise
 
 # Errors, stack and code
+mirror  ErrorFlags vm/error/error_instance.rs
+opaque  StackFrame class JSC::StackFrame
+opaque  StackTrace WTF::Vector<JSC::StackFrame>
+opaque  TerminationDeadline class JSC::TerminationDeadline
 
 # Buffers, WebAssembly and FFI
+mirror  ViewMode vm/runtime/buffers/view.rs
+mirror  CopyOrder vm/runtime/buffers/copy.rs
+cell    JsArrayBuffer class JSC::JSArrayBuffer
+cell    JsArrayBufferView class JSC::JSArrayBufferView
+cell    JsTypedArray class JSC::JSArrayBufferView
+opaque  ArrayBuffer class JSC::ArrayBuffer
+opaque  ArrayBufferContents class JSC::ArrayBufferContents
+counted ArrayBufferRef JSC::ArrayBuffer
+value   CopyOrder uint8_t
+value   FreeBytes std::add_pointer_t<void(void*, void*)>
+opaque  WasmModule class JSC::Wasm::Module
+opaque  WasmSharedMemory class JSC::Wasm::SharedMemory
+opaque  WasmStreamingCompiler class JSC::Wasm::StreamingCompiler
+counted WasmModuleRef JSC::Wasm::Module
+counted WasmSharedMemoryRef JSC::Wasm::SharedMemory
+counted WasmStreamingCompilerRef JSC::Wasm::StreamingCompiler
+mirror  FfiType embed/api/missing.rs
+opaque  FfiInvocation class JSC::FFI::ThreadsafeInvocation
 
 # Promises, collections, text and time
 
 # Modules, scopes and cached bytecode
 
 # Inspector, profilers and options
+opaque  Options struct Engine::Options

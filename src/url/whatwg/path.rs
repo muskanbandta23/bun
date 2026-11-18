@@ -4,7 +4,7 @@ use bun_highway::url::Scan;
 
 use crate::class::{
     self, C0_CONTROL, FRAGMENT, NUMBER_SIGN, OPAQUE_PATH_SCAN, PATH, PERCENT, QUERY, QUESTION_MARK,
-    SPECIAL_QUERY, Set, TAB_OR_NEWLINE, TAIL_SCAN,
+    SPECIAL_QUERY, Set, TAIL_SCAN,
 };
 use crate::parser::{Parser, Step};
 use crate::{Error, Result, Scheme, percent};
@@ -118,41 +118,29 @@ impl<'a> Parser<'a> {
     }
 
     #[inline]
-    pub(crate) fn escape(&mut self, at: usize) -> Result<()> {
-        let out = self.out.interrupt(at)?;
-        percent::push_escaped(out, self.source.bytes[at], self.source.encoding)?;
-        self.out.resume(at + 1);
+    pub(crate) fn escape(&mut self, start: usize, end: usize) -> Result<()> {
+        let bytes = &self.source.bytes[start..end];
+        percent::escape_all(self.source.with_bytes(bytes), self.out.interrupt(start)?)?;
+        self.out.resume(end);
         Ok(())
     }
 
-    /// Escapes the byte at `start` and those of `set` that follow it. Returns the index behind them.
+    /// Escapes the bytes of `set` that the input has from `start` on. Returns the index behind them.
     fn escape_run(&mut self, start: usize, set: Set) -> Result<usize> {
-        let out = self.out.interrupt(start)?;
-        let mut at = start;
-        for &byte in &self.source.bytes[start..] {
-            if !class::is_in(set, byte) {
-                break;
-            }
-            // In a file name, where a `%` is itself, these are too.
-            if class::is_in(TAB_OR_NEWLINE, byte) && set & PERCENT == 0 {
-                return Err(Error::Invalid);
-            }
-            percent::push_escaped(out, byte, self.source.encoding)?;
-            at += 1;
-        }
-        self.out.resume(at);
-        Ok(at)
+        let end = start + class::run_length(set, &self.source.bytes[start..]);
+        self.escape(start, end)?;
+        Ok(end)
     }
 
     /// Returns the index of the next `#` that is not in `set`, or of the end.
     #[inline(always)]
     pub(crate) fn encode_up_to_fragment(&mut self, scan: &mut Scan<'a>, set: Set) -> Result<usize> {
         while let Some(at) = scan.next() {
-            let byte = self.source.bytes[at];
-            if class::is_in(set, byte) {
-                scan.skip_to(self.escape_run(at, set)?);
-            } else if byte == b'#' {
-                return Ok(at);
+            match self.source.bytes[at] {
+                byte if class::is_in(set, byte) => scan.skip_to(self.escape_run(at, set)?),
+                b'#' => return Ok(at),
+                b'\t' | b'\n' | b'\r' => return Err(Error::Invalid),
+                _ => {}
             }
         }
         Ok(self.source.bytes.len())
@@ -173,6 +161,7 @@ impl<'a> Parser<'a> {
             }
             match byte {
                 b'?' | b'#' => break at,
+                b'\t' | b'\n' | b'\r' => return Err(Error::Invalid),
                 b'\\' if syntax.backslash_is_slash => {
                     self.out.replace(at, at + 1, b"/")?;
                     scan.skip_to(self.segment_start(at + 1, syntax)?);
@@ -254,7 +243,10 @@ impl<'a> Parser<'a> {
         while let Some(at) = scan.next() {
             match input[at] {
                 b'?' | b'#' => return Ok(at),
-                b' ' if matches!(input.get(at + 1), Some(b'?' | b'#')) => self.escape(at)?,
+                b'\t' | b'\n' | b'\r' => return Err(Error::Invalid),
+                b' ' if matches!(input.get(at + 1), Some(b'?' | b'#')) => {
+                    self.escape(at, at + 1)?
+                }
                 b' ' => {}
                 _ => scan.skip_to(self.escape_run(at, C0_CONTROL)?),
             }

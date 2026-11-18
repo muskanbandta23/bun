@@ -7,7 +7,7 @@ use std::rc::Rc;
 use bun_engine_syntax::{EvalContext, FieldSource, FunctionFlags, FunctionKind, Name};
 use bun_engine_text::{Identifier, Text};
 
-use crate::code::Code;
+use crate::code::{Code, CodeFlags};
 use crate::scope::StaticScope;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -191,8 +191,11 @@ impl FunctionInfo {
         code
     }
 
+    /// Code that suspends stays, for those that have saved its registers.
     pub fn set_code(&self, specialization: Specialization, code: Option<Rc<Code>>) {
-        self.code[specialization as usize].set(code);
+        let cell = &self.code[specialization as usize];
+        let kept = (cell.take()).filter(|it| it.body.flags().contains(CodeFlags::SUSPENDS));
+        cell.set(kept.or(code));
     }
 }
 

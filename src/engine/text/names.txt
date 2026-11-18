@@ -682,7 +682,9 @@ toGMTString
 toHex
 toISOString
 toInstant
+toIntegerOrInfinity
 toJSON
+toLength
 toLocaleDateString
 toLocaleLowerCase
 toLocaleString

@@ -356,17 +356,15 @@ fn positions_are_for_what_throws() {
     };
     let mut a = Assembler::default();
     a.negate(local(0), local(0));
-    assert_eq!(a.pending_position(), None);
     a.position(4, 3, 5);
     a.position(5, 4, 6);
     a.mov(local(0), local(1));
     a.negate(local(0), local(0));
-    let saved = a.pending_position();
     a.position(5, 4, 6);
     a.negate(local(0), local(0));
     a.position(9, 8, 10);
     a.negate(local(0), local(0));
-    a.restore_position(saved);
+    a.position(5, 4, 6);
     a.negate(local(0), local(0));
     a.set_records_positions(false);
     a.position(20, 19, 21);

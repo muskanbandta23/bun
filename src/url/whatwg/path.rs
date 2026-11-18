@@ -6,7 +6,7 @@ use crate::class::{
     self, C0_CONTROL, FRAGMENT, NUMBER_SIGN, OPAQUE_PATH_SCAN, PATH, PERCENT, QUERY, QUESTION_MARK,
     SPECIAL_QUERY, Set, TAB_OR_NEWLINE, TAIL_SCAN,
 };
-use crate::parser::{Parser, Tail};
+use crate::parser::{Parser, Step};
 use crate::{Error, Result, Scheme, percent};
 
 pub(crate) fn is_normalized_drive_letter(segment: &[u8]) -> bool {
@@ -63,29 +63,40 @@ impl PathSyntax {
 }
 
 impl<'a> Parser<'a> {
-    pub(crate) fn tail(&mut self, tail: Tail) -> Result<()> {
+    /// `step` is one that [`Self::head`] returns.
+    pub(crate) fn tail(&mut self, mut step: Step) -> Result<()> {
         let input = self.source.bytes;
-        let (mut at, mut scan) = match tail {
-            Tail::Segments(at) => {
-                let mut scan = TAIL_SCAN.scan(input, at);
-                (self.path(at, &mut scan, self.path_syntax(PATH))?, scan)
+        let syntax = self.path_syntax(PATH);
+        let start = match step {
+            Step::Start | Step::Authority(_) => return Err(Error::Invalid),
+            Step::Segments(at) => self.segment_start(at as usize, syntax)?,
+            Step::OpaquePath(at) => {
+                let end = self.opaque_path(at as usize)?;
+                step = Step::AfterPath(end as u32);
+                end + 1
             }
-            Tail::OpaquePath(at) => {
-                let end = self.opaque_path(at)?;
-                (end, TAIL_SCAN.scan(input, end + 1))
-            }
-            Tail::AfterPath(at) | Tail::AfterQuery(at) => (at, TAIL_SCAN.scan(input, at + 1)),
+            Step::AfterPath(at) | Step::AfterQuery(at) => at as usize + 1,
+            Step::RestOfPath(at) | Step::RestOfQuery(at) | Step::RestOfFragment(at) => at as usize,
         };
-        if !matches!(tail, Tail::AfterQuery(_)) {
-            self.parts.path_end = self.mark(at);
+        let mut scan = TAIL_SCAN.scan(input, start);
+        if let Step::Segments(_) | Step::RestOfPath(_) = step {
+            step = Step::AfterPath(self.path(&mut scan, syntax)? as u32);
         }
-        if input.get(at) == Some(&b'?') {
-            at = self.encode_up_to_fragment(&mut scan, self.query_set())?;
+        if let Step::AfterPath(at) = step {
+            self.parts.path_end = self.mark(at as usize);
+            step = match input.get(at as usize) {
+                Some(b'?') => Step::RestOfQuery(at),
+                _ => Step::AfterQuery(at),
+            };
         }
-        self.parts.query_end = self.mark(at);
-        while at < input.len() {
-            at = self.encode_up_to_fragment(&mut scan, FRAGMENT)?;
+        if let Step::RestOfQuery(_) = step {
+            step =
+                Step::AfterQuery(self.encode_up_to_fragment(&mut scan, self.query_set())? as u32);
         }
+        if let Step::AfterQuery(at) = step {
+            self.parts.query_end = self.mark(at as usize);
+        }
+        while self.encode_up_to_fragment(&mut scan, FRAGMENT)? < input.len() {}
         Ok(())
     }
 
@@ -134,7 +145,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Returns the index of the next `#` that is not in `set`, or of the end.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn encode_up_to_fragment(&mut self, scan: &mut Scan<'a>, set: Set) -> Result<usize> {
         while let Some(at) = scan.next() {
             let byte = self.source.bytes[at];
@@ -148,14 +159,9 @@ impl<'a> Parser<'a> {
     }
 
     /// Returns where the path ends, which `scan` has passed.
-    pub(crate) fn path(
-        &mut self,
-        start: usize,
-        scan: &mut Scan<'a>,
-        syntax: PathSyntax,
-    ) -> Result<usize> {
+    #[inline(always)]
+    pub(crate) fn path(&mut self, scan: &mut Scan<'a>, syntax: PathSyntax) -> Result<usize> {
         let input = self.source.bytes;
-        scan.skip_to(self.segment_start(start, syntax)?);
         let end = loop {
             let Some(at) = scan.next() else {
                 break input.len();
@@ -184,8 +190,15 @@ impl<'a> Parser<'a> {
     }
 
     /// Resolves the dot segments at `at`, and returns where the segment behind them starts.
-    #[inline]
-    fn segment_start(&mut self, mut at: usize, syntax: PathSyntax) -> Result<usize> {
+    #[inline(always)]
+    pub(crate) fn segment_start(&mut self, at: usize, syntax: PathSyntax) -> Result<usize> {
+        match self.source.bytes[at..] {
+            [b'.' | b'%', ..] | [_, b'|', ..] => self.peculiar_segment_start(at, syntax),
+            _ => Ok(at),
+        }
+    }
+
+    fn peculiar_segment_start(&mut self, mut at: usize, syntax: PathSyntax) -> Result<usize> {
         let input = self.source.bytes;
         while let Some((length, has_two_dots)) = syntax.dot_segment(&input[at..]) {
             self.out.interrupt(at)?;
@@ -196,8 +209,8 @@ impl<'a> Parser<'a> {
             at += usize::from(input.get(at).is_some_and(|&byte| syntax.is_slash(byte)));
             self.out.resume(at);
         }
-        if self.parts.scheme == Scheme::File
-            && let [letter, b'|', rest @ ..] = &input[at..]
+        if let [letter, b'|', rest @ ..] = &input[at..]
+            && self.parts.scheme == Scheme::File
             && letter.is_ascii_alphabetic()
             && !class::is_in(syntax.set, b'|')
             && syntax.ends_segment(rest.first())

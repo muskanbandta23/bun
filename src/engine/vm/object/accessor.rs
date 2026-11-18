@@ -6,7 +6,7 @@ use crate::{
 };
 
 /// What the slot of an accessor property has.
-#[cell(cell_type = GetterSetter, flags = TypeFlags::SHAPE_IS_IMMORTAL)]
+#[cell(cell_type = GetterSetter, export = "engine_class_GetterSetter", flags = TypeFlags::SHAPE_IS_IMMORTAL)]
 pub struct GetterSetter {
     base: JsCell,
     getter: Option<Gc<JsObject>>,
@@ -61,7 +61,7 @@ impl GetterSetter {
 }
 
 /// What the slot of a property has whose value native code provides.
-#[cell(cell_type = CustomGetterSetter, flags = TypeFlags::SHAPE_IS_IMMORTAL)]
+#[cell(cell_type = CustomGetterSetter, export = "engine_class_CustomGetterSetter", flags = TypeFlags::SHAPE_IS_IMMORTAL)]
 pub struct CustomGetterSetter {
     base: JsCell,
     getter: Option<CustomGetter>,

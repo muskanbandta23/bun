@@ -1,6 +1,7 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{FnArg, ImplItem, ItemImpl};
+use syn::parse::Parser;
+use syn::{FnArg, ImplItem, ItemImpl, LitStr};
 
 /// Each method: its name, the type flag that an override sets, what the table entry returns and how it gets there.
 const OPS: &[(&str, Option<&str>, &str)] = &[
@@ -38,7 +39,16 @@ const OPS: &[(&str, Option<&str>, &str)] = &[
     ("get_prototype_of", Some("OVERRIDES_GET_PROTOTYPE"), "value"),
 ];
 
-pub(crate) fn expand(item: TokenStream) -> syn::Result<TokenStream> {
+pub(crate) fn expand(arguments: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
+    let mut export: Option<LitStr> = None;
+    let parser = syn::meta::parser(|meta| {
+        if !meta.path.is_ident("export") {
+            return Err(meta.error("unknown option"));
+        }
+        export = Some(meta.value()?.parse()?);
+        Ok(())
+    });
+    parser.parse2(arguments)?;
     let mut block: ItemImpl = syn::parse2(item)?;
     let this_type = block.self_ty.clone();
     let mut entries = Vec::new();
@@ -82,7 +92,12 @@ pub(crate) fn expand(item: TokenStream) -> syn::Result<TokenStream> {
                 quote!(*result = #call;),
             ),
         };
+        let symbol = export.as_ref().map(|prefix| {
+            let symbol = format!("{}_{name}", prefix.value());
+            quote!(#[unsafe(export_name = #symbol)] #[inline(never)])
+        });
         entries.push(quote! {
+            #symbol
             #[allow(improper_ctypes_definitions)]
             unsafe extern "C" fn #name(this: &::bun_engine_vm::JsObject, #(#arguments: #types,)* #out) #returns { #body }
             ops.#name = #name;

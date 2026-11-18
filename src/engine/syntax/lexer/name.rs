@@ -3,11 +3,11 @@
 use bun_engine_text::Text;
 use bun_engine_unicode::{MAX_CODE_POINT, is_identifier_part, is_identifier_start};
 
-use super::Lexer;
+use super::{Lexer, Naming};
 use crate::chars;
 use crate::error::LexicalError;
-use crate::names::NameKind;
-use crate::token::TokenKind;
+use crate::names::{Key, NameKind};
+use crate::token::{Detail, TokenKind};
 
 pub(super) enum Malformed {
     /// More text could make it whole.
@@ -21,9 +21,23 @@ fn is_surrogate(code_point: u32) -> bool {
 
 impl Lexer<'_> {
     #[inline(never)]
-    pub(super) fn long_name(&mut self, start: usize, end: usize) {
+    pub(super) fn short_name(&mut self, key: Key, start: usize, end: usize, lead: Detail) {
+        let name = self.names.intern_short(key, start);
+        self.token = self.word(name, start, end, lead);
+    }
+
+    /// One that starts with an ASCII character.
+    #[inline(never)]
+    pub(super) fn any_name(&mut self, start: usize, lead: Detail, naming: Naming) {
+        let end = self.skip_name(start);
+        if chars::continues_name(self.byte(end)) {
+            return self.elaborate_name(start, end, lead);
+        }
+        if naming == Naming::Skip {
+            return self.set(TokenKind::Identifier, start, end, lead);
+        }
         let name = (self.names).intern_narrow(self.source, start, end, NameKind::Ordinary);
-        self.set_name(name, start, end);
+        self.token = self.word(name, start, end, lead);
     }
 
     /// A lone surrogate is itself. Zero past the end.
@@ -40,40 +54,39 @@ impl Lexer<'_> {
 
     /// At a character that starts a name or no token at all.
     #[inline(never)]
-    pub(super) fn unusual_name(&mut self, start: usize) {
+    pub(super) fn unusual_name(&mut self, start: usize, lead: Detail) {
         match self.byte(start) {
             b'#' if self.byte(start + 1) == b'\\' || self.starts_name(start + 1) => {
                 let end = self.skip_name(start + 1);
-                self.elaborate_name(start, start + 1, end);
+                self.elaborate_name(start, end, lead);
             }
-            b'@' if self.is_builtin => self.builtin_name(start),
-            b'\\' => self.elaborate_name(start, start, start),
-            _ if self.starts_name(start) => self.elaborate_name(start, start, start),
+            b'@' if self.is_builtin => self.builtin_name(start, lead),
+            b'\\' => self.elaborate_name(start, start, lead),
+            _ if self.starts_name(start) => self.elaborate_name(start, start, lead),
             _ => {
                 let unit = self.source.text.at(start);
                 self.error = Some(LexicalError::InvalidCharacter(unit));
-                self.set(TokenKind::Invalid, start, start);
+                self.set(TokenKind::Invalid, start, start, lead);
             }
         }
     }
 
-    fn builtin_name(&mut self, start: usize) {
+    fn builtin_name(&mut self, start: usize, lead: Detail) {
         let (kind, text_start) = match self.byte(start + 1) {
             b'@' => (NameKind::WellKnownSymbol, start + 2),
             _ => (NameKind::Private, start + 1),
         };
         let end = self.skip_name(text_start);
         let name = self.names.intern_narrow(self.source, text_start, end, kind);
-        self.token.value = name.index() as u32;
-        self.token.is_elaborate = false;
-        self.set(TokenKind::Identifier, start, end);
+        self.token = self.word(name, start, end, lead);
     }
 
-    /// `first` is past the `#` of a private name. All is well up to `offset`.
+    /// All is well up to `offset`.
     #[inline(never)]
-    pub(super) fn elaborate_name(&mut self, start: usize, first: usize, mut offset: usize) {
+    pub(super) fn elaborate_name(&mut self, start: usize, mut offset: usize, lead: Detail) {
         /// From this far off the end, a keyword that runs into a character above 0xff is taken for an identifier.
         const LONGEST_KEYWORD: usize = 10;
+        let first = start + usize::from(self.byte(start) == b'#');
         let mut has_escape = false;
         let mut may_be_keyword = true;
         while chars::continues_name(self.byte(offset)) {
@@ -81,16 +94,16 @@ impl Lexer<'_> {
                 has_escape = true;
                 match self.escape_in_name(offset + 1, offset == first) {
                     Ok(end) => offset = end,
-                    Err((kind, end)) => return self.set(kind, start, end),
+                    Err((kind, end)) => return self.set(kind, start, end, lead),
                 }
             } else {
                 let code_point = self.code_point(offset);
                 if is_surrogate(code_point) {
-                    return self.set(TokenKind::InvalidEncoding, start, offset);
+                    return self.set(TokenKind::InvalidEncoding, start, offset, lead);
                 }
                 if !is_identifier_part(code_point) {
                     if code_point > 0xffff {
-                        return self.set(TokenKind::InvalidCodePoint, start, offset);
+                        return self.set(TokenKind::InvalidCodePoint, start, offset, lead);
                     }
                     may_be_keyword = has_escape
                         || code_point <= 0xff
@@ -101,21 +114,21 @@ impl Lexer<'_> {
             }
             offset = self.skip_name(offset);
         }
-        let name = if has_escape {
+        let (name, detail) = if has_escape {
             self.unescape_name(start, offset);
-            (self.names).intern_text(self.source, Text::Utf16(&self.scratch))
+            let name = (self.names).intern_text(self.source, Text::Utf16(&self.scratch));
+            (name, lead | Detail::ELABORATE)
         } else {
-            self.names.intern_source(self.source, start, offset)
+            (self.names.intern_source(self.source, start, offset), lead)
         };
-        self.token.is_elaborate = has_escape;
-        self.set_name(name, start, offset);
-        if first != start {
-            self.token.kind = TokenKind::PrivateName;
-        } else if !may_be_keyword {
-            self.token.kind = TokenKind::Identifier;
-        } else if has_escape && self.token.kind != TokenKind::Identifier {
-            self.token.kind = TokenKind::EscapedKeyword;
-        }
+        let word = self.word(name, start, offset, detail);
+        self.token = word.with_kind(match word.kind() {
+            _ if first != start => TokenKind::PrivateName,
+            TokenKind::Identifier => TokenKind::Identifier,
+            _ if !may_be_keyword => TokenKind::Identifier,
+            _ if has_escape => TokenKind::EscapedKeyword,
+            keyword => keyword,
+        });
     }
 
     /// `offset` is past the backslash.

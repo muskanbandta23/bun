@@ -1,5 +1,5 @@
 use crate::class::{self, AT_SIGN, DIGIT_OR_X, HOST_SCAN, HostTraits, TAB_OR_NEWLINE, USERINFO};
-use crate::parser::{Parser, Tail};
+use crate::parser::{Parser, Step};
 use crate::{Error, Result, Scheme};
 
 /// The digits that `text` starts with: how many there are, and the port if they are one.
@@ -53,7 +53,8 @@ impl Parser<'_> {
         (input.len(), traits)
     }
 
-    pub(crate) fn authority(&mut self, start: usize) -> Result<Tail> {
+    #[inline]
+    pub(crate) fn authority(&mut self, start: usize) -> Result<Step> {
         let input = self.source.bytes;
         self.parts.set_empty_authority(self.mark(start));
         let mut host_start = start;

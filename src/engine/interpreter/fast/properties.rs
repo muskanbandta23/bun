@@ -2,8 +2,8 @@ use bun_engine_bytecode::{Width, op};
 use bun_engine_vm::code::metadata::{ArrayAccess, GetById, GetByVal, GetLength};
 use bun_engine_vm::ic::{self, AccessCases, AccessKind, StoreCache};
 use bun_engine_vm::{
-    IndexingMode, JsCell, JsObject, JsString, JsSymbol, OFFSET_OF_INTERNAL_FIELDS, TypeFlags, Value,
-    ValueProfile,
+    IndexingMode, JsCell, JsObject, JsString, JsSymbol, MappedArguments, OFFSET_OF_INTERNAL_FIELDS,
+    TypeFlags, Value, ValueProfile,
 };
 
 use super::barrier_and_next;
@@ -71,6 +71,8 @@ handler! {
             object.storage().public_length()
         } else if object.is_string() {
             cell::<JsString>(base).len()
+        } else if let Some(length) = object.downcast::<MappedArguments>().and_then(|it| it.original_length()) {
+            length
         } else {
             go!(m, get_length_property::<W>)
         };

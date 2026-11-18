@@ -26,6 +26,7 @@ pub struct PlainDateTime {
 pub struct ParsedPlainDateTime(PlainDateTime);
 
 impl ParsedPlainDateTime {
+    #[inline]
     pub fn finish(self) -> Result<PlainDateTime> {
         PlainDateTime::new(self.0.iso_date_time(), self.0.calendar)
     }
@@ -56,6 +57,7 @@ impl PlainDateTime {
         PlainDateTime::new(fields.date_time(overflow)?, fields.calendar)
     }
 
+    #[inline]
     pub fn parse(text: Text<'_>) -> Result<ParsedPlainDateTime, InputError<'_>> {
         let parsed = parse::plain_date_time(text).ok_or(Error::InvalidDateText)?;
         Ok(ParsedPlainDateTime(PlainDateTime {

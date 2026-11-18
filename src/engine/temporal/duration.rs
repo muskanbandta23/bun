@@ -40,9 +40,9 @@ impl PartialDuration {
     ];
 
     /// The validation of ToIntegerIfIntegral.
-    #[inline]
+    #[inline(always)]
     pub fn set(&mut self, unit: Unit, number: f64) -> Result<()> {
-        if number.fract() != 0.0 {
+        if number.trunc() != number || number.is_infinite() {
             return Err(Error::DurationFieldNotInteger);
         }
         self.0[unit as usize] = number + 0.0;
@@ -81,6 +81,7 @@ impl Duration {
         Ok(merged)
     }
 
+    #[inline]
     pub fn parse(text: Text<'_>) -> Result<Duration, InputError<'_>> {
         let mut parsed = Duration::ZERO;
         parse::duration(text, &mut parsed.0).ok_or(InputError::Text(TextError::Duration, text))?;
@@ -172,6 +173,11 @@ impl Duration {
             .into_iter()
             .find(|&unit| self.get(unit) != 0.0)
             .unwrap_or(Unit::Nanosecond)
+    }
+
+    #[inline]
+    pub(crate) fn has_date_units(&self) -> bool {
+        (self.0[..Unit::Hour as usize].iter()).fold(false, |any, &it| any | (it != 0.0))
     }
 
     /// The sum of the fields from `largest_unit` down, leaving out years, months and weeks.

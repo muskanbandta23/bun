@@ -73,7 +73,7 @@ define_class!(
 
 /// ToTemporalDateTime
 pub fn to_temporal_date_time(cx: &mut Cx, item: Value) -> JsResult<PlainDateTime> {
-    PlainDateTime::from_item(cx, item, Value::UNDEFINED)
+    PlainDateTime::from_argument(cx, item)
 }
 
 impl FromItem for PlainDateTime {

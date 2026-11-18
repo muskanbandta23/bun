@@ -45,14 +45,23 @@ define_class!(
     temporal_duration_shape, init_temporal_duration_shape, init_temporal_duration_constructor
 );
 
+#[inline(always)]
+fn set_field(cx: &mut Cx, fields: &mut PartialDuration, unit: Unit, value: Value) -> JsResult<()> {
+    if let Some(integer) = value.as_int32() {
+        return fields.set(unit, integer.into()).or_throw(cx);
+    }
+    if value.is_undefined() {
+        return Ok(());
+    }
+    fields.set(unit, value.to_number(cx)?).or_throw(cx)
+}
+
 /// ToTemporalPartialDurationRecord
 fn read_partial_duration(cx: &mut Cx, item: &JsObject) -> JsResult<PartialDuration> {
     let mut partial = PartialDuration::default();
     for (unit, property) in PartialDuration::PROPERTIES {
-        let value = item.get(cx, property)?;
-        if !value.is_undefined() {
-            partial.set(unit, value.to_number(cx)?).or_throw(cx)?;
-        }
+        let value = get(cx, item, property)?;
+        set_field(cx, &mut partial, unit, value)?;
     }
     Ok(partial)
 }
@@ -98,9 +107,7 @@ fn relative_to_option(cx: &mut Cx, options: Options) -> JsResult<Option<Relative
 fn construct(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let mut arguments = PartialDuration::default();
     for (unit, &value) in Unit::ALL.into_iter().zip(frame.arguments()) {
-        if !value.is_undefined() {
-            arguments.set(unit, value.to_number(cx)?).or_throw(cx)?;
-        }
+        set_field(cx, &mut arguments, unit, value)?;
     }
     (Duration::new(&arguments).or_throw(cx)?).constructed(cx, frame)
 }

@@ -25,16 +25,17 @@ macro_rules! define_object {
 }
 
 /// Makes a value type an `Instance`, and defines `initialize`, which makes the constructor, its prototype and the shape of
-/// the instances. The module has `CONSTRUCTOR_PROPERTIES`, `PROTOTYPE_PROPERTIES` and `construct`.
+/// the instances. The module has `CONSTRUCTOR_PROPERTIES`, `PROTOTYPE_PROPERTIES` and `construct`. A method of `Instance` can
+/// follow.
 macro_rules! define_class {
     (
         $name:ident, $prototype_name:literal, length $length:literal, $value_of:ident,
-        $shape:ident, $init_shape:ident, $init_constructor:ident
+        $shape:ident, $init_shape:ident, $init_constructor:ident $(, { $override:item })?
     ) => {
         #[bun_engine_macros::cell(name = "Object")]
-        struct Cell {
+        struct Object {
             base: JsObject,
-            value: $name,
+            value: core::cell::Cell<$name>,
         }
 
         impl Instance for $name {
@@ -43,8 +44,8 @@ macro_rules! define_class {
 
             #[inline(always)]
             fn of(object: &JsObject) -> Option<$name> {
-                let is_instance = object.class().is(<Cell as bun_engine_vm::CellKind>::CLASS);
-                is_instance.then(|| Gc::from(object).cast::<Cell>().value)
+                let is_instance = object.class().is(<Object as bun_engine_vm::CellKind>::CLASS);
+                is_instance.then(|| Gc::from(object).cast::<Object>().value.get())
             }
 
             #[inline(always)]
@@ -58,8 +59,11 @@ macro_rules! define_class {
             #[inline(always)]
             fn allocate(self, cx: &Cx, shape: Gc<bun_engine_vm::Shape>) -> Gc<JsObject> {
                 let base = bun_engine_vm::JsObjectInit::new(cx, shape);
-                cx.allocate::<Cell>(CellInit { base, value: self }).upcast()
+                let value = self.into();
+                cx.allocate::<Object>(ObjectInit { base, value }).upcast()
             }
+
+            $($override)?
         }
 
         define_object!(Prototype, $prototype_name, PROTOTYPE_PROPERTIES);
@@ -88,7 +92,7 @@ macro_rules! define_class {
                 base: InternalFunction::init(cx, shape, call, Some(construct)),
             });
             constructor.finish_constructor(cx, $length, names::$name, &prototype);
-            let spec = ShapeSpec::of::<Cell>();
+            let spec = ShapeSpec::of::<Object>();
             global.$init_shape(Shape::create(cx, Some(global), prototype.into(), spec));
             global.$init_constructor(constructor.upcast());
         }

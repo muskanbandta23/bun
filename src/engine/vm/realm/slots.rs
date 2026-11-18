@@ -323,6 +323,7 @@ realm_slots! {
         intl_object: JsObject,
         temporal_object: JsObject,
         temporal_now_object: JsObject,
+        temporal_zone_names: JsCell,
         temporal_duration_constructor: JsObject,
         temporal_duration_shape: Shape,
         temporal_instant_constructor: JsObject,

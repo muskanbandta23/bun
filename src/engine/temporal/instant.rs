@@ -72,6 +72,7 @@ impl Instant {
     }
 
     /// SystemUTCEpochNanoseconds
+    #[inline]
     pub fn now() -> Instant {
         Instant::clamped(match SystemTime::now().duration_since(UNIX_EPOCH) {
             Ok(since) => since.as_nanos() as i128,
@@ -79,6 +80,7 @@ impl Instant {
         })
     }
 
+    #[inline]
     pub fn parse(text: Text<'_>) -> Result<Instant, InputError<'_>> {
         parse::instant(text)
             .and_then(|(date_time, offset)| {
@@ -123,11 +125,13 @@ impl Instant {
         self.at_offset(time_zone.offset_seconds_at(self))
     }
 
+    #[inline]
     pub fn add(self, duration: &Duration) -> Result<Instant> {
         self.checked_add(time_units_only(duration)?)
             .ok_or(Error::InstantSumOutOfRange)
     }
 
+    #[inline]
     pub fn subtract(self, duration: &Duration) -> Result<Instant> {
         self.checked_add(-time_units_only(duration)?)
             .ok_or(Error::InstantRemainderOutOfRange)
@@ -201,12 +205,15 @@ impl Instant {
     }
 }
 
+#[inline]
 fn time_units_only(duration: &Duration) -> Result<TimeDuration> {
-    match duration.largest_unit() {
-        Unit::Year => Err(Error::AddingYearsToInstant),
-        Unit::Month => Err(Error::AddingMonthsToInstant),
-        Unit::Week => Err(Error::AddingWeeksToInstant),
-        Unit::Day => Err(Error::AddingDaysToInstant),
-        _ => Ok(duration.time()),
+    if !duration.has_date_units() {
+        return Ok(duration.time());
     }
+    Err(match duration.largest_unit() {
+        Unit::Year => Error::AddingYearsToInstant,
+        Unit::Month => Error::AddingMonthsToInstant,
+        Unit::Week => Error::AddingWeeksToInstant,
+        _ => Error::AddingDaysToInstant,
+    })
 }

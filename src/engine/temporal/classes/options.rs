@@ -32,10 +32,11 @@ impl Options {
     /// `None` for undefined.
     #[inline]
     pub(super) fn get(self, cx: &mut Cx, name: PropertyName<'_>) -> JsResult<Option<Value>> {
-        match self.0 {
-            Some(object) => get_defined(cx, &object, name),
-            None => Ok(None),
-        }
+        let Some(object) = self.0 else {
+            return Ok(None);
+        };
+        let value = get(cx, &object, name)?;
+        Ok((!value.is_undefined()).then_some(value))
     }
 
     #[inline]
@@ -124,12 +125,6 @@ impl Options {
             overflow: self.value_or(cx, default.overflow)?,
         })
     }
-}
-
-#[inline(never)]
-fn get_defined(cx: &mut Cx, object: &JsObject, name: PropertyName<'_>) -> JsResult<Option<Value>> {
-    let value = object.get(cx, name)?;
-    Ok((!value.is_undefined()).then_some(value))
 }
 
 /// GetOptionsObject and GetTemporalOverflowOption

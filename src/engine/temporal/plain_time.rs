@@ -68,6 +68,7 @@ impl PlainTime {
         PlainTime::MIDNIGHT.with(fields, overflow)
     }
 
+    #[inline]
     pub fn parse(text: Text<'_>) -> Result<PlainTime> {
         parse::time(text).ok_or(Error::InvalidTimeText)
     }

@@ -24,6 +24,7 @@ pub struct PlainDate {
 pub struct ParsedPlainDate(PlainDate);
 
 impl ParsedPlainDate {
+    #[inline]
     pub fn finish(self) -> Result<PlainDate> {
         PlainDate::new(self.0.date, self.0.calendar)
     }
@@ -51,6 +52,7 @@ impl PlainDate {
         Ok(PlainDate::from_valid(date, fields.calendar))
     }
 
+    #[inline]
     pub fn parse(text: Text<'_>) -> Result<ParsedPlainDate, InputError<'_>> {
         let parsed = parse::plain_date_time(text).ok_or(Error::InvalidDateText)?;
         Ok(ParsedPlainDate(PlainDate {

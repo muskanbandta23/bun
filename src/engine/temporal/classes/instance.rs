@@ -29,6 +29,12 @@ pub(super) trait Instance: Copy {
         Self::of_value(value).ok_or_else(|| throw(cx, InputError::Receiver { class, member }))
     }
 
+    /// `this`, for a member that looks at the local date or time.
+    #[inline(always)]
+    fn this_local(cx: &Cx, value: Value, member: PropertyName<'_>) -> JsResult<Self> {
+        Self::this(cx, value, member)
+    }
+
     #[inline(always)]
     fn to_object(self, cx: &Cx) -> Gc<JsObject> {
         self.allocate(cx, Self::shape(&cx.global(), cx))

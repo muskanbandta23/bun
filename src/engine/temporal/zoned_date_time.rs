@@ -11,17 +11,28 @@ use crate::{
     Duration, Error, Fields, InputError, Instant, InternalDuration, IsoDateTime, OffsetOption,
     Overflow, PlainDate, PlainDateTime, PlainTime, Precision, PrecisionOptions, Result,
     RoundOptions, RoundingMode, ShowCalendar, ShowOffset, ShowTimeZone, TextError, Unit,
-    UnresolvedZonedDateTime, find_time_zone, parse,
+    UnresolvedZonedDateTime, parse,
 };
 
-/// What a `Temporal.ZonedDateTime` holds, and the offset that follows from it.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// What a `Temporal.ZonedDateTime` holds.
+#[derive(Clone, Copy, Debug)]
 pub struct ZonedDateTime {
     instant: Instant,
-    offset_seconds: i32,
     time_zone: TimeZone,
     calendar: CalendarId,
+    /// In seconds. It follows from the others.
+    known_offset: Option<i32>,
 }
+
+/// Unlike `equals`, this tells the names of a time zone apart.
+impl PartialEq for ZonedDateTime {
+    fn eq(&self, other: &ZonedDateTime) -> bool {
+        (self.instant, self.time_zone, self.calendar)
+            == (other.instant, other.time_zone, other.calendar)
+    }
+}
+
+impl Eq for ZonedDateTime {}
 
 /// Of `from` and `with`, in the order they are read.
 #[derive(Clone, Copy, Debug)]
@@ -62,7 +73,12 @@ impl ZonedDisplay {
 impl ZonedDateTime {
     #[inline]
     pub fn new(instant: Instant, time_zone: TimeZone, calendar: CalendarId) -> ZonedDateTime {
-        ZonedDateTime::from_local(time_zone.localize(instant), time_zone, calendar)
+        ZonedDateTime {
+            instant,
+            time_zone,
+            calendar,
+            known_offset: None,
+        }
     }
 
     #[inline]
@@ -73,15 +89,29 @@ impl ZonedDateTime {
     ) -> ZonedDateTime {
         ZonedDateTime {
             instant: local.instant,
-            offset_seconds: local.offset_seconds,
             time_zone,
             calendar,
+            known_offset: Some(local.offset_seconds),
         }
     }
 
-    /// The conversion of the second argument of the constructor.
-    pub fn time_zone_argument(identifier: Text<'_>) -> Result<TimeZone, InputError<'_>> {
-        find_time_zone(identifier).ok_or(InputError::Text(TextError::TimeZone, identifier))
+    #[inline]
+    pub(crate) fn knows_offset(&self) -> bool {
+        self.known_offset.is_some()
+    }
+
+    /// The same value, which does not look its offset up again.
+    #[inline]
+    pub(crate) fn with_known_offset(&self) -> ZonedDateTime {
+        ZonedDateTime {
+            known_offset: Some(self.offset_seconds()),
+            ..*self
+        }
+    }
+
+    #[inline]
+    fn offset_seconds(&self) -> i32 {
+        (self.known_offset).unwrap_or_else(|| self.time_zone.offset_seconds_at(self.instant))
     }
 
     /// For `FieldSet::Zoned`.
@@ -95,6 +125,7 @@ impl ZonedDateTime {
         .finish(options.disambiguation, options.offset)
     }
 
+    #[inline]
     pub fn parse(text: Text<'_>) -> Result<UnresolvedZonedDateTime, InputError<'_>> {
         let parsed =
             parse::zoned_date_time(text).ok_or(InputError::Text(TextError::ZonedDateTime, text))?;
@@ -125,17 +156,17 @@ impl ZonedDateTime {
     /// GetISODateTimeFor
     #[inline]
     pub fn iso_date_time(&self) -> IsoDateTime {
-        self.instant.at_offset(self.offset_seconds)
+        self.instant.at_offset(self.offset_seconds())
     }
 
     #[inline]
     pub fn offset_nanoseconds(&self) -> i64 {
-        i64::from(self.offset_seconds) * NANOSECONDS_PER_SECOND
+        i64::from(self.offset_seconds()) * NANOSECONDS_PER_SECOND
     }
 
     pub fn offset_text(&self) -> IsoText {
         let mut text = IsoText::new();
-        text.push_offset(self.offset_seconds);
+        text.push_offset(self.offset_seconds());
         text
     }
 
@@ -379,15 +410,15 @@ impl ZonedDateTime {
     /// TemporalZonedDateTimeToString
     pub fn to_text(&self, precision: Precision, display: ZonedDisplay) -> IsoText {
         let instant = self.instant.rounded(precision.rounding);
-        let rounded = if instant == self.instant {
-            *self
+        let offset_seconds = if instant == self.instant {
+            self.offset_seconds()
         } else {
-            self.at(instant)
+            self.time_zone.offset_seconds_at(instant)
         };
         let mut text = IsoText::new();
-        text.push_date_time(rounded.iso_date_time(), precision.format);
+        text.push_date_time(instant.at_offset(offset_seconds), precision.format);
         if display.offset != ShowOffset::Never {
-            text.push_rounded_offset(rounded.offset_seconds);
+            text.push_rounded_offset(offset_seconds);
         }
         if display.time_zone != ShowTimeZone::Never {
             text.push_time_zone(self.time_zone, display.time_zone == ShowTimeZone::Critical);

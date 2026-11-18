@@ -13,7 +13,7 @@ pub(super) fn read_fields(
 ) -> JsResult<Fields> {
     let mut fields = Fields::new(set, calendar);
     for field in fields.properties() {
-        let value = item.get(cx, field.property())?;
+        let value = get(cx, item, field.property())?;
         if value.is_undefined() {
             fields.skip(field).or_throw(cx)?;
             continue;
@@ -51,8 +51,8 @@ fn is_partial(cx: &mut Cx, item: &JsObject) -> JsResult<bool> {
         None | Some(TemporalValue::Duration(_) | TemporalValue::Instant(_))
     );
     Ok(can_be_partial
-        && item.get(cx, names::calendar)?.is_undefined()
-        && item.get(cx, names::timeZone)?.is_undefined())
+        && get(cx, item, names::calendar)?.is_undefined()
+        && get(cx, item, names::timeZone)?.is_undefined())
 }
 
 /// The first argument of `with`.

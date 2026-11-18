@@ -47,7 +47,7 @@ define_class!(
 
 /// ToTemporalTime
 pub fn to_temporal_time(cx: &mut Cx, item: Value) -> JsResult<PlainTime> {
-    PlainTime::from_item(cx, item, Value::UNDEFINED)
+    PlainTime::from_argument(cx, item)
 }
 
 /// `None` for undefined.

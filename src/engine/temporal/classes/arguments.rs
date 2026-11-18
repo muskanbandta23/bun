@@ -1,16 +1,26 @@
 use bun_engine_date::TimeZone;
 use bun_engine_text::Text;
 use bun_engine_vm::StringView;
+use bun_engine_vm::caches::get_megamorphic;
 
 use super::prelude::*;
+use super::zone_names;
 use crate::{
     CalendarId, InputError, Instant, IsoText, TemporalValue, TextError, ZonedDateTime,
     parse_time_zone, to_integer_with_truncation,
 };
 
+#[inline]
+pub(super) fn get(cx: &mut Cx, object: &JsObject, name: PropertyName<'_>) -> JsResult<Value> {
+    get_megamorphic(cx, object.into(), name)
+}
+
 /// ToIntegerWithTruncation
 #[inline]
 pub(super) fn to_integer(cx: &mut Cx, value: Value, not_finite: Error) -> JsResult<i32> {
+    if let Some(integer) = value.as_int32() {
+        return to_integer_with_truncation(integer.into(), not_finite).or_throw(cx);
+    }
     to_integer_with_truncation(value.to_number(cx)?, not_finite).or_throw(cx)
 }
 
@@ -91,7 +101,7 @@ pub(super) fn calendar_of(cx: &mut Cx, item: &JsObject) -> JsResult<CalendarId> 
     if let Some(calendar) = calendar_slot(item) {
         return Ok(calendar);
     }
-    let value = item.get(cx, names::calendar)?;
+    let value = get(cx, item, names::calendar)?;
     if value.is_undefined() {
         return Ok(CalendarId::Iso8601);
     }
@@ -103,6 +113,11 @@ pub(super) fn to_time_zone(cx: &Cx, value: Value) -> JsResult<TimeZone> {
     if let Some(zoned) = ZonedDateTime::of_value(value) {
         return Ok(zoned.time_zone());
     }
+    if let Some(string) = value.as_string()
+        && let Some(time_zone) = zone_names::find(cx, string)?
+    {
+        return Ok(time_zone);
+    }
     let string = require_string(cx, value, Error::NotConvertibleToTimeZone)?;
     parse_time_zone(string.text()).or_throw(cx)
 }
@@ -110,8 +125,4 @@ pub(super) fn to_time_zone(cx: &Cx, value: Value) -> JsResult<TimeZone> {
 #[inline]
 pub(super) fn text_value(cx: &Cx, text: &IsoText) -> JsResult<Value> {
     Ok(JsString::from_text(cx, text.text()).into())
-}
-
-pub(super) fn time_zone_value(cx: &Cx, time_zone: TimeZone) -> JsResult<Value> {
-    Ok(JsString::from_text(cx, Text::from_ascii(&time_zone.identifier())).into())
 }

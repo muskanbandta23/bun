@@ -1,7 +1,8 @@
 use bun_engine_date::TimeZone;
 
-use super::arguments::{time_zone_value, to_time_zone};
+use super::arguments::to_time_zone;
 use super::prelude::*;
+use super::zone_names;
 use crate::{CalendarId, Instant, ZonedDateTime};
 
 static_table!(static PROPERTIES = [
@@ -21,6 +22,7 @@ pub(super) fn initialize(cx: &Cx) {
 }
 
 /// SystemUTCEpochNanoseconds
+#[inline(always)]
 fn current_instant(cx: &Cx) -> JsResult<Instant> {
     let overridden = cx.global().overridden_date_now().get();
     if overridden.is_nan() {
@@ -34,6 +36,7 @@ fn current_time_zone(cx: &Cx) -> TimeZone {
     TimeZone::Named(cx.date_cache().time_zone())
 }
 
+#[inline(always)]
 fn current_zoned(cx: &Cx, frame: &CallFrame) -> JsResult<ZonedDateTime> {
     let time_zone = match frame.argument(0) {
         Value::UNDEFINED => current_time_zone(cx),
@@ -50,7 +53,7 @@ fn instant(cx: &mut Cx, _: &CallFrame) -> JsResult<Value> {
 
 #[native_abi]
 fn time_zone_id(cx: &mut Cx, _: &CallFrame) -> JsResult<Value> {
-    time_zone_value(cx, current_time_zone(cx))
+    Ok(zone_names::identifier(cx, current_time_zone(cx)).into())
 }
 
 #[native_abi]

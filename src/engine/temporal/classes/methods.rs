@@ -13,6 +13,14 @@ use crate::{DifferenceOperation, DifferenceOptions, Duration, FieldSet, Fields, 
 pub(super) trait FromItem: Instance {
     /// ToTemporalDate and the like.
     fn from_item(cx: &mut Cx, item: Value, options: Value) -> JsResult<Self>;
+
+    #[inline(always)]
+    fn from_argument(cx: &mut Cx, item: Value) -> JsResult<Self> {
+        match Self::of_value(item) {
+            Some(value) => Ok(value),
+            None => Self::from_item(cx, item, Value::UNDEFINED),
+        }
+    }
 }
 
 pub(super) trait Compare: FromItem {
@@ -39,15 +47,15 @@ pub(super) fn from<T: FromItem>(cx: &mut Cx, frame: &CallFrame) -> JsResult<Valu
 
 #[native_abi]
 pub(super) fn compare<T: Compare>(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
-    let one = T::from_item(cx, frame.argument(0), Value::UNDEFINED)?;
-    let two = T::from_item(cx, frame.argument(1), Value::UNDEFINED)?;
+    let one = T::from_argument(cx, frame.argument(0))?;
+    let two = T::from_argument(cx, frame.argument(1))?;
     Ok((one.compare(&two) as i32).into())
 }
 
 #[native_abi]
 pub(super) fn equals<T: FromItem + PartialEq>(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let this = T::this(cx, frame.this_value(), names::equals)?;
-    let other = T::from_item(cx, frame.argument(0), Value::UNDEFINED)?;
+    let other = T::from_argument(cx, frame.argument(0))?;
     Ok((this == other).into())
 }
 
@@ -68,7 +76,7 @@ fn difference<T: Difference>(
     operation: DifferenceOperation,
 ) -> JsResult<Value> {
     let this = T::this(cx, frame.this_value(), member)?;
-    let other = T::from_item(cx, frame.argument(0), Value::UNDEFINED)?;
+    let other = T::from_argument(cx, frame.argument(0))?;
     this.check_comparable(&other).or_throw(cx)?;
     let options = Options::new(cx, frame.argument(1))?.difference(cx)?;
     (this.difference_from(operation, &other, options))

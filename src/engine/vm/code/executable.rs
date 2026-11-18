@@ -269,6 +269,12 @@ impl ScriptExecutable {
         unsafe { Owned::new(self, &self.rare_data.get_or_default().evals) }
     }
 
+    pub(super) fn forget_evals(&self) {
+        if self.rare_data.get().is_some() {
+            self.evals().clear();
+        }
+    }
+
     /// A built-in whose source is not for scripts and tools to see.
     pub fn is_private_builtin(&self) -> bool {
         let function = self.downcast::<FunctionExecutable>();

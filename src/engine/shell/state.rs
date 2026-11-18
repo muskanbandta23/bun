@@ -2,8 +2,9 @@
 
 use core::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
+use std::sync::Arc;
 
-use bun_engine_vm::{FastHashSet, JsPromise, Strong, Vm};
+use bun_engine_vm::{FastHashSet, JsPromise, Strong, TerminationDeadline, Vm};
 
 use crate::command_line::CommandLine;
 use crate::functions::Inbox;
@@ -20,6 +21,8 @@ pub(crate) struct State {
     /// Those that had no handler at the time.
     pub(crate) rejected_promises: RefCell<Vec<Strong<Gc<JsPromise>>>>,
     pub(crate) inbox: Inbox,
+    /// Of the calls with a time limit that are under way.
+    pub(crate) deadlines: RefCell<Vec<Arc<TerminationDeadline>>>,
 }
 
 impl State {

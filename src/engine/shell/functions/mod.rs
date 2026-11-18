@@ -9,6 +9,7 @@ mod heap_profiler;
 mod io;
 mod scripts;
 mod tasks;
+mod test_objects;
 mod tiers;
 mod values;
 

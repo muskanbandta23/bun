@@ -472,7 +472,7 @@ impl Generator<'_> {
         }
         let (inputs, _) = self.constrain(&mut data, &operands, &[]);
         self.builder()
-            .terminal_patchpoint(&data, &inputs, successors);
+            .terminal_patchpoint(&data, &inputs, &[], successors);
     }
 
     pub(super) fn signature_index(&mut self) -> usize {

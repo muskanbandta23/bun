@@ -248,8 +248,6 @@ inline JSValue call(JSGlobalObject* globalObject, JSValue function, const CallDa
 JSValue call(JSGlobalObject*, JSValue function, const CallData&, JSValue thisValue, const ArgList&, NakedPtr<Exception>& returnedException);
 JSValue call(JSGlobalObject*, JSValue function, JSValue thisValue, const ArgList&, ASCIILiteral errorMessage);
 inline JSValue call(JSGlobalObject* globalObject, JSValue function, const ArgList& arguments, ASCIILiteral errorMessage) { return call(globalObject, function, function, arguments, errorMessage); }
-inline JSValue profiledCall(JSGlobalObject* globalObject, ProfilingReason, JSValue function, const CallData& callData, JSValue thisValue, const ArgList& arguments) { return call(globalObject, function, callData, thisValue, arguments); }
-inline JSValue profiledCall(JSGlobalObject* globalObject, ProfilingReason, JSValue function, const CallData& callData, JSValue thisValue, const ArgList& arguments, NakedPtr<Exception>& returnedException) { return call(globalObject, function, callData, thisValue, arguments, returnedException); }
 
 inline JSObject* construct(JSGlobalObject* globalObject, const JSValue& constructor, const CallData&, const ArgList& arguments, const JSValue& newTarget) { return Engine::construct(globalObject, constructor, arguments.span(), newTarget); }
 inline JSObject* construct(JSGlobalObject* globalObject, const JSValue& constructor, const CallData& constructData, const ArgList& arguments) { return construct(globalObject, constructor, constructData, arguments, constructor); }

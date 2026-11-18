@@ -42,7 +42,8 @@ fn import(
     }
     let referrer = Identifier::new(referrer.text());
     let order = loader.async_evaluation_order(referrer.name());
-    loader.request_import(cx, &specifier, Some(&referrer), parameters, phase, order)
+    (loader.request_import(cx, &specifier, Some(&referrer), parameters, phase, order))
+        .or_else(|thrown| JsPromise::rejected_with_caught(cx, thrown))
 }
 
 fn resolve(

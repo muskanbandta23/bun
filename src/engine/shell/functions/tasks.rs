@@ -1,13 +1,16 @@
 //! Time, timers and microtasks.
 
+use core::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use core::time::Duration;
 use std::sync::OnceLock;
 use std::time::{Instant, SystemTime};
 
+use bun_engine_inspector::AsyncCallType;
 use bun_engine_vm::{JsFunction, WorkKind};
 
 use super::return_undefined;
 use crate::global::ShellGlobal;
+use crate::inspector;
 use crate::prelude::*;
 
 pub(super) const FUNCTIONS: Functions = &[
@@ -69,11 +72,20 @@ fn set_timeout(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     };
     let delay = duration(frame.argument(1).as_number().unwrap_or(0.0) / 1000.0);
     let ticket = cx.add_pending_work(WorkKind::AtSomePoint, callback.upcast(), &[]);
+    static LAST_ID: AtomicU64 = AtomicU64::new(0);
+    let (kind, id) = (AsyncCallType::DomTimer, LAST_ID.fetch_add(1, Relaxed));
+    if let Some(inspector) = inspector::controller(cx) {
+        inspector.did_schedule_async_call(cx, kind, id, true);
+    }
     cx.timer_queue().start(delay, move |_| {
-        ticket.schedule(|cx, ticket| {
+        ticket.schedule(move |cx, ticket| {
             let callback = ticket.target(cx).map_or_default(Into::into);
-            cx.call(callback, Value::UNDEFINED, &[])?;
-            drain_microtasks(cx)
+            let inspector = inspector::controller(cx);
+            (inspector.iter()).for_each(|it| it.will_dispatch_async_call(kind, id));
+            let result = cx.call(callback, Value::UNDEFINED, &[]);
+            let result = result.and_then(|_| drain_microtasks(cx));
+            (inspector.iter()).for_each(|it| it.did_dispatch_async_call(kind, id));
+            result
         });
     });
     Ok(Value::UNDEFINED)

@@ -71,7 +71,7 @@ impl AbstractModuleRecord {
     fn push_cyclic_imports(&self, pending: &mut Modules) {
         let entries = self.entries();
         let requests = entries.requests().iter().rev();
-        pending.extend(requests.filter_map(|it| self.imported_module(it.key()).downcast()));
+        pending.extend(requests.filter_map(|it| self.imported_module(it.key())?.downcast()));
     }
 
     /// GatherAsynchronousTransitiveDependencies
@@ -166,7 +166,9 @@ impl CyclicModuleRecord {
             }
         };
         for request in self.entries().requests() {
-            let required = self.imported_module(request.key());
+            let Some(required) = self.imported_module(request.key()) else {
+                continue;
+            };
             if request.phase == ImportPhase::Defer {
                 required.gather_async_dependencies(&mut add);
             } else if let Some(required) = required.downcast() {

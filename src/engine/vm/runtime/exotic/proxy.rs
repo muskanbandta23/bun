@@ -366,25 +366,25 @@ impl ProxyObject {
             let message = "Proxy handler's 'ownKeys' method must return an object";
             return Err(cx.throw_type_error(message));
         };
-        let mut keys = Vec::new();
+        let mut keys = PropertyNameList::new(PropertyNameMode::StringsAndSymbols);
+        let mut count = 0;
         for_each_in_array_like(cx, &result, |cx, key| {
             if !key.is_string() && !key.is_symbol() {
                 return Err(cx.throw_type_error("Proxy handler's 'ownKeys' method must return an array-like object containing only Strings and Symbols"));
             }
-            keys.try_reserve(1).map_err(|_| cx.throw_out_of_memory())?;
-            keys.push(key.to_property_key(cx)?.to_identifier());
+            keys.add(key.to_property_key(cx)?.name());
+            count += 1;
             Ok(())
         })?;
-        let mut unchecked = FastHashSet::default();
-        if !keys.iter().all(|key| unchecked.insert(key.name())) {
+        if keys.len() != count {
             return Err(cx.throw_type_error(
                 "Proxy handler's 'ownKeys' trap result must not contain any duplicate names",
             ));
         }
         if target.shape().has(ShapeFlags::BINDS_OTHER_TRAPS) {
-            validate_own_keys(cx, &target, &unchecked)?;
+            validate_own_keys(cx, &target, &keys.iter().map(|key| key.name()).collect())?;
         }
-        keys.iter().for_each(|key| list.add(key.name()));
+        list.append(keys);
         if list.includes_private_names() {
             add_private_names_behind_proxies(cx, target, list)?;
         }
@@ -650,16 +650,14 @@ impl ProxyObject {
         if mode == DontEnumMode::Include {
             return self.own_keys_through(cx, list);
         }
-        let mut all = list.new_like();
-        self.own_keys_through(cx, &mut all)?;
-        for key in all.iter() {
+        let mut keys = list.new_like();
+        self.own_keys_through(cx, &mut keys)?;
+        keys.try_retain(|key| {
             let mut slot = PropertySlot::new(self.as_value(), InternalMethod::GetOwnProperty);
-            if self.get_own_property_through(cx, key.name(), &mut slot)?
-                && slot.attributes().is_enumerable()
-            {
-                list.add(key.name());
-            }
-        }
+            Ok(self.get_own_property_through(cx, key, &mut slot)?
+                && slot.attributes().is_enumerable())
+        })?;
+        list.append(keys);
         Ok(())
     }
 

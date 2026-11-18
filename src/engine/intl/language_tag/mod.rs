@@ -20,14 +20,27 @@ static ENGLISH: [StaticString; 2] = [StaticString::new(b"en"), StaticString::new
 
 /// Structurally valid and canonical.
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct LanguageTag(StringRef);
+pub struct LanguageTag {
+    string: StringRef,
+    base_name_length: usize,
+}
 
 impl LanguageTag {
+    /// `string` is canonical.
+    fn new(string: StringRef) -> LanguageTag {
+        let bytes = u8::units(string.text()).unwrap_or_default();
+        let base_name_length = Subtags::new(bytes).run(|it| !is_singleton(it)).len();
+        LanguageTag {
+            string,
+            base_name_length,
+        }
+    }
+
     /// `None` unless `text` is structurally valid.
     pub(crate) fn canonicalize(text: Text<'_>) -> Result<Option<LanguageTag>> {
         // The most common ones do not load the aliases.
         if let Some(tag) = ENGLISH.iter().find(|it| it.get().text() == text) {
-            return Ok(Some(LanguageTag(StringRef::from_static(tag))));
+            return Ok(Some(LanguageTag::new(StringRef::from_static(tag))));
         }
         let Some(subtags) = lowercase_subtags(text)? else {
             return Ok(None);
@@ -39,25 +52,25 @@ impl LanguageTag {
 
     /// `parts` add up to a canonical tag.
     pub(crate) fn from_canonical_parts(parts: &[Text<'_>]) -> Result<LanguageTag> {
-        Ok(LanguageTag(StringRef::try_concat(parts)?))
+        Ok(LanguageTag::new(StringRef::try_concat(parts)?))
     }
 
     pub(crate) fn english() -> LanguageTag {
-        LanguageTag(StringRef::from_static(&ENGLISH[0]))
+        LanguageTag::new(StringRef::from_static(&ENGLISH[0]))
     }
 
     pub fn string(&self) -> &StringRef {
-        &self.0
+        &self.string
     }
 
     pub(crate) fn as_bytes(&self) -> &[u8] {
-        u8::units(self.0.text()).unwrap_or_default()
+        u8::units(self.string.text()).unwrap_or_default()
     }
 
     /// `part` is a slice of `as_bytes`.
     pub(crate) fn substring(&self, part: &[u8]) -> StringRef {
         let range = self.as_bytes().subslice_range(part).unwrap_or_default();
-        StringRef::substring(&self.0, range.into())
+        StringRef::substring(&self.string, range.into())
     }
 
     pub(crate) fn language(&self) -> &[u8] {
@@ -66,12 +79,12 @@ impl LanguageTag {
 
     /// What comes before the extensions.
     pub(crate) fn base_name(&self) -> &[u8] {
-        Subtags::new(self.as_bytes()).run(|it| !is_singleton(it))
+        &self.as_bytes()[..self.base_name_length]
     }
 
     /// The value of a key of the `u` extension, which is empty for `true`.
     pub(crate) fn keyword(&self, key: Key) -> Option<&[u8]> {
-        let mut subtags = Subtags::new(self.as_bytes());
+        let mut subtags = Subtags::new(self.as_bytes().get(self.base_name_length + 1..)?);
         match subtags.find(|it| matches!(*it, b"u" | b"x"))? {
             b"u" => subtags.find(|it| is_singleton(it) || *it == key.as_bytes()),
             _ => None,

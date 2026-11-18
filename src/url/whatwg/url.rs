@@ -55,29 +55,39 @@ impl Url {
         punycode: Punycode,
     ) -> Result<Url> {
         match input.into() {
-            Input::String(string) => Url::parse_string(string, base, punycode),
-            Input::Text(text) => Url::parse_text(text, base, punycode),
+            Input::String(string) => match string.text() {
+                Text::Latin1(bytes) => Url::parse_owned(bytes, string, base, punycode),
+                Text::Utf16(units) => Url::parse_utf16(units, base, punycode),
+            },
+            Input::Text(Text::Latin1(bytes)) => {
+                Url::parse_bytes(bytes, Encoding::Latin1, base, punycode)
+            }
+            Input::Text(Text::Utf16(units)) => Url::parse_utf16(units, base, punycode),
             Input::Utf8(bytes) => Url::parse_bytes(bytes, Encoding::UncheckedUtf8, base, punycode),
         }
     }
 
-    fn parse_string(string: &StringImpl, base: Option<&Url>, punycode: Punycode) -> Result<Url> {
-        let Text::Latin1(bytes) = string.text() else {
-            return Url::parse_text(string.text(), base, punycode);
-        };
+    /// `bytes` are the characters of `owner`.
+    #[inline(never)]
+    fn parse_owned(
+        bytes: &[u8],
+        owner: &StringImpl,
+        base: Option<&Url>,
+        punycode: Punycode,
+    ) -> Result<Url> {
         let source = Source::new(bytes, Encoding::Latin1);
         parse::parse(source, base, punycode, |href| {
-            if href.len() == string.len() {
-                return Ok(Some(StringRef::retain(string)));
+            if href.len() == owner.len() {
+                return Ok(Some(StringRef::retain(owner)));
             }
             StringRef::try_from_units(href).map(Some)
         })
     }
 
     #[inline(never)]
-    fn parse_text(text: Text<'_>, base: Option<&Url>, punycode: Punycode) -> Result<Url> {
+    fn parse_utf16(units: &[u16], base: Option<&Url>, punycode: Punycode) -> Result<Url> {
         let mut transcoder = Transcoder::new();
-        let Source { bytes, encoding } = transcoder.source(text)?;
+        let Source { bytes, encoding } = transcoder.source(Text::Utf16(units))?;
         Url::parse_bytes(bytes, encoding, base, punycode)
     }
 

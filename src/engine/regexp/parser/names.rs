@@ -5,7 +5,7 @@ use bun_engine_text::{CodeUnit, Text};
 use bun_engine_unicode::{is_identifier_part, is_identifier_start};
 use smallvec::SmallVec;
 
-use super::{NameId, Parser, Sink, try_push};
+use super::{Cursor, NameId, try_push};
 use crate::Error;
 use crate::tree::Group;
 
@@ -85,8 +85,9 @@ impl<'a> Names<'a> {
     }
 }
 
-impl<'a, C: CodeUnit, S: Sink> Parser<'a, C, S> {
+impl<'a, C: CodeUnit> Cursor<'a, C> {
     /// From after `<` to after `>`, or nowhere if there is no name.
+    #[inline(never)]
     pub(super) fn group_name(&mut self) -> Result<Option<Name<'a>>, Error> {
         let start = self.at;
         let mut unescaped: Option<Vec<u16>> = None;
@@ -100,6 +101,9 @@ impl<'a, C: CodeUnit, S: Sink> Parser<'a, C, S> {
             }
             let c = if unit == u32::from(b'\\') {
                 unescaped.get_or_insert_with(|| before.iter().map(|unit| unit.to_u16()).collect());
+                if !self.eat(b'u') {
+                    return Err(Error::InvalidUnicodeEscape);
+                }
                 self.strict_unicode_escape()?
             } else {
                 self.complete_pair(unit)

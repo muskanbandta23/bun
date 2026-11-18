@@ -270,6 +270,7 @@ fn names() {
     ]
     .concat();
     let module = with_names(&[&all, &[1, 4, 1, 1, 1, b'z']]);
+    assert_eq!(module.custom_sections().len(), 2);
     assert_eq!(
         module.bytes(module.names().unwrap().module().unwrap()),
         b"m"
@@ -281,13 +282,15 @@ fn names() {
     assert_eq!(unordered.names().unwrap().module(), None);
 
     assert!(with_names(&[]).names().is_none());
-    let malformed: [&[u8]; 6] = [
+    let malformed: [&[u8]; 8] = [
         &[1, 4, 1, 3, 1, b'a'],
         &[1, 4, 1, 0, 1, 0xff],
         &[1, 5, 1, 0, 1, b'a'],
         &[1, 3, 1, 0, 1, b'a'],
         &[2, 2, 1, 0],
         &[0x80, 0],
+        &[1, 4, 1, 0, 1, b'a', 0, 2, 1, b'm'],
+        &[1, 4, 1, 0, 1, b'a', 1, 4, 1, 1, 1, b'b'],
     ];
     for section in malformed {
         assert!(with_names(&[section]).names().is_none(), "{section:?}");

@@ -6,6 +6,7 @@ use core::ptr::NonNull;
 use std::rc::Rc;
 
 use super::jobs;
+use super::microtask::TaskHeader;
 use crate::{
     Cx, Exception, Gc, GcFree, GlobalObject, InternalMicrotask, JsResult, QueuedTask, Thrown,
     Value, Visitor, Vm,
@@ -70,9 +71,22 @@ impl MicrotaskQueue {
 
     #[inline(always)]
     pub fn enqueue(&self, task: QueuedTask) {
-        if self.len() == self.capacity.get() {
+        if self.is_full() {
             self.grow();
         }
+        // SAFETY: not any more.
+        unsafe { self.enqueue_unchecked(task) }
+    }
+
+    #[inline(always)]
+    fn is_full(&self) -> bool {
+        self.len() == self.capacity.get()
+    }
+
+    /// # Safety
+    /// It is not full.
+    #[inline(always)]
+    unsafe fn enqueue_unchecked(&self, task: QueuedTask) {
         let end = self.end.get();
         // SAFETY: in the buffer, and free.
         unsafe { self.slot(end).write(task) };
@@ -87,7 +101,7 @@ impl MicrotaskQueue {
         }
         self.start.set(start + 1);
         // SAFETY: written by `enqueue`.
-        Some(unsafe { self.slot(start).read() })
+        Some(unsafe { QueuedTask::read_words(self.slot(start)) })
     }
 
     fn peek(&self) -> Option<QueuedTask> {
@@ -174,8 +188,9 @@ impl MicrotaskQueue {
             // SAFETY: the caller's.
             let cx = unsafe { Cx::from_global(global) };
             if task.is_tracked() {
-                run_tracked(cx, &task)?;
-            } else if let Err(thrown) = jobs::run(cx, &task) {
+                let (header, [a, b, c, d]) = task.into_parts();
+                run_tracked(cx, header, a, b, c, d)?;
+            } else if let Err(thrown) = jobs::run(cx, task) {
                 report(cx, thrown)?;
             }
             if let Some(tick) = vm.embedder().microtasks.on_each_tick.get() {
@@ -220,7 +235,15 @@ fn notify_debugger(cx: &mut Cx, event: MicrotaskEvent, task: &QueuedTask) -> JsR
 
 #[cold]
 #[inline(never)]
-fn run_tracked(cx: &mut Cx, task: &QueuedTask) -> JsResult<()> {
+fn run_tracked(
+    cx: &mut Cx,
+    header: TaskHeader,
+    a: Option<Value>,
+    b: Option<Value>,
+    c: Option<Value>,
+    d: Option<Value>,
+) -> JsResult<()> {
+    let task = &QueuedTask::from_parts(header, [a, b, c, d]);
     notify_debugger(cx, MicrotaskEvent::WillRun, task)?;
     jobs::run_out_of_line(cx, task).or_else(|thrown| report(cx, thrown))?;
     notify_debugger(cx, MicrotaskEvent::DidRun, task)
@@ -346,6 +369,72 @@ impl RealmMicrotaskQueue {
         // SAFETY: as above.
         unsafe { &*self.0.get() }.enqueue(task);
     }
+
+    #[inline(always)]
+    fn try_enqueue(&self, task: QueuedTask) -> bool {
+        // SAFETY: as above, and only if it is not full.
+        unsafe {
+            let queue = &*self.0.get();
+            !queue.is_full() && {
+                queue.enqueue_unchecked(task);
+                true
+            }
+        }
+    }
+}
+
+/// `global` is that of the task.
+impl QueuedTask {
+    /// False, having done nothing, if it takes a call.
+    #[inline(always)]
+    pub(super) fn try_queue_quickly(self, vm: &Vm, global: &GlobalObject) -> bool {
+        !vm.has_synchronous_module_queue()
+            && !vm.has_debugger()
+            && global.realm_microtask_queue().try_enqueue(self)
+    }
+
+    #[inline(always)]
+    pub(super) fn queue(self, vm: &Vm, global: &GlobalObject) {
+        if !self.try_queue_quickly(vm, global) {
+            let (header, [a, b, c, d]) = self.into_parts();
+            queue_slowly::<false>(vm, header, a, b, c, d);
+        }
+    }
+
+    /// For the reaction to a promise.
+    #[inline(always)]
+    pub(super) fn queue_or_divert(self, vm: &Vm, global: &GlobalObject) {
+        if !self.try_queue_quickly(vm, global) {
+            let (header, [a, b, c, d]) = self.into_parts();
+            queue_slowly::<true>(vm, header, a, b, c, d);
+        }
+    }
+}
+
+/// The task comes in registers, so that the callers need no memory for it.
+#[cold]
+#[inline(never)]
+fn queue_slowly<const MAY_DIVERT: bool>(
+    vm: &Vm,
+    header: TaskHeader,
+    a: Option<Value>,
+    b: Option<Value>,
+    c: Option<Value>,
+    d: Option<Value>,
+) {
+    let task = QueuedTask::from_parts(header, [a, b, c, d]);
+    if MAY_DIVERT && vm.divert_to_synchronous_module_queue(&task) {
+        return;
+    }
+    let global = task.global();
+    if !vm.has_debugger() {
+        return global.realm_microtask_queue().enqueue(task);
+    }
+    let last_id = &vm.services.control.last_microtask_id;
+    last_id.update(|id| id + 1);
+    let task = task.tracked(vm, last_id.get());
+    global.realm_microtask_queue().enqueue(task);
+    (vm.hooks().debugger_microtask_event)(vm, &global, MicrotaskEvent::DidQueue, last_id.get());
 }
 
 impl GlobalObject {
@@ -357,44 +446,8 @@ impl GlobalObject {
         payload: u8,
         arguments: [Value; QueuedTask::MAX_ARGUMENTS],
     ) {
-        let task = QueuedTask::new(self.into(), job, payload, arguments.map(Some));
-        if vm.has_debugger() {
-            return queue_tracked(vm, &task);
-        }
-        self.realm_microtask_queue().enqueue(task);
+        QueuedTask::new(self.into(), job, payload, arguments.map(Some)).queue(vm, self);
     }
-
-    /// For the reaction to a promise.
-    #[inline(always)]
-    pub(super) fn queue_or_divert_microtask(
-        &self,
-        vm: &Vm,
-        job: InternalMicrotask,
-        payload: u8,
-        arguments: [Value; QueuedTask::MAX_ARGUMENTS],
-    ) {
-        if vm.has_synchronous_module_queue() {
-            let task = QueuedTask::new(self.into(), job, payload, arguments.map(Some));
-            if vm.divert_to_synchronous_module_queue(&task) {
-                return;
-            }
-        }
-        self.queue_microtask(vm, job, payload, arguments);
-    }
-}
-
-#[cold]
-#[inline(never)]
-pub(super) fn queue_tracked(vm: &Vm, task: &QueuedTask) {
-    let global = task.global();
-    if !vm.has_debugger() {
-        return global.realm_microtask_queue().enqueue(*task);
-    }
-    let last_id = &vm.services.control.last_microtask_id;
-    last_id.update(|id| id + 1);
-    let task = task.tracked(vm, last_id.get());
-    global.realm_microtask_queue().enqueue(task);
-    (vm.hooks().debugger_microtask_event)(vm, &global, MicrotaskEvent::DidQueue, last_id.get());
 }
 
 impl Vm {

@@ -252,10 +252,14 @@ fast_handlers! {
     ThrowIfNullish throw_if_nullish,
     ResumeDispatch resume_dispatch,
     Suspend suspend,
+    Await r#await,
     Resume resume,
     ResumeAfterYield resume_after_yield,
     ResumeAfterAwait resume_after_await,
     GeneratorReturn generator_return,
+    AsyncReturn async_return,
+    NewPromise new_promise,
+    CreatePromise create_promise,
     @fixed Call Call1 Call2 TailCall Construct SuperConstruct
     @varargs CallVarargs TailCallVarargs ConstructVarargs SuperConstructVarargs CallWithSpread
 }

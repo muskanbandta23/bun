@@ -1,11 +1,10 @@
-use core::cell::Cell;
 use std::rc::Rc;
 
 use bun_engine_bytecode::{CodeKind, HandlerKind, Opcode, RawInstruction, Visibility};
 
 use crate::{
-    CallFrame, CellType, CodeBlock, CodeOrigin, CompiledCode, Cx, EntryRecord, Gc, JsCell,
-    JsFunction, JsObject, LineColumn, RealmSlot, Value, ValueVec, Vm,
+    CallFrame, CellType, CodeBlock, CodeOrigin, CompiledCode, EntryRecord, Gc, JsCell,
+    JsFunction, JsObject, LineColumn, RealmSlot, ValueVec, Vm,
 };
 
 /// What a frame of WebAssembly code runs.
@@ -313,55 +312,5 @@ impl Vm {
                     ) && handler.range.contains(&offset)
                 })
             })
-    }
-}
-
-/// What a call from native code is made on behalf of.
-pub(super) struct EntryContext {
-    context: Value,
-    /// The one around that of the call.
-    outer_entry_frame: usize,
-    previous: *const EntryContext,
-}
-
-pub(super) struct EntryContexts(Cell<*const EntryContext>);
-
-impl Default for EntryContexts {
-    fn default() -> EntryContexts {
-        EntryContexts(Cell::new(core::ptr::null()))
-    }
-}
-
-impl Cx {
-    /// `enter` makes one call, whose entry frame gets the context: the async function that it resumes, for one.
-    #[inline(always)]
-    pub fn with_entry_context<R>(&mut self, context: Value, enter: impl FnOnce(&mut Cx) -> R) -> R {
-        let entry = EntryContext {
-            context,
-            outer_entry_frame: self.top_entry_frame(),
-            previous: self.services.errors.entry_contexts.0.get(),
-        };
-        self.services.errors.entry_contexts.0.set(&raw const entry);
-        let result = enter(self);
-        self.services.errors.entry_contexts.0.set(entry.previous);
-        result
-    }
-}
-
-impl Vm {
-    /// # Safety
-    /// The address of an entry frame that is on the stack.
-    pub unsafe fn entry_context(&self, entry_frame: usize) -> Option<Value> {
-        // SAFETY: the caller's.
-        let outer = unsafe { EntryRecord::of(entry_frame) }.previous_top_entry_frame;
-        let mut next = self.services.errors.entry_contexts.0.get();
-        // SAFETY: each is in the frame of a call of `with_entry_context` that has not returned.
-        while let Some(entry) = unsafe { next.as_ref() } {
-            if entry.outer_entry_frame == outer {
-                return Some(entry.context);
-            }
-            next = entry.previous;
-        }
-        None
     }
 }

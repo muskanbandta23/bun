@@ -7,7 +7,8 @@ use std::rc::Rc;
 
 use bun_engine_bytecode::{
     ArrayLiteral, Body, Code, CodeFlags, CodeKind, Constant, FunctionIndex, FunctionRef,
-    IdentifierIndex, Instructions, Opcode, Position, ScopeIndex, Specialization, TemplateSite,
+    IdentifierIndex, Instructions, Opcode, Position, Register, ScopeIndex, Specialization,
+    SuspendPoint, SuspendPointIndex, TemplateSite,
 };
 use bun_engine_macros::cell;
 use bun_engine_text::{Identifier, PropertyName, names};
@@ -128,6 +129,8 @@ pub struct CodeBlock {
     tier: Cell<Tier>,
     is_jettisoned: Cell<bool>,
     saved_words: u32,
+    suspend_points: *const SuspendPoint,
+    saved_registers: *const Register,
     alternative: Option<Gc<CodeBlock>>,
     code: Rc<Code>,
     words: Words,
@@ -183,6 +186,8 @@ impl CodeBlock {
             tier: Cell::new(Tier::Interpreter),
             is_jettisoned: Cell::new(false),
             saved_words: code.body.saved_words(),
+            suspend_points: code.body.suspend_points().as_ptr(),
+            saved_registers: code.body.all_saved_registers().as_ptr(),
             alternative: None,
             code,
             words,
@@ -222,6 +227,8 @@ impl CodeBlock {
             tier: Cell::new(tier),
             is_jettisoned: Cell::new(false),
             saved_words: self.saved_words,
+            suspend_points: self.suspend_points,
+            saved_registers: self.saved_registers,
             alternative: Some(self.baseline()),
             code: Rc::clone(&self.code),
             words: Words::zeroed(0).unwrap_or_else(|| bun_alloc::out_of_memory()),
@@ -381,6 +388,27 @@ impl CodeBlock {
     #[inline(always)]
     pub fn saved_words(&self) -> u32 {
         self.saved_words
+    }
+
+    /// # Safety
+    /// The code has that point.
+    #[inline(always)]
+    pub unsafe fn suspend_point_unchecked(&self, point: SuspendPointIndex) -> &SuspendPoint {
+        debug_assert!(point.index() < self.body().suspend_points().len());
+        // SAFETY: the caller's. The body is kept alive.
+        unsafe { &*self.suspend_points.add(point.index()) }
+    }
+
+    /// # Safety
+    /// As above.
+    #[inline(always)]
+    pub unsafe fn saved_registers_unchecked(&self, point: SuspendPointIndex) -> &[Register] {
+        // SAFETY: as above, and the range has been verified.
+        unsafe {
+            let range = self.suspend_point_unchecked(point).registers();
+            let first = self.saved_registers.add(range.start);
+            core::slice::from_raw_parts(first, range.end - range.start)
+        }
     }
 
     /// With `this`.

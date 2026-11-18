@@ -40,7 +40,7 @@ impl JsFunctionWithFields {
         Self::create(cx, executable_for(cx, length, function), fields)
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn create(
         cx: &Cx,
         executable: Gc<NativeExecutable>,
@@ -83,16 +83,20 @@ impl ResolverExecutables {
 }
 
 impl Resolver {
-    #[inline]
+    #[inline(always)]
     fn create(self, cx: &Cx, fields: [Value; 2]) -> Gc<JsFunctionWithFields> {
         let root = &cx.services.control.resolver_executables.0[self as usize];
-        let executable = root.get().unwrap_or_else(|| {
-            let functions: [NativeFunction; 4] = [first_resolve, first_reject, resolve, reject];
-            let executable = executable_for(cx, 1, functions[self as usize]);
-            root.set(Some(executable));
-            executable
-        });
+        let executable = root.get().unwrap_or_else(|| self.create_executable(cx));
         JsFunctionWithFields::create(cx, executable, fields)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn create_executable(self, cx: &Cx) -> Gc<NativeExecutable> {
+        let functions: [NativeFunction; 4] = [first_resolve, first_reject, resolve, reject];
+        let executable = executable_for(cx, 1, functions[self as usize]);
+        cx.services.control.resolver_executables.0[self as usize].set(Some(executable));
+        executable
     }
 }
 

@@ -11,6 +11,19 @@ use crate::{
     NativeExecutable, Shape, Value, Vm,
 };
 
+/// With the `Vm` in `r13`. The context follows.
+macro_rules! open_entry_frame {
+    () => {
+        concat!(
+            "push rbp\n",
+            "mov rbp, rsp\n",
+            "push qword ptr [r13 + {top_call_frame}]\n",
+            "push qword ptr [r13 + {top_entry_frame}]\n",
+            "mov [r13 + {top_entry_frame}], rbp",
+        )
+    };
+}
+
 macro_rules! leave_entry_frame {
     () => {
         concat!(
@@ -18,42 +31,30 @@ macro_rules! leave_entry_frame {
             "mov [r13 + {top_call_frame}], rcx\n",
             "mov rcx, [rbp - 16]\n",
             "mov [r13 + {top_entry_frame}], rcx\n",
-            "mov rbx, [rbp - 24]\n",
-            "mov r12, [rbp - 32]\n",
-            "mov r13, [rbp - 40]\n",
-            "mov r14, [rbp - 48]\n",
-            "mov r15, [rbp - 56]\n",
             "leave\n",
             "ret",
         )
     };
 }
 
+/// The arguments are in r12 to r14.
 #[unsafe(naked)]
-pub(super) unsafe extern "sysv64" fn enter(
+pub(super) unsafe extern "rust-preserve-none" fn enter(
     entry: usize,
     vm: &Vm,
     frame: &ProtoFrame,
 ) -> JsResult<Value> {
     naked_asm!(
-        "push rbp",
-        "mov rbp, rsp",
-        "push qword ptr [rsi + {top_call_frame}]",
-        "push qword ptr [rsi + {top_entry_frame}]",
-        "push rbx",
-        "push r12",
-        "push r13",
-        "push r14",
-        "push r15",
-        "mov r13, rsi",
-        "mov [r13 + {top_entry_frame}], rbp",
-        "mov ecx, [rdx + {copied}]",
-        "lea rax, [rcx * 8 + 32 + 15]",
+        open_entry_frame!(),
+        "push 0",
+        "mov ecx, [r14 + {argument_count}]",
+        "lea rax, [rcx * 8 + 24 + 15]",
         "and rax, -16",
-        "lea rsp, [rbp - 64]",
+        "lea rsp, [rbp - 32]",
         "sub rsp, rax",
-        "mov rsi, [rdx + {arguments}]",
-        "test ecx, ecx",
+        "mov [rsp + 16], rcx",
+        "mov rsi, [r14 + {arguments}]",
+        "dec ecx",
         "jz 3f",
         "2:",
         "mov rax, [rsi + rcx * 8 - 8]",
@@ -61,28 +62,60 @@ pub(super) unsafe extern "sysv64" fn enter(
         "dec ecx",
         "jnz 2b",
         "3:",
-        "mov rax, [rdx + {this_value}]",
+        "mov rax, [r14 + {this_value}]",
         "mov [rsp + 24], rax",
-        "mov eax, [rdx + {argument_count}]",
-        "mov [rsp + 16], rax",
-        "mov rax, [rdx + {callee}]",
+        "mov rax, [r14 + {callee}]",
         "mov [rsp + 8], rax",
-        "mov rax, [rdx + {code_block}]",
+        "mov rax, [r14 + {code_block}]",
         "mov [rsp], rax",
-        "mov rcx, [rdx + {executable}]",
+        "mov rcx, [r14 + {executable}]",
         "movabs r14, {number_tag}",
         "lea r15, [r14 + {other_tag}]",
-        "call rdi",
+        "call r12",
         leave_entry_frame!(),
         top_call_frame = const Vm::OFFSET_OF_TOP_CALL_FRAME,
         top_entry_frame = const Vm::OFFSET_OF_TOP_ENTRY_FRAME,
         code_block = const offset_of!(ProtoFrame, code_block),
         callee = const offset_of!(ProtoFrame, callee),
         argument_count = const offset_of!(ProtoFrame, argument_count_including_this),
-        copied = const offset_of!(ProtoFrame, copied),
         this_value = const offset_of!(ProtoFrame, this_value),
         arguments = const offset_of!(ProtoFrame, arguments),
         executable = const offset_of!(ProtoFrame, executable),
+        number_tag = const Value::NUMBER_TAG,
+        other_tag = const Value::OTHER_TAG,
+    )
+}
+
+/// The arguments are in r12 to r15, rdi, rsi, rdx, rcx, r8 and r9.
+#[unsafe(naked)]
+pub(super) unsafe extern "rust-preserve-none" fn enter_short(
+    entry: usize,
+    vm: &Vm,
+    code_block: usize,
+    callee: u64,
+    argument_count_including_this: u64,
+    this_value: u64,
+    context: u64,
+    executable: usize,
+    first: u64,
+    second: u64,
+) -> JsResult<Value> {
+    naked_asm!(
+        open_entry_frame!(),
+        "push rdx",
+        "push rdx",
+        "push r9",
+        "push r8",
+        "push rsi",
+        "push rdi",
+        "push r15",
+        "push r14",
+        "movabs r14, {number_tag}",
+        "lea r15, [r14 + {other_tag}]",
+        "call r12",
+        leave_entry_frame!(),
+        top_call_frame = const Vm::OFFSET_OF_TOP_CALL_FRAME,
+        top_entry_frame = const Vm::OFFSET_OF_TOP_ENTRY_FRAME,
         number_tag = const Value::NUMBER_TAG,
         other_tag = const Value::OTHER_TAG,
     )

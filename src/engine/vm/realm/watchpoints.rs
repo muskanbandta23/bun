@@ -150,8 +150,13 @@ impl GlobalObject {
         set
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn holds(&self, vm: &Vm, which: RealmWatchpoint) -> bool {
+        self.is_watched(which) || self.holds_slow(vm, which)
+    }
+
+    #[inline(never)]
+    fn holds_slow(&self, vm: &Vm, which: RealmWatchpoint) -> bool {
         self.watchpoints(vm, which).is_still_valid()
     }
 
@@ -185,7 +190,7 @@ impl GlobalObject {
 
     #[inline(always)]
     fn is_watched(&self, which: RealmWatchpoint) -> bool {
-        self.watchpoints_unchecked(which).state() == WatchpointState::Watched
+        self.watchpoints_unchecked(which).is_watched()
     }
 
     #[inline(always)]
@@ -205,7 +210,7 @@ impl GlobalObject {
 }
 
 impl Cx {
-    #[inline]
+    #[inline(always)]
     pub fn holds(&self, which: RealmWatchpoint) -> bool {
         self.global().holds(self, which)
     }

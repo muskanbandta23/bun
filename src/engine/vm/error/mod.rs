@@ -28,7 +28,6 @@ use crate::traps::BlockedThread;
 
 #[derive(Default)]
 pub(crate) struct State {
-    entry_contexts: stack_visitor::EntryContexts,
     termination_deferral: termination::Deferral,
     has_had_deadlines: Cell<bool>,
     pub(crate) blocked_thread: BlockedThread,

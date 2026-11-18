@@ -30,7 +30,7 @@ execute! {
         f.set(op.dst, vm::get_dispose_method(cx, f.get(op.value), op.is_async)?);
     }
     NewSuppressedError(op, cx, f) {
-        f.set(op.dst, vm::new_suppressed_error(cx, f.reg(op.error), f.reg(op.suppressed)));
+        f.set(op.dst, vm::ErrorInstance::suppressed(cx, f.reg(op.error), f.reg(op.suppressed)));
     }
     AsyncIteratorOpen(op, cx, f) {
         let opened = vm::open_async_iterator(cx, f.get(op.iterable), f.reg(op.method))?;

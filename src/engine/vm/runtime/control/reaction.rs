@@ -4,7 +4,7 @@ use bun_engine_macros::cell;
 
 use super::tagged_field::TaggedField;
 use crate::{
-    Cx, Gc, GlobalObject, InternalFieldTuple, InternalMicrotask, JsCell, PromiseStatus, TypeFlags,
+    Cx, Gc, GlobalObject, InternalFieldTuple, InternalMicrotask, JsCell, PromiseStatus, QueuedTask, TypeFlags,
     Value, Vm,
 };
 
@@ -43,25 +43,20 @@ impl InternalReaction {
     }
 
     #[inline(always)]
-    fn arguments(self, value: Value) -> [Value; 4] {
-        [self.cell, value, self.context, self.async_context]
+    pub(super) fn to_task(
+        self,
+        global: &GlobalObject,
+        status: PromiseStatus,
+        value: Value,
+    ) -> QueuedTask {
+        let arguments = [self.cell, value, self.context, self.async_context];
+        QueuedTask::new(global.into(), self.task, status as u8, arguments.map(Some))
     }
 
     /// As if to a promise that nothing else knows of and that has settled.
     #[inline(always)]
     pub fn queue(self, vm: &Vm, global: &GlobalObject, status: PromiseStatus, value: Value) {
-        global.queue_microtask(vm, self.task, status as u8, self.arguments(value));
-    }
-
-    #[inline(always)]
-    pub(super) fn queue_or_divert(
-        self,
-        vm: &Vm,
-        global: &GlobalObject,
-        status: PromiseStatus,
-        value: Value,
-    ) {
-        global.queue_or_divert_microtask(vm, self.task, status as u8, self.arguments(value));
+        self.to_task(global, status, value).queue(vm, global);
     }
 }
 
@@ -146,6 +141,7 @@ impl Continuation {
         }
     }
 
+    #[inline(always)]
     pub(super) fn without_handler(self) -> InternalReaction {
         let task = InternalMicrotask::PromiseResolveWithoutHandler;
         InternalReaction::new(task, self.result().as_cell(), Value::UNDEFINED)
@@ -153,22 +149,22 @@ impl Continuation {
 
     /// `handler` is callable or undefined.
     #[inline(always)]
-    pub(super) fn queue(
+    pub(super) fn to_task(
         self,
-        vm: &Vm,
         global: &GlobalObject,
         status: PromiseStatus,
         value: Value,
         handler: Value,
-    ) {
+    ) -> QueuedTask {
         if handler.is_undefined() {
-            return self.without_handler().queue(vm, global, status, value);
+            return self.without_handler().to_task(global, status, value);
         }
         let (job, payload) = (
             InternalMicrotask::PromiseReaction,
             status as u8 | self.kind.payload(),
         );
-        global.queue_microtask(vm, job, payload, [self.first, value, handler, self.last]);
+        let arguments = [self.first, value, handler, self.last];
+        QueuedTask::new(global.into(), job, payload, arguments.map(Some))
     }
 }
 
@@ -319,17 +315,17 @@ impl PromiseReaction {
     }
 
     #[inline(always)]
-    fn queue(&self, vm: &Vm, global: &GlobalObject, status: PromiseStatus, value: Value) {
+    fn to_task(&self, global: &GlobalObject, status: PromiseStatus, value: Value) -> QueuedTask {
         let (task, detail) = self.task_and_detail();
         if task != InternalMicrotask::PromiseReaction {
-            return self.describe().queue_or_divert(vm, global, status, value);
+            return self.describe().to_task(global, status, value);
         }
         let handler = match self.downcast::<FullPromiseReaction>() {
             Some(full) if status == PromiseStatus::Rejected => full.third,
             None if detail != status as u8 => Value::UNDEFINED,
             _ => self.second,
         };
-        (self.continuation()).queue(vm, global, status, value, handler);
+        self.continuation().to_task(global, status, value, handler)
     }
 
     /// TriggerPromiseReactions. `self` is the newest.
@@ -352,7 +348,7 @@ impl PromiseReaction {
             }
         }
         for reaction in core::iter::successors(Some(oldest), |it| it.next()) {
-            reaction.queue(vm, global, status, value);
+            (reaction.to_task(global, status, value)).queue_or_divert(vm, global);
         }
     }
 }

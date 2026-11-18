@@ -4,175 +4,175 @@ use bun_engine_text::names;
 
 use super::async_context::AsyncContextScope;
 use super::async_iteration::run_answer;
+use super::microtask::TaskHeader;
 use super::promise::Resolution;
 use super::reaction::HandlerContext;
 use super::resolving::create_resolving_functions;
 use crate::runtime::modules;
 use crate::{
     Cx, Gc, InternalFieldTuple, InternalMicrotask, InternalReaction, JsAsyncFromSyncIterator,
-    JsAsyncFunctionGenerator, JsAsyncGenerator, JsPromise, JsResult, PromiseCombinator,
-    PromiseReaction, PromiseStatus, QueuedTask, Value, ValueVec,
+    JsAsyncFunctionGenerator, JsAsyncGenerator, JsObject, JsPromise, JsResult, PromiseCombinator,
+    PromiseReaction, PromiseStatus, QueuedTask, Thrown, Value, ValueVec,
 };
 
-/// The jobs have frames of their own, so nothing that they leave on the stack outlives them.
-#[inline(always)]
-pub(super) fn run(cx: &mut Cx, task: &QueuedTask) -> JsResult<()> {
-    use InternalMicrotask::*;
-    let (job, payload) = (task.job(), task.payload());
-    let [cell, value, context, last] = task.arguments.map(Option::unwrap_or_default);
-    let status = PromiseStatus::from_payload(payload);
-    if job == AsyncFunctionResume {
-        return resume_async_function(cx, status, value, context, last);
-    }
-    if job == PromiseReaction {
-        return react(cx, payload, cell, value, context, last);
-    }
-    run_less_common(cx, task)
-}
+/// Gets the four arguments of the task.
+type Job = fn(&mut Cx, TaskHeader, Value, Value, Value, Value) -> JsResult<()>;
 
-#[inline(never)]
-pub(super) fn run_out_of_line(cx: &mut Cx, task: &QueuedTask) -> JsResult<()> {
-    run(cx, task)
-}
-
-#[inline(never)]
-fn run_less_common(cx: &mut Cx, task: &QueuedTask) -> JsResult<()> {
+const fn job_for(task: InternalMicrotask) -> Job {
     use InternalMicrotask::*;
-    let (job, payload) = (task.job(), task.payload());
-    let arguments = task.arguments.map(Option::unwrap_or_default);
-    let [cell, value, context, last] = arguments;
-    let status = PromiseStatus::from_payload(payload);
-    match job {
-        AsyncFunctionResume | PromiseReaction => unreachable!(),
-        CallInAsyncContext => call_in_async_context(cx, task),
-        CallWithArguments => call_with_arguments(cx, task),
-        PromiseResolveWithoutHandler => settle(cx, cell, status, value),
-        PromiseResolveThenable => {
-            let _scope = AsyncContextScope::enter(cx, last);
-            follow_thenable(cx, cell, value, context)
+    match task {
+        CallInAsyncContext | CallWithArguments | PromiseReaction | AsyncFunctionResume => {
+            |_, _, _, _, _, _| unreachable!()
         }
-        PromiseResolveNativeThenable => resolve_native_thenable(cx, cell.cast(), value, context),
-        PromiseReactToNativeThenable => {
-            let reaction = InternalReaction {
-                task: InternalMicrotask::from_bits(payload),
-                cell,
-                context,
-                async_context: last,
-            };
-            react_to_native_thenable(cx, value.cast(), &reaction)
+        PromiseResolveWithoutHandler => {
+            |cx, header, result, value, _, _| settle(cx, result, header.status(), value)
         }
-        PromiseRaceElement => resolve_or_reject(cx, cell.cast(), status, value),
+        PromiseResolveThenable => resolve_thenable,
+        PromiseResolveNativeThenable => resolve_native_thenable,
+        PromiseReactToNativeThenable => react_to_native_thenable,
+        PromiseRaceElement => settle_race,
         PromiseAllElement | PromiseAllSettledElement | PromiseAnyElement => {
-            (cell.cast::<PromiseCombinator>()).did_settle(cx, context, status, value)
+            |cx, header, combinator, value, index, _| {
+                (combinator.cast::<PromiseCombinator>()).did_settle(cx, index, header.status(), value)
+            }
         }
-        PromiseFinally => {
-            let _scope = AsyncContextScope::enter(cx, last);
-            call_finally(cx, cell.cast(), context, status, value)
-        }
-        PromiseFinallyFulfill | PromiseFinallyReject if status == PromiseStatus::Rejected => {
-            settle(cx, cell, status, value)
-        }
-        PromiseFinallyFulfill => settle(cx, cell, PromiseStatus::Fulfilled, context),
-        PromiseFinallyReject => settle(cx, cell, PromiseStatus::Rejected, context),
+        PromiseFinally => call_finally,
+        PromiseFinallyFulfill | PromiseFinallyReject => pass_finally,
         AsyncGeneratorResume
         | AsyncGeneratorYield
         | AsyncGeneratorResumeWithReturn
-        | AsyncGeneratorAwaitReturn => {
-            let _scope = AsyncContextScope::enter(cx, last);
-            (context.cast::<JsAsyncGenerator>()).continue_with(cx, job, status, value)
-        }
-        AsyncIteratorAnswer => run_answer(cx, payload, arguments),
+        | AsyncGeneratorAwaitReturn => |cx, header, _, value, generator, async_context| {
+            let _scope = AsyncContextScope::enter(cx, async_context);
+            let generator = generator.cast::<JsAsyncGenerator>();
+            generator.continue_with(cx, header.job(), header.status(), value)
+        },
+        AsyncIteratorAnswer => run_answer,
         AsyncFromSyncIteratorContinue
         | AsyncFromSyncIteratorContinueOrClose
-        | AsyncFromSyncIteratorDone => {
-            let _scope = AsyncContextScope::enter(cx, last);
-            let iterator = context.cast::<JsAsyncFromSyncIterator>();
-            iterator.continue_with(cx, job, cell.cast(), status, value)
-        }
-        PromiseFulfillWithoutHandler => {
-            let promise = cell.cast::<JsPromise>();
-            match status {
+        | AsyncFromSyncIteratorDone => |cx, header, target, value, iterator, async_context| {
+            let _scope = AsyncContextScope::enter(cx, async_context);
+            let iterator = iterator.cast::<JsAsyncFromSyncIterator>();
+            iterator.continue_with(cx, header.job(), target.cast(), header.status(), value)
+        },
+        PromiseFulfillWithoutHandler => |cx, header, promise, value, _, _| {
+            let promise = promise.cast::<JsPromise>();
+            match header.status() {
                 PromiseStatus::Rejected => promise.reject_promise(cx, value),
                 _ => promise.fulfill_promise(cx, value),
             }
             Ok(())
-        }
-        _ => modules::run_microtask(cx, job, status, cell, value, context),
+        },
+        _ => |cx, header, cell, value, context, _| {
+            modules::run_microtask(cx, header.job(), header.status(), cell, value, context)
+        },
     }
 }
 
-#[inline(never)]
-fn resume_async_function(
-    cx: &mut Cx,
-    status: PromiseStatus,
-    value: Value,
-    generator: Value,
-    async_context: Value,
-) -> JsResult<()> {
-    let _scope = AsyncContextScope::enter(cx, async_context);
-    (generator.cast::<JsAsyncFunctionGenerator>()).continue_with(cx, status, value)
+static JOBS: [Job; InternalMicrotask::ALL.len()] = {
+    let mut jobs = [job_for(InternalMicrotask::ALL[0]); _];
+    let mut index = 0;
+    while index < jobs.len() {
+        jobs[index] = job_for(InternalMicrotask::ALL[index]);
+        index += 1;
+    }
+    jobs
+};
+
+/// The most common jobs are inlined: the caller has saved the registers that a call of generated code destroys.
+#[inline(always)]
+pub(super) fn run(cx: &mut Cx, task: QueuedTask) -> JsResult<()> {
+    let (header, [a, b, c, d]) = task.into_parts();
+    if header.is_call() {
+        return call(cx, header, a, b, c, d);
+    }
+    let [a, b, c, d] = [a, b, c, d].map(Option::unwrap_or_default);
+    if header.is(InternalMicrotask::AsyncFunctionResume) {
+        let _scope = AsyncContextScope::enter(cx, d);
+        return (c.cast::<JsAsyncFunctionGenerator>()).continue_with(cx, header.status(), b);
+    }
+    if header.is(InternalMicrotask::PromiseReaction) {
+        return react(cx, header, a, b, c, d);
+    }
+    JOBS[header.job() as usize](cx, header, a, b, c, d)
 }
 
 #[inline(never)]
+pub(super) fn run_out_of_line(cx: &mut Cx, task: &QueuedTask) -> JsResult<()> {
+    run(cx, *task)
+}
+
+#[inline(always)]
 fn react(
     cx: &mut Cx,
-    payload: u8,
+    header: TaskHeader,
     first: Value,
     value: Value,
     handler: Value,
     last: Value,
 ) -> JsResult<()> {
-    let (result, argument, async_context) = match HandlerContext::from_payload(payload) {
-        HandlerContext::Async => (first, None, last),
-        HandlerContext::Argument => (first, Some(last), Value::UNDEFINED),
-        HandlerContext::BothWithoutResult => (Value::UNDEFINED, Some(last), first),
+    let kind = HandlerContext::from_payload(header.payload());
+    let (result, count, argument, async_context) = match kind {
+        HandlerContext::Async => (first, 1, Value::UNDEFINED, last),
+        HandlerContext::Argument => (first, 2, last, Value::UNDEFINED),
+        HandlerContext::BothWithoutResult => (Value::UNDEFINED, 2, last, first),
         HandlerContext::Both => {
             let both = last.cast::<InternalFieldTuple>();
-            (first, Some(both.fields().at(0)), both.fields().at(1))
+            (first, 2, both.fields().at(0), both.fields().at(1))
         }
     };
     let _scope = AsyncContextScope::enter(cx, async_context);
-    let outcome = match argument {
-        None => cx.call(handler, Value::UNDEFINED, &[value]),
-        Some(argument) => cx.call(handler, Value::UNDEFINED, &[value, argument]),
-    };
-    match outcome {
+    match cx.call_in_job(handler, Value::UNDEFINED, count, [value, argument]) {
         Ok(value) => settle(cx, result, PromiseStatus::Fulfilled, value),
-        Err(thrown) if result.is_undefined_or_null() => Err(thrown),
-        Err(thrown) => {
-            let error = cx.catch_value(thrown)?;
-            settle(cx, result, PromiseStatus::Rejected, error)
-        }
+        Err(thrown) => handler_did_throw(cx, result, thrown),
     }
+}
+
+#[cold]
+#[inline(never)]
+fn handler_did_throw(cx: &mut Cx, result: Value, thrown: Thrown) -> JsResult<()> {
+    if result.is_undefined_or_null() {
+        return Err(thrown);
+    }
+    let error = cx.catch_value(thrown)?;
+    settle(cx, result, PromiseStatus::Rejected, error)
 }
 
 /// `target` is as the `result` of `perform_then`.
 #[inline(always)]
 fn settle(cx: &mut Cx, target: Value, status: PromiseStatus, value: Value) -> JsResult<()> {
     let Some(promise) = target.downcast::<JsPromise>() else {
-        return settle_capability(cx, target, status, value);
+        return match target.as_object() {
+            Some(capability) => settle_capability(cx, capability, status, value),
+            None => Ok(()),
+        };
     };
     if status == PromiseStatus::Rejected {
         promise.reject_promise(cx, value);
-        return Ok(());
-    }
-    if !value.is_object() {
+    } else if let Some(object) = value.as_object() {
+        return promise.resolve_with_object(cx.in_realm_of(&promise), object);
+    } else {
         promise.fulfill_promise(cx, value);
-        return Ok(());
     }
-    promise.resolve_promise(cx.in_realm(promise.global()), value)
+    Ok(())
+}
+
+#[inline(never)]
+fn settle_out_of_line(
+    cx: &mut Cx,
+    target: Value,
+    status: PromiseStatus,
+    value: Value,
+) -> JsResult<()> {
+    settle(cx, target, status, value)
 }
 
 #[inline(never)]
 fn settle_capability(
     cx: &mut Cx,
-    capability: Value,
+    capability: Gc<JsObject>,
     status: PromiseStatus,
     value: Value,
 ) -> JsResult<()> {
-    let Some(capability) = capability.as_object() else {
-        return Ok(());
-    };
     let name = match status {
         PromiseStatus::Rejected => names::reject,
         _ => names::resolve,
@@ -181,20 +181,22 @@ fn settle_capability(
     cx.call(function, Value::UNDEFINED, &[value]).map(drop)
 }
 
-fn resolve_or_reject(
+fn settle_race(
     cx: &mut Cx,
-    promise: Gc<JsPromise>,
-    status: PromiseStatus,
+    header: TaskHeader,
+    promise: Value,
     value: Value,
+    _: Value,
+    _: Value,
 ) -> JsResult<()> {
-    if status == PromiseStatus::Rejected {
-        promise.reject(cx, value);
+    if !promise.cast::<JsPromise>().mark_as_resolved() {
         return Ok(());
     }
-    promise.resolve(cx.in_realm(promise.global()), value)
+    settle_out_of_line(cx, promise, header.status(), value)
 }
 
 /// `call_then` gets the resolving functions.
+#[inline(always)]
 fn follow(
     cx: &mut Cx,
     target: Value,
@@ -208,14 +210,32 @@ fn follow(
     Ok(())
 }
 
+fn resolve_thenable(
+    cx: &mut Cx,
+    _: TaskHeader,
+    thenable: Value,
+    then: Value,
+    target: Value,
+    async_context: Value,
+) -> JsResult<()> {
+    let _scope = AsyncContextScope::enter(cx, async_context);
+    follow_thenable(cx, thenable, then, target)
+}
+
 fn follow_thenable(cx: &mut Cx, thenable: Value, then: Value, target: Value) -> JsResult<()> {
     follow(cx, target, |cx, functions| {
-        cx.call(then, thenable, &functions).map(drop)
+        cx.call_in_job(then, thenable, 2, functions).map(drop)
     })
 }
 
 #[inline(never)]
-fn follow_with_species(cx: &mut Cx, promise: Gc<JsPromise>, target: Value) -> JsResult<()> {
+fn follow_with_species(
+    cx: &mut Cx,
+    promise: Gc<JsPromise>,
+    target: Value,
+    async_context: Value,
+) -> JsResult<()> {
+    let _scope = AsyncContextScope::enter(cx, async_context);
     follow(cx, target, |cx, [resolve, reject]| {
         promise.then_with_species(cx, resolve, reject).map(drop)
     })
@@ -223,13 +243,15 @@ fn follow_with_species(cx: &mut Cx, promise: Gc<JsPromise>, target: Value) -> Js
 
 fn resolve_native_thenable(
     cx: &mut Cx,
-    promise: Gc<JsPromise>,
+    _: TaskHeader,
+    promise: Value,
     target: Value,
     async_context: Value,
+    _: Value,
 ) -> JsResult<()> {
+    let promise = promise.cast::<JsPromise>();
     if !promise.has_pristine_species(cx) {
-        let _scope = AsyncContextScope::enter(cx, async_context);
-        return follow_with_species(cx, promise, target);
+        return follow_with_species(cx, promise, target, async_context);
     }
     let task = InternalMicrotask::PromiseResolveWithoutHandler;
     let reaction = InternalReaction::new(task, target.as_cell(), Value::UNDEFINED);
@@ -239,53 +261,61 @@ fn resolve_native_thenable(
 
 fn react_to_native_thenable(
     cx: &mut Cx,
-    promise: Gc<JsPromise>,
-    reaction: &InternalReaction,
+    header: TaskHeader,
+    cell: Value,
+    promise: Value,
+    context: Value,
+    async_context: Value,
 ) -> JsResult<()> {
+    let promise = promise.cast::<JsPromise>();
+    let reaction = InternalReaction {
+        task: InternalMicrotask::from_bits(header.payload()),
+        cell,
+        context,
+        async_context,
+    };
     if !promise.has_pristine_species(cx) {
-        let _scope = AsyncContextScope::enter(cx, reaction.async_context);
-        let target = PromiseReaction::internal(cx, *reaction, None);
-        return follow_with_species(cx, promise, target.into());
+        let target = PromiseReaction::internal(cx, reaction, None);
+        return follow_with_species(cx, promise, target.into(), async_context);
     }
-    promise.react(cx, *reaction);
+    promise.react(cx, reaction);
     Ok(())
 }
 
 fn call_finally(
     cx: &mut Cx,
-    result: Gc<JsPromise>,
-    on_finally: Value,
-    status: PromiseStatus,
+    header: TaskHeader,
+    result: Value,
     value: Value,
+    on_finally: Value,
+    async_context: Value,
 ) -> JsResult<()> {
-    let cx = cx.in_realm(result.global());
-    let returned = match cx.call(on_finally, Value::UNDEFINED, &[]) {
+    let _scope = AsyncContextScope::enter(cx, async_context);
+    let cx = cx.in_realm_of(&result.cast::<JsPromise>());
+    let (status, nothing) = (header.status(), Value::UNDEFINED);
+    let returned = match cx.call_in_job(on_finally, nothing, 0, [nothing; 2]) {
         Ok(returned) => returned,
-        Err(thrown) => {
-            result.reject_promise(cx, cx.catch_value(thrown)?);
-            return Ok(());
-        }
+        Err(thrown) => return handler_did_throw(cx, result, thrown),
     };
     let Some(returned) = returned.as_object() else {
-        return settle(cx, result.into(), status, value);
+        return settle_out_of_line(cx, result, status, value);
     };
     let task = match status {
         PromiseStatus::Rejected => InternalMicrotask::PromiseFinallyReject,
         _ => InternalMicrotask::PromiseFinallyFulfill,
     };
-    let reaction = InternalReaction::new(task, Some(result.cell()), value);
+    let reaction = InternalReaction::new(task, result.as_cell(), value);
     if let Some(promise) = returned.downcast::<JsPromise>()
-        && promise.global() == cx.global()
-        && promise.has_pristine_then(cx)
+        && promise.has_pristine_then_in(cx)
     {
         promise.react(cx, reaction);
         return Ok(());
     }
     match Resolution::of(cx, returned)? {
         Resolution::Settled(PromiseStatus::Rejected, error) => {
-            settle(cx, result.into(), PromiseStatus::Rejected, error)
+            settle_out_of_line(cx, result, PromiseStatus::Rejected, error)
         }
-        Resolution::Settled(..) => settle(cx, result.into(), status, value),
+        Resolution::Settled(..) => settle_out_of_line(cx, result, status, value),
         Resolution::Thenable(then) => {
             let target = PromiseReaction::internal(cx, reaction, None);
             follow_thenable(cx, returned.into(), then, target.into())
@@ -293,19 +323,58 @@ fn call_finally(
     }
 }
 
-fn call_in_async_context(cx: &mut Cx, task: &QueuedTask) -> JsResult<()> {
-    let [function, async_context, first, second] = task.arguments;
-    let Some(function) = function.filter(|it| it.is_callable()) else {
+fn pass_finally(
+    cx: &mut Cx,
+    header: TaskHeader,
+    result: Value,
+    value: Value,
+    original: Value,
+    _: Value,
+) -> JsResult<()> {
+    let (status, value) = match (header.status(), header.job()) {
+        (PromiseStatus::Rejected, _) => (PromiseStatus::Rejected, value),
+        (_, InternalMicrotask::PromiseFinallyReject) => (PromiseStatus::Rejected, original),
+        _ => (PromiseStatus::Fulfilled, original),
+    };
+    settle_out_of_line(cx, result, status, value)
+}
+
+#[inline(never)]
+fn call(
+    cx: &mut Cx,
+    header: TaskHeader,
+    function: Option<Value>,
+    a: Option<Value>,
+    b: Option<Value>,
+    c: Option<Value>,
+) -> JsResult<()> {
+    let function = function.unwrap_or_default();
+    if header.is(InternalMicrotask::CallInAsyncContext) {
+        return call_in_async_context(cx, function, a.unwrap_or_default(), b, c);
+    }
+    let mut arguments = ValueVec::new();
+    ([a, b, c].into_iter().flatten()).for_each(|argument| arguments.push(argument));
+    cx.call(function, Value::UNDEFINED, &arguments).map(drop)
+}
+
+#[inline(always)]
+fn call_in_async_context(
+    cx: &mut Cx,
+    function: Value,
+    async_context: Value,
+    first: Option<Value>,
+    second: Option<Value>,
+) -> JsResult<()> {
+    if !function.is_callable() {
         return Ok(());
+    }
+    let count = match second {
+        Some(_) => 2,
+        None => first.is_some().into(),
     };
-    let scope = AsyncContextScope::enter(cx, async_context.unwrap_or_default());
-    let result = match (first, second) {
-        (first, Some(second)) => {
-            let arguments = [first.unwrap_or_default(), second];
-            cx.call(function, Value::UNDEFINED, &arguments)
-        }
-        (first, None) => cx.call(function, Value::UNDEFINED, first.as_slice()),
-    };
+    let arguments = [first, second].map(Option::unwrap_or_default);
+    let scope = AsyncContextScope::enter(cx, async_context);
+    let result = cx.call_in_job(function, Value::UNDEFINED, count, arguments);
     drop(scope);
     match (result, cx.embedder().microtasks.report_error.get()) {
         (Err(thrown), Some(report)) => {
@@ -315,12 +384,4 @@ fn call_in_async_context(cx: &mut Cx, task: &QueuedTask) -> JsResult<()> {
         }
         (result, _) => result.map(drop),
     }
-}
-
-fn call_with_arguments(cx: &mut Cx, task: &QueuedTask) -> JsResult<()> {
-    let [function, rest @ ..] = task.arguments;
-    let mut arguments = ValueVec::new();
-    rest.into_iter().flatten().for_each(|it| arguments.push(it));
-    cx.call(function.unwrap_or_default(), Value::UNDEFINED, &arguments)
-        .map(drop)
 }

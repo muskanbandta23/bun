@@ -1,14 +1,15 @@
 use core::mem::offset_of;
 
 use bun_engine_macros::cell;
-use bun_engine_text::names;
+use bun_engine_text::{PropertyName, names};
 
+use super::initialize_at;
 use super::reaction::Continuation;
 use super::tagged_field::{TAG_SHIFT, TaggedField};
 use crate::{
-    CellType, Cx, ErrorInstance, ErrorType, Field, Gc, GlobalObject, InternalMicrotask,
+    CellKind, CellType, Cx, ErrorInstance, ErrorType, Field, Gc, GlobalObject, InternalMicrotask,
     InternalReaction, JsCell, JsObject, JsObjectInit, JsResult, Message, PromiseCapability,
-    PromiseReaction, PromiseRejectionOperation, RealmWatchpoint, Shape, ShapeFlags, Thrown,
+    PromiseReaction, PromiseRejectionOperation, QueuedTask, RealmSlot, RealmWatchpoint, Shape, ShapeFlags, Storage, Thrown,
     TypeFlags, Value, Vm, species_constructor,
 };
 
@@ -23,11 +24,9 @@ pub enum PromiseStatus {
 impl PromiseStatus {
     #[inline(always)]
     pub fn from_payload(payload: u8) -> PromiseStatus {
-        match u16::from(payload) & JsPromise::STATUS_MASK {
-            0 => PromiseStatus::Pending,
-            1 => PromiseStatus::Fulfilled,
-            _ => PromiseStatus::Rejected,
-        }
+        let status = payload & JsPromise::STATUS_MASK as u8;
+        // SAFETY: from zero to two.
+        unsafe { core::mem::transmute(status.min(PromiseStatus::Rejected as u8)) }
     }
 }
 
@@ -78,7 +77,7 @@ impl Resolution {
 }
 
 /// Whether the shapes tell that there is no `then` on the prototype chain.
-#[inline]
+#[inline(always)]
 pub fn is_definitely_not_thenable(object: &JsObject) -> bool {
     let hides_properties = TypeFlags::OVERRIDES_GET_PROTOTYPE
         | TypeFlags::PROHIBITS_PROPERTY_CACHING
@@ -116,29 +115,78 @@ impl JsPromise {
     pub const PAYLOAD_IS_ASYNC_CONTEXT: u16 = 1 << 14;
     const OUTLIVES_REACTION: u16 = Self::IS_HANDLED | Self::IS_RESOLVED;
 
-    #[inline(always)]
-    fn allocate(vm: &Vm, shape: Gc<Shape>, flags: u16, slot: Option<Value>) -> Gc<JsPromise> {
+    pub fn create(vm: &Vm, shape: Gc<Shape>) -> Gc<JsPromise> {
         vm.allocate::<JsPromise>(JsPromiseInit {
             base: JsObjectInit::new(vm, shape),
-            payload: TaggedField::new(None, flags),
-            slot,
+            payload: TaggedField::new(None, 0),
+            slot: None,
         })
     }
 
-    #[inline]
-    pub fn create(vm: &Vm, shape: Gc<Shape>) -> Gc<JsPromise> {
-        Self::allocate(vm, shape, 0, None)
+    #[inline(always)]
+    fn allocate_plain(cx: &Cx, flags: u16, slot: Option<Value>) -> Gc<JsPromise> {
+        let init = Self::plain_init(cx.promise_shape(), flags, slot);
+        let address = cx.allocate_cell_memory(size_of::<JsPromise>());
+        // SAFETY: new, and of that size.
+        unsafe { initialize_at(address, init) }
+    }
+
+    /// `shape` is the `promise_shape` of a realm.
+    #[inline(always)]
+    fn plain_init(shape: Gc<Shape>, flags: u16, slot: Option<Value>) -> JsPromiseInit {
+        debug_assert!(shape.class().is(Self::CLASS) && !shape.max_offset().is_valid());
+        JsPromiseInit {
+            // SAFETY: it has neither properties nor elements.
+            base: unsafe { JsObjectInit::with_storage(shape, Storage::NONE) },
+            payload: TaggedField::new(None, flags),
+            slot,
+        }
+    }
+
+    /// `None` if it takes a call.
+    #[inline(always)]
+    fn try_allocate_quickly(
+        vm: &Vm,
+        global: &GlobalObject,
+        flags: u16,
+        slot: Option<Value>,
+    ) -> Option<Gc<JsPromise>> {
+        let shape = global.slot_if_initialized(RealmSlot::promise_shape)?;
+        let address = vm.heap.cells.allocator_for(size_of::<Self>())?.try_bump()?;
+        // SAFETY: what the slot has, and as above.
+        unsafe {
+            let init = Self::plain_init(shape.cast_unchecked(), flags, slot);
+            Some(initialize_at(address, init))
+        }
     }
 
     /// `new_promise`
     #[inline(always)]
     pub fn new(cx: &Cx) -> Gc<JsPromise> {
-        Self::allocate(cx, cx.promise_shape(), 0, None)
+        Self::allocate_plain(cx, 0, None)
+    }
+
+    #[inline(always)]
+    pub fn try_new_quickly(vm: &Vm, global: &GlobalObject) -> Option<Gc<JsPromise>> {
+        Self::try_allocate_quickly(vm, global, 0, None)
+    }
+
+    #[inline(always)]
+    pub(super) fn try_fulfilled_quickly(
+        vm: &Vm,
+        global: &GlobalObject,
+        value: Value,
+    ) -> Option<Gc<JsPromise>> {
+        let flags = PromiseStatus::Fulfilled as u16 | Self::IS_RESOLVED;
+        Self::try_allocate_quickly(vm, global, flags, Some(value))
     }
 
     /// `create_promise`
     pub fn for_new_target(cx: &mut Cx, new_target: Value) -> JsResult<Gc<JsPromise>> {
         let constructor = cx.promise_constructor();
+        if new_target == constructor.into() {
+            return Ok(Self::new(cx));
+        }
         let shape =
             cx.shape_from_new_target(new_target, &constructor, GlobalObject::promise_shape)?;
         Ok(Self::create(cx, shape))
@@ -148,7 +196,7 @@ impl JsPromise {
     #[inline(always)]
     pub fn fulfilled(cx: &Cx, value: Value) -> Gc<JsPromise> {
         let flags = PromiseStatus::Fulfilled as u16 | Self::IS_RESOLVED;
-        Self::allocate(cx, cx.promise_shape(), flags, Some(value))
+        Self::allocate_plain(cx, flags, Some(value))
     }
 
     /// Always a new one. Fails only if execution is terminated.
@@ -157,7 +205,7 @@ impl JsPromise {
         let Some(object) = value.as_object() else {
             return Ok(Self::fulfilled(cx, value));
         };
-        let promise = Self::allocate(cx, cx.promise_shape(), Self::IS_RESOLVED, None);
+        let promise = Self::allocate_plain(cx, Self::IS_RESOLVED, None);
         promise.resolve_with_object(cx, object)?;
         Ok(promise)
     }
@@ -295,7 +343,7 @@ impl JsPromise {
     }
 
     #[inline(never)]
-    fn resolve_with_object(&self, cx: &mut Cx, object: Gc<JsObject>) -> JsResult<()> {
+    pub(super) fn resolve_with_object(&self, cx: &mut Cx, object: Gc<JsObject>) -> JsResult<()> {
         if let Some(promise) = object.downcast::<JsPromise>() {
             if promise.is_same(self) {
                 let message = "Cannot resolve a promise with itself".into_string();
@@ -312,7 +360,8 @@ impl JsPromise {
             }
         }
         match Resolution::of(cx, object)? {
-            Resolution::Settled(status, value) => self.settle(cx, status, value),
+            Resolution::Settled(PromiseStatus::Rejected, error) => self.reject_promise(cx, error),
+            Resolution::Settled(_, value) => self.fulfill_promise(cx, value),
             Resolution::Thenable(then) => {
                 let job = InternalMicrotask::PromiseResolveThenable;
                 let arguments = [object.into(), then, self.into(), cx.current_async_context()];
@@ -323,49 +372,81 @@ impl JsPromise {
     }
 
     /// FulfillPromise
-    #[inline]
+    #[inline(always)]
     pub fn fulfill_promise(&self, vm: &Vm, value: Value) {
-        self.settle(vm, PromiseStatus::Fulfilled, value);
+        if !self.try_fulfill_quickly(vm, value) {
+            self.settle(vm, PromiseStatus::Fulfilled, value);
+        }
     }
 
     /// RejectPromise
-    #[inline(never)]
+    #[inline]
     pub fn reject_promise(&self, vm: &Vm, reason: Value) {
         self.settle(vm, PromiseStatus::Rejected, reason);
     }
 
+    /// False, having done nothing, if it takes a call.
     #[inline(always)]
+    pub(super) fn try_fulfill_quickly(&self, vm: &Vm, value: Value) -> bool {
+        if value.is_cell() && self.needs_write_barrier() {
+            return false;
+        }
+        let (status, flags) = (PromiseStatus::Fulfilled, self.flags());
+        if !self.is_pending_without_reactions() {
+            // Once it has settled, it has none.
+            let Some(global) = self.realm().filter(|_| flags & Self::KIND_MASK != 0) else {
+                return false;
+            };
+            let task = self.task_of_inline_reaction(&global, status, value);
+            if !task.try_queue_quickly(vm, &global) {
+                return false;
+            }
+        }
+        // SAFETY: none is needed.
+        unsafe { self.slot.set_without_barrier(Some(value)) };
+        (self.payload).clear(flags & Self::OUTLIVES_REACTION | status as u16);
+        true
+    }
+
+    #[inline(never)]
     fn settle(&self, vm: &Vm, status: PromiseStatus, value: Value) {
         if !self.is_pending() {
             return;
         }
-        let (flags, payload, slot) = (self.flags(), self.payload.cell(), self.slot_value());
-        let kind = self.inline_reaction_kind();
+        let (global, flags, payload) = (self.global(), self.flags(), self.payload.cell());
+        let task = (flags & Self::KIND_MASK != 0)
+            .then(|| self.task_of_inline_reaction(&global, status, value));
         self.set_slot(Some(value));
         (self.payload).clear(flags & Self::OUTLIVES_REACTION | status as u16);
-        match kind {
-            InlineReactionKind::Internal => Self::internal_reaction(flags, payload, slot)
-                .queue_or_divert(vm, &self.global(), status, value),
-            InlineReactionKind::None => {
-                if status == PromiseStatus::Rejected && flags & Self::IS_HANDLED == 0 {
-                    self.track_rejection(&self.global(), PromiseRejectionOperation::Reject);
-                }
-                if let Some(newest) = payload {
-                    (newest.cast::<PromiseReaction>()).trigger(vm, &self.global(), status, value);
-                }
-            }
-            _ => {
-                let is_handled = Self::status_handled_by(kind) == status;
-                let handler = if is_handled { slot } else { Value::UNDEFINED };
-                Continuation::new(payload.map_or_default(Value::from), Value::UNDEFINED).queue(
-                    vm,
-                    &self.global(),
-                    status,
-                    value,
-                    handler,
-                );
-            }
+        if let Some(task) = task {
+            return task.queue_or_divert(vm, &global);
         }
+        if status == PromiseStatus::Rejected && flags & Self::IS_HANDLED == 0 {
+            self.track_rejection(&global, PromiseRejectionOperation::Reject);
+        }
+        if let Some(newest) = payload {
+            (newest.cast::<PromiseReaction>()).trigger(vm, &global, status, value);
+        }
+    }
+
+    /// There is one.
+    #[inline(always)]
+    fn task_of_inline_reaction(
+        &self,
+        global: &GlobalObject,
+        status: PromiseStatus,
+        value: Value,
+    ) -> QueuedTask {
+        let (payload, slot) = (self.payload.cell(), self.slot_value());
+        let kind = self.inline_reaction_kind();
+        if kind == InlineReactionKind::Internal {
+            let reaction = Self::internal_reaction(self.flags(), payload, slot);
+            return reaction.to_task(global, status, value);
+        }
+        let is_handled = Self::status_handled_by(kind) == status;
+        let handler = if is_handled { slot } else { Value::UNDEFINED };
+        Continuation::new(payload.map_or_default(Value::from), Value::UNDEFINED)
+            .to_task(global, status, value, handler)
     }
 
     /// HostPromiseRejectionTracker
@@ -421,13 +502,15 @@ impl JsPromise {
         self.payload.bits() & !ignored == 0
     }
 
+    /// # Safety
+    /// The write barrier follows, if it is needed.
     #[inline(always)]
-    fn set_inline_reaction(&self, flags: u16, payload: Option<Gc<JsCell>>, slot: Value) {
+    unsafe fn set_inline_reaction(&self, flags: u16, payload: Option<Gc<JsCell>>, slot: Value) {
         let flags = self.flags() | Self::IS_HANDLED | flags;
-        // SAFETY: fields of this cell, and one barrier does for both.
+        // SAFETY: the caller's.
         unsafe {
             self.slot.set_without_barrier(Some(slot));
-            self.payload.set(self, payload, flags);
+            self.payload.set_without_barrier(payload, flags);
         }
     }
 
@@ -480,42 +563,87 @@ impl JsPromise {
         inline.into_iter().chain(others.map(|it| it.describe()))
     }
 
+    /// # Safety
+    /// As for `set_inline_reaction`.
+    #[inline(always)]
+    unsafe fn try_react_inline(&self, reaction: InternalReaction) -> bool {
+        if !self.is_pending_without_reactions() {
+            return false;
+        }
+        let mut flags = (InlineReactionKind::Internal as u16) << Self::KIND_SHIFT
+            | (reaction.task as u16) << Self::TASK_SHIFT;
+        let payload = if reaction.async_context.is_undefined() {
+            debug_assert!(reaction.cell.is_undefined() || reaction.cell.is_cell());
+            reaction.cell
+        } else if reaction.cell.is_undefined() && reaction.async_context.is_cell() {
+            flags |= Self::PAYLOAD_IS_ASYNC_CONTEXT;
+            reaction.async_context
+        } else {
+            return false;
+        };
+        // SAFETY: the caller's.
+        unsafe { self.set_inline_reaction(flags, payload.as_cell(), reaction.context) };
+        true
+    }
+
+    /// `global` is its realm. False, having done nothing, if it takes a call.
+    #[inline(always)]
+    fn try_react_quickly(
+        &self,
+        vm: &Vm,
+        global: &GlobalObject,
+        reaction: InternalReaction,
+    ) -> bool {
+        if self.status() == PromiseStatus::Fulfilled {
+            let task = reaction.to_task(global, PromiseStatus::Fulfilled, self.slot_value());
+            return task.try_queue_quickly(vm, global);
+        }
+        // SAFETY: none is needed.
+        !self.needs_write_barrier() && unsafe { self.try_react_inline(reaction) }
+    }
+
     /// PerformPromiseThen for a job of the engine.
     #[inline(always)]
-    pub fn react(&self, vm: &Vm, reaction: InternalReaction) {
-        if self.is_pending_without_reactions() {
-            let flags = (InlineReactionKind::Internal as u16) << Self::KIND_SHIFT
-                | (reaction.task as u16) << Self::TASK_SHIFT;
-            if reaction.async_context.is_undefined() {
-                debug_assert!(reaction.cell.is_undefined() || reaction.cell.is_cell());
-                return self.set_inline_reaction(flags, reaction.cell.as_cell(), reaction.context);
-            }
-            if reaction.cell.is_undefined() && reaction.async_context.is_cell() {
-                let flags = flags | Self::PAYLOAD_IS_ASYNC_CONTEXT;
-                let payload = reaction.async_context.as_cell();
-                return self.set_inline_reaction(flags, payload, reaction.context);
-            }
-        }
-        match self.status() {
-            PromiseStatus::Pending => self.add_internal_reaction(vm, &reaction),
-            status => {
-                let global = self.global();
-                if status == PromiseStatus::Rejected {
-                    self.will_handle_rejection(&global);
-                }
-                reaction.queue_or_divert(vm, &global, status, self.slot_value());
-            }
+    pub fn react(&self, vm: &Vm, it: InternalReaction) {
+        if !self.try_react_quickly(vm, &self.global(), it) {
+            self.react_slowly(vm, it.task, it.cell, it.context, it.async_context);
         }
     }
 
     #[inline(never)]
-    fn add_internal_reaction(&self, vm: &Vm, reaction: &InternalReaction) {
-        self.add_reaction(vm, |older| PromiseReaction::internal(vm, *reaction, older));
+    fn react_slowly(
+        &self,
+        vm: &Vm,
+        task: InternalMicrotask,
+        cell: Value,
+        context: Value,
+        async_context: Value,
+    ) {
+        let reaction = InternalReaction {
+            task,
+            cell,
+            context,
+            async_context,
+        };
+        // SAFETY: it follows.
+        if unsafe { self.try_react_inline(reaction) } {
+            return self.write_barrier_for_cell();
+        }
+        let (global, status) = (self.global(), self.status());
+        match status {
+            PromiseStatus::Pending => {
+                let make = |older| PromiseReaction::internal(vm, reaction, older);
+                return self.add_reaction(vm, make);
+            }
+            PromiseStatus::Fulfilled => {}
+            PromiseStatus::Rejected => self.will_handle_rejection(&global),
+        }
+        (reaction.to_task(&global, status, self.slot_value())).queue_or_divert(vm, &global);
     }
 
     /// PerformPromiseThen. `result` is a promise that nothing else resolves, the object of a `PromiseCapability`, or
     /// undefined.
-    #[inline]
+    #[inline(never)]
     pub fn perform_then(&self, cx: &Cx, on_fulfilled: Value, on_rejected: Value, result: Value) {
         let then = Continuation::new(result, cx.current_async_context());
         self.add_handlers(cx, on_fulfilled, on_rejected, then);
@@ -548,8 +676,40 @@ impl JsPromise {
                 (PromiseStatus::Rejected, on_rejected)
             }
         };
-        let handler = callable_or_undefined(handler);
-        then.queue(cx, &cx.global(), status, self.slot_value(), handler);
+        let (global, handler) = (cx.global(), callable_or_undefined(handler));
+        (then.to_task(&global, status, self.slot_value(), handler)).queue(cx, &global);
+    }
+
+    /// `perform_then` with a single function. False, having done nothing, if it takes a call.
+    #[inline(always)]
+    fn try_add_handler_quickly(
+        &self,
+        cx: &Cx,
+        kind: InlineReactionKind,
+        handler: Value,
+        result: Gc<JsPromise>,
+    ) -> bool {
+        let async_context = cx.current_async_context();
+        if self.status() == PromiseStatus::Fulfilled {
+            let handler = match kind {
+                InlineReactionKind::FulfillHandler => handler,
+                _ => Value::UNDEFINED,
+            };
+            let (global, value) = (cx.global(), self.slot_value());
+            return Continuation::new(result.into(), async_context)
+                .to_task(&global, PromiseStatus::Fulfilled, value, handler)
+                .try_queue_quickly(cx, &global);
+        }
+        if !self.is_pending_without_reactions()
+            || !async_context.is_undefined()
+            || self.needs_write_barrier()
+        {
+            return false;
+        }
+        let flags = (kind as u16) << Self::KIND_SHIFT;
+        // SAFETY: none is needed.
+        unsafe { self.set_inline_reaction(flags, Some(result.cell()), handler) };
+        true
     }
 
     #[inline(always)]
@@ -576,7 +736,9 @@ impl JsPromise {
         };
         if self.is_pending_without_reactions() && then.first.is::<JsPromise>() {
             let flags = (kind as u16) << Self::KIND_SHIFT;
-            return self.set_inline_reaction(flags, then.first.as_cell(), handler);
+            // SAFETY: it follows.
+            unsafe { self.set_inline_reaction(flags, then.first.as_cell(), handler) };
+            return self.write_barrier_for_cell();
         }
         self.add_reaction(vm, |older| {
             let handles = Self::status_handled_by(kind);
@@ -586,31 +748,51 @@ impl JsPromise {
 
     // What scripts can change
 
+    /// Whether it is an ordinary promise of that realm, in which the watchpoint is known to hold.
     #[inline(always)]
-    fn inherits_directly(&self, vm: &Vm, name: bun_engine_text::PropertyName<'_>) -> bool {
+    pub fn is_plain_in(&self, global: &GlobalObject, which: RealmWatchpoint) -> bool {
+        global.slot_if_initialized(RealmSlot::promise_shape) == Some(self.shape().cell())
+            && global.watchpoints_unchecked(which).is_watched()
+    }
+
+    #[inline(never)]
+    fn inherits_pristine(&self, vm: &Vm, which: RealmWatchpoint, name: PropertyName<'_>) -> bool {
         let (shape, global) = (self.shape(), self.global());
-        shape == global.promise_shape(vm)
-            || (shape.prototype() == global.promise_prototype(vm).into()
-                && shape.get(name).is_none())
+        global.holds(vm, which)
+            && shape.prototype() == global.promise_prototype(vm).into()
+            && shape.get(name).is_none()
     }
 
     /// Whether `then` is the original function of its realm, and finding it runs no code.
     #[inline(always)]
     pub fn has_pristine_then(&self, vm: &Vm) -> bool {
-        self.global().holds(vm, RealmWatchpoint::PromiseThen)
-            && self.inherits_directly(vm, names::then)
+        let which = RealmWatchpoint::PromiseThen;
+        self.is_plain_in(&self.global(), which) || self.inherits_pristine(vm, which, names::then)
     }
 
     /// The same for `constructor` and its `Symbol.species`.
     #[inline(always)]
     pub fn has_pristine_species(&self, vm: &Vm) -> bool {
-        self.global().holds(vm, RealmWatchpoint::PromiseSpecies)
-            && self.inherits_directly(vm, names::constructor)
+        let which = RealmWatchpoint::PromiseSpecies;
+        self.is_plain_in(&self.global(), which)
+            || self.inherits_pristine(vm, which, names::constructor)
     }
 
+    /// And it belongs to the current realm.
     #[inline(always)]
-    pub(super) fn has_pristine_species_in(&self, cx: &Cx) -> bool {
-        self.global() == cx.global() && self.has_pristine_species(cx)
+    pub fn has_pristine_then_in(&self, cx: &Cx) -> bool {
+        let which = RealmWatchpoint::PromiseThen;
+        self.is_plain_in(&cx.global(), which)
+            || (self.global() == cx.global() && self.inherits_pristine(cx, which, names::then))
+    }
+
+    /// As above.
+    #[inline(always)]
+    pub fn has_pristine_species_in(&self, cx: &Cx) -> bool {
+        let which = RealmWatchpoint::PromiseSpecies;
+        self.is_plain_in(&cx.global(), which)
+            || (self.global() == cx.global()
+                && self.inherits_pristine(cx, which, names::constructor))
     }
 
     #[inline(always)]
@@ -630,7 +812,7 @@ impl JsPromise {
     }
 
     /// `Promise.prototype.then`
-    #[inline]
+    #[inline(always)]
     pub fn then(
         &self,
         cx: &mut Cx,
@@ -641,7 +823,18 @@ impl JsPromise {
             return self.then_with_species(cx, on_fulfilled, on_rejected);
         }
         let result = Self::new(cx);
-        self.perform_then(cx, on_fulfilled, on_rejected, result.into());
+        let (kind, handler, other) = if on_rejected.is_undefined() {
+            (InlineReactionKind::FulfillHandler, on_fulfilled, on_rejected)
+        } else {
+            (InlineReactionKind::RejectHandler, on_rejected, on_fulfilled)
+        };
+        let is_function = |cell: Gc<JsCell>| CellType::FUNCTIONS.contains(cell.cell_type());
+        if !(other.is_undefined()
+            && handler.as_cell().is_some_and(is_function)
+            && self.try_add_handler_quickly(cx, kind, handler, result))
+        {
+            self.perform_then(cx, on_fulfilled, on_rejected, result.into());
+        }
         Ok(result.upcast())
     }
 
@@ -710,10 +903,7 @@ impl InternalReaction {
     #[inline(never)]
     fn resolve_with_object(&self, cx: &mut Cx, object: Gc<JsObject>) -> JsResult<()> {
         let global = cx.global();
-        if let Some(promise) = object.downcast::<JsPromise>()
-            && promise.global() == global
-            && promise.has_pristine_then(cx)
-        {
+        if (object.downcast::<JsPromise>()).is_some_and(|it| it.has_pristine_then_in(cx)) {
             let job = InternalMicrotask::PromiseReactToNativeThenable;
             let arguments = [self.cell, object.into(), self.context, self.async_context];
             global.queue_microtask(cx, job, self.task as u8, arguments);
@@ -734,23 +924,51 @@ impl InternalReaction {
     /// Await, with this for what follows. If it throws, nothing has been arranged.
     #[inline(always)]
     pub fn await_value(self, cx: &mut Cx, value: Value) -> JsResult<()> {
-        let Some(promise) = value.downcast::<JsPromise>() else {
-            return self.resolve(cx, value);
-        };
-        if promise.has_pristine_species_in(cx) {
-            promise.react(cx, self);
+        if self.try_await_quickly(cx, &cx.global(), value) {
             return Ok(());
         }
-        self.await_unusual_promise(cx, promise)
+        let (task, cell) = (self.task, self.cell);
+        Self::await_slowly(cx, value, task, cell, self.context, self.async_context)
+    }
+
+    /// The same in that realm. False, having done nothing, if it takes a call.
+    #[inline(always)]
+    pub(super) fn try_await_quickly(self, vm: &Vm, global: &GlobalObject, value: Value) -> bool {
+        if let Some(object) = value.as_object() {
+            if let Some(promise) = object.downcast::<JsPromise>() {
+                return promise.is_plain_in(global, RealmWatchpoint::PromiseSpecies)
+                    && promise.try_react_quickly(vm, global, self);
+            }
+            if !is_definitely_not_thenable(&object) {
+                return false;
+            }
+        }
+        (self.to_task(global, PromiseStatus::Fulfilled, value)).try_queue_quickly(vm, global)
     }
 
     #[inline(never)]
-    fn await_unusual_promise(&self, cx: &mut Cx, promise: Gc<JsPromise>) -> JsResult<()> {
-        if promise.get(cx, names::constructor)? == cx.promise_constructor().into() {
-            promise.react(cx, *self);
+    fn await_slowly(
+        cx: &mut Cx,
+        value: Value,
+        task: InternalMicrotask,
+        cell: Value,
+        context: Value,
+        async_context: Value,
+    ) -> JsResult<()> {
+        let reaction = InternalReaction {
+            task,
+            cell,
+            context,
+            async_context,
+        };
+        if let Some(promise) = value.downcast::<JsPromise>()
+            && (promise.has_pristine_species_in(cx)
+                || promise.get(cx, names::constructor)? == cx.promise_constructor().into())
+        {
+            promise.react(cx, reaction);
             return Ok(());
         }
-        self.resolve_with_object(cx, promise.upcast())
+        reaction.resolve(cx, value)
     }
 }
 

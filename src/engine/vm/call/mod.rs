@@ -176,8 +176,6 @@ struct ProtoFrame {
     code_block: usize,
     callee: u64,
     argument_count_including_this: u32,
-    /// How many of `arguments` to copy.
-    copied: u32,
     this_value: u64,
     arguments: *const Value,
     executable: usize,
@@ -229,7 +227,6 @@ impl Cx {
         &mut self,
         target: &CallTarget,
         callee: Value,
-        argument_count_including_this: usize,
         this_value: Value,
         arguments: &[Value],
     ) -> JsResult<Value> {
@@ -242,8 +239,7 @@ impl Cx {
         let frame = ProtoFrame {
             code_block: target.code_block,
             callee: callee.to_bits(),
-            argument_count_including_this: argument_count_including_this as u32,
-            copied: arguments.len() as u32,
+            argument_count_including_this: arguments.len() as u32 + 1,
             this_value: this_value.to_bits(),
             arguments: arguments.as_ptr(),
             executable: target.executable,
@@ -264,11 +260,61 @@ impl Cx {
         result
     }
 
+    /// The frame has two words after `this`, whatever the count is. Panics unless the `Vm` is entered.
+    #[inline(always)]
+    fn enter_short(
+        &mut self,
+        target: &CallTarget,
+        callee: Value,
+        argument_count_including_this: u32,
+        this_value: Value,
+        [first, second]: [Value; 2],
+        context: Option<Value>,
+    ) -> JsResult<Value> {
+        let vm = self.vm();
+        debug_assert!(!vm.has_exception());
+        assert!(vm.is_entered());
+        if stack_pointer() < vm.soft_stack_limit() {
+            return Err(self.throw_stack_overflow());
+        }
+        // SAFETY: as above.
+        unsafe {
+            stubs::enter_short(
+                target.entry,
+                vm,
+                target.code_block,
+                callee.to_bits(),
+                argument_count_including_this.into(),
+                this_value.to_bits(),
+                Value::bits_of(context),
+                target.executable,
+                first.to_bits(),
+                second.to_bits(),
+            )
+        }
+    }
+
+    /// `call` with the first `count` of `arguments`, in a microtask.
+    #[inline(always)]
+    pub(crate) fn call_in_job(
+        &mut self,
+        callee: Value,
+        this: Value,
+        count: u32,
+        arguments: [Value; 2],
+    ) -> JsResult<Value> {
+        assert!(count <= 2);
+        match CallTarget::find(callee, Specialization::Call) {
+            Some(target) => self.enter_short(&target, callee, count + 1, this, arguments, None),
+            None => Err(errors::throw_not_a_function(self, callee)),
+        }
+    }
+
     /// Call(F, V, argumentsList)
     #[inline]
     pub fn call(&mut self, callee: Value, this: Value, arguments: &[Value]) -> JsResult<Value> {
         match CallTarget::find(callee, Specialization::Call) {
-            Some(target) => self.enter(&target, callee, arguments.len() + 1, this, arguments),
+            Some(target) => self.enter(&target, callee, this, arguments),
             None => Err(errors::throw_not_a_function(self, callee)),
         }
     }
@@ -283,7 +329,7 @@ impl Cx {
         let Some(target) = CallTarget::find(callee, Specialization::Construct) else {
             return Err(errors::throw_not_a_constructor(self, callee));
         };
-        let result = self.enter(&target, callee, arguments.len() + 1, new_target, arguments)?;
+        let result = self.enter(&target, callee, new_target, arguments)?;
         result
             .as_object()
             .ok_or_else(|| errors::throw_not_a_constructor(self, callee))
@@ -309,13 +355,14 @@ impl Cx {
     ) -> JsResult<Value> {
         let callee = crate::JsCallee::create(self, executable, scope);
         let target = CallTarget::of(&executable, Specialization::Call);
-        self.enter(&target, callee.into(), 1, this, &[])
+        self.enter(&target, callee.into(), this, &[])
     }
 
     /// Enters the code of `callee` where `generator` left it.
     ///
     /// # Safety
     /// The generator was suspended in that code and has just been marked as executing.
+    #[inline(always)]
     pub(crate) unsafe fn resume(
         &mut self,
         callee: Gc<JsObject>,
@@ -326,7 +373,7 @@ impl Cx {
         // SAFETY: what has suspended is a function or the callee of a module.
         let executable = unsafe { JsFunction::executable_or_rare_data(callee.cell()) };
         let target = CallTarget::of(&executable, Specialization::Call);
-        self.enter(&target, callee.into(), 0, generator, &[value, mode])
+        self.enter_short(&target, callee.into(), 0, generator, [value, mode], Some(generator))
     }
 }
 

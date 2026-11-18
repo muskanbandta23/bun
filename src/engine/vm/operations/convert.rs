@@ -84,7 +84,7 @@ impl Value {
         })
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn is_callable(self) -> bool {
         self.as_object().is_some_and(|object| object.is_callable())
     }

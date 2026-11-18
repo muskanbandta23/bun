@@ -182,6 +182,9 @@ impl Types {
     }
 
     fn is_defined_subtype(&self, mut sub: TypeIndex, sup: TypeIndex) -> bool {
+        if sub == sup {
+            return true;
+        }
         let has_rtt = |index| (self.definition(index).group as usize) < self.groups.len();
         if self.depth(sub) > self.depth(sup) + SHORT_WALK && has_rtt(sub) && has_rtt(sup) {
             return self.rtt(sub).is_subtype_of(self.rtt(sup));

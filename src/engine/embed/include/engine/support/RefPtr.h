@@ -152,4 +152,5 @@ struct GetPtrHelper<RefPtr<T, PtrTraits, RefDerefTraits>> {
 
 }
 
+using WTF::adoptRef;
 using WTF::RefPtr;

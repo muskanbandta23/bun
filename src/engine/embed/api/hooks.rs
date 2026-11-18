@@ -22,7 +22,7 @@ unsafe extern "C" {
 }
 
 pub(super) static REALM_HOOKS: RealmHooks = RealmHooks {
-    modules: ModuleHooks {},
+    modules: ModuleHooks::DEFAULT,
     promise_rejection_tracker: |cx, promise, operation| {
         engine_host_track_promise_rejection(cx, promise, operation);
     },

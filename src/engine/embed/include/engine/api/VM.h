@@ -24,7 +24,7 @@ class TypedArrayController;
 class UnlinkedProgramCodeBlock;
 
 enum VMIdentifierType {};
-using VMIdentifier = AtomicObjectIdentifier<VMIdentifierType>;
+using VMIdentifier = ObjectIdentifier<VMIdentifierType>;
 using VMMalloc = FastMalloc;
 using ErrorInfoFunction = Function<String(VM&, Vector<StackFrame>&, unsigned& line, unsigned& column, String& sourceURL)>;
 using ErrorInfoFunctionJSValue = Function<JSValue(VM&, Vector<StackFrame>&, unsigned& line, unsigned& column, String& sourceURL, JSObject*)>;

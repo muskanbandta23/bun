@@ -117,3 +117,13 @@ opaque  LineColumn struct JSC::LineColumn
 counted SourceProviderRef JSC::SourceProvider
 value   SourceType JSC::SourceProviderSourceType
 cell    JsPromise class JSC::JSPromise
+
+# Errors, stack and code
+
+# Buffers, WebAssembly and FFI
+
+# Promises, collections, text and time
+
+# Modules, scopes and cached bytecode
+
+# Inspector, profilers and options

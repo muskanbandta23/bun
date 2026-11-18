@@ -274,6 +274,16 @@ ENGINE_OFFSET(GlobalObject, slots, 328)
 ENGINE_LIMIT(globalObjectSizeAfterSlots, 1536, size_of::<GlobalObject>() - GlobalObject_slots - 8 * RealmSlot::COUNT)
 ENGINE_OFFSET(GlobalProxy, target, 16)
 
+// Errors, stack and code
+
+// Buffers, WebAssembly and FFI
+
+// Promises, collections, text and time
+
+// Modules, scopes and cached bytecode
+
+// Inspector, profilers and options
+
 } // namespace Engine::Layout
 
 #undef ENGINE_OFFSET

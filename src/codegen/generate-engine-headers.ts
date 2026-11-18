@@ -120,8 +120,8 @@ writeIfNotChanged(
 // ─── Functions ───
 
 const strings: Record<string, { raw: string; cpp: string; adopt: (p: string) => string }> = {
-  StringRef: { raw: "WTF::StringImpl", cpp: "WTF::String", adopt: p => `WTF::String(adoptRef(${p}))` },
-  Atom: { raw: "WTF::AtomStringImpl", cpp: "WTF::AtomString", adopt: p => `WTF::AtomString(adoptRef(${p}))` },
+  StringRef: { raw: "WTF::StringImpl", cpp: "WTF::String", adopt: p => `WTF::String(WTF::adoptRef(${p}))` },
+  Atom: { raw: "WTF::AtomStringImpl", cpp: "WTF::AtomString", adopt: p => `WTF::AtomString(WTF::adoptRef(${p}))` },
   Identifier: { raw: "WTF::UniquedStringImpl", cpp: "JSC::Identifier", adopt: p => `JSC::Identifier::adopt(${p})` },
 };
 
@@ -227,8 +227,8 @@ function result(type: string): { cpp: string; convert: (call: string) => string 
   const known = types.get(bare);
   if (known?.kind === "counted")
     return isOptional
-      ? { cpp: `WTF::RefPtr<${known.cpp}>`, convert: call => `adoptRef<${known.cpp}>(${call})` }
-      : { cpp: `WTF::Ref<${known.cpp}>`, convert: call => `adoptRef(*${call})` };
+      ? { cpp: `WTF::RefPtr<${known.cpp}>`, convert: call => `WTF::adoptRef(${call})` }
+      : { cpp: `WTF::Ref<${known.cpp}>`, convert: call => `WTF::adoptRef(*${call})` };
   if (known?.kind === "wrapped") return { cpp: known.cpp, convert: call => call };
   return { cpp: raw(type, false), convert: call => call };
 }

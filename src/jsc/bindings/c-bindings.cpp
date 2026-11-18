@@ -1,5 +1,6 @@
 // when we don't want to use @cInclude, we can just stick wrapper functions here
 #include "root.h"
+#include <cstdarg>
 #include "OwnedFd.h"
 #include <cstdio>
 #include <cstdlib>

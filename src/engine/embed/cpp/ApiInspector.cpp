@@ -58,7 +58,7 @@ void JSGlobalObjectInspectorController::disconnectFrontend(FrontendChannel& fron
     Engine::inspector_will_disconnect_frontend(m_backend, &m_globalObject);
     for (auto& agent : m_agents)
         agent->setEnabled(false);
-    m_frontends.removeFirst(&frontend);
+    m_frontends.removeFirstMatching([&](auto* it) { return it == &frontend; });
     if (m_frontends.isEmpty())
         Engine::inspector_did_disconnect_last_frontend(m_backend);
 }

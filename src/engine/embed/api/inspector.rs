@@ -225,9 +225,13 @@ fn inspector_did_evaluate_script(backend: &InspectorBackend, start: f64, reason:
 }
 
 #[export]
-fn global_has_debugger(_: &GlobalObject) -> bool {
-    false
+fn global_has_debugger(global: &GlobalObject) -> bool {
+    global.debugger().is_some()
 }
 
 #[export]
-fn global_report_source_to_debugger(_: &Cx, _: &SourceProvider) {}
+fn global_report_source_to_debugger(cx: &Cx, provider: &SourceProvider) {
+    if let Some(debugger) = cx.global().debugger() {
+        debugger.did_parse(cx, provider, None);
+    }
+}

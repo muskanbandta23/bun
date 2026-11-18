@@ -158,6 +158,7 @@ public:
     static RefPtr<VM> tryCreate(HeapType = HeapType::Small);
     void ref() const { m_refCount.fetch_add(1, std::memory_order_relaxed); }
     void deref() const { Engine::vm_release(this); }
+    unsigned refCount() const { return m_refCount.load(std::memory_order_relaxed); }
     void refSuppressingSaferCPPChecking() const { ref(); }
     void derefSuppressingSaferCPPChecking() const { deref(); }
 

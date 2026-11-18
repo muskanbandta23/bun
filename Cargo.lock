@@ -905,6 +905,7 @@ dependencies = [
 name = "bun_engine_vm"
 version = "0.0.0"
 dependencies = [
+ "allocator-api2",
  "bitflags",
  "bun_alloc",
  "bun_engine_bigint",

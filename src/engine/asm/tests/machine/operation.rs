@@ -13,7 +13,7 @@ pub(crate) struct Operation {
 }
 
 impl Operation {
-    /// Runs with the usual scratch registers only.
+    /// Runs with the usual scratch registers only, unless it tells what it names.
     pub(crate) fn custom(
         name: String,
         emit: impl Fn(&mut MacroAssembler, Label) + 'static,
@@ -22,6 +22,13 @@ impl Operation {
             describe: Box::new(move || name.clone()),
             emit: Box::new(emit),
             names: abi::ALL,
+        }
+    }
+
+    pub(crate) fn naming(self, names: impl Names) -> Self {
+        Self {
+            names: names.names(),
+            ..self
         }
     }
 

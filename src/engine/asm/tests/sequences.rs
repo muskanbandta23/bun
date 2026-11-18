@@ -173,6 +173,10 @@ fn comparisons() {
         branch32(Cond::Above, X1, 0xffff, t) => "cmp w1, #16, lsl #12; b.hs #-4",
         branch32(Cond::Lt, X1, 4097, t) => "cmp w1, #1, lsl #12; b.le #-4",
         branch32(Cond::Eq, X1, 0xffff, t) => "movz w16, #0xffff; cmp w1, w16; b.eq #-8",
+        branch32(Cond::Eq, X1, 0x1_f600, t)
+            => "sub w16, w1, #0x1f, lsl #12; cmp w16, #0x600; b.eq #-8",
+        branch64(Cond::Ne, X1, -0x1_2345, t)
+            => "add x16, x1, #0x13, lsl #12; cmp x16, #0xcbb; b.ne #-8",
         branch32(Cond::Ne, Address::new(X2, 0), 0xffff, t)
             => "ldr w16, [x2]; movz w17, #0xffff; cmp w16, w17; b.ne #-12",
         branch8(Cond::Eq, byte, 0, t) => "ldrb w16, [x2, #5]; cbz w16, #-4",

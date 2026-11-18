@@ -52,7 +52,19 @@ fn moving(arguments: Vec<Argument>) -> Case {
     let emitted = arguments.clone();
     let name = format!("move_arguments({arguments:x?})");
     let operation = Operation::custom(name, move |masm, _| masm.move_arguments(&emitted));
-    Case::new(operation, move |m| {
+    let mut names = RegisterSet::of(&abi::ARGUMENT_GPRS, &abi::ARGUMENT_FPRS);
+    for &argument in &arguments {
+        match argument {
+            Argument::Gpr(reg) => names.insert(reg),
+            Argument::Fpr(reg) => names.insert(reg),
+            Argument::Imm(_) => {}
+            Argument::Load32(address)
+            | Argument::Load64(address)
+            | Argument::LoadF64(address)
+            | Argument::AddressOf(address) => names.insert(address.base()),
+        }
+    }
+    Case::new(operation.naming(names), move |m| {
         let values: Vec<u64> = arguments.iter().map(|&each| value_of(m, each)).collect();
         let (mut gprs, mut fprs) = (abi::ARGUMENT_GPRS.iter(), abi::ARGUMENT_FPRS.iter());
         let mut on_stack = 0;

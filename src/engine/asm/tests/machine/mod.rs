@@ -27,6 +27,7 @@ use bun_engine_exec_memory::{CodeHandle, Priority, link};
 use memory::{Arena, STACK_REACH, WINDOW_SIZE};
 pub(crate) use model::{Machine, Outcome, Registers};
 use operands::{SP, operand_registers};
+use operation::Names;
 pub(crate) use operation::Operation;
 #[allow(unused_imports)]
 pub(crate) use operation::op;
@@ -341,7 +342,10 @@ impl Harness {
     fn other_scratch(&mut self, case: &Case) -> Scratch {
         let usual = Self::default_scratch();
         let mut free = self.operand_registers - case.operation.names - case.clobbers;
-        if free.is_empty() {
+        for &memory in &case.memories {
+            free -= memory.names();
+        }
+        if free.gprs().count() < 2 || free.fprs().count() < 2 {
             return usual;
         }
         let mut take = |bank| {

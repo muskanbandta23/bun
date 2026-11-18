@@ -44,7 +44,7 @@ fn jumps() {
             let jump = Operation::custom(format!("jump_indirect({place:x?})"), move |masm, _| {
                 masm.jump_indirect(place)
             });
-            let case = Case::new(jump, |_| true).reads(Size::S64, place);
+            let case = Case::new(jump.naming(place), |_| true).reads(Size::S64, place);
             h.add(case.given(move |m, _| {
                 put(m, place, address);
                 true
@@ -94,7 +94,7 @@ fn calls_return() {
         let call = Operation::custom(format!("call_indirect({place:x?})"), move |masm, _| {
             masm.call_indirect(place)
         });
-        let case = Case::new(call, called).reads(Size::S64, place);
+        let case = Case::new(call.naming(place), called).reads(Size::S64, place);
         let case = case.given(move |m, _| {
             put(m, place, address);
             true
@@ -161,7 +161,7 @@ fn jump_tables() {
             }
             masm.bind(done);
         });
-        let case = Case::new(jump, move |m| {
+        let case = Case::new(jump.naming([index, result]), move |m| {
             m.set64(result, m.get64(index));
             if index != result {
                 m.forget(index);

@@ -1,6 +1,7 @@
 //! Comparisons and tests, and the branches that need no flags.
 
-use super::immediate::BitmaskImm;
+use super::constant::ConstantMove;
+use super::immediate::{ArithmeticImm, BitmaskImm};
 use super::macro_assembler::{MacroAssembler, all_ones, unsigned};
 use super::opcode::{AddSub, Bitfield, Cc};
 use super::registers::{SP, ZR};
@@ -136,8 +137,21 @@ impl MacroAssembler {
             self.asm.add_sub_imm(op, width, ZR, lhs, imm);
             return cond.into();
         }
-        let rhs = self.constant_beside(lhs, width, rhs);
-        self.add_sub_registers(AddSub::Subs, width, ZR, lhs, rhs);
+        let (temp, constant) = (
+            self.scratch_beside(lhs),
+            ConstantMove::new(width, rhs as u64),
+        );
+        if matches!(cond, Cond::Eq | Cond::Ne)
+            && constant.instructions() > 1
+            && let Some((op, high)) = AddSub::Sub.with_constant(width, rhs & !0xfff)
+            && let Some(low) = ArithmeticImm::new(rhs as u64 & 0xfff)
+        {
+            self.asm.add_sub_imm(op, width, temp, lhs, high);
+            self.asm.cmp_imm(width, temp, low);
+            return cond.into();
+        }
+        self.asm.move_constant(temp, constant);
+        self.add_sub_registers(AddSub::Subs, width, ZR, lhs, temp);
         cond.into()
     }
 

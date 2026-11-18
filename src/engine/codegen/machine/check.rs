@@ -74,7 +74,9 @@ impl<I: Isa> Checker<'_, I> {
                 .and_then(|cell| contents.0.get(&cell));
             let fits = |vreg: VReg| {
                 let class = self.class(vreg);
-                class == step.class || step.class == Class::Int64 && class == Class::Int32
+                step.is_swap
+                    || class == step.class
+                    || step.class == Class::Int64 && class == Class::Int32
             };
             first
                 .into_iter()

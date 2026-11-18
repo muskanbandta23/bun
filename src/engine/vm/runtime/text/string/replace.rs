@@ -1,6 +1,5 @@
-use core::ops::Range;
-
-use bun_engine_text::{StringBuilder, Text};
+use bun_engine_regexp::{GroupNames, Template};
+use bun_engine_text::Text;
 
 use crate::{Cx, Gc, JsResult, JsString, StringSplicer, Value};
 
@@ -18,35 +17,6 @@ impl ReplaceMode {
             ReplaceMode::All => usize::MAX,
         }
     }
-}
-
-const DOLLAR: u16 = b'$' as u16;
-
-/// GetSubstitution without captures.
-fn append_substitution(
-    out: &mut StringBuilder,
-    template: Text<'_>,
-    first_dollar: usize,
-    subject: Text<'_>,
-    matched: Range<usize>,
-) {
-    let (mut done, mut dollar) = (0, Some(first_dollar));
-    while let Some(at) = dollar {
-        let value = match template.get(at + 1).and_then(|it| u8::try_from(it).ok()) {
-            Some(b'$') => Some(Text::from_ascii("$")),
-            Some(b'&') => Some(subject.slice(matched.clone())),
-            Some(b'`') => Some(subject.slice(0..matched.start)),
-            Some(b'\'') => Some(subject.slice_from(matched.end)),
-            _ => None,
-        };
-        if let Some(value) = value {
-            out.push_text(template.slice(done..at));
-            out.push_text(value);
-            done = at + 2;
-        }
-        dollar = template.find_unit(DOLLAR, done.max(at + 1));
-    }
-    out.push_text(template.slice_from(done));
 }
 
 impl JsString {
@@ -76,10 +46,10 @@ impl JsString {
         template: Gc<JsString>,
     ) -> JsResult<Gc<JsString>> {
         let view = template.view(cx)?;
-        match (view.text().find_unit(DOLLAR, 0), mode) {
-            (None, ReplaceMode::First) => self.replace_first_literally(cx, search, template),
-            (None, ReplaceMode::All) => self.replace_all_literally(cx, search, &template),
-            (Some(dollar), _) => self.replace_expanding(cx, mode, search, view.text(), dollar),
+        match (view.text().contains_unit(b'$'.into()), mode) {
+            (false, ReplaceMode::First) => self.replace_first_literally(cx, search, template),
+            (false, ReplaceMode::All) => self.replace_all_literally(cx, search, &template),
+            (true, _) => self.replace_expanding(cx, mode, search, view.text()),
         }
     }
 
@@ -125,14 +95,15 @@ impl JsString {
         mode: ReplaceMode,
         search: &JsString,
         template: Text<'_>,
-        dollar: usize,
     ) -> JsResult<Gc<JsString>> {
+        let no_names = GroupNames::default();
+        let template = cx.or_out_of_memory(Template::new(template, 0, &no_names))?;
         let (view, search) = (self.view(cx)?, search.view(cx)?);
         let mut splicer = StringSplicer::new(&view);
         for start in view.text().matches(search.text()).take(mode.limit()) {
             let range = start..start + search.text().len();
             splicer.replace_with(range.clone(), |out| {
-                append_substitution(out, template, dollar, view.text(), range);
+                template.append(out, view.text(), range, &[]);
             });
         }
         Ok(splicer.finish(cx)?.unwrap_or_else(|| self.into()))

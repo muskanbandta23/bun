@@ -8,7 +8,6 @@ mod matching;
 mod prototype;
 mod replace;
 mod split;
-#[allow(dead_code)]
 pub(crate) mod string_methods;
 
 use bun_engine_text::Text;

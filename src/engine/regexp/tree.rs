@@ -4,6 +4,7 @@ use core::marker::PhantomData;
 use core::ops::{Index, Range};
 
 use bun_engine_unicode::IgnoreCase;
+use smallvec::{Array, SmallVec};
 
 use crate::set::Set;
 use crate::{Error, Flags};
@@ -20,7 +21,7 @@ impl NodeId {
 
 /// Equal sets nearly always have the same one.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub struct SetId(u32);
+pub struct SetId(pub(crate) u32);
 
 impl SetId {
     #[inline]
@@ -142,27 +143,21 @@ pub enum Node {
     },
 }
 
-/// A node comes after its children. As parsed, the last node is the root and every other has one parent.
+/// A node comes after its children. The last one is the root, and every other has one parent.
 pub struct Tree {
-    nodes: Vec<Node>,
-    children: Vec<NodeId>,
-    chars: Vec<u32>,
-    groups: Vec<Group>,
-    sets: Vec<Set>,
-    /// By hash, once there are many: the index of a set plus one.
-    set_slots: Vec<u32>,
-    owned_ranges: usize,
+    nodes: SmallVec<[Node; 12]>,
+    children: SmallVec<[NodeId; 12]>,
+    chars: SmallVec<[u32; 24]>,
+    groups: SmallVec<[Group; 4]>,
+    sets: SmallVec<[Set; 3]>,
     group_count: Group,
     flags: Flags,
 }
 
 const MAX_ELEMENTS: usize = 1 << 22;
-const MAX_OWNED_RANGES: usize = 1 << 23;
-const SETS_COMPARED_IN_TURN: usize = 8;
-const PROBES: usize = 4;
 
-#[inline]
-fn reserve<T>(elements: &mut Vec<T>, additional: usize) -> Result<(), Error> {
+#[inline(always)]
+fn reserve<A: Array>(elements: &mut SmallVec<A>, additional: usize) -> Result<(), Error> {
     if additional > elements.capacity() - elements.len() {
         grow(elements, additional)?;
     }
@@ -170,36 +165,38 @@ fn reserve<T>(elements: &mut Vec<T>, additional: usize) -> Result<(), Error> {
 }
 
 #[cold]
-fn grow<T>(elements: &mut Vec<T>, additional: usize) -> Result<(), Error> {
-    let room = MAX_ELEMENTS - elements.len();
-    if additional > room {
+fn grow<A: Array>(elements: &mut SmallVec<A>, additional: usize) -> Result<(), Error> {
+    let required = elements.len() + additional;
+    if required > MAX_ELEMENTS {
         return Err(Error::PatternTooLarge);
     }
-    let doubled = elements.len().max(4).clamp(additional, room);
     elements
-        .try_reserve_exact(doubled)
+        .try_grow((required * 2).next_power_of_two().min(MAX_ELEMENTS))
         .map_err(|_| Error::OutOfMemory)
 }
 
-fn append<T: Copy>(elements: &mut Vec<T>, new: &[T]) -> Result<Span<T>, Error> {
+#[inline(always)]
+fn append<A: Array<Item: Copy>>(
+    elements: &mut SmallVec<A>,
+    new: &[A::Item],
+) -> Result<Span<A::Item>, Error> {
     reserve(elements, new.len())?;
     let start = elements.len();
-    elements.extend_from_slice(new);
-    Ok(Span::new(start..elements.len()))
+    elements.extend(new.iter().copied());
+    Ok(Span::new(start..start + new.len()))
 }
 
 impl Tree {
     /// Without a node.
-    pub fn new(flags: Flags, group_count: Group) -> Tree {
+    #[inline]
+    pub(crate) fn new(flags: Flags) -> Tree {
         Tree {
-            nodes: Vec::new(),
-            children: Vec::new(),
-            chars: Vec::new(),
-            groups: Vec::new(),
-            sets: Vec::new(),
-            set_slots: Vec::new(),
-            owned_ranges: 0,
-            group_count,
+            nodes: SmallVec::new(),
+            children: SmallVec::new(),
+            chars: SmallVec::new(),
+            groups: SmallVec::new(),
+            sets: SmallVec::new(),
+            group_count: 0,
             flags,
         }
     }
@@ -251,20 +248,16 @@ impl Tree {
         }
     }
 
-    #[inline]
-    pub fn add(&mut self, node: Node) -> Result<NodeId, Error> {
+    #[inline(always)]
+    pub(crate) fn add(&mut self, node: Node) -> Result<NodeId, Error> {
+        let id = NodeId(self.nodes.len() as u32);
         reserve(&mut self.nodes, 1)?;
         self.nodes.push(node);
-        Ok(self.root())
+        Ok(id)
     }
 
     pub(crate) fn set_group_count(&mut self, group_count: Group) {
         self.group_count = group_count;
-    }
-
-    pub(crate) fn reserve(&mut self, nodes: usize, chars: usize) -> Result<(), Error> {
-        reserve(&mut self.nodes, nodes)?;
-        reserve(&mut self.chars, chars)
     }
 
     #[inline]
@@ -276,83 +269,47 @@ impl Tree {
         self.nodes[id.index()] = node;
     }
 
-    #[inline]
-    pub(crate) fn char_count(&self) -> usize {
-        self.chars.len()
+    /// Returns the number of characters that the tree has now.
+    #[inline(always)]
+    pub(crate) fn push_char(&mut self, c: u32) -> Result<usize, Error> {
+        let count = self.chars.len() + 1;
+        reserve(&mut self.chars, 1)?;
+        self.chars.push(c);
+        Ok(count)
     }
 
-    #[inline]
+    /// Returns the number of characters that the tree has now.
+    #[inline(always)]
     pub(crate) fn extend_chars(
         &mut self,
         most: usize,
         chars: impl Iterator<Item = u32>,
-    ) -> Result<(), Error> {
+    ) -> Result<usize, Error> {
         reserve(&mut self.chars, most)?;
         self.chars.extend(chars);
-        Ok(())
+        Ok(self.chars.len())
     }
 
-    pub fn add_children(&mut self, children: &[NodeId]) -> Result<Span<NodeId>, Error> {
+    #[inline]
+    pub(crate) fn add_children(&mut self, children: &[NodeId]) -> Result<Span<NodeId>, Error> {
         append(&mut self.children, children)
     }
 
-    pub fn add_chars(&mut self, chars: &[u32]) -> Result<Span<u32>, Error> {
-        append(&mut self.chars, chars)
-    }
-
-    pub fn add_groups(&mut self, groups: &[Group]) -> Result<Span<Group>, Error> {
+    pub(crate) fn add_groups(&mut self, groups: &[Group]) -> Result<Span<Group>, Error> {
         append(&mut self.groups, groups)
     }
 
-    pub fn add_set(&mut self, set: Set) -> Result<SetId, Error> {
-        if let Some(index) = self.find_set(&set) {
-            return Ok(SetId(index as u32));
-        }
-        self.owned_ranges += set.owned_ranges();
-        if self.owned_ranges > MAX_OWNED_RANGES {
-            return Err(Error::PatternTooLarge);
-        }
+    #[inline]
+    pub(crate) fn add_set(&mut self, set: Set) -> Result<SetId, Error> {
+        let id = SetId(self.sets.len() as u32);
         reserve(&mut self.sets, 1)?;
         self.sets.push(set);
-        let index = self.sets.len() - 1;
-        if self.sets.len() * 2 <= self.set_slots.len() {
-            self.remember_set(index);
-        } else if self.sets.len() > SETS_COMPARED_IN_TURN {
-            let slots = (self.sets.len() * 4).next_power_of_two();
-            self.set_slots.clear();
-            self.set_slots
-                .try_reserve_exact(slots)
-                .map_err(|_| Error::OutOfMemory)?;
-            self.set_slots.resize(slots, 0);
-            (0..=index).for_each(|index| self.remember_set(index));
-        }
-        Ok(SetId(index as u32))
+        Ok(id)
     }
 
-    fn set_probes(&self, set: &Set) -> impl Iterator<Item = usize> + use<> {
-        let (hash, mask) = ((set.hash() >> 32) as usize, self.set_slots.len() - 1);
-        (0..PROBES).map(move |probe| (hash + probe) & mask)
-    }
-
-    fn find_set(&self, set: &Set) -> Option<usize> {
-        if self.set_slots.is_empty() {
-            return self.sets.iter().position(|known| known == set);
-        }
-        self.set_probes(set)
-            .map_while(|slot| (self.set_slots[slot] as usize).checked_sub(1))
-            .find(|&index| self.sets[index] == *set)
-    }
-
-    /// Displaces another one if all probes are taken.
-    fn remember_set(&mut self, index: usize) {
-        let mut chosen = 0;
-        for slot in self.set_probes(&self.sets[index]) {
-            chosen = slot;
-            if self.set_slots[slot] == 0 {
-                break;
-            }
-        }
-        self.set_slots[chosen] = index as u32 + 1;
+    #[inline]
+    pub(crate) fn sets(&self) -> &[Set] {
+        &self.sets
     }
 }
 

@@ -51,7 +51,7 @@ fn hooks() -> Hooks {
         debugger_did_unwind_frame: |_, _| {},
         visit_roots: |_, _| {},
         visit_code_on_stack: |_, _, _| {},
-        reconcile_weak_references: |_, _| {},
+        reconcile_weak_references: bun_engine_inspector::profiling::reconcile_weak_references,
         did_collect: |_, _| {},
     }
 }

@@ -77,7 +77,7 @@ impl Session<'_> {
     #[inline(always)]
     pub(super) fn binding_name<const BUILD: bool>(&mut self, binder: Binder) -> Parsed<Pattern> {
         let token = self.token();
-        if token.kind != TokenKind::Identifier {
+        if token.kind() != TokenKind::Identifier {
             if binder.is_lexical() && token.spells(TokenKind::Let) {
                 return Err(self.fail(LET_IN_LEXICAL_DECLARATION));
             }
@@ -91,13 +91,13 @@ impl Session<'_> {
     #[inline(always)]
     fn bind<const BUILD: bool>(&mut self, binder: Binder, token: Token) -> Parsed<Pattern> {
         let name = token.name();
-        self.declare_bound_name(binder, name, token.start)?;
+        self.declare_bound_name(binder, name, token.start())?;
         if BUILD && binder != Binder::Assignment && self.context.contains(Context::EXPORTING) {
             self.export_declaration(name, "Cannot export a duplicate name '%'")?;
         }
         let declaration = binder.declaration();
         let kind = PatternKind::Binding { name, declaration };
-        Ok(self.pattern_node::<BUILD>(token.start, token.end, kind))
+        Ok(self.pattern_node::<BUILD>(token.start(), token.end(), kind))
     }
 
     fn declare_bound_name(&mut self, binder: Binder, name: Name, start: u32) -> Parsed<()> {
@@ -377,7 +377,7 @@ impl Session<'_> {
         binder: Binder,
     ) -> Parsed<(PropertyKey, Pattern)> {
         let token = self.token();
-        if token.kind == TokenKind::EscapedKeyword || self.is_name(token) {
+        if token.kind() == TokenKind::EscapedKeyword || self.is_name(token) {
             self.next();
             let pattern = if self.eat(TokenKind::Colon) {
                 self.element::<BUILD>(binder)?
@@ -386,7 +386,7 @@ impl Session<'_> {
             };
             return Ok((PropertyKey::Named(token.name()), pattern));
         }
-        let key = match token.kind {
+        let key = match token.kind() {
             TokenKind::Number | TokenKind::BigInt => {
                 PropertyKey::Named(self.numeric_key::<BUILD>()?)
             }
@@ -414,7 +414,7 @@ impl Session<'_> {
 
     #[cold]
     fn fail_for_colon(&mut self, binder: Binder, key: Token) -> Failed {
-        let sentence = match key.kind {
+        let sentence = match key.kind() {
             _ if binder == Binder::Assignment => return Failed,
             TokenKind::Enum => "Cannot use abbreviated destructuring syntax for reserved name '%'",
             TokenKind::ReservedInStrictCode => {
@@ -433,11 +433,11 @@ impl Session<'_> {
         token: Token,
     ) -> Parsed<Pattern> {
         let name = token.name();
-        if token.kind != TokenKind::Identifier {
-            if binder.is_lexical() && token.kind == TokenKind::Let {
+        if token.kind() != TokenKind::Identifier {
+            if binder.is_lexical() && token.kind() == TokenKind::Let {
                 return Err(self.reject("Cannot use the keyword 'let' as a lexical variable name"));
             }
-            if token.kind == TokenKind::EscapedKeyword
+            if token.kind() == TokenKind::EscapedKeyword
                 && (!self.is_unreserved(token) || (binder.is_lexical() && name == Name::LET))
             {
                 return Err(self.reject_naming(ABBREVIATED_KEYWORD, name));

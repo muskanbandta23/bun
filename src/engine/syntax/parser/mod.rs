@@ -280,12 +280,12 @@ impl Session<'_> {
 
     #[inline(always)]
     fn kind(&self) -> TokenKind {
-        self.lexer.token.kind
+        self.lexer.token.kind()
     }
 
     #[inline(always)]
     fn at(&self, kind: TokenKind) -> bool {
-        self.lexer.token.kind == kind
+        self.lexer.token.kind() == kind
     }
 
     #[inline(always)]
@@ -296,7 +296,7 @@ impl Session<'_> {
     /// Of the token.
     #[inline(always)]
     fn start(&self) -> u32 {
-        self.lexer.token.start
+        self.lexer.token.start()
     }
 
     #[inline(always)]
@@ -306,7 +306,7 @@ impl Session<'_> {
 
     #[inline(always)]
     fn follows_newline(&self) -> bool {
-        self.lexer.token.follows_newline
+        self.lexer.token.follows_newline()
     }
 
     #[inline(always)]

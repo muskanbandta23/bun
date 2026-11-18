@@ -42,8 +42,8 @@ impl Session<'_> {
         name: Token,
         r#in: In,
     ) -> Parsed<Expression> {
-        self.lexer.restore(name, name.start);
-        self.arrow_function::<BUILD>(name.start, FunctionFlags::empty(), r#in)
+        self.lexer.restore(name, name.start());
+        self.arrow_function::<BUILD>(name.start(), FunctionFlags::empty(), r#in)
     }
 
     #[inline(never)]
@@ -52,7 +52,7 @@ impl Session<'_> {
         r#in: In,
     ) -> Parsed<Expression> {
         let mark = self.mark();
-        let guess = self.guess_arrow(mark.token.end);
+        let guess = self.guess_arrow(mark.token.end());
         self.expression_or_arrow::<BUILD>(&mark, guess, false, r#in)
     }
 
@@ -72,8 +72,8 @@ impl Session<'_> {
         self.next();
         let guess = match self.kind() {
             _ if self.follows_newline() => Guess::No,
-            TokenKind::OpenParen => self.guess_arrow(self.token().end),
-            TokenKind::Identifier if self.peek().kind == TokenKind::Arrow => Guess::Yes,
+            TokenKind::OpenParen => self.guess_arrow(self.token().end()),
+            TokenKind::Identifier if self.peek().kind() == TokenKind::Arrow => Guess::Yes,
             _ => Guess::No,
         };
         if guess != Guess::Yes {
@@ -91,7 +91,7 @@ impl Session<'_> {
         is_async: bool,
         r#in: In,
     ) -> Parsed<Expression> {
-        let start = mark.token.start;
+        let start = mark.token.start();
         if guess == Guess::Yes
             && let Some(arrow) = self.presumed_arrow::<BUILD>(mark, is_async, r#in)
         {
@@ -120,7 +120,7 @@ impl Session<'_> {
     ) -> Option<Parsed<Expression>> {
         let flags = arrow_flags(is_async);
         match self.begin_function(FunctionKind::Arrow, flags, None, None) {
-            Ok(begun) => Some(self.rest_of_arrow::<BUILD>(mark.token.start, begun, r#in)),
+            Ok(begun) => Some(self.rest_of_arrow::<BUILD>(mark.token.start(), begun, r#in)),
             Err(Failed) if self.may_try_again() => {
                 self.rewind(mark);
                 None
@@ -153,7 +153,7 @@ impl Session<'_> {
         }
         match self.are_arrow_parameters() {
             Ok(true) => {
-                return self.arrow_function::<BUILD>(mark.token.start, arrow_flags(is_async), r#in);
+                return self.arrow_function::<BUILD>(mark.token.start(), arrow_flags(is_async), r#in);
             }
             Err(Failed) if is_at_arrow => return Err(Failed),
             _ => {}
@@ -169,7 +169,7 @@ impl Session<'_> {
                 return Ok(false);
             }
             self.refuse_await(self.token(), "parameter name")?;
-            return Ok(self.peek().kind == TokenKind::Arrow);
+            return Ok(self.peek().kind() == TokenKind::Arrow);
         }
         let mark = self.mark();
         let kept =
@@ -178,7 +178,7 @@ impl Session<'_> {
         let outer = self.enter_function(
             FunctionKind::Arrow,
             context | self.context & kept,
-            mark.token.start,
+            mark.token.start(),
         );
         self.next();
         let result = self.parameter_list::<false>(FunctionKind::Arrow);
@@ -314,7 +314,7 @@ impl Session<'_> {
         let (mark, assignments) = (self.mark(), self.assignments);
         match self.conditional::<BUILD>(r#in) {
             Ok(left) if left.class != Class::Literal || !self.at(TokenKind::Assign) => {
-                self.rest_of_assignment::<BUILD>(mark.token.start, left, assignments, r#in)
+                self.rest_of_assignment::<BUILD>(mark.token.start(), left, assignments, r#in)
             }
             left => self.destructuring_assignment::<BUILD>(&mark, left.is_err(), r#in),
         }
@@ -354,6 +354,6 @@ impl Session<'_> {
             pattern,
             value: value.id(),
         };
-        Ok(self.node::<BUILD>(value.class.of_wrapper(), mark.token.start, kind))
+        Ok(self.node::<BUILD>(value.class.of_wrapper(), mark.token.start(), kind))
     }
 }

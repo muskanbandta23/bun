@@ -3,10 +3,10 @@
 use bun_engine_number::{NumberText, decimal_literal_value, radix_literal_value};
 use bun_engine_text::Text;
 
-use super::Lexer;
+use super::{Flaw, Lexer};
 use crate::chars::{self, Start};
 use crate::names::Name;
-use crate::token::{Token, TokenKind};
+use crate::token::{Detail, Token, TokenKind};
 
 /// Any number of so many digits fits in `Token::value`.
 const PLAIN_DIGITS: usize = 9;
@@ -40,6 +40,14 @@ impl Radix {
     }
 }
 
+/// The kind of token, and where it ends.
+type Scanned = Result<(TokenKind, usize), Flaw>;
+
+fn unterminated(end: usize, message: &'static str) -> Scanned {
+    let kind = TokenKind::Unterminated;
+    Err(Flaw { kind, end, message })
+}
+
 /// LegacyOctalIntegerLiteral of ECMA-262.
 fn is_legacy_octal(literal: &[u8]) -> bool {
     matches!(literal, [b'0', rest @ ..] if rest.iter().all(|digit| matches!(digit, b'0'..=b'7')))
@@ -52,7 +60,7 @@ fn is_integer(value: f64) -> bool {
 
 impl Lexer<'_> {
     #[inline(never)]
-    pub(super) fn number(&mut self, start: usize) {
+    pub(super) fn number(&mut self, start: usize, lead: Detail) {
         let mut value = u32::from(self.byte(start) - b'0');
         let mut end = start + 1;
         while value != 0 && self.byte(end).is_ascii_digit() && end - start < PLAIN_DIGITS {
@@ -63,11 +71,9 @@ impl Lexer<'_> {
             chars::start(self.byte(end)),
             Start::Name | Start::Digit | Start::Dot | Start::Other
         ) {
-            return self.elaborate_number(start);
+            return self.elaborate_number(start, lead);
         }
-        self.token.value = value;
-        self.token.is_elaborate = false;
-        self.set(TokenKind::Number, start, end);
+        self.set(TokenKind::Number, start, end, lead | Detail::value(value));
     }
 
     fn is_digit(&self, offset: usize, radix: u32) -> bool {
@@ -88,8 +94,14 @@ impl Lexer<'_> {
     }
 
     #[inline(never)]
-    pub(super) fn elaborate_number(&mut self, start: usize) {
-        self.token.is_elaborate = true;
+    pub(super) fn elaborate_number(&mut self, start: usize, lead: Detail) {
+        match self.any_number(start) {
+            Ok((kind, end)) => self.set(kind, start, end, lead | Detail::ELABORATE),
+            Err(flaw) => self.fail(start, lead, flaw),
+        }
+    }
+
+    fn any_number(&self, start: usize) -> Scanned {
         let mut offset = start;
         if self.byte(start) == b'0' {
             let second = self.byte(start + 1);
@@ -97,8 +109,7 @@ impl Lexer<'_> {
                 return self.prefixed_number(start, &radix);
             }
             if second == b'_' {
-                let message = "Numeric literals may not begin with 0_";
-                return self.fail(TokenKind::Unterminated, start, start + 1, message);
+                return unterminated(start + 1, "Numeric literals may not begin with 0_");
             }
             if second.is_ascii_digit() {
                 return self.number_with_leading_zero(start);
@@ -107,15 +118,15 @@ impl Lexer<'_> {
         if self.byte(start) != b'.' {
             offset = self.skip_digits(start, 10);
             if self.byte(offset) == b'n' {
-                return self.finish_decimal(TokenKind::BigInt, start, offset + 1);
+                return self.end_of_decimal(TokenKind::BigInt, offset + 1);
             }
         }
-        self.fraction_and_exponent(start, offset);
+        self.fraction_and_exponent(offset)
     }
 
-    fn prefixed_number(&mut self, start: usize, radix: &Radix) {
+    fn prefixed_number(&self, start: usize, radix: &Radix) -> Scanned {
         if !self.is_digit(start + 2, radix.value) {
-            return self.fail(TokenKind::Unterminated, start, start + 1, radix.no_digits);
+            return unterminated(start + 1, radix.no_digits);
         }
         let digits_end = self.skip_digits(start + 2, radix.value);
         let (kind, end) = match self.byte(digits_end) {
@@ -123,36 +134,36 @@ impl Lexer<'_> {
             _ => (TokenKind::Number, digits_end),
         };
         if self.starts_name(end) {
-            return self.fail(TokenKind::Unterminated, start, end, radix.no_space);
+            return unterminated(end, radix.no_space);
         }
-        self.set(kind, start, end);
+        Ok((kind, end))
     }
 
-    fn number_with_leading_zero(&mut self, start: usize) {
+    fn number_with_leading_zero(&self, start: usize) -> Scanned {
         if self.is_strict() {
-            let message =
-                "Decimal integer literals with a leading zero are forbidden in strict mode";
-            return self.fail(TokenKind::Unterminated, start, start + 1, message);
+            return unterminated(
+                start + 1,
+                "Decimal integer literals with a leading zero are forbidden in strict mode",
+            );
         }
         let mut end = start;
         while self.byte(end).is_ascii_digit() {
             end += 1;
         }
         if is_legacy_octal(&self.bytes[start..end]) {
-            self.finish_decimal(TokenKind::Number, start, end);
+            self.end_of_decimal(TokenKind::Number, end)
         } else {
-            self.fraction_and_exponent(start, end);
+            self.fraction_and_exponent(end)
         }
     }
 
-    fn fraction_and_exponent(&mut self, start: usize, mut offset: usize) {
+    fn fraction_and_exponent(&self, mut offset: usize) -> Scanned {
         if self.byte(offset) == b'.' {
             offset += 1;
             if self.byte(offset).is_ascii_digit() {
                 offset = self.skip_digits(offset, 10);
                 if self.byte(offset) == b'_' {
-                    let message = "Non-number found after decimal point";
-                    return self.malformed_decimal(start, offset, message);
+                    return Err(self.flaw(offset, "Non-number found after decimal point"));
                 }
             }
         }
@@ -163,32 +174,26 @@ impl Lexer<'_> {
                 offset = self.skip_digits(offset, 10);
             }
             if !has_digits || self.byte(offset) == b'_' {
-                let message = "Non-number found after exponent indicator";
-                return self.malformed_decimal(start, offset, message);
+                return Err(self.flaw(offset, "Non-number found after exponent indicator"));
             }
         }
-        self.finish_decimal(TokenKind::Number, start, offset);
+        self.end_of_decimal(TokenKind::Number, offset)
     }
 
-    fn finish_decimal(&mut self, kind: TokenKind, start: usize, end: usize) {
+    fn end_of_decimal(&self, kind: TokenKind, end: usize) -> Scanned {
         if self.starts_name(end) {
-            let message = "No identifiers allowed directly after numeric literal";
-            return self.malformed_decimal(start, end, message);
+            return Err(self.flaw(end, "No identifiers allowed directly after numeric literal"));
         }
-        self.set(kind, start, end);
-    }
-
-    fn malformed_decimal(&mut self, start: usize, end: usize, message: &'static str) {
-        self.fail(self.kind_of_malformed(end), start, end, message);
+        Ok((kind, end))
     }
 
     /// The number, and whether it is written as an integer.
     #[inline(always)]
     pub(crate) fn number_value(&self, token: Token) -> (f64, bool) {
-        if token.is_elaborate {
+        if token.is_elaborate() {
             self.elaborate_number_value(token)
         } else {
-            (f64::from(token.value), true)
+            (f64::from(token.value()), true)
         }
     }
 
@@ -209,7 +214,7 @@ impl Lexer<'_> {
 
     /// The digits and the radix.
     pub(crate) fn bigint_value(&mut self, token: Token) -> (Name, u8) {
-        let (start, end) = (token.start as usize, token.end as usize - 1);
+        let (start, end) = (token.start() as usize, token.end() as usize - 1);
         let (start, radix) = match Radix::of_prefix(self.byte(start + 1)) {
             Some(radix) => (start + 2, radix.value as u8),
             None => (start, 10),
@@ -227,11 +232,11 @@ impl Lexer<'_> {
 
     /// The name of the property that a number is the key of.
     pub(crate) fn number_key(&mut self, token: Token) -> Name {
-        if !token.is_elaborate {
+        if !token.is_elaborate() {
             return (self.names).intern_source(
                 self.source,
-                token.start as usize,
-                token.end as usize,
+                token.start() as usize,
+                token.end() as usize,
             );
         }
         let text = NumberText::from(self.elaborate_number_value(token).0);

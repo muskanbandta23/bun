@@ -222,7 +222,7 @@ impl Session<'_> {
     #[inline(never)]
     fn statement_from_word<const BUILD: bool>(&mut self, position: Position) -> Parsed<Statement> {
         let token = self.token();
-        if token.kind == TokenKind::EscapedKeyword && !self.is_unreserved(token) {
+        if token.kind() == TokenKind::EscapedKeyword && !self.is_unreserved(token) {
             return Err(self.unexpected());
         }
         if position == Position::InList {
@@ -231,10 +231,10 @@ impl Session<'_> {
             }
             if self.at_async_function() {
                 self.next();
-                return self.function_declaration::<BUILD>(token.start, Site::Ordinary, None);
+                return self.function_declaration::<BUILD>(token.start(), Site::Ordinary, None);
             }
             if self.context.contains(Context::STATIC_BLOCK) {
-                match token.kind {
+                match token.kind() {
                     TokenKind::Yield => {
                         return Err(self.fail("Cannot use 'yield' within static block"));
                     }
@@ -251,7 +251,7 @@ impl Session<'_> {
     pub(super) fn at_async_function(&mut self) -> bool {
         self.at_contextual(Name::ASYNC) && {
             let next = self.peek();
-            next.kind == TokenKind::Function && !next.follows_newline
+            next.kind() == TokenKind::Function && !next.follows_newline()
         }
     }
 
@@ -263,7 +263,7 @@ impl Session<'_> {
         let next = self.token();
         let is_keyword = self.is_strict()
             || matches!(
-                next.kind,
+                next.kind(),
                 TokenKind::Identifier | TokenKind::OpenBrace | TokenKind::OpenBracket
             )
             || next.spells(TokenKind::Let)
@@ -290,8 +290,8 @@ impl Session<'_> {
         if self.at_contextual(Name::USING) {
             let (name, after) = self.peek_twice();
             let is_enumeration =
-                is_in_for && name.is_contextual(Name::OF) && after.kind != TokenKind::Assign;
-            return (!name.follows_newline && self.is_name(name) && !is_enumeration)
+                is_in_for && name.is_contextual(Name::OF) && after.kind() != TokenKind::Assign;
+            return (!name.follows_newline() && self.is_name(name) && !is_enumeration)
                 .then_some(DeclarationKind::Using);
         }
         if self.at(TokenKind::Await)
@@ -300,7 +300,7 @@ impl Session<'_> {
             && self.peek().is_contextual(Name::USING)
         {
             let (using, name) = self.peek_twice();
-            return (!using.follows_newline && !name.follows_newline && self.is_name(name))
+            return (!using.follows_newline() && !name.follows_newline() && self.is_name(name))
                 .then_some(DeclarationKind::AwaitUsing);
         }
         None
@@ -344,7 +344,7 @@ impl Session<'_> {
     /// False if the characters after the word rule it out.
     #[inline(always)]
     fn may_be_at_label(&self) -> bool {
-        let end = self.token().end as usize;
+        let end = self.token().end() as usize;
         let next = (self.lexer).byte(end + usize::from(self.lexer.byte(end) == b' '));
         next == b':'
             || matches!(
@@ -370,7 +370,7 @@ impl Session<'_> {
     ) -> Parsed<Statement> {
         let mut start;
         loop {
-            if self.peek().kind != TokenKind::Colon {
+            if self.peek().kind() != TokenKind::Colon {
                 return self.expression_statement_from_word::<BUILD>();
             }
             start = self.start();
@@ -432,7 +432,7 @@ impl Session<'_> {
     }
 
     fn expression_statement_from_word<const BUILD: bool>(&mut self) -> Parsed<Statement> {
-        if self.at(TokenKind::Let) && self.peek().kind == TokenKind::OpenBracket {
+        if self.at(TokenKind::Let) && self.peek().kind() == TokenKind::OpenBracket {
             self.next();
             return Err(self.fail("Cannot use lexical declaration in single-statement context"));
         }
@@ -824,7 +824,7 @@ impl Session<'_> {
         let (token, declared) = (self.token(), self.scopes.lexical_count());
         let is_simple = self.is_name(token);
         let pattern = if is_simple {
-            self.scopes.push(ScopeKind::SimpleCatch, token.start);
+            self.scopes.push(ScopeKind::SimpleCatch, token.start());
             self.refuse_await(token, "catch parameter name")?;
             self.next();
             let name = token.name();
@@ -835,9 +835,9 @@ impl Session<'_> {
             self.scopes.declare_lexical(name, BindingKind::Let);
             let declaration = Some(DeclarationKind::Let);
             let kind = PatternKind::Binding { name, declaration };
-            self.pattern_node::<BUILD>(token.start, token.end, kind)
+            self.pattern_node::<BUILD>(token.start(), token.end(), kind)
         } else {
-            self.scopes.push(ScopeKind::Block, token.start);
+            self.scopes.push(ScopeKind::Block, token.start());
             self.pattern::<BUILD>(Binder::Catch)?
         };
         (self.scopes).initialize_lexicals(declared, self.lexer.previous_end);
@@ -922,7 +922,7 @@ impl Session<'_> {
         r#in: In,
     ) -> Parsed<(Expression, Declarator)> {
         let token = self.token();
-        if token.kind != TokenKind::Identifier || token.name() <= Name::EVAL {
+        if token.kind() != TokenKind::Identifier || token.name() <= Name::EVAL {
             if !self.is_name(token) {
                 return self.pattern_declarator::<BUILD>(kind, start, r#in);
             }
@@ -937,7 +937,7 @@ impl Session<'_> {
         let has_initializer = self.eat(TokenKind::Assign);
         let node = if has_initializer {
             if kind == DeclarationKind::Var {
-                self.scopes.write(name, token.start);
+                self.scopes.write(name, token.start());
             }
             let value_start = self.start();
             let value = self.assignment_in::<BUILD>(r#in)?.id();
@@ -952,7 +952,7 @@ impl Session<'_> {
             let kind = ExprKind::Initialize {
                 kind,
                 name,
-                name_start: token.start,
+                name_start: token.start(),
                 value,
             };
             let node = self.node::<BUILD>(Class::Other, start, kind);
@@ -966,10 +966,10 @@ impl Session<'_> {
                 && kind == DeclarationKind::Let
                 && (r#in == In::Allowed || !self.at_enumeration())
             {
-                self.scopes.initialize_lexicals(declared, token.end);
+                self.scopes.initialize_lexicals(declared, token.end());
                 self.scopes.note_starts_undefined();
             }
-            self.node::<BUILD>(Class::Other, token.start, ExprKind::Declare { kind, name })
+            self.node::<BUILD>(Class::Other, token.start(), ExprKind::Declare { kind, name })
         };
         let declarator = Declarator {
             target: Declared::Name(token),
@@ -1012,7 +1012,7 @@ impl Session<'_> {
             self.declare_eval_or_arguments(name, sentence)?;
         }
         let (kind, keyword) = match kind {
-            DeclarationKind::Var => return self.declare_variable(name, token.start),
+            DeclarationKind::Var => return self.declare_variable(name, token.start()),
             DeclarationKind::Let => (BindingKind::Let, "let"),
             DeclarationKind::Const => (BindingKind::Const, "const"),
             DeclarationKind::Using => (BindingKind::Using, "using"),

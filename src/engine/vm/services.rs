@@ -62,6 +62,7 @@ macro_rules! services {
 }
 
 services! {
+    bigints: crate::primitive::BigIntState,
     caches: caches::State,
     prototype_lookups: crate::ic::PrototypeLookups,
     code: code::State,

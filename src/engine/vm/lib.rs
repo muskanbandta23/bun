@@ -63,9 +63,9 @@ pub use primitive::*;
 pub use realm::*;
 pub use runtime::*;
 pub use scope::{Environment, ModuleEnvironment, ScopeTemplate};
-pub use traps::{Trap, Traps};
+pub use traps::{DeferTraps, Trap, Traps, WakeOnTermination};
 pub use value::Value;
-pub use vm::{DeferTermination, Embedder, Vm, VmRef, VmShapes};
+pub use vm::{Embedder, SuspendException, Vm, VmRef, VmShapes};
 pub use watchpoint::{
     DeferredFire, InlineWatchpointSet, Watcher, Watchpoint, WatchpointSet, WatchpointState,
 };

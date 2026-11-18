@@ -45,10 +45,8 @@ binary_operators! {
     bit_and, "bitwise 'and' operation", |a, b| to_int32(a) & to_int32(b), bitwise_and;
     bit_or, "bitwise 'or' operation", |a, b| to_int32(a) | to_int32(b), bitwise_or;
     bit_xor, "bitwise 'xor' operation", |a, b| to_int32(a) ^ to_int32(b), bitwise_xor;
-    shift_left, "left shift operation", |a, b| to_int32(a).wrapping_shl(to_int32(b) as u32),
-        left_shift;
-    shift_right, "signed right shift operation", |a, b| to_int32(a).wrapping_shr(to_int32(b) as u32),
-        signed_right_shift;
+    shift_left, "left shift operation", |a, b| to_int32(a).wrapping_shl(to_int32(b) as u32), left_shift;
+    shift_right, "signed right shift operation", |a, b| to_int32(a).wrapping_shr(to_int32(b) as u32), signed_right_shift;
 }
 
 pub fn shift_right_unsigned(cx: &mut Cx, lhs: Value, rhs: Value) -> JsResult<u32> {

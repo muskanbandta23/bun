@@ -5,8 +5,8 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering, fence};
 
 use bun_engine_bytecode::Directives;
-use bun_engine_syntax::LineTable;
 use bun_engine_macros::FieldOffsets;
+use bun_engine_syntax::LineTable;
 use bun_engine_text::{StringRef, Text};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

@@ -18,7 +18,6 @@ icu_functions! {
     fn ucal_setGregorianChange(calendar: *mut UCalendar, time: f64, status: &mut Status);
     fn ucal_setMillis(calendar: *mut UCalendar, time: f64, status: &mut Status);
     fn ucal_get(calendar: *const UCalendar, field: Field, status: &mut Status) -> i32;
-    fn ucal_set(calendar: *mut UCalendar, field: Field, value: i32);
     fn ucal_getTimeZoneDisplayName(
         calendar: *const UCalendar,
         kind: ZoneName,
@@ -35,7 +34,6 @@ const UCAL_DEFAULT: i32 = 0;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(i32)]
 pub enum Field {
-    Year = 1,
     /// From zero.
     Month = 2,
     DayOfMonth = 5,
@@ -99,11 +97,6 @@ impl Calendar {
     pub fn get(&mut self, field: Field) -> Result<i32> {
         // SAFETY: the calendar is open.
         call(|status| unsafe { ucal_get(self.0.as_ptr(), field, status) })
-    }
-
-    pub fn set(&mut self, field: Field, value: i32) {
-        // SAFETY: the calendar is open.
-        unsafe { ucal_set(self.0.as_ptr(), field, value) }
     }
 
     /// The long name: `Pacific Standard Time`.

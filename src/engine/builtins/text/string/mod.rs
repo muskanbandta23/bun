@@ -50,20 +50,14 @@ pub(super) fn add_conditions(
             return true;
         }
         StringIteratorProtocol => {
-            let iterator_prototype = cx.string_iterator_prototype();
             conditions.pristine(&prototype, symbols::iterator);
-            conditions.pristine(&iterator_prototype, names::next);
-            let chain = [
-                iterator_prototype,
-                cx.iterator_prototype(),
-                cx.object_prototype(),
-            ];
-            conditions.absent_from_chain(&chain, names::r#return);
+            conditions.pristine_iterator(&cx.string_iterator_prototype());
             return true;
         }
         _ => return false,
     };
-    conditions.absent_from_chain(&[prototype, cx.object_prototype()], absent);
+    conditions.absent(&prototype, absent, cx.object_prototype().into());
+    conditions.absent(&cx.object_prototype(), absent, Value::NULL);
     true
 }
 

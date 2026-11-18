@@ -186,6 +186,13 @@ pub(crate) fn find(text: Text<'_>, hash: u32) -> Option<StringRef> {
     TABLE.with_borrow(|table| table.find(text, hash).ok().map(StringRef::retain))
 }
 
+pub(crate) fn length_of_longest() -> usize {
+    TABLE.with_borrow(|table| {
+        let atoms = table.slots.iter().filter_map(Slot::atom);
+        atoms.map(StringImpl::len).max().unwrap_or(0)
+    })
+}
+
 pub(crate) fn remove(atom: &StringImpl) {
     if !HAS_ENDED.get() {
         TABLE.with_borrow_mut(|table| table.remove(atom));

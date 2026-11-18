@@ -35,25 +35,30 @@ impl Conditions<'_> {
         });
     }
 
-    /// Each object is the prototype of the one before it, the last has none, and none has the property.
-    pub(crate) fn absent_from_chain(&mut self, chain: &[Gc<JsObject>], name: PropertyName<'_>) {
-        for (index, object) in chain.iter().enumerate() {
-            let prototype = chain
-                .get(index + 1)
-                .map_or(Value::NULL, |&next| next.into());
-            self.add(object, || {
-                PropertyCondition::absence(object, name)
-                    .filter(|_| object.prototype_direct() == prototype)
-            });
-        }
-    }
-
     /// The property is what the static table of the object says, and stays so.
     pub(crate) fn pristine(&mut self, object: &JsObject, name: PropertyName<'_>) {
         let is_pristine = object.reify_if_pristine(self.cx, name);
         self.add(object, || {
             PropertyCondition::equivalence(object, name).filter(|_| is_pristine)
         });
+    }
+
+    pub(crate) fn absent(&mut self, object: &JsObject, name: PropertyName<'_>, prototype: Value) {
+        self.add(object, || {
+            PropertyCondition::absence(object, name)
+                .filter(|_| object.prototype_direct() == prototype)
+        });
+    }
+
+    /// An object that inherits from `prototype` has the original `next`, is its own iterator and has no `return`.
+    pub(crate) fn pristine_iterator(&mut self, prototype: &JsObject) {
+        let (iterator, object) = (self.cx.iterator_prototype(), self.cx.object_prototype());
+        self.pristine(prototype, names::next);
+        self.pristine(&iterator, symbols::iterator);
+        self.absent(prototype, symbols::iterator, iterator.into());
+        self.absent(prototype, names::r#return, iterator.into());
+        self.absent(&iterator, names::r#return, object.into());
+        self.absent(&object, names::r#return, Value::NULL);
     }
 }
 

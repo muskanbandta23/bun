@@ -60,6 +60,14 @@ impl StringRef {
         StringRef(unsafe { StringImpl::external(units, context, free) })
     }
 
+    /// For a new string: `hash` is what `hash()` would compute.
+    pub fn with_hash(self, hash: u32) -> StringRef {
+        if self.existing_hash() == 0 {
+            self.set_hash(hash);
+        }
+        self
+    }
+
     /// Takes the allocation over.
     pub fn from_vec<T: CodeUnit>(units: Vec<T>) -> Result<StringRef, AllocError> {
         if units.is_empty() {
@@ -212,10 +220,7 @@ impl StringRef {
         } else {
             StringRef::retain(string)
         };
-        if shared.can_become_atom() && !shared.is_static() {
-            shared.hash();
-            shared.set_never_atomize();
-        }
+        shared.set_never_atomize();
         SharedString(shared)
     }
 }

@@ -10,6 +10,7 @@ use bun_icu::relative_time_format::{
 };
 
 use crate::error::IcuResult;
+use crate::number_format::ESTIMATED_FORMATTER_SIZE;
 use crate::number_format::parts::{FieldContext, collect_fields, push_flattened};
 use crate::numbering_system::NumericLocale;
 use crate::parts::new_string;
@@ -57,6 +58,7 @@ impl RelativeTimeFormat {
         let formatter = cache.relative_time_formatters.find_or_insert(
             |it| it.0.style == style && it.0.locale == locale,
             || {
+                cache.note_allocation(ESTIMATED_FORMATTER_SIZE);
                 let failure = "failed to initialize RelativeTimeFormat";
                 let icu_style = match style {
                     Style::Long => icu::Style::Long,

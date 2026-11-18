@@ -11,7 +11,9 @@ impl Validator<'_> {
         if let Some([top]) = self.top()
             && *top == operand
         {
-            *top = result;
+            if result != operand {
+                *top = result;
+            }
             return Ok(());
         }
         self.rare_unary(operand, result)
@@ -30,7 +32,9 @@ impl Validator<'_> {
         if let Some(top) = self.top()
             && ValType::pair(*top) == ValType::pair([operand; 2])
         {
-            top[0] = result;
+            if result != operand {
+                top[0] = result;
+            }
             self.height -= 1;
             return Ok(());
         }

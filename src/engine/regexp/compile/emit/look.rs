@@ -15,11 +15,12 @@ impl Emitter<'_> {
         fail: Fail,
     ) -> Result<Fail, Error> {
         let outer = core::mem::replace(&mut self.direction, direction);
+        let (repeats, following) = (self.repeats, core::mem::take(&mut self.following));
         match negated {
             true => self.negative_look(body, fail)?,
             false => self.positive_look(body, fail)?,
         }
-        self.direction = outer;
+        (self.direction, self.repeats, self.following) = (outer, repeats, following);
         Ok(fail)
     }
 

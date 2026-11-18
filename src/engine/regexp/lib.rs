@@ -12,6 +12,7 @@ mod interpreter;
 mod parser;
 mod pattern;
 pub mod program;
+mod search;
 pub mod set;
 mod surrogate;
 pub mod tree;

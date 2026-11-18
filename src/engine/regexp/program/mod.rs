@@ -1,6 +1,7 @@
 //! What a pattern is compiled to, for the interpreter and for the generator of machine code.
 
 mod op;
+mod scan;
 mod verify;
 
 use core::ops::Range;
@@ -9,9 +10,10 @@ use bun_engine_unicode::IgnoreCase;
 
 pub(crate) use op::split_halves;
 pub use op::{
-    ClassId, Comparison, Direction, Filter, LoopId, Op, Pairs, Place, ScopeId, Slot, Stride,
+    ClassId, Comparison, Direction, Filter, LoopId, Op, Pairs, Place, ScanId, ScopeId, Slot, Stride,
     SwitchId, Target, UNBOUNDED, UNSET, join_halves,
 };
+pub use scan::{Probe, RowProbe, Scan};
 pub use verify::Verified;
 
 use crate::set::{LookupTable, Set};
@@ -298,6 +300,7 @@ pub struct Program {
     pub(crate) loops: Vec<Loop>,
     pub(crate) choice_targets: Vec<Target>,
     pub(crate) switches: Vec<Switch>,
+    pub(crate) scans: Vec<Scan>,
     pub(crate) classes: Vec<Class>,
     pub(crate) referenced_pairs: Vec<u16>,
     /// One for each cell: how much it gains from a register.
@@ -338,6 +341,11 @@ impl Program {
     #[inline]
     pub fn switch(&self, id: SwitchId) -> &Switch {
         &self.switches[id.index()]
+    }
+
+    #[inline]
+    pub fn scan(&self, id: ScanId) -> &Scan {
+        &self.scans[id.index()]
     }
 
     /// Where [`Op::Resume`] can go with this slot.
@@ -420,6 +428,8 @@ impl Program {
             + bytes(&self.loops)
             + bytes(&self.choice_targets)
             + bytes(&self.switches)
+            + bytes(&self.scans)
+            + self.scans.iter().map(|it| bytes(&it.rows)).sum::<usize>()
             + bytes(&self.classes)
             + bytes(&self.referenced_pairs)
             + bytes(&self.cell_weights)

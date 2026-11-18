@@ -1,87 +1,46 @@
-//! What a process settles before it uses ICU.
+//! The locale that ICU falls back to.
 
-use core::ffi::c_char;
+use core::ffi::{CStr, c_char};
+use std::sync::Once;
 
+use crate::CText;
 use crate::argument::locale_id;
 use crate::error::Status;
-use crate::{CText, locale};
 
 icu_functions! {
+    fn uloc_getDefault() -> *const c_char;
     fn uloc_setDefault(locale: *const c_char, status: &mut Status);
 }
 
-/// Makes ICU allocate as the rest of the process does. The library of macOS is shared with the system's frameworks, and
-/// keeps their allocator.
-///
-/// # Safety
-/// Nothing has called ICU yet, and nothing does until this returns.
-pub unsafe fn use_default_allocator() {
-    #[cfg(not(system_icucore))]
-    {
-        use bun_alloc::{default_alloc, out_of_memory};
-        use core::ffi::c_void;
-
-        type Allocate = extern "C" fn(*const c_void, usize) -> *mut c_void;
-        type Reallocate = unsafe extern "C" fn(*const c_void, *mut c_void, usize) -> *mut c_void;
-        type Free = unsafe extern "C" fn(*const c_void, *mut c_void);
-
-        icu_functions! {
-            fn u_setMemoryFunctions(context: *const c_void, allocate: Allocate, reallocate: Reallocate, free: Free, status: &mut Status);
-        }
-
-        // Comparing strings and looking for a boundary have no way to report a failure.
-        fn allocated(block: *mut c_void) -> *mut c_void {
-            if block.is_null() {
-                out_of_memory();
-            }
-            block
-        }
-
-        extern "C" fn allocate(_: *const c_void, size: usize) -> *mut c_void {
-            allocated(default_alloc::malloc(size))
-        }
-
-        unsafe extern "C" fn reallocate(
-            _: *const c_void,
-            block: *mut c_void,
-            size: usize,
-        ) -> *mut c_void {
-            // SAFETY: each block that ICU holds came from these functions.
-            allocated(unsafe { default_alloc::realloc(block, size) })
-        }
-
-        unsafe extern "C" fn free(_: *const c_void, block: *mut c_void) {
-            // SAFETY: each block that ICU holds came from these functions.
-            unsafe { default_alloc::free(block) }
-        }
-
-        // SAFETY: ICU holds no block of another allocator. It fails only if a function is missing.
-        unsafe {
-            u_setMemoryFunctions(
-                core::ptr::null(),
-                allocate,
-                reallocate,
-                free,
-                &mut Status::default(),
-            );
-        }
-    }
+/// Comes before each call that can open data: `Status::new` has it for those that report a status.
+#[inline]
+pub(crate) fn settle() {
+    static CHOSEN: Once = Once::new();
+    CHOSEN.call_once(choose);
 }
 
-/// Takes `locale::default()` from the environment (`LC_ALL`, `LC_MESSAGES`, `LANG`) as far as that names a locale, and
-/// makes it `en_US` if it names none or one whose data is not in this executable.
-///
-/// # Safety
-/// No other thread calls ICU or changes the environment until this returns.
-pub unsafe fn choose_default_locale() {
+pub(crate) fn get() -> &'static CStr {
+    settle();
+    current()
+}
+
+fn current() -> &'static CStr {
+    // SAFETY: ICU keeps each locale that has been the default.
+    unsafe { CStr::from_ptr(uloc_getDefault()) }
+}
+
+/// That of the environment (`LC_ALL`, `LC_MESSAGES`, `LANG`) as far as it names a locale, or `en_US` if it names none or
+/// one whose data is not in this executable.
+#[cold]
+fn choose() {
     let set = |locale| {
         // SAFETY: `locale` is terminated, or null for that of the environment. A failure leaves the default as it is.
-        unsafe { uloc_setDefault(locale, &mut Status::default()) }
+        unsafe { uloc_setDefault(locale, &mut Status::during_setup()) }
     };
     set(c"en_US".as_ptr());
     set(core::ptr::null());
 
-    let found = locale::default();
+    let found = current();
     let usable = parents(found.to_bytes())
         .filter_map(|id| CText::new(id).ok())
         .find(|id| locale_id(id).is_ok());

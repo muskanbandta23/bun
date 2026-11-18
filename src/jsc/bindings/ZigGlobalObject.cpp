@@ -274,9 +274,6 @@ extern "C" void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject*);
 extern "C" long Bun__crashHandlerFromJSCFrame(void*, void*, void*, void*);
 #endif
 
-// bun_icu_default_locale.cpp
-extern "C" void Bun__ensureICUDefaultLocale();
-
 // LintHost.cpp
 namespace Bun {
 JSC::JSObject* createLintHost(JSC::VM&, JSC::JSGlobalObject*);
@@ -333,7 +330,6 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         locksBuiltinsWithoutImage = locksBuiltins;
         if (locksBuiltins)
             JSC::AOT::lockBuiltinsWithoutImage();
-        Bun__ensureICUDefaultLocale();
 
         std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
         WTF::initializeMainThread();

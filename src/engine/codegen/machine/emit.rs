@@ -180,6 +180,10 @@ impl Operands<'_> {
         self.places.code.vregs[self.rest.as_slice()[0].vreg].class
     }
 
+    pub(crate) fn function(&self) -> &Function {
+        self.places.function
+    }
+
     pub(crate) fn any_is_in(&self, reg: Gpr) -> bool {
         self.rest
             .as_slice()

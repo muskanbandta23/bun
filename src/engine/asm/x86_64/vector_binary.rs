@@ -215,6 +215,14 @@ impl Form {
     }
 }
 
+/// The instruction that is all there is to the operation, and whether its operands are in reverse order.
+pub fn single_instruction(op: VectorBinary) -> Option<(Sse, bool)> {
+    match Form::of(op) {
+        (Form::One(instruction), is_reversed) => Some((instruction, is_reversed)),
+        _ => None,
+    }
+}
+
 pub(super) fn has_fma(features: X64Features) -> bool {
     features.contains(X64Features::AVX | X64Features::FMA)
 }

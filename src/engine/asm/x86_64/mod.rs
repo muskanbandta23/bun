@@ -19,3 +19,4 @@ pub use float::{FloatFlags, rounding_control};
 pub use integer::MacroAssembler;
 pub use opcode::*;
 pub use registers::*;
+pub use vector_binary::single_instruction;

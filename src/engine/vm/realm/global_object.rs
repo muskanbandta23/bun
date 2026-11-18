@@ -218,7 +218,7 @@ impl GlobalObject {
             unsafe { binding.set(cx, self, value) };
         }
         if descriptor.has_writable() && !descriptor.writable() && current.writable() {
-            binding.make_read_only();
+            binding.make_read_only(cx);
             self.watchpoints_unchecked(RealmWatchpoint::GlobalVariablesAreWritable)
                 .invalidate(cx);
         }
@@ -387,6 +387,9 @@ impl GlobalObject {
     pub(crate) fn add_lexical(&self, vm: &Vm, name: PropertyName<'_>, attributes: Attributes) {
         self.lexicals.add(self, name, attributes, false);
         self.lexical_epoch.update(|epoch| epoch + 1);
+        if self.shape().get(name).is_some() {
+            self.change_shape_id(vm);
+        }
         (vm.hooks().did_declare_global_lexical)(vm, self, name);
     }
 

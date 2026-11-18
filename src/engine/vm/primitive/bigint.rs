@@ -1,12 +1,18 @@
+use core::cell::Cell;
+use core::cmp::Ordering;
 use core::mem::offset_of;
 use core::ops::Deref;
 
-use bun_engine_bigint::{BigIntRef, Error, ErrorKind, Fill, New, Outcome, SmallBigInt};
-use bun_engine_text::StringRef;
+use bun_engine_bigint::{
+    BigIntRef, DivisorCache, Error, ErrorKind, Fill, LiteralRadix, New, Outcome, SmallBigInt,
+};
+use bun_engine_text::{StringRef, Text};
 
+use crate::services::Service;
+use crate::vm::Root;
 use crate::{
     CellKind, CellType, CellTypeRange, Class, ClassOps, Cx, ErrorType, Extends, Gc, GcFree, JsCell,
-    JsResult, Shape, Thrown, TypeFlags, Visitor, Vm, ascii_literal,
+    JsResult, JsString, Shape, Thrown, Trap, TypeFlags, Visitor, Vm, ascii_literal,
 };
 
 /// The digits of the magnitude follow, the least significant first. The last is not zero.
@@ -14,7 +20,8 @@ use crate::{
 pub struct JsBigInt {
     base: JsCell,
     length: u32,
-    is_negative: bool,
+    /// The low byte is 1 if the value is negative. The others are zero until the hash is asked for.
+    sign_and_hash: Cell<u32>,
 }
 
 #[unsafe(export_name = "engine_class_BigInt")]
@@ -67,95 +74,254 @@ unsafe impl CellKind for JsBigInt {
     fn trace_fields(&self, _: &mut Visitor) {}
 }
 
-impl JsBigInt {
-    pub const OFFSET_OF_LENGTH: usize = offset_of!(JsBigInt, length);
-    pub const OFFSET_OF_SIGN: usize = offset_of!(JsBigInt, is_negative);
-    pub const OFFSET_OF_DIGITS: usize = size_of::<JsBigInt>();
+pub(crate) struct State {
+    zero: Root<JsBigInt>,
+    divisors: DivisorCache,
+}
 
-    /// `fill` returns how many of the digits count, and the sign.
+impl Default for State {
+    fn default() -> State {
+        State {
+            zero: Root::new(),
+            divisors: DivisorCache::default(),
+        }
+    }
+}
+
+impl Service for State {
+    fn initialize(&self, vm: &Vm) {
+        let zero = Unfinished::try_new(vm, 0).unwrap_or_else(|_| bun_alloc::out_of_memory());
+        self.zero.set(Some(zero.finish(0, false)));
+    }
+
+    fn visit(&self, visitor: &mut Visitor) {
+        self.zero.visit(visitor);
+    }
+}
+
+/// A new cell that nothing refers to yet.
+struct Unfinished {
+    cell: *mut JsBigInt,
+    capacity: usize,
+}
+
+impl Unfinished {
     #[inline(always)]
-    fn try_create(
-        vm: &Vm,
-        capacity: usize,
-        fill: impl FnOnce(&mut [u64]) -> Result<(u32, bool), Error>,
-    ) -> Result<Gc<JsBigInt>, Error> {
-        let size = Self::OFFSET_OF_DIGITS + capacity * size_of::<u64>();
-        let address = vm.heap.cells.try_allocate(&vm.heap, size);
+    fn try_new(vm: &Vm, capacity: usize) -> Result<Unfinished, Error> {
+        let address = vm
+            .heap
+            .cells
+            .try_allocate(&vm.heap, JsBigInt::allocation_size(capacity));
         if address == 0 {
             return Err(Error::OutOfMemory);
         }
         let cell = core::ptr::with_exposed_provenance_mut::<JsBigInt>(address);
-        // SAFETY: a new cell of that size, which is zero until the digits are there.
+        // SAFETY: a new cell of that size. The collector reads nothing but the header.
+        unsafe { JsCell::initialize(cell.cast(), vm.shapes.bigint()) };
+        Ok(Unfinished { cell, capacity })
+    }
+
+    /// With whatever the memory held.
+    #[inline(always)]
+    fn digits(&mut self) -> &mut [u64] {
+        // SAFETY: the rest of the cell. The empty block stands for storing the bytes that are there, after which
+        // they count as initialized.
         unsafe {
-            JsCell::initialize(cell.cast(), vm.shapes.bigint());
-            (&raw mut (*cell).length).write(0);
-            (&raw mut (*cell).is_negative).write(false);
-            let digits = cell.add(1).cast::<u64>();
-            digits.write_bytes(0, capacity);
-            let (length, is_negative) = fill(core::slice::from_raw_parts_mut(digits, capacity))?;
-            assert!(length as usize <= capacity);
-            (*cell).length = length;
-            (*cell).is_negative = is_negative;
-            Ok(Gc::from_address(address))
+            let digits = self.cell.add(1).cast::<u64>();
+            core::arch::asm!("/* {0} */", in(reg) digits, options(nostack, preserves_flags));
+            core::slice::from_raw_parts_mut(digits, self.capacity)
         }
     }
 
-    #[inline]
+    #[inline(always)]
+    fn finish(self, length: u32, is_negative: bool) -> Gc<JsBigInt> {
+        assert!(length as usize <= self.capacity);
+        // SAFETY: the last fields of the cell to be written.
+        unsafe {
+            (&raw mut (*self.cell).length).write(length);
+            (&raw mut (*self.cell).sign_and_hash).write(Cell::new(is_negative.into()));
+            Gc::from_address(self.cell.expose_provenance())
+        }
+    }
+}
+
+impl JsBigInt {
+    pub const OFFSET_OF_LENGTH: usize = offset_of!(JsBigInt, length);
+    /// A byte.
+    pub const OFFSET_OF_SIGN: usize = offset_of!(JsBigInt, sign_and_hash);
+    /// 32 bits, to be shifted right by `HASH_SHIFT`.
+    pub const OFFSET_OF_HASH: usize = offset_of!(JsBigInt, sign_and_hash);
+    pub const HASH_SHIFT: u32 = 8;
+    pub const OFFSET_OF_DIGITS: usize = size_of::<JsBigInt>();
+
+    #[inline(always)]
+    pub const fn allocation_size(digit_count: usize) -> usize {
+        Self::OFFSET_OF_DIGITS + digit_count * size_of::<u64>()
+    }
+
+    /// The only one in use that is zero.
+    #[inline(always)]
+    pub fn zero(vm: &Vm) -> Gc<JsBigInt> {
+        // SAFETY: set when the `Vm` is made.
+        unsafe { vm.services.bigints.zero.get().unwrap_unchecked() }
+    }
+
+    #[inline(always)]
     pub fn from_small(vm: &Vm, value: impl Into<SmallBigInt>) -> Gc<JsBigInt> {
         let value = value.into();
-        let created = Self::try_create(vm, 2, |digits| {
-            digits.copy_from_slice(&value.padded_digits());
-            Ok((value.length() as u32, value.is_negative()))
-        });
-        created.unwrap_or_else(|_| bun_alloc::out_of_memory())
+        if value.is_zero() {
+            return Self::zero(vm);
+        }
+        let mut cell = Unfinished::try_new(vm, 2).unwrap_or_else(|_| bun_alloc::out_of_memory());
+        cell.digits().copy_from_slice(&value.padded_digits());
+        cell.finish(value.length() as u32, value.is_negative())
     }
 
     pub fn try_copy_of(vm: &Vm, value: BigIntRef<'_>) -> Result<Gc<JsBigInt>, Error> {
-        Self::try_create(vm, value.digits().len(), |digits| {
-            digits.copy_from_slice(value.digits());
-            Ok((digits.len() as u32, value.is_negative()))
-        })
+        if value.is_zero() {
+            return Ok(Self::zero(vm));
+        }
+        let mut cell = Unfinished::try_new(vm, value.digits().len())?;
+        cell.digits().copy_from_slice(value.digits());
+        Ok(cell.finish(value.digits().len() as u32, value.is_negative()))
     }
 
-    pub fn try_from_new(vm: &Vm, new: New<impl Fill>) -> Result<Gc<JsBigInt>, Error> {
-        match new {
+    /// Of a magnitude that may have leading zeros, the least significant word first.
+    pub fn try_from_words(
+        vm: &Vm,
+        is_negative: bool,
+        words: &[u64],
+    ) -> Result<Gc<JsBigInt>, Error> {
+        Self::try_copy_of(vm, BigIntRef::from_words(is_negative, words)?)
+    }
+
+    pub fn from_words(cx: &Cx, is_negative: bool, words: &[u64]) -> JsResult<Gc<JsBigInt>> {
+        Self::try_from_words(cx, is_negative, words).map_err(|error| Self::throw(cx, error))
+    }
+
+    /// `operands` are the cells that `fill` reads.
+    #[inline(always)]
+    fn try_from_fill(
+        vm: &Vm,
+        fill: impl Fill,
+        operands: &[&JsBigInt],
+    ) -> Result<Gc<JsBigInt>, Error> {
+        const MAX_UNUSED_DIGITS: usize = 8;
+        let capacity = fill.digit_count();
+        let mut cell = Unfinished::try_new(vm, capacity)?;
+        for &operand in operands {
+            Gc::from(operand).keep_alive();
+        }
+        let filled = match fill.fill(cell.digits(), &mut || vm.is_termination_requested()) {
+            Ok(filled) if filled.length != 0 => filled,
+            other => {
+                // A stale word on the stack can still make the cell show up in a walk of the heap.
+                cell.finish(0, false);
+                return other.map(|_| Self::zero(vm));
+            }
+        };
+        let result = cell.finish(filled.length, filled.is_negative);
+        if capacity - filled.length as usize > MAX_UNUSED_DIGITS {
+            return Ok(result.in_a_cell_of_its_size(vm));
+        }
+        Ok(result)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn in_a_cell_of_its_size(&self, vm: &Vm) -> Gc<JsBigInt> {
+        let copy = Self::try_copy_of(vm, self.value());
+        copy.unwrap_or_else(|_| self.into())
+    }
+
+    #[inline]
+    fn try_from_new(vm: &Vm, new: Result<New<impl Fill>, Error>) -> Result<Gc<JsBigInt>, Error> {
+        match new? {
             New::Small(small) => Ok(Self::from_small(vm, small)),
-            New::Large(fill) => Self::try_create(vm, fill.digit_count(), |digits| {
-                let filled = fill.fill(digits, &mut || vm.is_termination_requested())?;
-                Ok((filled.length, filled.is_negative))
-            }),
+            New::Large(fill) => Self::try_from_fill(vm, fill, &[]),
         }
     }
 
-    #[inline]
-    pub fn from_new(cx: &Cx, new: Result<New<impl Fill>, Error>) -> JsResult<Gc<JsBigInt>> {
-        new.and_then(|new| Self::try_from_new(cx, new))
-            .map_err(|error| Self::throw(cx, error))
-    }
-
     /// The result of an operation on `first` and `second`.
-    #[inline]
-    pub fn from_outcome(
+    #[inline(always)]
+    pub(crate) fn from_outcome(
         cx: &Cx,
         first: &JsBigInt,
         second: &JsBigInt,
         outcome: Result<Outcome<impl Fill>, Error>,
     ) -> JsResult<Gc<JsBigInt>> {
-        match outcome {
-            Ok(Outcome::First) => Ok(first.into()),
-            Ok(Outcome::Second) => Ok(second.into()),
-            Ok(Outcome::New(new)) => Self::from_new(cx, Ok(new)),
+        let result = match outcome {
+            Ok(Outcome::First) => return Ok(first.into()),
+            Ok(Outcome::Second) => return Ok(second.into()),
+            Ok(Outcome::New(New::Small(small))) => return Ok(Self::from_small(cx, small)),
+            Ok(Outcome::New(New::Large(fill))) => Self::try_from_fill(cx, fill, &[first, second]),
+            Err(error) => Err(error),
+        };
+        result.map_err(|error| Self::throw(cx, error))
+    }
+
+    /// NumberToBigInt
+    pub fn from_number(cx: &Cx, number: f64) -> JsResult<Gc<JsBigInt>> {
+        Self::try_from_new(cx, bun_engine_bigint::from_number(number))
+            .map_err(|error| Self::throw(cx, error))
+    }
+
+    /// StringToBigInt
+    pub fn from_string(cx: &Cx, text: Text<'_>) -> JsResult<Option<Gc<JsBigInt>>> {
+        let parsed = Self::try_from_new(cx, bun_engine_bigint::from_string(text));
+        Self::unless_invalid(cx, parsed)
+    }
+
+    /// The same, but throws a SyntaxError for what is not an integer.
+    pub fn parse(cx: &Cx, text: Text<'_>) -> JsResult<Gc<JsBigInt>> {
+        Self::try_from_new(cx, bun_engine_bigint::from_string(text))
+            .map_err(|error| Self::throw(cx, error))
+    }
+
+    /// `characters` have no sign, prefix, suffix or separators. `None` if they are not all digits.
+    pub fn from_characters(
+        cx: &Cx,
+        characters: Text<'_>,
+        radix: LiteralRadix,
+        is_negative: bool,
+    ) -> JsResult<Option<Gc<JsBigInt>>> {
+        let parsed = bun_engine_bigint::from_literal(characters, radix, is_negative);
+        Self::unless_invalid(cx, Self::try_from_new(cx, parsed))
+    }
+
+    /// For a constant of code.
+    pub(crate) fn from_literal(
+        cx: &Cx,
+        characters: Text<'_>,
+        radix: LiteralRadix,
+        is_negative: bool,
+    ) -> JsResult<Gc<JsBigInt>> {
+        let parsed = bun_engine_bigint::from_literal(characters, radix, is_negative);
+        Self::try_from_new(cx, parsed).map_err(|error| match error {
+            Error::TooBig => cx.throw_out_of_memory(),
+            _ => Self::throw(cx, error),
+        })
+    }
+
+    fn unless_invalid<T>(cx: &Cx, parsed: Result<T, Error>) -> JsResult<Option<T>> {
+        match parsed {
+            Ok(value) => Ok(Some(value)),
+            Err(Error::InvalidText) => Ok(None),
             Err(error) => Err(Self::throw(cx, error)),
         }
     }
 
     #[cold]
+    #[inline(never)]
     pub fn throw(cx: &Cx, error: Error) -> Thrown {
         match error.kind() {
             ErrorKind::RangeError => cx.throw_range_error(error.message()),
             ErrorKind::SyntaxError => cx.throw_error(ErrorType::SyntaxError, error.message()),
             ErrorKind::OutOfMemoryError => cx.throw_out_of_memory_with(error.message()),
-            ErrorKind::Interruption => cx.throw_termination(),
+            ErrorKind::Interruption => {
+                cx.traps().clear(Trap::TERMINATION);
+                cx.throw_termination()
+            }
         }
     }
 
@@ -164,7 +330,7 @@ impl JsBigInt {
         let digits = core::ptr::with_exposed_provenance(self.address() + Self::OFFSET_OF_DIGITS);
         // SAFETY: inside the cell, initialized, and never changed.
         let digits = unsafe { core::slice::from_raw_parts(digits, self.length as usize) };
-        BigIntRef::new(self.is_negative, digits)
+        BigIntRef::new(self.is_negative(), digits)
     }
 
     #[inline(always)]
@@ -172,9 +338,92 @@ impl JsBigInt {
         self.length == 0
     }
 
+    #[inline(always)]
+    pub fn is_negative(&self) -> bool {
+        self.sign_and_hash.get() & 1 != 0
+    }
+
+    /// 24 bits that are not all zero, as for a string.
+    #[inline]
+    pub fn hash(&self) -> u32 {
+        match self.sign_and_hash.get() >> Self::HASH_SHIFT {
+            0 => self.compute_hash(),
+            hash => hash,
+        }
+    }
+
+    #[inline(never)]
+    fn compute_hash(&self) -> u32 {
+        let hash = (self.value().hash() >> Self::HASH_SHIFT).max(1);
+        self.sign_and_hash
+            .update(|sign| sign | hash << Self::HASH_SHIFT);
+        hash
+    }
+
+    /// `None` if the string is not an integer.
+    pub fn compare_to_string(&self, cx: &Cx, string: &JsString) -> JsResult<Option<Ordering>> {
+        let view = string.view(cx)?;
+        let ordering = bun_engine_bigint::from_string(view.text()).and_then(|new| match new {
+            New::Small(small) => Ok(self.value().cmp(&small.as_ref())),
+            New::Large(fill) => Ok(self
+                .value()
+                .cmp(&Self::try_from_fill(cx, fill, &[self])?.value())),
+        });
+        Self::unless_invalid(cx, ordering)
+    }
+
+    /// `radix` is from 2 to 36.
     pub fn to_string_ref(&self, cx: &Cx, radix: u32) -> JsResult<StringRef> {
         self.value()
             .to_string_ref(radix, &mut || cx.is_termination_requested())
             .map_err(|error| Self::throw(cx, error))
     }
+
+    pub fn to_js_string(&self, cx: &Cx, radix: u32) -> JsResult<Gc<JsString>> {
+        Ok(JsString::new(cx, self.to_string_ref(cx, radix)?))
+    }
+
+    pub fn divide(cx: &Cx, x: &JsBigInt, y: &JsBigInt) -> JsResult<Gc<JsBigInt>> {
+        let cache = &cx.services.bigints.divisors;
+        let outcome = bun_engine_bigint::divide(x.value(), y.value(), cache);
+        Self::from_outcome(cx, x, y, outcome)
+    }
+
+    pub fn remainder(cx: &Cx, x: &JsBigInt, y: &JsBigInt) -> JsResult<Gc<JsBigInt>> {
+        let cache = &cx.services.bigints.divisors;
+        let outcome = bun_engine_bigint::remainder(x.value(), y.value(), cache);
+        Self::from_outcome(cx, x, y, outcome)
+    }
+
+    pub fn as_int_n(cx: &Cx, bits: u64, x: &JsBigInt) -> JsResult<Gc<JsBigInt>> {
+        Self::from_outcome(cx, x, x, Ok(bun_engine_bigint::as_int_n(bits, x.value())))
+    }
+
+    pub fn as_uint_n(cx: &Cx, bits: u64, x: &JsBigInt) -> JsResult<Gc<JsBigInt>> {
+        Self::from_outcome(cx, x, x, bun_engine_bigint::as_uint_n(bits, x.value()))
+    }
+}
+
+macro_rules! operators {
+    (unary: $($unary:ident)*; binary: $($binary:ident)*; fallible: $($fallible:ident)*;) => {
+        impl JsBigInt {
+            $(pub fn $unary(cx: &Cx, x: &JsBigInt) -> JsResult<Gc<JsBigInt>> {
+                Self::from_outcome(cx, x, x, Ok(bun_engine_bigint::$unary(x.value())))
+            })*
+
+            $(pub fn $binary(cx: &Cx, x: &JsBigInt, y: &JsBigInt) -> JsResult<Gc<JsBigInt>> {
+                Self::from_outcome(cx, x, y, Ok(bun_engine_bigint::$binary(x.value(), y.value())))
+            })*
+
+            $(pub fn $fallible(cx: &Cx, x: &JsBigInt, y: &JsBigInt) -> JsResult<Gc<JsBigInt>> {
+                Self::from_outcome(cx, x, y, bun_engine_bigint::$fallible(x.value(), y.value()))
+            })*
+        }
+    };
+}
+
+operators! {
+    unary: unary_minus bitwise_not increment decrement;
+    binary: add subtract bitwise_and bitwise_or bitwise_xor;
+    fallible: multiply exponentiate left_shift signed_right_shift;
 }

@@ -1,4 +1,4 @@
-use bun_engine_text::Text;
+use bun_engine_text::{PropertyName, Text, names};
 
 use crate::format::IsoText;
 use crate::{
@@ -25,6 +25,20 @@ impl Default for PartialDuration {
 }
 
 impl PartialDuration {
+    /// In the order that ToTemporalPartialDurationRecord reads them.
+    pub const PROPERTIES: [(Unit, PropertyName<'static>); UNIT_COUNT] = [
+        (Unit::Day, names::days),
+        (Unit::Hour, names::hours),
+        (Unit::Microsecond, names::microseconds),
+        (Unit::Millisecond, names::milliseconds),
+        (Unit::Minute, names::minutes),
+        (Unit::Month, names::months),
+        (Unit::Nanosecond, names::nanoseconds),
+        (Unit::Second, names::seconds),
+        (Unit::Week, names::weeks),
+        (Unit::Year, names::years),
+    ];
+
     /// The validation of ToIntegerIfIntegral.
     #[inline]
     pub fn set(&mut self, unit: Unit, number: f64) -> Result<()> {

@@ -1,5 +1,5 @@
 use bun_engine_number::NumberText;
-use bun_engine_text::{StringRef, Text};
+use bun_engine_text::{PropertyName, StringRef, Text, names};
 
 use crate::{Error, ErrorKind};
 
@@ -12,7 +12,7 @@ pub enum InputError<'a> {
     /// RequireInternalSlot failed in `Temporal.<class>.prototype.<member>`.
     Receiver {
         class: &'static str,
-        member: &'static str,
+        member: PropertyName<'a>,
     },
 }
 
@@ -141,9 +141,16 @@ impl InputError<'_> {
                 sentence(before, [digits.text(), Text::EMPTY], after)
             }
             InputError::Receiver { class, member } => {
-                let article = match member {
-                    "toZonedDateTimeISO" => "an",
-                    _ => "a",
+                let article = if member == names::toZonedDateTimeISO {
+                    "an"
+                } else {
+                    "a"
+                };
+                let member = match class {
+                    "PlainMonthDay" | "PlainYearMonth" if member == names::calendarId => {
+                        names::calendar.text()
+                    }
+                    _ => member.text(),
                 };
                 StringRef::from_str(&format!(
                     "Temporal.{class}.prototype.{member} called on value that's not {article} {class}"

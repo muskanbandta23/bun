@@ -3,16 +3,18 @@
 mod comment;
 mod name;
 mod number;
+mod operator;
 mod quoted;
 
 use bun_highway::{ScannerStops, ScannerWindow, Stops};
 
-use crate::chars::{self, Start};
+use crate::chars;
 use crate::error::LexicalError;
 use crate::names::{Key, LONGEST_SHORT, Name, Names};
 use crate::source::Source;
 use crate::token::{Detail, Token, TokenKind};
 
+use operator::SCANNERS;
 pub(crate) use quoted::TEMPLATE_IS_TAIL;
 
 #[repr(C)]
@@ -123,7 +125,7 @@ impl<'a> Lexer<'a> {
         &self.bytes[token.start() as usize..token.end() as usize]
     }
 
-    #[inline(always)]
+    #[inline(never)]
     pub(crate) fn next(&mut self) {
         self.advance(Naming::LookUp);
     }
@@ -175,10 +177,9 @@ impl<'a> Lexer<'a> {
 
     /// Reads the token once more, by the rules that hold now.
     pub(crate) fn read_again(&mut self) {
-        let (lead, previous_end) = (self.token.lead(), self.previous_end);
-        self.jump(self.token.start());
-        self.token = self.token.with_lead(lead);
-        self.previous_end = previous_end;
+        self.error = None;
+        let (start, lead) = (self.token.start() as usize, self.token.lead());
+        self.scan(start, lead, Naming::LookUp);
     }
 
     #[inline(always)]
@@ -237,126 +238,17 @@ impl<'a> Lexer<'a> {
         self.stop(offset, |stops| stops.after_name)
     }
 
-    /// One more character if that is `=`.
     #[inline(always)]
-    fn operator(&self, plain: TokenKind, assigning: TokenKind, end: usize) -> (TokenKind, usize) {
-        if self.byte(end) == b'=' {
-            (assigning, end + 1)
-        } else {
-            (plain, end)
-        }
-    }
-
-    #[inline(never)]
     fn advance(&mut self, naming: Naming) {
         self.previous_end = self.token.end();
         self.scan(self.token.end() as usize, Detail::NONE, naming);
     }
 
-    /// It has no registers to save, for it calls nothing that it has to go on after.
     #[inline(always)]
-    fn scan(&mut self, mut offset: usize, mut lead: Detail, naming: Naming) {
-        type T = TokenKind;
-        loop {
-            let Some(&byte) = self.bytes.get(offset) else {
-                return self.set(T::End, self.bytes.len(), self.bytes.len(), lead);
-            };
-            let next = offset + 1;
-            let (kind, end) = match chars::start(byte) {
-                Start::Name => return self.name(offset, lead, naming),
-                Start::Punctuator => (chars::punctuator(byte), next),
-                Start::Blank => {
-                    offset = next;
-                    continue;
-                }
-                Start::Newline => {
-                    let position = next.wrapping_sub(self.window_start);
-                    if position >= ScannerWindow::REACH {
-                        return self.scan_past_trivia(offset, lead, naming);
-                    }
-                    let run = self.window.stops().after_blanks.run(position);
-                    offset = next + run.min(EXACT_RUN) as usize;
-                    lead = Detail::FOLLOWS_NEWLINE;
-                    continue;
-                }
-                Start::Digit => return self.number(offset, lead),
-                Start::Quote => return self.string(offset, lead),
-                Start::Dot => match self.byte(next) {
-                    b'0'..=b'9' => return self.elaborate_number(offset, lead),
-                    b'.' if self.byte(next + 1) == b'.' => (T::Ellipsis, next + 2),
-                    _ => (T::Dot, next),
-                },
-                Start::Equals => match self.byte(next) {
-                    b'=' => self.operator(T::Equal, T::StrictEqual, next + 1),
-                    b'>' => (T::Arrow, next + 1),
-                    _ => (T::Assign, next),
-                },
-                Start::Exclamation => match self.byte(next) {
-                    b'=' => self.operator(T::NotEqual, T::StrictNotEqual, next + 1),
-                    _ => (T::Not, next),
-                },
-                Start::Question => match self.byte(next) {
-                    b'?' => self.operator(T::Coalesce, T::CoalesceAssign, next + 1),
-                    b'.' if !self.byte(next + 1).is_ascii_digit() => (T::QuestionDot, next + 1),
-                    _ => (T::Question, next),
-                },
-                Start::Less => match self.byte(next) {
-                    b'<' => self.operator(T::ShiftLeft, T::ShiftLeftAssign, next + 1),
-                    b'!' if self.opens_html_comment(offset) => {
-                        return self.scan_past_trivia(offset, lead, naming);
-                    }
-                    _ => self.operator(T::Less, T::LessEqual, next),
-                },
-                Start::Greater => match (self.byte(next), self.byte(next + 1)) {
-                    (b'>', b'>') => {
-                        self.operator(T::ShiftRightUnsigned, T::ShiftRightUnsignedAssign, next + 2)
-                    }
-                    (b'>', _) => self.operator(T::ShiftRight, T::ShiftRightAssign, next + 1),
-                    _ => self.operator(T::Greater, T::GreaterEqual, next),
-                },
-                Start::Plus => match self.byte(next) {
-                    b'+' => (T::Increment, next + 1),
-                    _ => self.operator(T::Plus, T::AddAssign, next),
-                },
-                Start::Minus => match self.byte(next) {
-                    b'-' if self.closes_html_comment(offset, lead) => {
-                        return self.scan_past_trivia(offset, lead, naming);
-                    }
-                    b'-' => (T::Decrement, next + 1),
-                    _ => self.operator(T::Minus, T::SubtractAssign, next),
-                },
-                Start::Star => match self.byte(next) {
-                    b'*' => self.operator(T::Exponentiate, T::ExponentiateAssign, next + 1),
-                    _ => self.operator(T::Star, T::MultiplyAssign, next),
-                },
-                Start::Slash => match self.byte(next) {
-                    b'/' | b'*' => return self.scan_past_trivia(offset, lead, naming),
-                    _ => self.operator(T::Slash, T::DivideAssign, next),
-                },
-                Start::Percent => self.operator(T::Percent, T::RemainderAssign, next),
-                Start::Ampersand => match self.byte(next) {
-                    b'&' => self.operator(T::And, T::AndAssign, next + 1),
-                    _ => self.operator(T::BitAnd, T::BitAndAssign, next),
-                },
-                Start::Bar => match self.byte(next) {
-                    b'|' => self.operator(T::Or, T::OrAssign, next + 1),
-                    _ => self.operator(T::BitOr, T::BitOrAssign, next),
-                },
-                Start::Caret => self.operator(T::BitXor, T::BitXorAssign, next),
-                Start::Other => return self.unusual_name(offset, lead),
-            };
-            return self.set(kind, offset, end, lead);
-        }
-    }
-
-    #[inline(never)]
-    fn scan_past_trivia(&mut self, offset: usize, lead: Detail, naming: Naming) {
-        if let Some((offset, lead)) = self.skip_trivia(offset, lead) {
-            self.set(TokenKind::Semicolon, offset, offset, lead);
-            let previous_end = self.previous_end;
-            self.advance(naming);
-            self.token = self.token.with_lead(lead);
-            self.previous_end = previous_end;
+    fn scan(&mut self, offset: usize, lead: Detail, naming: Naming) {
+        match self.bytes.get(offset) {
+            Some(&byte) => SCANNERS[usize::from(byte)](self, offset, lead, naming),
+            None => self.set(TokenKind::End, self.bytes.len(), self.bytes.len(), lead),
         }
     }
 

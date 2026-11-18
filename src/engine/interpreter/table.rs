@@ -43,6 +43,11 @@ macro_rules! define_slow_tables {
         /// By opcode. `None` for the instructions that call.
         pub static SLOW_PATHS: [Option<SlowPath>; Opcode::COUNT] =
             [$(is_call!($name, None, Some(slow::slow_path::<op::$name>)),)*];
+
+        /// The same, but they leave the top frame of the `Vm` and the call site alone, so `frame` can be any memory that
+        /// has a header and the registers that the instruction uses.
+        pub static OPERATIONS: [Option<SlowPath>; Opcode::COUNT] =
+            [$(is_call!($name, None, Some(slow::operation::<op::$name>)),)*];
     };
 }
 

@@ -1,5 +1,7 @@
 use bun_engine_bytecode::op;
-use bun_engine_vm::{Arithmetic, ArithmeticProfile, CellType, JsCell, TypeFlags, Value};
+use bun_engine_vm::{
+    Arithmetic, ArithmeticProfile, CellType, JsCell, JsString, TypeFlags, Value,
+};
 
 use crate::machine::{EMPTY, Machine, UNDEFINED, boolean, branch, cell, go, handler, next, slow};
 
@@ -299,10 +301,14 @@ impl<W: bun_engine_bytecode::Width> Machine<W> {
             }
             // SAFETY: both are cells.
             let (a, b) = unsafe { (cell::<JsCell>(lhs), cell::<JsCell>(rhs)) };
-            let is_by_identity = a.cell_type() > CellType::BigInt
-                || a.cell_type() != b.cell_type()
-                || (a.per_cell_bit() && b.per_cell_bit() && a.is_string());
-            return is_by_identity.then_some(false);
+            if a.cell_type() > CellType::BigInt || a.cell_type() != b.cell_type() {
+                return Some(false);
+            }
+            if !a.is_string() {
+                return None;
+            }
+            // SAFETY: both are strings.
+            return unsafe { cell::<JsString>(lhs).equals_if_atoms(&cell::<JsString>(rhs)) };
         }
         if self.are_int32(lhs, rhs) || !self.is_number(lhs) || !self.is_number(rhs) {
             return Some(lhs == rhs);

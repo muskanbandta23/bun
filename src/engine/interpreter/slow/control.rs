@@ -1,7 +1,7 @@
 use bun_engine_bytecode::{ErrorKind, StaticError};
 use bun_engine_text::PropertyName;
 use bun_engine_vm::code::metadata::{Counter, Flags};
-use bun_engine_vm::{Cx, ErrorType, Exception, JsString, Thrown, errors};
+use bun_engine_vm::{Cx, ErrorType, JsString, Thrown, errors};
 
 use super::{Next, execute};
 
@@ -73,7 +73,7 @@ execute! {
         f.set(op.value, exception.value());
     }
     Throw(op, cx, f) {
-        return Err(cx.throw_exception(Exception::create(cx, f.get(op.value))))
+        return Err(cx.throw(f.get(op.value)))
     }
     Rethrow(op, cx, f) {
         return Err(cx.throw_exception(f.cell(op.exception)))

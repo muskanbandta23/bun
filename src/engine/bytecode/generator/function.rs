@@ -535,7 +535,7 @@ impl<'a> Generator<'a> {
         };
         for binding in bindings {
             if binding.kind == BindingKind::Var && has(binding, BindingFlags::CAPTURED) {
-                let slot = self.add_slot(&mut layout, binding);
+                let slot = self.add_slot(&mut layout, &Self::as_initialized(binding));
                 self.bind_slot(binding, register, slot);
             }
         }

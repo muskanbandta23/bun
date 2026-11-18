@@ -310,7 +310,11 @@ impl Generator<'_> {
         let (handler, try_depth) = (self.asm().label(), self.asm().try_depth());
         self.asm()
             .push_try(handler, HandlerKind::SynthesizedFinally);
-        self.b.controls.push(Control::Iterator { state, try_depth });
+        self.b.controls.push(Control::Iterator {
+            state,
+            try_depth,
+            range: (divot, start, end),
+        });
         self.b.controls.push(Control::Loop {
             on_break,
             on_continue: next,
@@ -338,6 +342,7 @@ impl Generator<'_> {
 
         self.close_iterator_on_throw(handler, state);
         self.asm().bind(on_break);
+        self.position(divot, start, end);
         self.asm().iterator_close(state, CloseMode::Normal);
         self.asm().bind(done);
         self.leave_loop_scope(it.scope);
@@ -468,6 +473,7 @@ impl Generator<'_> {
     #[inline(never)]
     pub(super) fn await_value(&mut self, dst: Register, value: Operand, position: u32) {
         self.debug_hook(DebugHook::WillAwait, position);
+        self.position_at(position);
         self.suspend(value, SuspendKind::Await);
         self.asm().resume_after_await(dst);
         self.debug_hook(DebugHook::DidAwait, position);

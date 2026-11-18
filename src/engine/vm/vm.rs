@@ -109,6 +109,9 @@ vm_shapes! {
     regexp: crate::RegExp,
     property_name_enumerator: crate::PropertyNameEnumerator,
     sentinel: crate::Sentinel,
+    slim_promise_reaction: crate::PromiseReaction,
+    full_promise_reaction: crate::FullPromiseReaction,
+    promise_combinator: crate::PromiseCombinator,
 }
 
 impl VmShapes {
@@ -134,6 +137,7 @@ pub struct Embedder {
     /// After the last cell.
     pub destroy_members: Cell<Option<fn(&Vm)>>,
     pub errors: crate::ErrorHooks,
+    pub microtasks: crate::MicrotaskHooks,
 }
 
 /// All that the scripts of one thread share.
@@ -161,6 +165,7 @@ pub struct Vm {
     pub did_enter: Cell<bool>,
     is_execution_forbidden: Cell<bool>,
     deletes_unconfigurable_properties: Cell<bool>,
+    pub(crate) is_async_context_tracked: Cell<bool>,
     /// Members of the class that C++ sees.
     embedder_members: UnsafeCell<MaybeUninit<[usize; 48]>>,
     pub heap: Heap,
@@ -236,6 +241,7 @@ impl VmRef {
             did_defer_termination: Cell::new(false),
             is_execution_forbidden: Cell::new(false),
             deletes_unconfigurable_properties: Cell::new(false),
+            is_async_context_tracked: Cell::new(false),
             debugger_count: Cell::new(0),
             did_enter: Cell::new(false),
             seed: Cell::new(seed.rotate_left(32) | 1),
@@ -246,7 +252,7 @@ impl VmRef {
             spaces_by_class: RefCell::default(),
             shapes_by_class: RefCell::default(),
             extensions: RefCell::default(),
-            default_microtask_queue: MicrotaskQueueRef::default(),
+            default_microtask_queue: MicrotaskQueueRef::unregistered(),
             string_caches: StringCaches::new(),
             shape_cache: ShapeCache::default(),
             symbols: WeakValueMap::default(),
@@ -322,6 +328,8 @@ impl Vm {
     pub const OFFSET_OF_CATCH_BYTECODE_OFFSET: usize = offset_of!(Vm, catch_bytecode_offset);
     pub const OFFSET_OF_PROTOTYPE_CHAIN_EPOCH: usize = offset_of!(Vm, prototype_chain_epoch);
     pub const OFFSET_OF_SCRATCH: usize = offset_of!(Vm, scratch);
+    pub const OFFSET_OF_IS_ASYNC_CONTEXT_TRACKED: usize = offset_of!(Vm, is_async_context_tracked);
+    pub const OFFSET_OF_DEBUGGER_COUNT: usize = offset_of!(Vm, debugger_count);
     pub const OFFSET_OF_HEAP: usize = offset_of!(Vm, heap);
     pub const OFFSET_OF_SMALL_STRINGS: usize = offset_of!(Vm, small_strings);
 
@@ -468,6 +476,7 @@ impl Vm {
         })
     }
 
+    #[inline(always)]
     pub fn default_microtask_queue(&self) -> &MicrotaskQueueRef {
         &self.default_microtask_queue
     }
@@ -631,6 +640,11 @@ impl Vm {
         self.entry_global.get()
     }
 
+    #[inline(always)]
+    pub(crate) fn set_entry_global(&self, global: Gc<GlobalObject>) {
+        self.entry_global.set(Some(global));
+    }
+
     pub(crate) fn will_enter(&self, global: Gc<GlobalObject>) {
         self.entry_global.set(Some(global));
         self.did_enter.set(true);
@@ -770,7 +784,9 @@ impl Vm {
         (self.hooks.visit_code_on_stack)(self, addresses, visitor);
     }
 
-    pub(crate) fn visit_output_constraints(&self, _: &mut Visitor) {}
+    pub(crate) fn visit_output_constraints(&self, visitor: &mut Visitor) {
+        self.services.visit_output_constraints(visitor);
+    }
 
     pub(crate) fn reconcile_weak_references(&self, survivors: &Survivors) {
         self.shape_cache.prune(survivors);

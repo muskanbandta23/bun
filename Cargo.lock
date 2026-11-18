@@ -939,6 +939,7 @@ dependencies = [
  "bun_engine_asm",
  "bun_engine_codegen",
  "bun_engine_wasm_format",
+ "hashbrown 0.15.5",
  "smallvec",
 ]
 

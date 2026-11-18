@@ -14,4 +14,5 @@ bun_engine_asm.workspace = true
 bun_engine_codegen.workspace = true
 bun_engine_wasm_format.workspace = true
 bitflags.workspace = true
+hashbrown.workspace = true
 smallvec.workspace = true

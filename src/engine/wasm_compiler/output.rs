@@ -41,8 +41,13 @@ pub struct CallSite {
 #[derive(Clone, Copy, Debug)]
 pub struct InlineFrame {
     pub func: FuncIndex,
-    /// A position in `inline_frames`, or `u32::MAX` for the function itself.
+    /// A position in `inline_frames`, `u32::MAX` for the function itself, or [`Self::NO_CALLER`].
     pub caller: u32,
+}
+
+impl InlineFrame {
+    /// A tail call has put it in the place of the function itself.
+    pub const NO_CALLER: u32 = u32::MAX - 1;
 }
 
 /// A patchable call or jump that goes through the slot of the callee until it is pointed at the code.

@@ -22,8 +22,8 @@ pub trait Feedback {
 /// How much a function may grow.
 #[derive(Clone, Copy, Debug)]
 pub struct InliningBudget {
-    pub growth_factor: f32,
-    pub cap: f32,
+    pub(super) growth_factor: f32,
+    pub(super) cap: f32,
 }
 
 impl InliningBudget {

@@ -59,8 +59,10 @@ impl Simplifier<'_> {
             function.target(edge) == function.target(first)
                 && pairs.all(|(&a, &b)| function.resolve(a) == function.resolve(b))
         };
-        !matches!(self.op(function.last(block)), Op::Patchpoint(_))
-            && function.successors(block).skip(1).all(is_same)
+        matches!(
+            self.op(function.last(block)),
+            Op::Branch(_) | Op::Switch(..) | Op::JumpTable(..)
+        ) && function.successors(block).skip(1).all(is_same)
     }
 
     fn merge(&mut self, block: Block, edge: Edge) {

@@ -21,19 +21,23 @@ mod knowledge;
 mod memory;
 mod numbering;
 mod params;
+mod promises;
 mod rewrite;
 mod selects;
 mod shifts;
 mod shuffles;
 mod vectors;
+mod writes;
 
 use self::facts::Facts;
-use self::numbering::Numbering;
+use self::numbering::{Numbering, is_expression};
+use self::promises::makes_promise;
 use self::rewrite::Step;
+use self::writes::Writes;
 use super::Analyses;
 use crate::analysis::{Cfg, Dominators};
 use crate::bitset::BitSet;
-use crate::ir::{Block, Edge, Entity, Function, Op, State, Table, Type, Value};
+use crate::ir::{Block, Edge, EffectFlags, Entity, Function, Heap, Op, State, Table, Type, Value};
 use crate::target::Target;
 
 #[derive(Clone, Copy, Default)]
@@ -44,6 +48,8 @@ struct ValueInfo {
     /// The position of the walk up to which a branch or check has decided whether the value is zero.
     decided_until: u32,
     is_zero: bool,
+    /// Can now be computed where the client did not expect it to be when it marked loads as `ALWAYS_READABLE`.
+    is_set_free: bool,
 }
 
 /// Kept from one function to the next for their allocations.
@@ -54,6 +60,7 @@ pub(super) struct Tables {
     state_users: Table<State, u32>,
     resolved_states: BitSet,
     numbering: Numbering,
+    writes: Writes,
     /// An edge from a block that can be reached leads here.
     entered: BitSet,
     /// May have no use left.
@@ -84,6 +91,10 @@ struct Simplifier<'a> {
     /// A value has been replaced after some of its uses were visited.
     left_aliases: bool,
     would_find_more: bool,
+    has_promises: bool,
+    has_set_free: bool,
+    /// What has been set free has gone back to the start of a loop.
+    withdraws_all_promises: bool,
 }
 
 pub(super) fn run(function: &mut Function, analyses: &mut Analyses, target: Target) {
@@ -107,9 +118,13 @@ pub(super) fn run(function: &mut Function, analyses: &mut Analyses, target: Targ
             changed_control: false,
             left_aliases: false,
             would_find_more: false,
+            has_promises: false,
+            has_set_free: false,
+            withdraws_all_promises: false,
         };
         simplifier.count_uses();
         simplifier.walk();
+        simplifier.keep_promises();
         simplifier.replace_cycles_of_params();
         simplifier.tidy_blocks();
         let Simplifier {
@@ -142,6 +157,7 @@ impl Simplifier<'_> {
         tables.state_users.refill(function.state_count(), 0);
         tables.resolved_states.reset(function.state_count());
         tables.numbering.reset();
+        tables.writes.reset(function, cfg);
         tables.entered.reset(function.block_count());
         for &block in cfg.order().iter().rev() {
             for edge in function.successors(block) {
@@ -149,26 +165,42 @@ impl Simplifier<'_> {
                     tables.values[arg].uses += 1;
                 }
             }
-            let mut value = function.last(block);
-            while !value.is_none() {
-                let previous = function.previous(value);
-                if tables.values[value].uses == 0 && !function.effects(value).must_execute() {
-                    function.remove(value);
-                } else {
-                    for &operand in function.operands(value) {
-                        tables.values[operand].uses += 1;
+            let mut next = function.last(block);
+            while let Some(value) = next.expand() {
+                next = function.previous(value);
+                let (op, is_used) = (function.op(value), tables.values[value].uses != 0);
+                if is_expression(op) {
+                    if is_used {
+                        for &operand in op.inline_operands() {
+                            tables.values[operand].uses += 1;
+                        }
+                    } else {
+                        function.remove(value);
                     }
-                    if let Some(state) = function.state_of(value).expand() {
-                        tables.state_users[state] += 1;
-                        if tables.state_users[state] == 1 {
-                            for &kept in function.state(state) {
-                                tables.values[kept].uses += 1;
-                            }
+                    continue;
+                }
+                let effects = function.effects(value);
+                if !is_used && !effects.must_execute() {
+                    function.remove(value);
+                    continue;
+                }
+                if effects.writes_memory() {
+                    tables.writes.expect(function, effects.writes);
+                }
+                self.has_promises |= makes_promise(op);
+                for &operand in function.operands(value) {
+                    tables.values[operand].uses += 1;
+                }
+                if let Some(state) = function.state_of(value).expand() {
+                    tables.state_users[state] += 1;
+                    if tables.state_users[state] == 1 {
+                        for &kept in function.state(state) {
+                            tables.values[kept].uses += 1;
                         }
                     }
                 }
-                value = previous;
             }
+            tables.writes.sum_up(cfg, self.dominators, block);
             if cfg.loop_headed_by(block).is_none() {
                 drop_unused_params(function, tables, cfg, block);
             }
@@ -185,12 +217,16 @@ impl Simplifier<'_> {
                 self.position = self.end_of_subtree;
                 continue;
             }
+            self.tables
+                .numbering
+                .enter(self.position, self.end_of_subtree);
             let mut value = self.function.first(block);
             while value != self.function.last(block) {
                 self.visit(value);
                 value = self.function.next(value);
             }
             self.visit_end(value);
+            self.tables.writes.leave(block);
             self.position += 1;
         }
     }
@@ -199,6 +235,9 @@ impl Simplifier<'_> {
     fn point_at(&mut self, value: Value) {
         const BUDGET: u32 = 40;
         (self.cursor, self.budget) = (value, BUDGET);
+        if self.has_set_free {
+            self.follow_what_is_set_free(value);
+        }
         self.function.resolve_operands(value);
         if let Some(state) = self.function.state_of(value).expand()
             && self.tables.resolved_states.insert(state.index())
@@ -227,33 +266,82 @@ impl Simplifier<'_> {
                 Step::Exits(exit) => return self.end_block_at(value, exit),
             }
         }
-        if let Op::Check(condition, _) = op {
-            self.decide(condition, true);
-        } else if let Some(key) = numbering::key(op) {
-            self.number(value, key, ty);
+        if is_expression(&op) {
+            match self
+                .tables
+                .numbering
+                .find_expression(self.function, &op, ty)
+            {
+                Ok(known) => {
+                    self.hit();
+                    return self.replace(value, known);
+                }
+                Err(vacancy) => self.tables.numbering.add(&vacancy, value, 0),
+            }
+        } else {
+            self.number_other(value, op, ty);
         }
         self.remove_unused();
     }
 
-    #[inline]
-    fn number(&mut self, value: Value, key: Op, ty: Type) {
-        let (position, end) = (self.position, self.end_of_subtree);
-        match self.tables.numbering.find(self.function, key, ty, position) {
-            Ok(known) => {
-                self.hit();
-                return self.replace(value, known);
+    fn number_other(&mut self, value: Value, op: Op, ty: Type) {
+        let Tables {
+            numbering, writes, ..
+        } = &mut *self.tables;
+        if let Op::Check(condition, _) = op {
+            self.decide(condition, true);
+        } else if let Some(key) = numbering::key(self.function, op) {
+            match numbering.find(self.function, writes, key, ty) {
+                Ok(_) if ty == Type::Void => {
+                    self.hit();
+                    self.discard(value);
+                }
+                Ok(known) => {
+                    self.hit();
+                    self.replace(value, known);
+                }
+                Err(vacancy) => {
+                    numbering.add(&vacancy, value, writes.now());
+                    if let Op::Checked(op, args, _) = op {
+                        let plain = Op::Binary(numbering::unchecked(op), args);
+                        if let Err(vacancy) = numbering.find_expression(self.function, &plain, ty) {
+                            numbering.add(&vacancy, value, 0);
+                        }
+                    }
+                }
             }
-            Err(vacancy) => self.tables.numbering.add(&vacancy, value, position, end),
+        } else if let Some(load) = numbering::load_after(op) {
+            self.number_store(value, load);
+        } else {
+            self.note_writes(value);
         }
-        if let Op::Checked(op, args, _) = key {
-            let plain = Op::Binary(numbering::unchecked(op), args);
-            if let Err(vacancy) = self
-                .tables
-                .numbering
-                .find(self.function, plain, ty, position)
-            {
-                self.tables.numbering.add(&vacancy, value, position, end);
-            }
+    }
+
+    fn number_store(&mut self, store: Value, load: (Op, Heap)) {
+        let Tables {
+            numbering, writes, ..
+        } = &mut *self.tables;
+        let (function, stored) = (&*self.function, self.function.operands(store)[0]);
+        let before = numbering.find(function, writes, load, function.type_of(stored));
+        if before.as_ref().ok() == Some(&stored) && !function.effects(store).has(EffectFlags::EXITS)
+        {
+            self.hit();
+            return self.discard(store);
+        }
+        writes.write(load.1);
+        let after = match before {
+            Ok(_) => numbering.find(function, writes, load, function.type_of(stored)),
+            not_found => not_found,
+        };
+        if let Err(vacancy) = after {
+            numbering.add(&vacancy, store, writes.now());
+        }
+    }
+
+    fn note_writes(&mut self, value: Value) {
+        let effects = self.function.effects(value);
+        if effects.writes_memory() {
+            self.tables.writes.write(effects.writes);
         }
     }
 

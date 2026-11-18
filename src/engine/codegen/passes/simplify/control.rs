@@ -12,6 +12,9 @@ impl Simplifier<'_> {
         let (block, incoming) = (self.block, self.cfg.predecessors(self.block));
         if incoming.is_empty() {
             self.tables.entered.insert(block.index());
+            self.tables
+                .writes
+                .enter(self.cfg, self.dominators, block, None);
             return true;
         }
         let mut edges = core::mem::take(&mut self.tables.edges);
@@ -33,6 +36,12 @@ impl Simplifier<'_> {
             }
         }
         if first.is_some() {
+            let source = first
+                .filter(|_| second.is_none())
+                .map(|edge| self.function.source(edge));
+            self.tables
+                .writes
+                .enter(self.cfg, self.dominators, block, source);
             self.would_find_more |= !is_entered;
             self.simplify_params(&edges, is_entered);
         }
@@ -108,6 +117,7 @@ impl Simplifier<'_> {
 
     pub(super) fn visit_end(&mut self, last: Value) {
         self.point_at(last);
+        self.note_writes(last);
         for edge in self.function.successors(self.block) {
             self.function.resolve_args(edge);
         }

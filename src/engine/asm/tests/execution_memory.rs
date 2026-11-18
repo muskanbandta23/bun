@@ -23,6 +23,35 @@ fn loads() {
 }
 
 #[test]
+fn every_register_in_an_address() {
+    let mut h = Harness::new();
+    let registers = h.operand_registers;
+    for base in registers.gprs().chain([SP]) {
+        for index in registers.gprs().map(Some).chain([None]) {
+            for offset in [0, 8, 300] {
+                let address = match index {
+                    Some(index) => Address::indexed(base, index, h.random.pick(&SCALES), offset),
+                    None => Address::new(base, offset),
+                };
+                let (reg, size) = (h.any_gpr(), h.random.pick(&SIZES));
+                let case = Case::new(op!(load(size, reg, address)), move |m| {
+                    m.set64(reg, m.load(size, address));
+                });
+                h.add(case.accesses(address));
+                let case = Case::new(op!(store(size, address, reg)), move |m| {
+                    m.store(size, address, m.get64(reg));
+                });
+                h.add(case.accesses(address));
+            }
+            let (dst, rhs) = (h.any_gpr(), index.unwrap_or(SP));
+            h.add(Case::new(op!(add64(dst, base, rhs)), move |m| {
+                m.set64(dst, m.get64(base).wrapping_add(m.get64(rhs)));
+            }));
+        }
+    }
+}
+
+#[test]
 fn loads_that_extend_the_sign() {
     let mut h = Harness::new();
     for size in SIZES {

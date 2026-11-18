@@ -379,8 +379,8 @@ inline JSObject* objectConstructorFreeze(JSGlobalObject* globalObject, JSObject*
 inline JSObject* objectConstructorSeal(JSGlobalObject* globalObject, JSObject* object) { return Engine::object_seal(object, globalObject); }
 inline uint64_t toLength(JSGlobalObject* globalObject, JSObject* object) { return Engine::object_length_of_array_like(object, globalObject); }
 inline bool objectPrototypeHasOwnProperty(JSGlobalObject* globalObject, JSObject* object, PropertyName name) { return object->hasOwnProperty(globalObject, name); }
-inline inline String describeRepresentation(JSValue value) { return Engine::value_describe(value); }
-JSValue objectValues(VM&, JSGlobalObject* globalObject, JSValue value) { return Engine::object_values(globalObject, value); }
+inline String describeRepresentation(JSValue value) { return Engine::value_describe(value); }
+inline JSValue objectValues(VM&, JSGlobalObject* globalObject, JSValue value) { return Engine::object_values(globalObject, value); }
 inline JSArray* ownPropertyKeys(JSGlobalObject* globalObject, JSObject* object, PropertyNameMode kinds, DontEnumPropertiesMode mode) { return Engine::object_own_keys(object, globalObject, kinds, mode); }
 inline JSString* objectPrototypeToString(JSGlobalObject* globalObject, JSValue value) { return Engine::value_to_tagged_string(value, globalObject); }
 // The same, as if there were no `Symbol.toStringTag`.

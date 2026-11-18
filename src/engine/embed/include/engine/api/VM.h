@@ -383,6 +383,10 @@ template<typename T> ALWAYS_INLINE void* allocateCell(VM& vm, size_t size = size
     return T::template subspaceFor<T, SubspaceAccess::OnMainThread>(vm)->allocate(vm.heap, size);
 }
 
+namespace Integrity {
+inline void auditCellFully(VM& vm, JSCell* cell) { RELEASE_ASSERT(&cell->vm() == &vm && !cell->isPendingDestruction()); }
+}
+
 // A collection that has become due runs at the end of the scope.
 class DeferGC {
     WTF_MAKE_NONCOPYABLE(DeferGC);

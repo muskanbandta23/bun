@@ -107,8 +107,8 @@ impl Duration {
     }
 
     /// The conversion of the `unit` option of `total`.
-    pub fn total_unit(name: Option<Text<'_>>) -> Result<Unit> {
-        name.and_then(Unit::find).ok_or(Error::InvalidTotalUnit)
+    pub fn total_unit(name: Text<'_>) -> Result<Unit> {
+        Unit::find(name).ok_or(Error::InvalidTotalUnit)
     }
 
     pub fn total(&self, unit: Unit, relative_to: Option<&RelativeTo>) -> Result<f64> {

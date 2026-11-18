@@ -177,7 +177,11 @@ impl Fields {
         if !self.calendar.has_eras() {
             bits &= !(Field::Era.bit() | Field::EraYear.bit());
         }
-        (Field::ALL.into_iter()).filter(move |field| bits & field.bit() != 0)
+        core::iter::from_fn(move || {
+            let field = Field::ALL.get(bits.trailing_zeros() as usize)?;
+            bits &= bits - 1;
+            Some(*field)
+        })
     }
 
     /// For a value that is `undefined`.
@@ -288,7 +292,7 @@ impl Fields {
     /// InterpretTemporalDateTimeFields
     pub(crate) fn date_time(&self, overflow: Overflow) -> Result<IsoDateTime> {
         Ok(IsoDateTime {
-            date: self.calendar.date_from_fields(self.date, overflow)?,
+            date: self.calendar.date_from_fields(&self.date, overflow)?,
             time: self.time_over(PlainTime::MIDNIGHT, overflow)?,
         })
     }
@@ -299,9 +303,9 @@ impl Fields {
         base: IsoDateTime,
         overflow: Overflow,
     ) -> Result<IsoDateTime> {
-        let date = DateFields::of_date(self.calendar, base.date)?.merged(self.date);
+        let date = DateFields::of_date(self.calendar, base.date)?.merged(&self.date);
         Ok(IsoDateTime {
-            date: self.calendar.date_from_fields(date, overflow)?,
+            date: self.calendar.date_from_fields(&date, overflow)?,
             time: self.time_over(base.time, overflow)?,
         })
     }

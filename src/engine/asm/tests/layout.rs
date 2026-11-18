@@ -500,15 +500,19 @@ fn x64_jumps_are_short_exactly_when_they_reach() {
 
 #[test]
 fn x64_jumps_reach_over_jumps_that_shrink() {
-    let mut program = Program::<x64::MacroAssembler>::new(true);
-    let (behind, ahead) = (program.here(), program.masm.new_label());
-    for _ in 0..62 {
-        program.add(Item::Transfer(Transfer::OnFlags, ahead));
+    for count in [63, 64] {
+        let mut program = Program::<x64::MacroAssembler>::new(true);
+        program.fill(300);
+        let (behind, ahead) = (program.here(), program.masm.new_label());
+        for _ in 0..count {
+            program.add(Item::Transfer(Transfer::OnFlags, ahead));
+        }
+        program.bind(ahead);
+        program.add(Item::Transfer(Transfer::OnFlags, behind));
+        let extents = program.check();
+        let short = extents.iter().filter(|(start, end)| end - start == 2);
+        assert_eq!(short.count(), 64);
     }
-    program.bind(ahead);
-    program.add(Item::Transfer(Transfer::OnFlags, behind));
-    let extents = program.check();
-    assert!(extents.iter().all(|(start, end)| end - start == 2));
 }
 
 /// A row of items on each side of the gap, each a little further from what it refers to on the other side.

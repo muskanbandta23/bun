@@ -1,12 +1,30 @@
 //! Transformations of functions. Each leaves a valid function without aliases.
 
 mod bounds;
+mod branches_to_selects;
 mod construct_ssa;
+mod copier;
+mod dead_stores;
+mod duplicate_tails;
 mod eliminate_dead_code;
+mod eliminate_redundant_memory;
+mod facts;
+mod fold_path_constants;
+mod hoist_loop_invariants;
+mod induction;
+mod infer_switches;
 mod lower_switches;
 mod lower_total_division;
 mod merges;
+mod orderings;
+mod places;
+mod preheaders;
 mod reaching;
+mod readability;
+mod rotate_loops;
+mod sink_into_cold_blocks;
+mod specialize_selects;
+mod writes;
 
 use crate::analysis::{Cfg, Dominators, Frequencies};
 use crate::ir::{Function, validate};
@@ -85,9 +103,18 @@ macro_rules! passes {
 const QUICK: &[Pass] = passes![construct_ssa, lower_switches, lower_total_division];
 const FULL: &[Pass] = passes![
     construct_ssa,
+    specialize_selects,
+    fold_path_constants,
+    hoist_loop_invariants,
+    rotate_loops,
+    eliminate_redundant_memory,
     eliminate_dead_code,
+    infer_switches,
+    duplicate_tails,
     lower_switches,
     lower_total_division,
+    branches_to_selects,
+    sink_into_cold_blocks,
 ];
 
 impl Pass {

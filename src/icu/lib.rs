@@ -2,6 +2,7 @@
 
 #[macro_use]
 mod ffi;
+mod argument;
 pub mod break_iterator;
 mod c_text;
 pub mod calendar;
@@ -23,6 +24,7 @@ pub mod normalizer;
 pub mod number_format;
 pub mod numbering_system;
 pub mod plural_rules;
+pub mod process;
 pub mod relative_time_format;
 pub mod resource_bundle;
 pub mod time_zone;

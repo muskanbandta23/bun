@@ -15,7 +15,6 @@ pub use collections::*;
 pub use control::*;
 pub use exotic::*;
 pub use internal_fields::{InternalFieldTuple, OFFSET_OF_INTERNAL_FIELDS, Sentinel};
-#[allow(unused_imports, unreachable_pub)]
 pub use iteration::*;
 pub use modules::*;
 pub use text::*;

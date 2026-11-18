@@ -264,6 +264,13 @@ impl<'a> PropertyName<'a> {
         symbol::flags(self.string()).is_some_and(|flags| flags.is_private())
     }
 
+    /// Private, and unlike a property in that it belongs to a proxy itself and is left alone by `Object.freeze`.
+    #[inline]
+    pub fn is_private_element(self) -> bool {
+        symbol::flags(self.string())
+            .is_some_and(|flags| flags.is_private() && !flags.passes_through_proxies())
+    }
+
     #[inline]
     pub fn symbol_flags(self) -> Option<symbol::SymbolFlags> {
         symbol::flags(self.string())

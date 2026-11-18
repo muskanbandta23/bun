@@ -590,6 +590,7 @@ dependencies = [
  "bun_engine_inspector",
  "bun_engine_interpreter",
  "bun_engine_intl",
+ "bun_engine_macros",
  "bun_engine_number",
  "bun_engine_optimizer",
  "bun_engine_regexp_jit",
@@ -872,9 +873,11 @@ name = "bun_engine_temporal"
 version = "0.0.0"
 dependencies = [
  "bun_engine_date",
+ "bun_engine_macros",
  "bun_engine_number",
  "bun_engine_standalone",
  "bun_engine_text",
+ "bun_engine_vm",
  "bun_icu",
 ]
 

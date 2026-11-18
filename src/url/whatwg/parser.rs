@@ -80,6 +80,9 @@ impl<'a> Parser<'a> {
 
     #[inline]
     fn start(&mut self, base: Option<&View<'a>>) -> Result<Step> {
+        if base.is_some_and(|base| !self.out.has_room_for(base.text)) {
+            return Err(Error::OutOfMemory);
+        }
         let input = self.source.bytes;
         let (colon, has_uppercase) = scan_scheme(input);
         match (input.get(colon), base) {

@@ -216,7 +216,7 @@ fn comparing_durations() {
 
 #[test]
 fn year_months_and_month_days() {
-    let month = PlainYearMonth::new(2020, 1, CalendarId::Iso8601, 31).unwrap();
+    let month = PlainYearMonth::new(2020, 1, CalendarId::Iso8601, Some(31)).unwrap();
     let later = month.add(&duration("P1Y1M"), Overflow::Reject).unwrap();
     assert_eq!(
         string(&later.to_text(ShowCalendar::Always)),
@@ -230,8 +230,8 @@ fn year_months_and_month_days() {
         month.add(&duration("P1D"), Overflow::Reject),
         Err(Error::UnitsBelowMonth)
     );
-    assert!(PlainYearMonth::new(-271_821, 4, CalendarId::Iso8601, 1).is_ok());
-    assert!(PlainYearMonth::new(275_760, 10, CalendarId::Iso8601, 1).is_err());
+    assert!(PlainYearMonth::new(-271_821, 4, CalendarId::Iso8601, None).is_ok());
+    assert!(PlainYearMonth::new(275_760, 10, CalendarId::Iso8601, None).is_err());
 
     for (year, expected) in [
         ("1e10", "02-29"),

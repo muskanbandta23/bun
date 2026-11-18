@@ -86,7 +86,7 @@ impl IntSwitch {
     }
 }
 
-/// The keys are in `Code::string_switches`, in the same order.
+/// The keys are in `Code::string_switches`, in the same order. The first of equal keys counts.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct StringSwitch {
     pub default: u32,

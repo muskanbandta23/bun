@@ -7,6 +7,7 @@ mod assembler;
 mod code;
 mod constant;
 mod function;
+mod generator;
 mod host;
 mod instruction;
 mod metadata;

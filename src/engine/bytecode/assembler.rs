@@ -416,6 +416,10 @@ impl Assembler {
             .then(|| (Site(self.last), self.header(self.last).opcode()))
     }
 
+    pub(crate) fn opcode(&self, site: Site) -> Opcode {
+        self.header(site.0).opcode()
+    }
+
     #[inline]
     pub(crate) fn operand(&self, site: Site, index: usize) -> u32 {
         debug_assert!(site.0 < self.len && index < self.header(site.0).operands());

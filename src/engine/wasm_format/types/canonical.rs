@@ -17,7 +17,7 @@ use crate::alloc::{OutOfMemory, TryPush, try_boxed};
 pub(super) const NO_SUPERTYPE: u32 = u32::MAX;
 
 /// An index in a group names a member or, from the number of members up, a type outside the group.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
 pub(super) struct Shape {
     pub(super) supertype: u32,
@@ -183,10 +183,6 @@ pub(super) struct RecGroup {
 }
 
 impl RecGroup {
-    pub(super) fn hash(&self) -> u64 {
-        self.hash
-    }
-
     #[inline]
     pub(super) fn rtt(&self, member: u32) -> &Rtt {
         &self.members[member as usize]
@@ -212,7 +208,7 @@ impl Drop for RecGroup {
 }
 
 /// The structure of a group that may exist already.
-#[derive(Default, Hash)]
+#[derive(Default)]
 pub(super) struct Candidate {
     shapes: Vec<Shape>,
     values: Vec<ValType>,
@@ -244,12 +240,31 @@ impl Candidate {
         self.outside.try_push(rtt.address())
     }
 
+    pub(super) fn hash(&self) -> u64 {
+        let [seed, multiplier] = REGISTRY.keys;
+        let shapes = self.shapes.iter().flat_map(|shape| {
+            let kind = u64::from(shape.kind as u8) << 1 | u64::from(shape.is_final);
+            let counts = u64::from(shape.count) << 16 | u64::from(shape.results);
+            [kind << 32 | counts, shape.supertype.into()]
+        });
+        let values = self.values.iter().map(|ty| ty.bits().into());
+        let fields = self.fields.iter().map(|field| {
+            u64::from(field.storage.as_value_bits().bits()) << 1 | u64::from(field.mutable)
+        });
+        let outside = self.outside.iter().map(|&address| address as u64);
+        let words = shapes.chain(values).chain(fields).chain(outside);
+        words.fold(seed, |hash, word| {
+            let product = u128::from(hash ^ word) * u128::from(multiplier);
+            product as u64 ^ (product >> 64) as u64
+        })
+    }
+
     /// The group is valid and not empty. `outside` finds an outside type by its number.
     pub(super) fn intern<'a>(
         &self,
+        hash: u64,
         outside: impl Fn(usize) -> (&'a Arc<RecGroup>, u32),
     ) -> Result<Arc<RecGroup>, OutOfMemory> {
-        let hash = REGISTRY.hasher.hash_one(self);
         // Released after the lock, which the drop of a group takes.
         let mut upgraded = SmallVec::<[Arc<RecGroup>; 1]>::new();
         let mut entries = REGISTRY.entries.lock();
@@ -277,7 +292,7 @@ impl Candidate {
         Ok(group)
     }
 
-    fn describes(&self, group: &RecGroup) -> bool {
+    pub(super) fn describes(&self, group: &RecGroup) -> bool {
         let shapes = group.members.iter().map(|member| member.shape);
         let outside = group.outside.iter().map(|ty| ty.rtt().address());
         *self.values == *group.values
@@ -341,12 +356,13 @@ struct Entry {
 }
 
 struct Registry {
-    hasher: RandomState,
+    /// Secret, so that no module can choose groups that collide.
+    keys: [u64; 2],
     entries: Guarded<HashTable<Entry>>,
 }
 
 static REGISTRY: LazyLock<Registry> = LazyLock::new(|| Registry {
-    hasher: RandomState::new(),
+    keys: [0, 1].map(|i| RandomState::new().hash_one(i) | 1),
     entries: Guarded::new(HashTable::new()),
 });
 
@@ -388,7 +404,7 @@ impl CanonicalType {
             assert!(ty.defined_index().is_none());
             candidate.push_value(ty)?;
         }
-        let group = candidate.intern(|_| unreachable!())?;
+        let group = candidate.intern(candidate.hash(), |_| unreachable!())?;
         Ok(Self::new(group, 0))
     }
 

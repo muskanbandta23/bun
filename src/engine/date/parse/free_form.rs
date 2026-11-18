@@ -5,6 +5,7 @@ use bun_engine_text::CodeUnit;
 use super::Parsed;
 use super::cursor::{Cursor, Number, Word, is_letter};
 use crate::civil::days_from_civil;
+use crate::time_value::DAY;
 
 const MAX_YEAR: u32 = 1_000_000;
 
@@ -225,7 +226,7 @@ pub(super) fn parse<T: CodeUnit>(
             _ => cursor.advance(1),
         }
     }
-    let time = parts.date.days()? * 86_400_000 + parts.clock.milliseconds()?;
+    let time = parts.date.days()? * DAY + parts.clock.milliseconds()?;
     Some(match parts.zone {
         Some(zone) => Parsed::Utc(time - zone.milliseconds()?),
         None => Parsed::Local(time),
@@ -258,8 +259,10 @@ impl Parts {
             zone.minutes = Some(value);
         } else if continues_clock {
             self.clock.push_last(value);
-            let is_set_off = matches!(cursor.peek(), 0 | b'\t'..=b'\r' | b' ' | b'+' | b'-')
-                || cursor.is_at_letter(b'z');
+            let is_set_off = matches!(
+                cursor.peek(),
+                0 | b'\t'..=b'\r' | b' ' | b'+' | b'-' | b'Z' | b'z'
+            );
             is_set_off.then_some(())?;
         } else {
             self.date.push(value)?;

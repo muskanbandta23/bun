@@ -21,6 +21,8 @@ pub(super) struct Repeat {
 pub(super) struct Outside {
     turn: Turn,
     weight: u32,
+    repeats: bool,
+    following: u32,
 }
 
 /// How a loop without frames knows the number of its turns.
@@ -54,7 +56,7 @@ impl Emitter<'_> {
         };
         let is_stepped = matches!(form, Form::Possessive | Form::Stepped);
         if is_stepped && max != 0 && self.graph.turns_are_alike(body) {
-            return self.stepped(repeat, form == Form::Stepped, fail);
+            return self.stepped(id, repeat, form == Form::Stepped, fail);
         }
         if min == 0 && !repeat.pairs.is_empty() {
             self.record(Op::Clear {
@@ -74,16 +76,21 @@ impl Emitter<'_> {
         let outside = Outside {
             turn: self.turn,
             weight: self.weight,
+            repeats: self.repeats,
+            following: self.following,
         };
         self.turn.required = required;
         self.weight = self.weight.saturating_mul(8);
         self.repeats = true;
+        self.following = UNBOUNDED;
         outside
     }
 
     pub(super) fn leave_loop(&mut self, outside: &Outside) {
         self.turn = outside.turn;
         self.weight = outside.weight;
+        self.repeats = outside.repeats;
+        self.following = outside.following;
     }
 
     /// What holds wherever a turn can start or the loop can end.
@@ -281,6 +288,7 @@ impl Emitter<'_> {
             self.output.op(Section::Cold, op)?;
         }
         self.output.op(Section::Cold, Op::Jump { to: turn })?;
+        self.repeats = true;
         self.fail_to_either(direct, later)
     }
 }

@@ -1,7 +1,7 @@
 use super::annual::AnnualRule;
 
 /// More than any offset from UTC.
-const DAY: i64 = 86_400;
+pub(super) const SECONDS_PER_DAY: i64 = 86_400;
 /// Further from the epoch than any time that a script can name.
 const LIMIT: i64 = 1 << 46;
 
@@ -137,9 +137,10 @@ impl ZoneRules {
         {
             return annual.span_at_local(local_time, side);
         }
-        let mut passed = (self.history).partition_point(|it| it.time - DAY <= local_time);
+        let mut passed =
+            (self.history).partition_point(|it| it.time - SECONDS_PER_DAY <= local_time);
         let mut end = (self.history.get(passed))
-            .map_or(i64::MAX, |it| it.time - DAY)
+            .map_or(i64::MAX, |it| it.time - SECONDS_PER_DAY)
             .min(self.end_of_history());
         while let Some(transition) = self.history[..passed].last() {
             let start = transition.time

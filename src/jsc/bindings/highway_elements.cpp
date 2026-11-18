@@ -101,6 +101,45 @@ size_t LastIndexOfEitherU64Impl(const uint64_t* elements, size_t len, uint64_t f
     return Last(elements, len, [a = Equals(first), b = Equals(second)](auto lanes) HWY_ATTR { return hn::Or(a(lanes), b(lanes)); });
 }
 
+template<class T>
+static HWY_INLINE auto MaskedEquals(T mask, T needle)
+{
+    const hn::ScalableTag<T> d;
+    return [masks = hn::Set(d, mask), needles = hn::Set(d, needle)](auto lanes) HWY_ATTR { return hn::Eq(hn::And(lanes, masks), needles); };
+}
+
+// Without the sign, the bits of a NaN are above those of infinity.
+template<class T>
+static HWY_INLINE auto MagnitudeAbove(T limit)
+{
+    const hn::ScalableTag<T> d;
+    const hn::RebindToSigned<decltype(d)> di;
+    using Signed = hwy::MakeSigned<T>;
+    return [di, masks = hn::Set(di, hwy::LimitsMax<Signed>()), limits = hn::Set(di, static_cast<Signed>(limit))](auto lanes) HWY_ATTR {
+        return hn::RebindMask(hn::ScalableTag<T> {}, hn::Gt(hn::And(hn::BitCast(di, lanes), masks), limits));
+    };
+}
+
+#define BUN_LANE_SEARCHES(bits)                                                                                                          \
+    size_t IndexOfMasked##bits##Impl(const uint##bits##_t* elements, size_t len, uint##bits##_t mask, uint##bits##_t needle)     \
+    {                                                                                                                                    \
+        return First(elements, len, MaskedEquals(mask, needle));                                                                         \
+    }                                                                                                                                    \
+    size_t LastIndexOfMasked##bits##Impl(const uint##bits##_t* elements, size_t len, uint##bits##_t mask, uint##bits##_t needle) \
+    {                                                                                                                                    \
+        return Last(elements, len, MaskedEquals(mask, needle));                                                                          \
+    }                                                                                                                                    \
+    size_t IndexOfMagnitudeAbove##bits##Impl(const uint##bits##_t* elements, size_t len, uint##bits##_t limit)                       \
+    {                                                                                                                                    \
+        return First(elements, len, MagnitudeAbove(limit));                                                                              \
+    }
+
+BUN_LANE_SEARCHES(8)
+BUN_LANE_SEARCHES(16)
+BUN_LANE_SEARCHES(32)
+BUN_LANE_SEARCHES(64)
+#undef BUN_LANE_SEARCHES
+
 } // namespace HWY_NAMESPACE
 } // namespace bun
 HWY_AFTER_NAMESPACE();
@@ -150,6 +189,29 @@ extern "C" size_t highway_last_index_of_either_u64(const uint64_t* elements, siz
 {
     return BUN_HWY_DISPATCH(LastIndexOfEitherU64Impl)(elements, len, first, second);
 }
+
+#define BUN_LANE_SEARCHES(bits)                                                                                                                          \
+    HWY_EXPORT(IndexOfMasked##bits##Impl);                                                                                                               \
+    HWY_EXPORT(LastIndexOfMasked##bits##Impl);                                                                                                           \
+    HWY_EXPORT(IndexOfMagnitudeAbove##bits##Impl);                                                                                                       \
+    extern "C" size_t highway_index_of_masked_##bits(const uint##bits##_t* elements, size_t len, uint##bits##_t mask, uint##bits##_t needle)      \
+    {                                                                                                                                                    \
+        return BUN_HWY_DISPATCH(IndexOfMasked##bits##Impl)(elements, len, mask, needle);                                                                 \
+    }                                                                                                                                                    \
+    extern "C" size_t highway_last_index_of_masked_##bits(const uint##bits##_t* elements, size_t len, uint##bits##_t mask, uint##bits##_t needle) \
+    {                                                                                                                                                    \
+        return BUN_HWY_DISPATCH(LastIndexOfMasked##bits##Impl)(elements, len, mask, needle);                                                             \
+    }                                                                                                                                                    \
+    extern "C" size_t highway_index_of_magnitude_above_##bits(const uint##bits##_t* elements, size_t len, uint##bits##_t limit)                       \
+    {                                                                                                                                                    \
+        return BUN_HWY_DISPATCH(IndexOfMagnitudeAbove##bits##Impl)(elements, len, limit);                                                                \
+    }
+
+BUN_LANE_SEARCHES(8)
+BUN_LANE_SEARCHES(16)
+BUN_LANE_SEARCHES(32)
+BUN_LANE_SEARCHES(64)
+#undef BUN_LANE_SEARCHES
 
 } // namespace bun
 #endif

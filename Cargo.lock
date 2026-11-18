@@ -593,7 +593,6 @@ dependencies = [
  "bun_engine_macros",
  "bun_engine_number",
  "bun_engine_optimizer",
- "bun_engine_regexp_jit",
  "bun_engine_standalone",
  "bun_engine_temporal",
  "bun_engine_text",
@@ -647,6 +646,7 @@ dependencies = [
  "bun_engine_regexp",
  "bun_engine_standalone",
  "bun_engine_syntax",
+ "bun_engine_temporal",
  "bun_engine_text",
  "bun_engine_unicode",
  "bun_engine_vm",
@@ -832,6 +832,7 @@ dependencies = [
  "bun_engine_standalone",
  "bun_engine_text",
  "bun_engine_unicode",
+ "smallvec",
 ]
 
 [[package]]
@@ -908,6 +909,7 @@ dependencies = [
  "allocator-api2",
  "bitflags",
  "bun_alloc",
+ "bun_engine_asm",
  "bun_engine_bigint",
  "bun_engine_bytecode",
  "bun_engine_date",
@@ -915,6 +917,7 @@ dependencies = [
  "bun_engine_macros",
  "bun_engine_number",
  "bun_engine_regexp",
+ "bun_engine_regexp_jit",
  "bun_engine_standalone",
  "bun_engine_syntax",
  "bun_engine_text",
@@ -956,7 +959,9 @@ dependencies = [
  "bitflags",
  "bun_engine_asm",
  "bun_engine_codegen",
+ "bun_engine_standalone",
  "bun_engine_wasm_format",
+ "hashbrown 0.15.5",
  "smallvec",
 ]
 
@@ -978,8 +983,10 @@ dependencies = [
  "bun_alloc",
  "bun_engine_asm",
  "bun_engine_exec_memory",
+ "bun_engine_macros",
  "bun_engine_wasm_compiler",
  "bun_engine_wasm_format",
+ "bun_sys",
  "bun_threading",
  "libc",
  "smallvec",
@@ -2621,6 +2628,12 @@ dependencies = [
 [[package]]
 name = "bun_yarr"
 version = "0.0.0"
+dependencies = [
+ "bun_core",
+ "bun_engine_regexp",
+ "bun_engine_standalone",
+ "bun_engine_text",
+]
 
 [[package]]
 name = "bun_zlib"

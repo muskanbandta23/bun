@@ -728,8 +728,14 @@ impl<I: Instruction> Lowering<'_, I> {
     #[inline]
     pub(crate) fn use_value(&mut self, value: Value, role: Role, place: Place) {
         let value = self.representative(value);
-        if let Op::Pinned(reg) = self.op(value) {
-            return self.given(reg.number());
+        match self.op(value) {
+            Op::Pinned(reg) => return self.given(reg.number()),
+            Op::Const64(bits)
+                if let Some((reg, _)) = self.function.pinned_near(bits.get(), 0..=0) =>
+            {
+                return self.given(reg.number());
+            }
+            _ => {}
         }
         let vreg = self.tables.vregs[value]
             .expand()

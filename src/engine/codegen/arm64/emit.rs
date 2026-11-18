@@ -190,6 +190,11 @@ impl Isa for Inst {
         to: Location,
         class: Class,
     ) {
+        if let (Location::Constant(bits), Location::Gpr(dst)) = (from, to)
+            && let Some((base, distance)) = function.pinned_near(bits.get(), -4095..=4095)
+        {
+            return masm.add64(dst, base, distance);
+        }
         Accesses::new(masm, frame).move_between(function, from, to, class);
     }
 

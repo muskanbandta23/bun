@@ -13,12 +13,13 @@ use bun_engine_macros::cell;
 use bun_engine_text::{Identifier, PropertyName, names};
 
 use super::metadata;
+use super::optimization::Optimization;
 use super::profile::ValueProfile;
 use crate::heap::Survivors;
 use crate::{
     Attributes, Cx, Field, FunctionExecutable, Gc, GcFree, GlobalObject, ImmutableArray,
     IntegrityLevel, JsArray, JsBigInt, JsCell, JsResult, JsString, LineColumn, RealmSlot, RegExp,
-    ScopeTemplate, ScriptExecutable, TypeFlags, Value, ValueVec, Visitor, Vm,
+    ScopeTemplate, ScriptExecutable, SourceProviderRef, TypeFlags, Value, ValueVec, Visitor, Vm,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -129,6 +130,7 @@ pub struct CodeBlock {
     words: Words,
     compiled: RefCell<Option<Rc<dyn CompiledCode>>>,
     pub(crate) caches: metadata::SideTables,
+    pub(super) optimization: Optimization,
 }
 
 impl CodeBlock {
@@ -176,6 +178,7 @@ impl CodeBlock {
             words,
             compiled: RefCell::new(None),
             caches: metadata::SideTables::default(),
+            optimization: Optimization::default(),
         });
         for (slot, constant) in code_block.fields().iter().zip(&code_block.code.constants) {
             let value = code_block.link_constant(cx, constant)?;
@@ -210,6 +213,7 @@ impl CodeBlock {
             words: Words::zeroed(0).unwrap_or_else(|| bun_alloc::out_of_memory()),
             compiled: RefCell::new(None),
             caches: metadata::SideTables::default(),
+            optimization: Optimization::default(),
         })
     }
 
@@ -471,11 +475,14 @@ impl CodeBlock {
         })
     }
 
+    /// In the text of `source_provider`. What comes before the first position has that.
     pub fn position(&self, bytecode_offset: u32) -> Position {
-        let found = self.body().positions().find(bytecode_offset);
+        let positions = self.body().positions();
+        let found = positions.find(bytecode_offset);
+        let found = found.or_else(|| Some(positions.entries().next()?.1));
         found.unwrap_or_else(|| {
             let function = self.executable.downcast::<FunctionExecutable>();
-            let start = function.map_or(0, |function| function.info().parameters_start());
+            let start = function.map_or(0, |function| function.parameters_start());
             Position {
                 divot: start,
                 start,
@@ -484,9 +491,16 @@ impl CodeBlock {
         })
     }
 
+    pub fn source_provider(&self) -> SourceProviderRef {
+        match self.executable.downcast::<FunctionExecutable>() {
+            Some(function) => function.code_provider(),
+            None => self.executable.provider().clone(),
+        }
+    }
+
     pub fn line_column(&self, bytecode_offset: u32) -> LineColumn {
         let divot = self.position(bytecode_offset).divot;
-        self.executable.provider().position_in_document(divot)
+        self.source_provider().position_in_document(divot)
     }
 
     fn visit_children(&self, visitor: &mut Visitor) {

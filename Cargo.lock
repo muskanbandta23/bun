@@ -745,9 +745,9 @@ dependencies = [
 name = "bun_engine_date"
 version = "0.0.0"
 dependencies = [
- "bun_engine_number",
  "bun_engine_standalone",
  "bun_engine_text",
+ "bun_engine_unicode",
  "bun_icu",
 ]
 

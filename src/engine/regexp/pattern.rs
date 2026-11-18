@@ -12,7 +12,7 @@ pub struct Pattern {
 
 impl Pattern {
     pub fn new(source: Text<'_>, flags: Flags) -> Result<Pattern, Error> {
-        let (tree, names, _) = build(source, flags)?;
+        let (tree, names) = build(source, flags)?;
         Ok(Pattern { tree, names })
     }
 

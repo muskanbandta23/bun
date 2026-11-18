@@ -8,6 +8,7 @@ use bun_engine_asm::{
 use super::entities::{
     Cases, Heap, Patchpoint, Slot, Span, State, Value, Variable, VectorConstant,
 };
+use super::node::NodeKind;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Type {
@@ -451,6 +452,21 @@ pub enum Op {
         args: [Value; 2],
     },
 
+    /// The first `count` of `args` are the operands.
+    Node {
+        kind: NodeKind,
+        count: u8,
+        args: [Value; 2],
+        data: u32,
+        state: State,
+    },
+    WideNode {
+        kind: NodeKind,
+        args: Span<Value>,
+        data: u32,
+        state: State,
+    },
+
     GetVariable(Variable),
     SetVariable(Variable, Value),
 
@@ -470,7 +486,7 @@ pub enum Op {
 const _: () = assert!(size_of::<Op>() == 20);
 
 macro_rules! inline_operands {
-    ($op:expr, $one:path, $none:expr) => {
+    ($op:expr, $one:path, $first:path, $none:expr) => {
         match $op {
             Op::Alias(a)
             | Op::Unary(_, a)
@@ -502,6 +518,7 @@ macro_rules! inline_operands {
             | Op::AtomicCompareExchange { args, .. }
             | Op::VectorTernary(_, args) => args,
             Op::Wide(_, args) => args,
+            Op::Node { count, args, .. } => $first(args, *count),
             Op::Const32(_)
             | Op::Const64(_)
             | Op::ConstF32(_)
@@ -513,6 +530,7 @@ macro_rules! inline_operands {
             | Op::Removed
             | Op::Fence { .. }
             | Op::Patchpoint(_)
+            | Op::WideNode { .. }
             | Op::GetVariable(_)
             | Op::Jump
             | Op::Return(_)
@@ -521,16 +539,35 @@ macro_rules! inline_operands {
     };
 }
 
+#[inline]
+fn first(args: &[Value; 2], count: u8) -> &[Value] {
+    &args[..count.into()]
+}
+
+#[inline]
+fn first_mut(args: &mut [Value; 2], count: u8) -> &mut [Value] {
+    &mut args[..count.into()]
+}
+
 impl Op {
-    /// All operands but those of a patchpoint or return and those in a state.
+    /// The kind and the data of a node.
+    #[inline]
+    pub fn node(&self) -> Option<(NodeKind, u32)> {
+        match *self {
+            Self::Node { kind, data, .. } | Self::WideNode { kind, data, .. } => Some((kind, data)),
+            _ => None,
+        }
+    }
+
+    /// All operands but those of a patchpoint, wide node or return and those in a state.
     #[inline]
     pub fn inline_operands(&self) -> &[Value] {
-        inline_operands!(self, core::slice::from_ref, &[])
+        inline_operands!(self, core::slice::from_ref, first, &[])
     }
 
     #[inline]
     pub fn inline_operands_mut(&mut self) -> &mut [Value] {
-        inline_operands!(self, core::slice::from_mut, &mut [])
+        inline_operands!(self, core::slice::from_mut, first_mut, &mut [])
     }
 
     #[inline]

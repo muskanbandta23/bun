@@ -56,7 +56,7 @@ impl MacroAssembler {
     }
 
     #[inline(always)]
-    pub(super) fn move_constant(&mut self, width: Width, dst: Gpr, value: i64) {
+    pub fn move_constant(&mut self, width: Width, dst: Gpr, value: i64) {
         match u16::try_from(value) {
             Ok(short) => self
                 .asm
@@ -141,7 +141,7 @@ impl MacroAssembler {
 
     /// Leaves the flags and the first scratch register alone.
     #[inline(always)]
-    pub(super) fn add_constant(&mut self, width: Width, dst: Gpr, lhs: Gpr, value: i64) {
+    pub fn add_constant(&mut self, width: Width, dst: Gpr, lhs: Gpr, value: i64) {
         match AddSub::Add.with_constant(width, value) {
             Some((op, imm)) => self.asm.add_sub_imm(op, width, dst, lhs, imm),
             None => self.add_long_constant(width, dst, lhs, value),
@@ -213,7 +213,7 @@ impl MacroAssembler {
 
     /// May overwrite the second scratch register.
     #[inline(always)]
-    pub(super) fn mem(&mut self, size: impl Into<AccessSize>, memory: impl Into<Memory>) -> Mem {
+    pub fn mem(&mut self, size: impl Into<AccessSize>, memory: impl Into<Memory>) -> Mem {
         self.mem_through(size.into(), memory.into(), None)
     }
 
@@ -323,7 +323,7 @@ impl MacroAssembler {
 
     /// A register that holds the address, for the instructions that take no offset. It may be `sp` or the second
     /// scratch register.
-    pub(super) fn base_register(&mut self, address: Address) -> Gpr {
+    pub fn base_register(&mut self, address: Address) -> Gpr {
         if !address.has_index() && address.offset == 0 {
             return address.base;
         }

@@ -6,9 +6,10 @@ use bun_engine_asm::{
 };
 
 use super::effects::EffectFlags;
-use super::entities::{Block, Heap, Value, Variable};
+use super::entities::{Block, Heap, State, Value, Variable};
 use super::evaluate;
 use super::function::{Function, Successor};
+use super::node::NodeKind;
 use super::op::{Access, Binary, Checked, Exit, Lanes, Load, Op, Origin, Store, Type, Unary, Wide};
 use super::patchpoint::{Input, Output, PatchpointData};
 
@@ -475,6 +476,19 @@ impl<'a> Builder<'a> {
         let value = self.patchpoint(&data, operands, results);
         self.function.set_successors(self.block, successors);
         value
+    }
+
+    #[inline]
+    pub fn node(
+        &mut self,
+        kind: NodeKind,
+        ty: Type,
+        operands: &[Value],
+        data: u32,
+        state: State,
+    ) -> Value {
+        let op = self.node_op(kind, operands, data, state);
+        self.insert(op, ty)
     }
 
     // Vectors

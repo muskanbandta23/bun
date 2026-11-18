@@ -2,6 +2,7 @@
 
 use core::ffi::{CStr, c_char};
 
+use crate::argument::locale_id;
 use crate::error::Status;
 use crate::ffi::{filled, open};
 use crate::{Buffer, Error, Result};
@@ -52,6 +53,7 @@ icu_handle! {
 
 impl DisplayNames {
     pub fn open(locale: &CStr, dialects: Dialects, length: Length) -> Result<DisplayNames> {
+        let locale = locale_id(locale)?;
         let mut contexts = [
             dialects as i32,
             UDISPCTX_CAPITALIZATION_FOR_STANDALONE,
@@ -60,12 +62,7 @@ impl DisplayNames {
         ];
         // SAFETY: `locale` is terminated, and there are as many contexts, which are copied.
         open(|status| unsafe {
-            uldn_openForContext(
-                locale.as_ptr(),
-                contexts.as_mut_ptr(),
-                contexts.len() as i32,
-                status,
-            )
+            uldn_openForContext(locale, contexts.as_mut_ptr(), contexts.len() as i32, status)
         })
         .map(DisplayNames)
     }

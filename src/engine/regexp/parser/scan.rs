@@ -2,6 +2,8 @@
 
 use bun_engine_text::CodeUnit;
 
+use super::cursor;
+
 const MAX_SIZE: usize = 1 << 20;
 const MAX_SIZE_WITH_PLAIN_CLASSES: usize = 1 << 22;
 
@@ -15,11 +17,7 @@ pub(super) fn is_too_large<C: CodeUnit>(units: &[C], has_class_sets: bool) -> bo
 /// After the left bracket of classes that have nothing but characters and ranges: such a class is one sorted list.
 #[cold]
 fn units_in_plain_classes<C: CodeUnit>(units: &[C], has_class_sets: bool) -> usize {
-    let ascii = |at: usize| {
-        units
-            .get(at)
-            .map_or(0, |unit| unit.to_u16().min(0xff) as u8)
-    };
+    let ascii = |at: usize| units.get(at).map_or(0, |unit| cursor::ascii(unit.to_u32()));
     let (mut total, mut depth, mut contents, mut is_plain) = (0, 0usize, 0, true);
     let mut at = 0;
     while at < units.len() {

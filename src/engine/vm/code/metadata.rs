@@ -7,7 +7,9 @@ use bun_engine_bytecode::MetadataKind;
 use super::profile::{ArithmeticProfile, ArrayProfile, ValueProfile};
 use crate::heap::{Allocator, Survivors};
 use crate::ic::{AccessCases, CallProfile, CallTargetCount, CaseArena, LoadCache, StoreCache};
-use crate::{CodeBlock, Gc, JsCell, ShapeId, SpeculatedType, Tier, Visitor, options};
+use crate::{
+    ArrayAllocationProfile, CodeBlock, Gc, JsCell, ShapeId, SpeculatedType, Tier, Visitor, options,
+};
 
 /// # Safety
 /// All zeros is a value, and the size is that of the kinds of entries that it is used for.
@@ -173,14 +175,14 @@ pub struct NewObject {
     pub allocator: Cell<*const Allocator>,
 }
 
-/// What `ArrayAllocationProfile` and other owners of a word make of it.
+/// What its owner makes of it.
 #[repr(transparent)]
 pub struct Word(pub Cell<u64>);
 
 #[repr(C)]
 pub struct NewArrayWithSpecies {
     pub value: ValueProfile,
-    pub allocation: Word,
+    pub allocation: ArrayAllocationProfile,
     pub array: ArrayProfile,
 }
 
@@ -245,7 +247,7 @@ entries! {
     Call { profile }
     SuperConstruct { call new_target }
     ToThis {}
-    NewArrayWithSpecies { array }
+    NewArrayWithSpecies { allocation array }
     ForIn { array cases }
     ForInGet { for_in }
     IteratorNext { array }
@@ -312,12 +314,13 @@ unsafe impl Entry for NewObject {
     }
 }
 
-/// An array that was last made there.
-#[repr(transparent)]
-pub struct NewArray(pub Word);
-
 // SAFETY: an integer.
-unsafe impl Entry for NewArray {}
+unsafe impl Entry for ArrayAllocationProfile {
+    fn reconcile(&self, _: &CodeBlock, _: &Survivors) {
+        // SAFETY: a code block that has run since the last collection is reconciled.
+        unsafe { self.update() };
+    }
+}
 
 /// Kept alive.
 #[repr(transparent)]
@@ -333,6 +336,12 @@ unsafe impl Entry for StrongCell {
 macro_rules! entry_types {
     ($($kind:ident => $type:ty,)*) => {
         $(const _: () = assert!(size_of::<$type>() == MetadataKind::$kind.words() as usize * 8);)*
+
+        fn entry_type_of(kind: MetadataKind) -> core::any::TypeId {
+            match kind {
+                $(MetadataKind::$kind => core::any::TypeId::of::<$type>(),)*
+            }
+        }
 
         macro_rules! for_each_entry {
             ($code_block:expr, |$entry:ident| $body:expr) => {
@@ -378,7 +387,7 @@ entry_types! {
     ToThis => ToThis,
     CachedCallee => WeakCell,
     NewObject => NewObject,
-    NewArray => NewArray,
+    NewArray => ArrayAllocationProfile,
     NewArrayWithSpecies => NewArrayWithSpecies,
     SharedRegExp => StrongCell,
     ForIn => ForIn,
@@ -417,6 +426,15 @@ impl CodeBlock {
     pub unsafe fn metadata<T: Entry>(&self, word: u32) -> &T {
         // SAFETY: the caller's.
         unsafe { &*self.metadata_ptr().add(word as usize).cast() }
+    }
+
+    /// Panics unless an entry of that kind, which has that type, starts at the word.
+    pub fn checked_metadata<T: Entry + 'static>(&self, kind: MetadataKind, word: u32) -> &T {
+        let range = self.body().metadata().range(kind);
+        assert!(range.contains(&word) && (word - range.start).is_multiple_of(kind.words()));
+        assert!(entry_type_of(kind) == core::any::TypeId::of::<T>());
+        // SAFETY: just checked.
+        unsafe { self.metadata(word) }
     }
 
     pub(crate) fn allocate_call_targets(&self) -> *const CallTargetCount {

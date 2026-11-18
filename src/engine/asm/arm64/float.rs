@@ -23,6 +23,16 @@ pub enum FloatFlags {
     Either(Cc, Cc),
 }
 
+impl FloatFlags {
+    pub fn inverted(self) -> Self {
+        match self {
+            Self::One(cc) => Self::One(cc.inverted()),
+            Self::Either(Cc::Mi, _) => FloatCond::EqOrUnordered.into(),
+            Self::Either(..) => FloatCond::Ne.into(),
+        }
+    }
+}
+
 impl From<FloatCond> for FloatFlags {
     fn from(cond: FloatCond) -> Self {
         Self::One(match cond {

@@ -1,16 +1,22 @@
 //! Natural numbers as slices of digits, least significant first.
 
 mod add;
+mod argument;
+mod carry;
 mod divide;
 mod multiply;
 mod shift;
+mod unroll;
 
 use core::cmp::Ordering;
 
 pub(crate) use add::*;
+pub(crate) use argument::*;
+pub(crate) use carry::*;
 pub(crate) use divide::*;
 pub(crate) use multiply::*;
 pub(crate) use shift::*;
+pub(crate) use unroll::*;
 
 #[inline]
 pub(crate) fn trim(mut digits: &[u64]) -> &[u64] {

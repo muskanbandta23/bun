@@ -3,12 +3,14 @@
 use core::hash::{Hash, Hasher};
 
 use bun_engine_asm::{Gpr, RegisterSet};
+use smallvec::SmallVec;
 
 use super::effects::{EffectFlags, HeapRange};
 use super::entities::{
     Block, Cases, Edge, Entity, Heap, List, Patchpoint, Pool, Slot, Span, State, Table, Value,
     Variable, VectorConstant,
 };
+use super::node::{NodeInfo, NodeKind};
 use super::op::{Bits64, Op, Origin, Type};
 use super::patchpoint::{Boundary, Input, Output, PatchpointData};
 use crate::hash::FastHasher;
@@ -39,6 +41,13 @@ struct EdgeData {
     target: Block,
     args: List<Value>,
     is_rare: bool,
+}
+
+#[derive(Clone, Copy)]
+struct StateData {
+    values: Span<Value>,
+    tags: Span<u8>,
+    layout: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -124,7 +133,9 @@ pub struct Function {
     blocks: Table<Block, BlockData>,
     edges: Table<Edge, EdgeData>,
     value_lists: Pool<Value>,
-    states: Table<State, Span<Value>>,
+    states: Table<State, StateData>,
+    state_tags: Pool<u8>,
+    node_kinds: &'static [NodeInfo],
     patchpoints: Table<Patchpoint, PatchpointData>,
     inputs: Pool<Input>,
     outputs: Pool<(Type, Output)>,
@@ -142,6 +153,7 @@ pub struct Function {
     floating_count: usize,
     /// Never allocated, and kept by everything that is called.
     pub pinned: RegisterSet,
+    pinned_values: SmallVec<[(Gpr, u64); 2]>,
     /// The bytes just below the frame pointer that are the client's.
     pub reserved_frame_bytes: u32,
     /// The least size of the area at the stack pointer. Operands and results of patchpoints extend it as they need.
@@ -160,6 +172,8 @@ impl Function {
             edges: Table::default(),
             value_lists: Pool::default(),
             states: Table::default(),
+            state_tags: Pool::default(),
+            node_kinds: &[],
             patchpoints: Table::default(),
             inputs: Pool::default(),
             outputs: Pool::default(),
@@ -175,6 +189,7 @@ impl Function {
             floating: Vec::new(),
             floating_count: 0,
             pinned,
+            pinned_values: SmallVec::new(),
             reserved_frame_bytes: 0,
             outgoing_bytes: 0,
             quiets_nans: false,
@@ -192,6 +207,7 @@ impl Function {
         self.edges.clear();
         self.value_lists.clear();
         self.states.clear();
+        self.state_tags.clear();
         self.patchpoints.clear();
         self.inputs.clear();
         self.outputs.clear();
@@ -208,6 +224,7 @@ impl Function {
         self.floating.resize(INITIAL_FLOATING_CAPACITY, Value::NONE);
         self.floating_count = 0;
         self.pinned = pinned;
+        self.pinned_values.clear();
         self.reserved_frame_bytes = 0;
         self.outgoing_bytes = 0;
         self.quiets_nans = false;
@@ -286,7 +303,7 @@ impl Function {
     pub fn operands(&self, value: Value) -> &[Value] {
         match &self.values[value].op {
             Op::Patchpoint(patchpoint) => &self.value_lists[self.patchpoints[*patchpoint].operands],
-            Op::Return(values) => &self.value_lists[*values],
+            Op::Return(values) | Op::WideNode { args: values, .. } => &self.value_lists[*values],
             op => op.inline_operands(),
         }
     }
@@ -297,7 +314,9 @@ impl Function {
             Op::Patchpoint(patchpoint) => {
                 &mut self.value_lists[self.patchpoints[*patchpoint].operands]
             }
-            Op::Return(values) => &mut self.value_lists[*values],
+            Op::Return(values) | Op::WideNode { args: values, .. } => {
+                &mut self.value_lists[*values]
+            }
             op => op.inline_operands_mut(),
         }
     }
@@ -307,6 +326,7 @@ impl Function {
         match self.values[value].op {
             Op::Check(_, exit) | Op::Checked(_, _, exit) => exit.state,
             Op::Patchpoint(patchpoint) => self.patchpoints[patchpoint].state,
+            Op::Node { state, .. } | Op::WideNode { state, .. } => state,
             _ => State::NONE,
         }
     }
@@ -315,6 +335,7 @@ impl Function {
         match &mut self.values[value].op {
             Op::Check(_, exit) | Op::Checked(_, _, exit) => exit.state = state,
             Op::Patchpoint(patchpoint) => self.patchpoints[*patchpoint].state = state,
+            Op::Node { state: own, .. } | Op::WideNode { state: own, .. } => *own = state,
             _ => unreachable!("has no state"),
         }
     }
@@ -445,6 +466,28 @@ impl Function {
     /// One of `pinned`, or the frame pointer.
     pub fn pinned(&mut self, register: Gpr) -> Value {
         self.intern(Op::Pinned(register), Type::I64)
+    }
+
+    /// Constants that are equal or close to what the register holds are taken from it.
+    pub fn set_pinned_value(&mut self, register: Gpr, value: u64) {
+        assert!(self.pinned.contains(register));
+        self.pinned_values.push((register, value));
+    }
+
+    /// A pinned register and what has to be added to it to get `value`, if that is within `reach`.
+    #[inline]
+    pub fn pinned_near(
+        &self,
+        value: u64,
+        reach: core::ops::RangeInclusive<i64>,
+    ) -> Option<(Gpr, i64)> {
+        let distances = self
+            .pinned_values
+            .iter()
+            .map(|&(register, held)| (register, value.wrapping_sub(held) as i64));
+        distances
+            .filter(|(_, distance)| reach.contains(distance))
+            .min_by_key(|&(_, distance)| distance.unsigned_abs())
     }
 
     pub fn slot_address(&mut self, slot: Slot) -> Value {
@@ -595,7 +638,7 @@ impl Function {
     }
 
     pub fn resolve_state(&mut self, state: State) {
-        self.resolve_span(self.states[state]);
+        self.resolve_span(self.states[state].values);
     }
 
     pub fn resolve_aliases(&mut self) {
@@ -973,7 +1016,41 @@ impl Function {
 
     pub fn add_state(&mut self, values: &[Value]) -> State {
         let values = self.add_values(values);
-        self.states.push(values)
+        self.states.push(StateData {
+            values,
+            tags: Span::default(),
+            layout: 0,
+        })
+    }
+
+    /// `layout` and a tag for each value, at first zero, tell the client what the values stand for.
+    pub fn add_described_state(
+        &mut self,
+        values: impl IntoIterator<Item = Value>,
+        layout: u32,
+    ) -> State {
+        let values = self.value_lists.add(values);
+        let tags = self.state_tags.add(core::iter::repeat_n(0, values.len()));
+        self.states.push(StateData {
+            values,
+            tags,
+            layout,
+        })
+    }
+
+    pub fn state_layout(&self, state: State) -> u32 {
+        self.states[state].layout
+    }
+
+    pub fn state_tags(&self, state: State) -> &[u8] {
+        &self.state_tags[self.states[state].tags]
+    }
+
+    /// Puts another form of the same value in its place, which is available wherever that is.
+    pub fn retag(&mut self, state: State, position: usize, value: Value, tag: u8) {
+        let data = self.states[state];
+        self.value_lists[data.values][position] = value;
+        self.state_tags[data.tags][position] = tag;
     }
 
     #[inline]
@@ -986,24 +1063,32 @@ impl Function {
         if state.is_none() {
             &[]
         } else {
-            &self.value_lists[self.states[state]]
+            &self.value_lists[self.states[state].values]
         }
     }
 
     /// For a state whose users all agree on the change.
     pub(crate) fn state_mut(&mut self, state: State) -> &mut [Value] {
-        &mut self.value_lists[self.states[state]]
+        &mut self.value_lists[self.states[state].values]
     }
 
     pub fn map_state(&mut self, state: State, mut map: impl FnMut(Value) -> Value) -> State {
         if state.is_none() {
             return state;
         }
-        let copy = self.value_lists.duplicate(self.states[state]);
+        let data = self.states[state];
+        let (copy, tags) = (
+            self.value_lists.duplicate(data.values),
+            self.state_tags.duplicate(data.tags),
+        );
         self.value_lists[copy]
             .iter_mut()
             .for_each(|value| *value = map(*value));
-        self.states.push(copy)
+        self.states.push(StateData {
+            values: copy,
+            tags,
+            ..data
+        })
     }
 
     // Patchpoints
@@ -1049,6 +1134,17 @@ impl Function {
                 Op::Patchpoint(self.patchpoints.push(data))
             }
             Op::Return(values) => Op::Return(self.value_lists.duplicate(values)),
+            Op::WideNode {
+                kind,
+                args,
+                data,
+                state,
+            } => Op::WideNode {
+                kind,
+                args: self.value_lists.duplicate(args),
+                data,
+                state,
+            },
             op => op,
         }
     }
@@ -1056,11 +1152,60 @@ impl Function {
     pub fn tuple_element_type(&self, tuple: Value, position: u32) -> Option<Type> {
         match *self.op(tuple) {
             Op::Wide(..) | Op::MulWide(..) => (position < 2).then_some(Type::I64),
+            Op::Node { kind, .. } | Op::WideNode { kind, .. } => self
+                .node_info(kind)
+                .elements
+                .get(position as usize)
+                .copied(),
             Op::Patchpoint(patchpoint) => self
                 .outputs(patchpoint)
                 .get(position as usize)
                 .map(|&(ty, _)| ty),
             _ => None,
+        }
+    }
+
+    // Nodes
+
+    pub fn set_node_kinds(&mut self, kinds: &'static [NodeInfo]) {
+        self.node_kinds = kinds;
+    }
+
+    #[inline]
+    pub fn node_info(&self, kind: NodeKind) -> &'static NodeInfo {
+        &self.node_kinds[usize::from(kind.0)]
+    }
+
+    #[inline]
+    pub fn node_op(&mut self, kind: NodeKind, operands: &[Value], data: u32, state: State) -> Op {
+        match *operands {
+            [] => Op::Node {
+                kind,
+                count: 0,
+                args: [Value::NONE; 2],
+                data,
+                state,
+            },
+            [only] => Op::Node {
+                kind,
+                count: 1,
+                args: [only, Value::NONE],
+                data,
+                state,
+            },
+            [first, second] => Op::Node {
+                kind,
+                count: 2,
+                args: [first, second],
+                data,
+                state,
+            },
+            _ => Op::WideNode {
+                kind,
+                args: self.add_values(operands),
+                data,
+                state,
+            },
         }
     }
 

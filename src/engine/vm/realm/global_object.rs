@@ -111,7 +111,7 @@ pub struct GlobalObject {
     embedder_methods: *const c_void,
     overridden_date_now: Cell<f64>,
     console_client: Cell<*mut c_void>,
-    /// Looked in after the global object.
+    /// A `with` scope that is looked in after the global object.
     pub scope_extension: Field<Option<Gc<Environment>>>,
     pub(self) original_array_shapes: FieldArray<Option<Gc<Shape>>, ARRAY_SHAPE_COUNT>,
     pub(self) array_shapes_for_allocation: FieldArray<Option<Gc<Shape>>, ARRAY_SHAPE_COUNT>,
@@ -123,6 +123,7 @@ pub struct GlobalObject {
     /// Changes when a lexical binding is declared, which may hide a property.
     lexical_epoch: Cell<u32>,
     is_initialized: Cell<bool>,
+    needs_debug_hooks: Cell<bool>,
     /// What other crates keep for the realm. See `extension_cell`.
     pub(self) extension_cells: TracedVec<Option<Gc<JsCell>>>,
     microtask_queue: RefCell<MicrotaskQueueRef>,
@@ -144,15 +145,7 @@ impl GlobalObject {
         name: PropertyName<'_>,
         slot: &mut PropertySlot,
     ) -> JsResult<bool> {
-        if self.ordinary_get_own_property_slot(cx, name, slot)? {
-            return Ok(true);
-        }
-        let Some(binding) = self.variables.find(name) else {
-            return Ok(false);
-        };
-        let attributes = binding.attributes() | Attributes::DONT_DELETE;
-        slot.set_value(self, attributes, binding.get().unwrap_or_default());
-        Ok(true)
+        self.get_declared_property_slot(cx, name, slot)
     }
 
     fn put(
@@ -266,6 +259,7 @@ impl GlobalObject {
             lexicals: GlobalBindings::default(),
             lexical_epoch: Cell::new(1),
             is_initialized: Cell::new(false),
+            needs_debug_hooks: Cell::new(false),
             scope_extension: None,
             microtask_queue: RefCell::new(vm.default_microtask_queue().clone()),
             regexp_state: RegExpGlobalState::default(),
@@ -308,6 +302,29 @@ impl GlobalObject {
         self.is_initialized.set(true);
         self.watchpoints(vm, RealmWatchpoint::ArrayPrototypeChainIsSane);
         self.watchpoints(vm, RealmWatchpoint::ArrayIteratorProtocol);
+    }
+
+    /// Whatever a class that extends this one makes of it.
+    pub(super) fn get_declared_property_slot(
+        &self,
+        cx: &mut Cx,
+        name: PropertyName<'_>,
+        slot: &mut PropertySlot,
+    ) -> JsResult<bool> {
+        if self.ordinary_get_own_property_slot(cx, name, slot)? {
+            return Ok(true);
+        }
+        let Some(binding) = self.variables.find(name) else {
+            return Ok(false);
+        };
+        let attributes = binding.attributes() | Attributes::DONT_DELETE;
+        slot.set_value(self, attributes, binding.get().unwrap_or_default());
+        Ok(true)
+    }
+
+    /// Whether a debugger wants to step through the code that is compiled from now on.
+    pub fn needs_debug_hooks(&self) -> &Cell<bool> {
+        &self.needs_debug_hooks
     }
 
     pub(super) fn is_initialized(&self) -> bool {

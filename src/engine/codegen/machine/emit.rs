@@ -13,7 +13,7 @@ use crate::analysis::{Cfg, Frequencies};
 use crate::client::{CallSite, Client, ExitSite, Frame, PatchpointSite};
 use crate::ir::{
     Action, Bits64, Block, Edge, Function, Input, Location, Op, Origin, Output, PatchpointFlags,
-    Span, Table, Type, Value,
+    Span, State, Table, Type, Value,
 };
 
 pub(crate) trait Isa: Instruction {
@@ -31,6 +31,7 @@ pub(crate) trait Isa: Instruction {
     fn emit_move(
         masm: &mut Self::Masm,
         function: &Function,
+        frame: &Frame,
         from: Location,
         to: Location,
         class: Class,
@@ -147,11 +148,16 @@ fn register(reg: Reg) -> Location {
 #[derive(Clone, Copy)]
 pub struct StateLocations<'a> {
     places: Places<'a>,
+    state: State,
     vregs: Span<VReg>,
     assigned: Span<u8>,
 }
 
 impl<'a> StateLocations<'a> {
+    pub fn state(self) -> State {
+        self.state
+    }
+
     pub fn len(self) -> usize {
         self.vregs.len()
     }
@@ -477,7 +483,14 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
         if step.kind == MoveKind::Swap {
             self.masm.swap(from.gpr(), to.gpr());
         } else if from != to {
-            I::emit_move(self.masm, self.places.function, from, to, step.class);
+            I::emit_move(
+                self.masm,
+                self.places.function,
+                self.frame,
+                from,
+                to,
+                step.class,
+            );
         }
     }
 
@@ -568,6 +581,7 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
         let data = &self.places.code.sites[site];
         StateLocations {
             places: self.places,
+            state: data.state,
             vregs: data.state_vregs,
             assigned: data.state_assigned,
         }
@@ -649,6 +663,9 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
         let (results, operands) = self.tables.locations.split_at(outputs.len());
 
         let own_scratch = I::lend_scratch(self.masm, data.clobbers_early & data.clobbers_late);
+        if data.action != Action::Custom {
+            self.client.before_call(self.masm, data.token, origin);
+        }
         match data.action {
             Action::Custom => self.client.patchpoint(
                 self.masm,

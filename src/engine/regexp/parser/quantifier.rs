@@ -1,10 +1,23 @@
 use bun_engine_text::{CodeUnit, MAX_LENGTH};
 
-use super::{Parser, Quantifier, Sink, Token, token};
+use super::{Cursor, Parser, Quantifier, Sink, Token, token};
 use crate::Error;
-use crate::tree::UNBOUNDED;
+use crate::tree::{Groups, UNBOUNDED};
 
-/// What is before a quantifier.
+/// What a quantifier can follow, and what the sink has yet to be told of it.
+pub(super) enum Atom<Outer> {
+    Complete,
+    Class {
+        negated: bool,
+    },
+    Group {
+        outer: Outer,
+        captures: Groups,
+        repeated: Repeated,
+    },
+}
+
+/// What a group is to a quantifier.
 #[derive(Clone, Copy)]
 pub(super) enum Repeated {
     Atom,
@@ -12,70 +25,103 @@ pub(super) enum Repeated {
     Nothing,
 }
 
-impl<C: CodeUnit, S: Sink> Parser<'_, C, S> {
+impl<S: Sink> Parser<'_, S> {
     #[inline(always)]
-    pub(super) fn quantify(&mut self) -> Result<(), Error> {
-        match self.quantifier(Repeated::Atom)? {
-            Some(quantifier) => self.sink.quantify(quantifier),
-            None => Ok(()),
+    pub(super) fn quantify<C: CodeUnit>(
+        &mut self,
+        cursor: &mut Cursor<C>,
+        atom: Atom<S::Outer>,
+    ) -> Result<(), Error> {
+        let quantifier = cursor.quantifier()?;
+        if let Some(quantifier) = quantifier {
+            self.sum_of_counts += u64::from(quantifier.min);
+        }
+        match atom {
+            Atom::Complete => quantifier.map_or(Ok(()), |it| self.sink.quantify(it)),
+            Atom::Class { negated } => self.sink.close_class(negated, quantifier),
+            Atom::Group {
+                outer,
+                captures,
+                repeated,
+            } => match (repeated, quantifier) {
+                (Repeated::Lookbehind, Some(_)) => Err(Error::QuantifiedLookbehind),
+                (Repeated::Nothing, Some(_)) => Err(Error::NothingToRepeat),
+                _ => self.sink.close(outer, captures, quantifier),
+            },
         }
     }
+}
 
+impl<C: CodeUnit> Cursor<'_, C> {
     #[inline(always)]
-    pub(super) fn quantifier(&mut self, repeated: Repeated) -> Result<Option<Quantifier>, Error> {
-        let next = self.peek();
-        if token(next) != Token::Quantifier {
+    fn quantifier(&mut self) -> Result<Option<Quantifier>, Error> {
+        let first = self.peek();
+        if token(first) != Token::Quantifier {
             return Ok(None);
         }
-        let (min, max) = match next {
-            b'*' => (0, UNBOUNDED),
-            b'+' => (1, UNBOUNDED),
-            b'?' => (0, 1),
-            _ => match self.counts()? {
-                Some(counts) => counts,
-                None => return Ok(None),
-            },
-        };
         self.at += 1;
-        match repeated {
-            Repeated::Atom => {}
-            Repeated::Lookbehind => return Err(Error::QuantifiedLookbehind),
-            Repeated::Nothing => return Err(Error::NothingToRepeat),
-        }
+        let (min, max) = match first {
+            b'{' => match self.counts() {
+                Some((min, max)) => limits(min, max)?,
+                None if self.is_unicode => return Err(Error::IncompleteQuantifier),
+                None => {
+                    self.at -= 1;
+                    return Ok(None);
+                }
+            },
+            b'?' => (0, 1),
+            _ => (u32::from(first == b'+'), UNBOUNDED),
+        };
         let greedy = !self.eat(b'?') || min == max;
         Ok(Some(Quantifier { min, max, greedy }))
     }
 
-    /// From the left brace up to the right one, or nowhere if the brace stands for itself.
-    fn counts(&mut self) -> Result<Option<(u32, u32)>, Error> {
-        let start = self.at;
-        self.at += 1;
-        if self.peek().is_ascii_digit() {
-            let min = self.decimal();
-            let max = match self.eat(b',') {
-                true if self.peek().is_ascii_digit() => self.decimal(),
-                true => u64::MAX,
-                false => min,
-            };
-            if self.peek() == b'}' {
-                if min == u64::MAX {
-                    return Err(Error::QuantifierTooLarge);
-                }
-                if min > max {
-                    return Err(Error::QuantifierOutOfOrder);
-                }
-                self.sum_of_counts = self.sum_of_counts.saturating_add(min);
-                // An iteration beyond the minimum consumes a character.
-                let is_unbounded = max - min >= MAX_LENGTH as u64;
-                let clamp = |count| u32::try_from(count).unwrap_or(UNBOUNDED);
-                let max = if is_unbounded { UNBOUNDED } else { clamp(max) };
-                return Ok(Some((clamp(min), max)));
-            }
-        }
-        if self.is_unicode {
-            return Err(Error::IncompleteQuantifier);
-        }
-        self.at = start;
-        Ok(None)
+    /// From after the left brace to after the right one, or nowhere.
+    #[inline(always)]
+    fn counts(&mut self) -> Option<(u64, u64)> {
+        let mut ahead = *self;
+        let min = ahead.decimal()?;
+        let max = match ahead.eat(b',') {
+            true => ahead.decimal().unwrap_or(u64::MAX),
+            false => min,
+        };
+        ahead.eat(b'}').then(|| {
+            self.at = ahead.at;
+            (min, max)
+        })
     }
+
+    #[inline(always)]
+    pub(super) fn is_after_literal_brace(&self) -> bool {
+        self.units[self.at - 1].is(b'{')
+            && !self.is_unicode
+            && (!self.peek().is_ascii_digit() || !self.is_at_counts())
+    }
+
+    #[inline(never)]
+    fn is_at_counts(mut self) -> bool {
+        self.counts().is_some()
+    }
+
+    /// After its first unit.
+    #[cold]
+    pub(super) fn misplaced_quantifier(&mut self) -> Error {
+        self.at -= 1;
+        self.quantifier().err().unwrap_or(Error::NothingToRepeat)
+    }
+}
+
+#[inline(always)]
+fn limits(min: u64, max: u64) -> Result<(u32, u32), Error> {
+    if min == u64::MAX {
+        return Err(Error::QuantifierTooLarge);
+    }
+    if min > max {
+        return Err(Error::QuantifierOutOfOrder);
+    }
+    // An iteration beyond the minimum consumes a character.
+    let is_unbounded = max - min >= MAX_LENGTH as u64;
+    let clamp = |count| u32::try_from(count).unwrap_or(UNBOUNDED);
+    let max = if is_unbounded { UNBOUNDED } else { clamp(max) };
+    Ok((clamp(min), max))
 }

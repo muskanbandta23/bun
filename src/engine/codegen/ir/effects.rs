@@ -47,6 +47,11 @@ impl HeapRange {
 impl Heap {
     pub const EVERYTHING: Self = Self(0);
     pub const NOTHING: Self = Self(1);
+
+    /// For a client that adds its first heaps in a fixed order.
+    pub const fn at(index: u32) -> Self {
+        Self(index)
+    }
 }
 
 bitflags::bitflags! {
@@ -62,6 +67,8 @@ bitflags::bitflags! {
         const WRITES_VARIABLE = 1 << 5;
         /// Stays even if nothing else says so.
         const KEPT = 1 << 6;
+        /// Gives another value than an instruction that looks the same.
+        const DISTINCT = 1 << 7;
     }
 }
 
@@ -166,6 +173,7 @@ impl Function {
             },
             Op::Check(..) | Op::Checked(..) => Effects::with_flags(EffectFlags::EXITS),
             Op::Patchpoint(patchpoint) => self.patchpoint(patchpoint).effects,
+            Op::Node { kind, .. } | Op::WideNode { kind, .. } => self.node_info(kind).effects,
             Op::GetVariable(_) => Effects::with_flags(EffectFlags::READS_VARIABLE),
             Op::SetVariable(..) => Effects::with_flags(EffectFlags::WRITES_VARIABLE),
             Op::Jump | Op::Branch(_) | Op::Switch(..) | Op::JumpTable(..) | Op::Unreachable => {

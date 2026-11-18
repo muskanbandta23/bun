@@ -81,46 +81,33 @@ use bun_ast as ast;
 use bun_core::escape_reg_exp::escape_reg_exp_for_package_name_matching;
 use bun_core::{String as BunString, StringView, strings};
 
-// LAYERING: `bun_jsc::RegularExpression` (Yarr FFI) lives in a higher tier.
+// LAYERING: `bun_jsc::RegularExpression` lives in a higher tier.
 // The bodies are defined `#[no_mangle]` in
 // `bun_jsc::regular_expression`; declared here as `extern "Rust"` and
 // resolved at link time.
 unsafe extern "Rust" {
     /// Compile `pattern` with no flags. `None` ⇔ the pattern does not compile.
-    /// Initializes JSC first (idempotent), so it must only run from
-    /// [`RegularExpression::matches`]; see the type's docs.
     safe fn __bun_regex_compile(pattern: &BunString) -> Option<NonNull<()>>;
     fn __bun_regex_matches(regex: NonNull<()>, input: &BunString) -> bool;
     fn __bun_regex_drop(regex: NonNull<()>);
 }
 
-/// Owned, type-erased compiled JSC regex; drops through the vtable.
-// FORWARD_DECL(b0): bun_jsc::RegularExpression — stored as raw NonNull<()>
-// (NOT Box<ZST>: a zero-sized opaque Box is a dangling sentinel that would
-// leak the real JSC allocation and skip its destructor).
+/// Owned, type-erased `bun_jsc::RegularExpression`.
 struct CompiledRegularExpression(NonNull<()>);
 
 impl Drop for CompiledRegularExpression {
     fn drop(&mut self) {
-        // SAFETY: self.0 was produced by `__bun_regex_compile`; runs JSC destructor + free.
+        // SAFETY: self.0 was produced by `__bun_regex_compile`.
         unsafe { __bun_regex_drop(self.0) }
     }
 }
 
-/// A package-name pattern, compiled on first use.
-///
-/// Matchers are built while bunfig.toml / .npmrc load, before the command
-/// initializes JSC. `__bun_regex_compile` initializes JSC, and the first
-/// `jsc::initialize` of the process fixes JSC's options, so compiling here
-/// would drop the options the command passes later (`bun -p` needs eval mode
-/// to keep the script's completion value, `bun test --isolate` its JIT
-/// thresholds). Only the install linker matches, so compiling there leaves
-/// the first call to the command.
+/// A package-name pattern, compiled on first use: only the install linker matches.
 pub struct RegularExpression {
     /// The anchored pattern built by [`create_matcher`].
     source: Box<[u8]>,
     /// `None` if the pattern failed to compile; it then never matches. The
-    /// escaping in [`create_matcher`] leaves Yarr's pattern size limit as the
+    /// escaping in [`create_matcher`] leaves the pattern size limit as the
     /// only way to fail.
     compiled: OnceCell<Option<CompiledRegularExpression>>,
 }

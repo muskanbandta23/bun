@@ -96,6 +96,7 @@ pub(super) fn multiply(
 /// A number that is transformed once to multiply several others by.
 pub(super) struct Transformed {
     layout: Layout,
+    max_other_length: usize,
     roots: Vec<Factor>,
     own: Vec<u64>,
     residues: Vec<u64>,
@@ -117,10 +118,15 @@ impl Transformed {
         }
         Ok(Transformed {
             layout,
+            max_other_length,
             roots,
             own: residues,
             residues: try_filled(0, layout.residues_length())?,
         })
+    }
+
+    pub(super) fn max_other_length(&self) -> usize {
+        self.max_other_length
     }
 
     pub(super) fn multiply(

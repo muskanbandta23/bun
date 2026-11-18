@@ -19,7 +19,12 @@ RefPtr<VM> VM::tryCreate(HeapType heapType)
 {
     Options::freeze();
     void* memory = Engine::vm_create(heapType, Engine::StaticAtom::COUNT, Engine::RealmSlot::COUNT);
-    return adoptRef(new (memory) VM);
+    auto* vm = new (memory) VM;
+    if (Options::useControlFlowProfiler()) [[unlikely]]
+        vm->enableControlFlowProfiler();
+    if (Options::useSamplingProfiler()) [[unlikely]]
+        vm->ensureSamplingProfiler().start();
+    return adoptRef(vm);
 }
 
 extern "C" void engine_host_destroy_vm_members(VM* vm)

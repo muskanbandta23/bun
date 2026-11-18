@@ -32,8 +32,7 @@ static bool isUserFunction(JSC::JSCell* callee)
         return false;
     }
 
-    // A generator or async body function takes JSC-internal arguments: a call from JS corrupts memory.
-    return !JSC::isGeneratorOrAsyncFunctionBodyParseMode(function->jsExecutable()->parseMode());
+    return !function->jsExecutable()->canSuspend();
 }
 
 void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encounteredStrictFrame)
@@ -52,7 +51,7 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
     JSC::CodeBlock* codeBlock = stackFrame.codeBlock();
     if (!isStrictFrame) {
         if (codeBlock) {
-            isStrictFrame = codeBlock->ownerExecutable()->isInStrictContext();
+            isStrictFrame = codeBlock->isInStrictContext();
         }
     }
 

@@ -128,7 +128,7 @@ impl JsFunction {
 #[native_abi]
 fn call_getter(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let function = frame.callee().cast::<JsCustomGetterFunction>();
-    let (this, name) = (frame.this_value(), function.property.name());
+    let (this, name) = (frame.this_value(), function.anchor().property.name());
     if let Some(class) = function.required_class
         && !this.as_cell().is_some_and(|cell| cell.inherits(class))
     {
@@ -142,7 +142,7 @@ fn call_getter(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 #[native_abi]
 fn call_setter(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let function = frame.callee().cast::<JsCustomSetterFunction>();
-    let name = function.property.name();
+    let name = function.anchor().property.name();
     (function.setter)(cx, frame.this_value(), frame.argument(0), name);
     cx.check_exception()?;
     Ok(Value::UNDEFINED)

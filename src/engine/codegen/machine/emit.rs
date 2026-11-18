@@ -8,12 +8,12 @@ use smallvec::SmallVec;
 use super::allocate::{Allocation, Stored};
 use super::code::{AT_HOME, Class, Code, Home, Operand, Registers, Role, Site, VReg};
 use super::lower::Instruction;
-use super::moves::{Move, Spot, SpotKind};
+use super::moves::{Move, MoveKind, Spot, SpotKind};
 use crate::analysis::{Cfg, Frequencies};
 use crate::client::{CallSite, Client, ExitSite, Frame, PatchpointSite};
 use crate::ir::{
     Action, Bits64, Block, Edge, Function, Input, Location, Op, Origin, Output, PatchpointFlags,
-    Table, Value,
+    Table, Type, Value,
 };
 
 pub(crate) trait Isa: Instruction {
@@ -425,7 +425,7 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
             self.places.spot::<I>(step.from, step.class),
             self.places.spot::<I>(step.to, step.class),
         );
-        let keeps_flags = !step.is_swap
+        let keeps_flags = step.kind != MoveKind::Swap
             && matches!(
                 from,
                 Location::Gpr(_) | Location::Fpr(_) | Location::Frame(_)
@@ -437,7 +437,7 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
         {
             self.flags_describe = None;
         }
-        if step.is_swap {
+        if step.kind == MoveKind::Swap {
             self.masm.swap(from.gpr(), to.gpr());
         } else if from != to {
             I::emit_move(self.masm, self.places.function, from, to, step.class);
@@ -668,6 +668,13 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
         }
         self.masm.set_scratch(own_scratch);
         if returns_to_first && function.successors(self.block).len() != 0 {
+            if data.flags.contains(PatchpointFlags::UNEXTENDED_RESULTS) {
+                for (&(ty, _), result) in outputs.iter().zip(&self.tables.locations) {
+                    if ty == Type::I32 {
+                        self.masm.zero_extend32(result.gpr(), result.gpr());
+                    }
+                }
+            }
             self.jump();
         }
     }

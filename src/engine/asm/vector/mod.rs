@@ -2,6 +2,7 @@
 
 mod evaluate;
 pub mod lanes;
+pub(crate) mod pattern;
 
 use crate::operand::{FloatWidth, Shift, Size};
 

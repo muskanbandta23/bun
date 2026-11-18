@@ -3,7 +3,7 @@ use bun_engine_vm::{JsArray, is_array};
 use crate::prelude::*;
 
 fn comma(cx: &Cx) -> Gc<JsString> {
-    cx.small_strings.single_character(cx, b',')
+    cx.small_strings.single_character(b',')
 }
 
 #[native_abi]

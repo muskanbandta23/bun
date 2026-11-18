@@ -1,1 +1,53 @@
+use bun_engine_date::{DateFields, make_date_from_integers, parse_date_as_utc, utc_string};
+use bun_engine_macros::export;
+use bun_engine_text::{StringRef, Text, names};
+use bun_engine_vm::{DateInstance, Gc, Shape, Vm};
 
+#[export]
+fn date_create(vm: &Vm, shape: Gc<Shape>, time: f64) -> Gc<DateInstance> {
+    DateInstance::create(vm, shape, time)
+}
+
+#[export]
+fn vm_follow_time_zone(vm: &Vm) {
+    vm.follow_time_zone();
+}
+
+/// From the year down to the millisecond.
+#[export]
+fn date_from_components(vm: &Vm, components: &[i32], is_local: bool) -> f64 {
+    let time = make_date_from_integers(components.try_into().expect("seven"));
+    if is_local {
+        vm.date_cache().utc(time)
+    } else {
+        time
+    }
+}
+
+#[export]
+fn date_fields(vm: &Vm, time: f64, is_local: bool) -> u64 {
+    let fields = if is_local {
+        vm.date_cache().local_fields(time.floor())
+    } else {
+        vm.date_cache().utc_fields(time.floor())
+    };
+    fields.map_or(0, DateFields::to_bits)
+}
+
+#[export]
+fn date_parse(vm: &Vm, text: Text<'_>) -> f64 {
+    vm.date_cache().parse(text)
+}
+
+#[export]
+fn date_to_utc_string(time: f64) -> StringRef {
+    DateFields::utc(time.floor()).map_or_else(
+        || names::invalidDate.to_identifier().into_string(),
+        utc_string,
+    )
+}
+
+#[export]
+fn date_parse_as_utc(utf8: &[u8]) -> f64 {
+    parse_date_as_utc(utf8)
+}

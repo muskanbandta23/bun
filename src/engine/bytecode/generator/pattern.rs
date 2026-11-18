@@ -1,10 +1,11 @@
 //! Destructuring.
 
-use bun_engine_syntax::Name;
 use bun_engine_syntax::ast::{
     DeclarationKind, ExprId, List, Pattern, PatternElement, PatternElementId, PatternId,
     PatternKind, PropertyKey,
 };
+
+use bun_engine_syntax::{Name, NameKind};
 
 use super::control::Control;
 use super::reference::Reference;
@@ -73,7 +74,11 @@ impl Generator<'_> {
                 declaration: Some(kind),
             } => Target::Lexical(name, kind),
             PatternKind::Target(target) => {
-                Target::Reference(self.reference(target, range(pattern)))
+                let reference = self.reference(target, range(pattern));
+                if let Reference::Member(_) = reference {
+                    self.position(pattern.end, pattern.start, pattern.end);
+                }
+                Target::Reference(reference)
             }
             PatternKind::Array(_) | PatternKind::Object(_) => Target::Pattern,
         }
@@ -120,6 +125,9 @@ impl Generator<'_> {
                 if let DeclarationKind::Using | DeclarationKind::AwaitUsing = kind {
                     self.add_disposable(value, node.start, kind == DeclarationKind::AwaitUsing);
                 }
+            }
+            Target::Reference(Reference::Member(member)) => {
+                self.put_member(node.start, member, value);
             }
             Target::Reference(reference) => self.store_reference(reference, value, range(node)),
             Target::Pattern => self.bind_pattern(pattern, value),
@@ -181,7 +189,11 @@ impl Generator<'_> {
         let (handler, try_depth) = (self.asm().label(), self.asm().try_depth());
         self.asm()
             .push_try(handler, HandlerKind::SynthesizedFinally);
-        self.b.controls.push(Control::Iterator { state, try_depth });
+        self.b.controls.push(Control::Iterator {
+            state,
+            try_depth,
+            range: (node.start, node.start, node.end),
+        });
         let mut is_exhausted = false;
         for element in ast.iter(elements) {
             let (element, mark) = (&ast[element], self.top);
@@ -222,7 +234,7 @@ impl Generator<'_> {
     fn bind_object(&mut self, node: &Pattern, elements: List<PatternElementId>, value: Operand) {
         let ast = self.ast;
         let first_name = match ast.get(elements, 0).map(|first| ast[first].key) {
-            Some(PropertyKey::Named(name)) => name,
+            Some(PropertyKey::Named(name)) if ast.names.kind(name) == NameKind::Ordinary => name,
             _ => Name::EMPTY,
         };
         self.throw_if_nullish(value, StaticError::DestructureNullish, first_name);

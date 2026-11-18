@@ -1,5 +1,6 @@
 use bun_engine_text::PropertyName;
 
+use super::condition::may_be_special_property;
 use super::get::{as_array_index, identifier_for_integer};
 use crate::{
     Attributes, CellType, CustomGetterSetter, Cx, JsObject, JsResult, PropertyDescriptor,
@@ -92,21 +93,27 @@ impl JsObject {
             .map(|_| ())
     }
 
-    /// Whether defining a data property with default attributes comes down to `put_direct`.
+    /// Whether defining a data property with all attributes given comes down to `put_direct`.
     #[inline]
     pub fn can_put_direct_fast(&self, name: PropertyName<'_>) -> bool {
         let shape = self.shape();
         if !shape.is_extensible()
             || shape.has_non_reified_static_properties()
-            || !(self.cell_type() == CellType::FinalObject
-                || shape.class().has_ordinary_define_own_property())
+            || !(self.cell_type() == CellType::FinalObject || self.defines_ordinarily(name))
         {
             return false;
         }
-        !shape.has(ShapeFlags::HAS_NON_CONFIGURABLE)
-            || shape
-                .get(name)
-                .is_none_or(|(_, attributes)| attributes.is_configurable())
+        !shape.has(ShapeFlags::HAS_NON_CONFIGURABLE | ShapeFlags::HAS_ANY_ACCESSOR)
+            || shape.get(name).is_none_or(|(_, attributes)| {
+                !attributes.intersects(Attributes::DONT_DELETE | Attributes::CUSTOM_VALUE)
+            })
+    }
+
+    fn defines_ordinarily(&self, name: PropertyName<'_>) -> bool {
+        let class = self.class();
+        class.has_ordinary_define_own_property()
+            || (class.has_builtin_define_own_property()
+                && !may_be_special_property(self.cell_type(), name))
     }
 
     /// CreateDataProperty

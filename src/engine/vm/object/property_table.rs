@@ -170,17 +170,27 @@ impl PropertyTable {
             .filter_map(|entry| Some((entry.key.as_ref()?.name(), entry.offset, entry.attributes)))
     }
 
-    /// Of all properties but private ones.
+    /// Of all properties but private elements.
     pub(crate) fn update_attributes(&mut self, update: impl Fn(Attributes) -> Attributes) {
         for entry in &mut self.entries {
-            if entry
-                .key
-                .as_ref()
-                .is_some_and(|key| !key.name().is_private())
-            {
+            if (entry.key.as_ref()).is_some_and(|key| !key.name().is_private_element()) {
                 entry.attributes = update(entry.attributes);
             }
         }
+    }
+
+    /// In that order. The others follow in theirs.
+    pub(crate) fn move_to_front(&mut self, names: impl Iterator<Item = Identifier>) {
+        let mut rank = vec![usize::MAX; self.entries.len()];
+        for (number, name) in names.enumerate() {
+            if let Some(position) = self.position(name.name()) {
+                rank[position] = rank[position].min(number);
+            }
+        }
+        let mut ranked: Vec<_> = rank.into_iter().zip(self.entries.drain(..)).collect();
+        ranked.sort_by_key(|it| it.0);
+        self.entries.extend(ranked.into_iter().map(|it| it.1));
+        self.rebuild();
     }
 
     /// Closes the gaps between the offsets, and returns the old ones.

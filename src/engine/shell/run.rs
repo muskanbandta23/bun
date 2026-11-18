@@ -1,11 +1,10 @@
 //! From the creation of a `Vm` to the exit code.
 
 use std::io::{BufRead, Write};
-use std::time::Instant;
 
 use bun_engine_text::names;
 use bun_engine_vm::heap::{HeapKind, Scope};
-use bun_engine_vm::{SourceType, evaluate_script};
+use bun_engine_vm::{RunLoop, SourceType, evaluate_script};
 
 use crate::command_line::{CommandLine, Script};
 use crate::functions::{to_console_text, to_utf8};
@@ -164,25 +163,6 @@ fn run_interactively(cx: &mut Cx) {
     }
 }
 
-fn run_loop(cx: &mut Cx) {
-    let state = State::of(cx);
-    while let Some(due) = state.next_timer_due() {
-        std::thread::sleep(due.saturating_duration_since(Instant::now()));
-        let Some(callback) = state.take_next_timer(cx) else {
-            continue;
-        };
-        let cx = cx.in_realm_of(&callback);
-        if cx.call(callback.into(), Value::UNDEFINED, &[]).is_err()
-            && let Some(exception) = cx.clear_exception()
-        {
-            if cx.is_termination_exception(exception) {
-                return check_exception(cx, Some(exception.value()), false);
-            }
-            (cx.global().hooks().report_uncaught_exception)(cx, exception);
-        }
-    }
-}
-
 /// On a new `Vm`. Returns the exit code.
 pub(crate) fn run(command_line: &CommandLine, body: impl FnOnce(&mut Cx)) -> i32 {
     let vm = bun_engine::create_vm(HeapKind::Large);
@@ -191,6 +171,7 @@ pub(crate) fn run(command_line: &CommandLine, body: impl FnOnce(&mut Cx)) -> i32
         let _ = State::of(vm.get()).command_line.set(command_line.clone());
         Cx::from_global(global::create(vm.get()))
     };
+    let run_loop = RunLoop::install(cx);
     let state = State::of(cx);
     (state.expected_async_passes).set(command_line.expected_async_passes);
     if !command_line.arguments.is_empty() {
@@ -204,7 +185,10 @@ pub(crate) fn run(command_line: &CommandLine, body: impl FnOnce(&mut Cx)) -> i32
 
     body(cx);
     if !cx.is_execution_forbidden().get() {
-        run_loop(cx);
+        let result = cx.drain_microtasks().and_then(|()| run_loop.run(cx));
+        if let Some(termination) = take_exception(cx, result) {
+            check_exception(cx, Some(termination), false);
+        }
         if command_line.is_interactive && !state.has_failed.get() {
             run_interactively(cx);
         }

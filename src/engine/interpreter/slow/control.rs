@@ -1,4 +1,4 @@
-use bun_engine_bytecode::{ErrorKind, StaticError};
+use bun_engine_bytecode::{DebugHook, ErrorKind, StaticError};
 use bun_engine_text::PropertyName;
 use bun_engine_vm::code::metadata::{Counter, Cover, Flags};
 use bun_engine_vm::{Cx, ErrorType, JsString, Thrown, errors};
@@ -104,7 +104,14 @@ execute! {
         }
     }
     Debug(op, cx, f) {
-        (cx.hooks().debug)(cx, f.header, op.hook, f.reg(op.scope))?;
+        if op.hook == DebugHook::DidReachDebuggerStatement
+            || cx.stepping_debugger_count().get() | f.code_block.debugger_requests().get() != 0
+        {
+            cx.debug(f.header, op.hook);
+        }
+    }
+    JumpIfFrameIsKept(op, cx, f) {
+        Next::jump_if(cx.keeps_frame_at_tail_call(f.header))
     }
     Cover(op, cx, f) {
         f.entry::<Cover>(op.metadata).count().update(|count| count + 1);

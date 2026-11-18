@@ -2,7 +2,7 @@ use bun_engine_bytecode::{Register, ResumeMode, Specialization, op};
 use bun_engine_vm::code::metadata;
 use bun_engine_vm::heap::barrier;
 use bun_engine_vm::ic::CallProfile;
-use bun_engine_vm::{CellType, Coroutine, Gc, JsFunction, ValueProfile};
+use bun_engine_vm::{CellType, Coroutine, Gc, ValueProfile};
 
 use crate::machine::{cell, dispatch, go, handler, jump, next, slow};
 use crate::slow::calls::write_header;
@@ -77,7 +77,7 @@ handler! {
         }
         let coroutine = cell::<Coroutine>(generator);
         let callee = coroutine.callee();
-        let executable = JsFunction::executable_of(callee.cell());
+        let executable = coroutine.executable();
         let profile = &m.entry::<metadata::Call>(op.metadata).profile;
         let seen = profile.executable().bits();
         if profile.callee().bits() != callee.address()

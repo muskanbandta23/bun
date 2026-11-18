@@ -18,6 +18,13 @@ pub struct GroupNames {
 const NAMES_COMPARED_IN_TURN: usize = 8;
 
 impl GroupNames {
+    pub const NONE: &GroupNames = &GroupNames {
+        units: Vec::new(),
+        groups: Vec::new(),
+        ends: Vec::new(),
+        sorted: Vec::new(),
+    };
+
     #[inline]
     pub fn len(&self) -> usize {
         self.ends.len()
@@ -109,15 +116,7 @@ impl NamedGroups {
     }
 
     /// Every name has a group.
-    #[inline]
-    pub(super) fn resolve(self, tree: &mut Tree) -> Result<GroupNames, Error> {
-        match self.groups.is_empty() {
-            true => Ok(self.names),
-            false => self.resolve_names(tree),
-        }
-    }
-
-    fn resolve_names(mut self, tree: &mut Tree) -> Result<GroupNames, Error> {
+    pub(super) fn resolve(mut self, tree: &mut Tree) -> Result<GroupNames, Error> {
         let mut names = self.names;
         self.groups.sort_unstable();
         for (index, &(position, _)) in self.groups.iter().enumerate() {

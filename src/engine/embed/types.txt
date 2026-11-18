@@ -132,6 +132,7 @@ cell    JsArrayBufferView class JSC::JSArrayBufferView
 cell    JsTypedArray class JSC::JSArrayBufferView
 opaque  ArrayBuffer class JSC::ArrayBuffer
 opaque  ArrayBufferContents class JSC::ArrayBufferContents
+opaque  BufferAccessor struct JSC::BufferAccessorDescriptor
 counted ArrayBufferRef JSC::ArrayBuffer
 value   CopyOrder uint8_t
 value   FreeBytes std::add_pointer_t<void(void*, void*)>
@@ -155,8 +156,57 @@ opaque  Ticket class JSC::DeferredWorkTicket
 opaque  DeferredTask class Engine::DeferredTask
 value   InternalMicrotask JSC::InternalMicrotask
 value   WorkKind uint8_t
+mirror  IterationKind vm/runtime/iteration/array_iterator.rs
+value   IterationKind JSC::IterationKind
+cell    JsMap class JSC::JSMap
+cell    JsSet class JSC::JSSet
+cell    JsMapIterator class JSC::JSMapIterator
+cell    JsSetIterator class JSC::JSSetIterator
+cell    JsWeakMap class JSC::JSWeakMap
+cell    JsWeakSet class JSC::JSWeakSet
+cell    JsFinalizationRegistry class JSC::JSFinalizationRegistry
+cell    JsAsyncFromSyncIterator class JSC::JSAsyncFromSyncIterator
+opaque  IteratorRecord class Engine::IteratorRecord
+cell    ProxyObject class JSC::ProxyObject
+mirror  Flags regexp/flags.rs
+cell    RegExp class JSC::RegExp
+cell    RegExpObject class JSC::RegExpObject
+cell    DateInstance class JSC::DateInstance
+cell    BooleanObject class JSC::BooleanObject
+mirror  LinesEnd vm/runtime/text/json/lines.rs
+mirror  MessageType vm/realm/console.rs
+mirror  MessageLevel vm/realm/console.rs
+value   MessageType JSC::MessageType
+value   MessageLevel JSC::MessageLevel
+mirror  TemporalType embed/api/temporal.rs
+value   TemporalType JSC::TemporalType
 
 # Modules, scopes and cached bytecode
+mirror  ModuleType vm/runtime/modules/request.rs
+mirror  ModuleStatus vm/runtime/modules/cyclic.rs
+mirror  RegistryStatus vm/runtime/modules/registry.rs
+mirror  ImportKind vm/runtime/modules/entries.rs
+cell    ModuleLoader class JSC::JSModuleLoader
+cell    ModuleRegistryEntry class JSC::ModuleRegistryEntry
+cell    AbstractModuleRecord class JSC::AbstractModuleRecord
+cell    CyclicModuleRecord class JSC::CyclicModuleRecord
+cell    SourceTextModuleRecord class JSC::JSModuleRecord
+cell    SyntheticModuleRecord class JSC::SyntheticModuleRecord
+cell    ModuleNamespace class JSC::JSModuleNamespaceObject
+cell    ModuleExecutable class JSC::ModuleProgramExecutable
+cell    JsSourceCode class JSC::JSSourceCode
+cell    Environment class JSC::JSLexicalEnvironment
+cell    ModuleEnvironment class JSC::JSModuleEnvironment
+cell    ScopeTemplate class JSC::ScopeTemplate
+opaque  FetchParameters class JSC::ScriptFetchParameters
+opaque  SyntheticExports class Engine::SyntheticExports
+opaque  CompiledScript class JSC::UnlinkedProgramCodeBlock
+counted FetchParametersRef JSC::ScriptFetchParameters
+counted CompiledScriptRef JSC::UnlinkedProgramCodeBlock
+value   ModuleType JSC::ScriptFetchParametersType
+value   ModuleStatus uint8_t
+value   RegistryStatus uint8_t
+value   ImportKind uint8_t
 
 # Inspector, profilers and options
 opaque  Options struct Engine::Options

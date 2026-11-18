@@ -11,7 +11,8 @@ use bun_icu::Buffer;
 pub use id::TimeZoneId;
 pub use rules::{LocalOffsets, ZoneRules};
 pub(crate) use rules::{Offset, Side};
-pub use system::{set_time_zone_override, system_time_zone, time_zone_generation};
+pub use system::set_time_zone_override;
+pub(crate) use system::{system_time_zone, time_zone_generation};
 
 use crate::format::{gmt_offset, iso_offset};
 

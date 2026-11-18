@@ -35,6 +35,8 @@ fn hooks() -> Hooks {
         builtin_source: bun_engine_builtins::builtin_source,
         temporal_to_locale_string: bun_engine_intl::temporal_to_locale_string,
         find_wasm_handler: |_, _| None,
+        wasm_frame: |_, _, _, _| unreachable!(),
+        wasm_names: |_, _| unreachable!(),
         debugger_did_parse: |_, _, _| {},
         debugger_microtask_event: |_, _, _, _| {},
         debugger_will_unwind: |_, _| {},

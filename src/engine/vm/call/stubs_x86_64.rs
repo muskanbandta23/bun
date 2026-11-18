@@ -117,7 +117,7 @@ pub unsafe extern "sysv64" fn throw_from_frame() {
 macro_rules! native_entry {
     ($name:ident, [$($load:literal),*], $($operand:ident = $value:expr),*) => {
         #[unsafe(naked)]
-        pub(super) unsafe extern "sysv64" fn $name() {
+        pub(crate) unsafe extern "sysv64" fn $name() {
             naked_asm!(
                 "push rbp",
                 "mov rbp, rsp",

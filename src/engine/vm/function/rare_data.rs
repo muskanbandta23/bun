@@ -5,8 +5,8 @@ use bun_engine_macros::cell;
 
 use crate::heap::Allocator;
 use crate::{
-    Executable, Field, Gc, InlineWatchpointSet, JsFinalObject, JsFunction, Shape, Vm,
-    WatchpointState, call,
+    CellType, Executable, Field, Gc, InlineWatchpointSet, JsFinalObject, JsFunction, JsObject,
+    Shape, Vm, WatchpointState, call,
 };
 
 /// What a constructor knows of the objects that it makes. It stands in for the executable, and forwards calls to it.
@@ -19,7 +19,6 @@ pub struct FunctionRareData {
     object_allocator: Cell<*const Allocator>,
     /// Of what a native constructor makes when this function is `new.target`.
     pub(crate) subclass_shape: Field<Option<Gc<Shape>>>,
-    pub(crate) bound_function_shape: Field<Option<Gc<Shape>>>,
     /// Fires when `prototype` changes.
     allocation_watchpoints: InlineWatchpointSet,
 }
@@ -40,7 +39,6 @@ impl FunctionRareData {
             object_shape: None,
             object_allocator: Cell::new(core::ptr::null()),
             subclass_shape: None,
-            bound_function_shape: None,
             allocation_watchpoints: InlineWatchpointSet::new(WatchpointState::Clear),
         })
     }
@@ -83,7 +81,12 @@ impl JsFunction {
         assert!(self.can_use_allocation_profile());
         let prototype = self.prototype_for_construction(vm);
         let rare_data = self.ensure_rare_data(vm);
-        let capacity = JsFinalObject::optimal_inline_capacity(inferred_capacity);
+        let mut capacity = inferred_capacity.max(self.declared_field_count());
+        if capacity < JsFinalObject::DEFAULT_INLINE_CAPACITY {
+            capacity += default_value_count(&prototype);
+            capacity = capacity.min(JsFinalObject::DEFAULT_INLINE_CAPACITY);
+        }
+        let capacity = JsFinalObject::optimal_inline_capacity(capacity);
         let shape = Shape::for_empty_object(vm, self.function_realm(), prototype, capacity);
         let size = JsFinalObject::allocation_size(capacity);
         let allocator = vm.heap.cells.allocator_for(size);
@@ -94,4 +97,23 @@ impl JsFunction {
         rare_data.allocation_watchpoints.start_watching();
         shape
     }
+
+    /// By this class and those that it extends.
+    fn declared_field_count(&self) -> usize {
+        const MAX_DEPTH: usize = 32;
+        (self.chain_direct().take(MAX_DEPTH))
+            .map_while(|class| class.downcast::<JsFunction>()?.script_executable())
+            .map(|executable| usize::from(executable.info().instance_fields()))
+            .sum()
+    }
+}
+
+/// What a prototype has besides methods, instances tend to get their own of.
+fn default_value_count(prototype: &JsObject) -> usize {
+    if prototype.cell_type() != CellType::FinalObject {
+        return 0;
+    }
+    let properties = prototype.shape().properties();
+    let values = properties.iter().map(|it| prototype.get_direct_at(it.1));
+    values.filter(|it| !it.is::<JsFunction>()).count()
 }

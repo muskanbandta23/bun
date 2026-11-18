@@ -144,6 +144,13 @@ impl State {
         }
     }
 
+    /// Whether a symbol lives on depends on who has its name.
+    pub(crate) fn will_collect(&self, scope: Scope) {
+        if scope == Scope::Full {
+            self.release_names();
+        }
+    }
+
     #[cold]
     pub(crate) fn did_wrap_epoch(&self) {
         self.release_names();
@@ -151,13 +158,7 @@ impl State {
     }
 }
 
-impl crate::services::Service for State {
-    fn did_collect(&self, _: &Vm, scope: Scope) {
-        if scope == Scope::Full {
-            self.release_names();
-        }
-    }
-}
+impl crate::services::Service for State {}
 
 impl Vm {
     /// The address does not change.

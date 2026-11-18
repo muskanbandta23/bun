@@ -619,6 +619,11 @@ fn shuffles_near_those_with_names() {
 }
 
 #[test]
+fn shuffles_that_prepare_a_lane() {
+    check_shuffles(shuffles::prepared_lanes(), &mut Random(seed()));
+}
+
+#[test]
 fn shuffles_that_nearly_interleave() {
     let patterns = shuffles::interleavings_but_for_a_byte();
     check_shuffles(patterns, &mut Random(seed()));

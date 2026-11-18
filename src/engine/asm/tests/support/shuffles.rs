@@ -61,6 +61,30 @@ pub(crate) fn interleavings_but_for_a_byte() -> Vec<Pattern> {
     all
 }
 
+/// Bytes gathered from one vector in place of a lane of the other, which stays as it is.
+pub(crate) fn prepared_lanes() -> Vec<Pattern> {
+    let gathers: [fn(u8, u8) -> u8; 4] = [
+        |byte, _| 2 * byte,
+        |byte, _| 2 * byte + 1,
+        |byte, bytes| bytes - 1 - byte,
+        |byte, _| byte + 3,
+    ];
+    let mut all = Vec::new();
+    for bytes in [2, 4, 8] {
+        for lane in 0..16 / bytes {
+            for gather in gathers {
+                all.extend([0, 16].map(|from| {
+                    array::from_fn(|place| match place as u8 {
+                        place if place / bytes == lane => from + gather(place % bytes, bytes),
+                        place => 16 - from + place,
+                    })
+                }));
+            }
+        }
+    }
+    all
+}
+
 /// What processors have instructions for, with the operands in any order, the same, or zero.
 pub(crate) fn with_names() -> Vec<Pattern> {
     let mut all = interleavings();

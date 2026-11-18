@@ -148,6 +148,7 @@ fn cases<M: VectorAssembly>(features: M::Features) -> Vec<Case<M>> {
     let random = &mut vectors::Random(1);
     let patterns = [
         shuffles::with_names(),
+        shuffles::prepared_lanes(),
         shuffles::of_wide_lanes().into_iter().step_by(11).collect(),
         shuffles::near_names(300, random),
         shuffles::random(300, random),

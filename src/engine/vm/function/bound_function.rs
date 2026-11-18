@@ -229,7 +229,7 @@ impl JsBoundFunction {
             }
         });
         if depth != 0 {
-            name = JsString::new(cx, prefixed(depth, name.to_string_without_resolving()));
+            name = JsString::new(cx, prefixed(depth, name.to_string_without_collecting()));
         }
         self.set_cached_name(Some(name));
         name
@@ -238,7 +238,7 @@ impl JsBoundFunction {
     pub(super) fn name_without_allocating(&self) -> StringRef {
         let (function, depth) = self.find_name();
         let name = match function.cached_name() {
-            Some(name) => name.to_string_without_resolving(),
+            Some(name) => name.to_string_without_collecting(),
             None => (function.target_function.downcast::<JsFunction>())
                 .map_or_default(|target| target.name()),
         };

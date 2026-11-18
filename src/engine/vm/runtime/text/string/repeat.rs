@@ -96,7 +96,7 @@ impl JsString {
             return Err(cx.throw_out_of_memory());
         }
         let fill_length = length as u32 - self.len();
-        if length <= MAX_COPIED_RESULT.into() {
+        if length <= MAX_COPIED_RESULT.into() && filler.len() <= MAX_COPIED_RESULT {
             let (view, filler) = (self.view(cx)?, filler.view(cx)?);
             let (before, after) = match side {
                 PadSide::Start => (Text::EMPTY, view.text()),

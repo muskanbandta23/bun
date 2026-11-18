@@ -48,7 +48,7 @@ pub const RESTRICTED_PROPERTY_ACCESS: &str =
 pub fn describe_value(cx: &Cx, value: Value, out: &mut StringBuilder) {
     if let Some(string) = value.as_string() {
         out.push_latin1(b'"');
-        out.push_text(string.to_string_without_resolving().text());
+        string.append_to(out);
         out.push_latin1(b'"');
     } else if let Some(symbol) = value.as_symbol() {
         match symbol.descriptive_string() {
@@ -63,7 +63,7 @@ pub fn describe_value(cx: &Cx, value: Value, out: &mut StringBuilder) {
         out.push_text(object.calculated_class_name(cx).text());
     } else {
         match value.primitive_to_string(cx) {
-            Ok(string) => out.push_text(string.to_string_without_resolving().text()),
+            Ok(string) => string.append_to(out),
             Err(thrown) => cx.discard_unless_termination(thrown),
         }
     }

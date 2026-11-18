@@ -272,9 +272,8 @@ static consteval unsigned getBytecodeCacheVersion()
 extern "C" void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject*);
 #endif
 
-#if OS(WINDOWS) && (CPU(X86_64) || CPU(ARM64))
-#include <JavaScriptCore/ExecutableAllocator.h>
-extern "C" long Bun__crashHandlerFromJSCFrame(void*, void*, void*, void*);
+#if OS(WINDOWS)
+extern "C" int32_t Bun__crashHandlerFromJSCFrame(void*, void*, void*, void*);
 #endif
 
 // bun_icu_default_locale.cpp
@@ -417,13 +416,10 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             }
         }); // end JSC::initialize lambda
 
-#if OS(WINDOWS) && (CPU(X86_64) || CPU(ARM64))
-        // JSC::initialize() registered unwind info + a language-specific SEH
-        // handler for the JIT pool. Route that handler to the crash reporter
-        // so a hardware fault under a JIT frame is reported deterministically
-        // at the JSC boundary. LLInt is not yet covered (needs build-time
-        // offlineasm .seh_* emission).
-        JSC::setJITExceptionHandlerWin(&Bun__crashHandlerFromJSCFrame);
+#if OS(WINDOWS)
+        // A hardware fault under a JIT frame goes to the crash reporter when SEH dispatch reaches that frame.
+        if (JSC::Options::useJIT())
+            JSC::setExceptionHandlerOfGeneratedCode(&Bun__crashHandlerFromJSCFrame);
 #endif
     }); // end std::call_once lambda
 

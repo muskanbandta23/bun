@@ -197,7 +197,7 @@ impl Options {
                 .saturating_add(MIN_RESERVED_ZONE_SIZE),
         );
 
-        self.use_jit &= bun_engine_exec_memory::is_available();
+        self.use_jit = self.use_jit && bun_engine_exec_memory::is_available();
         for tier in [
             &mut self.use_baseline_jit,
             &mut self.use_quick_optimizer,

@@ -166,7 +166,7 @@ impl<'a, T: ?Sized> Owned<'a, T> {
     /// # Safety
     /// `owner` traces `field` for as long as the borrow lasts.
     #[inline(always)]
-        #[cfg_attr(rootcheck, rootcheck::stays("as long as `field` does"))]
+    #[cfg_attr(rootcheck, rootcheck::stays("as long as `field` does"))]
     pub unsafe fn new(owner: &'a JsCell, field: &'a T) -> Owned<'a, T> {
         Owned { owner, field }
     }

@@ -11,7 +11,8 @@ use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::visit::Visitor;
 use rustc_middle::mir::{
-    CastKind, Const, ConstOperand, Location, Rvalue, Terminator, TerminatorKind, traversal,
+    CastKind, Const, ConstOperand, InlineAsmOperand, Location, Rvalue, Terminator, TerminatorKind,
+    traversal,
 };
 use rustc_middle::ty::adjustment::PointerCoercion;
 use rustc_middle::ty::{
@@ -40,7 +41,7 @@ impl<'a, 'tcx> Calls<'a, 'tcx> {
         Calls { cx, collects: Default::default(), mentions_upper: Default::default() }
     }
 
-    fn is_generic(&self, def_id: DefId) -> bool {
+    pub fn is_generic(&self, def_id: DefId) -> bool {
         let tcx = self.cx.tcx;
         tcx.generics_of(tcx.typeck_root_def_id(def_id)).requires_monomorphization(tcx)
     }
@@ -357,6 +358,13 @@ impl<'tcx> Visitor<'tcx> for Mentions<'_, '_, 'tcx> {
             TerminatorKind::Drop { place, .. } => {
                 self.add_drop(self.frame.place_type(*place), location);
             }
+            TerminatorKind::InlineAsm { operands, .. } => {
+                for operand in operands {
+                    if let InlineAsmOperand::SymFn { value } = operand {
+                        self.add_function(self.frame.instantiate(value.ty()), location);
+                    }
+                }
+            }
             _ => {}
         }
         self.super_terminator(terminator, location);
@@ -389,7 +397,10 @@ impl Node<'_> {
     }
 }
 
-pub fn check<'a, 'tcx>(calls: &Calls<'a, 'tcx>, cx: &'a Types<'tcx>) {
+pub type Instantiations<'tcx> = FxHashMap<DefId, Vec<Instance<'tcx>>>;
+
+/// Returns what has become of the generic functions.
+pub fn check<'a, 'tcx>(calls: &Calls<'a, 'tcx>, cx: &'a Types<'tcx>) -> Instantiations<'tcx> {
     let tcx = cx.tcx;
     let mut nodes = Vec::new();
     let mut index_of = FxHashMap::default();
@@ -402,7 +413,8 @@ pub fn check<'a, 'tcx>(calls: &Calls<'a, 'tcx>, cx: &'a Types<'tcx>) {
             nodes.push(Node { findings: bodies::check(frame, calls), ..node(instance) });
         }
     }
-    let mut next = nodes.len();
+    let as_declared = nodes.len();
+    let mut next = as_declared;
     nodes.extend(plain.into_iter().map(|it| node(calls.as_declared(it))));
     while next < nodes.len() {
         let instance = nodes[next].instance;
@@ -422,6 +434,11 @@ pub fn check<'a, 'tcx>(calls: &Calls<'a, 'tcx>, cx: &'a Types<'tcx>) {
         next += 1;
     }
     report(calls, &nodes);
+    let mut instantiations = Instantiations::default();
+    for node in nodes[as_declared..].iter().filter(|it| it.is_local()) {
+        instantiations.entry(node.instance.def_id()).or_default().push(node.instance);
+    }
+    instantiations
 }
 
 fn report<'tcx>(calls: &Calls<'_, 'tcx>, nodes: &[Node<'tcx>]) {

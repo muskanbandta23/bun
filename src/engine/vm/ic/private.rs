@@ -46,7 +46,13 @@ impl PutPrivateName {
         let inline_symbol = self.name.get().map(Gc::cast::<JsSymbol>);
         let inline_name = inline_symbol.as_ref().map(|it| it.anchor().name());
         let cases = self.cache.ensure_cases(cx, owner, inline_name);
-        cases.add(cx, owner, case, Some(symbol.anchor().name()), AccessKind::Generic);
+        cases.add(
+            cx,
+            owner,
+            case,
+            Some(symbol.anchor().name()),
+            AccessKind::Generic,
+        );
     }
 
     #[inline(always)]

@@ -18,7 +18,7 @@ use rustc_middle::ty::{self, Instance, RegionVid, Ty, TypeVisitableExt, TypingEn
 use rustc_span::{Span, Spanned};
 
 use crate::bodies::{Frame, deferred_blocks};
-use crate::calls::{Calls, Way};
+use crate::calls::{Calls, Instantiations, Way};
 use crate::types::Types;
 
 /// To be judged once nothing needs the MIR of the borrow checker any more.
@@ -557,16 +557,32 @@ fn may_collect_at<'a, 'tcx>(
     calls.may_collect_at(frame, terminator)
 }
 
-pub fn report<'tcx>(calls: &Calls<'_, 'tcx>, cx: &Types<'tcx>, suspects: Vec<Suspect<'tcx>>) {
+pub fn report<'tcx>(
+    calls: &Calls<'_, 'tcx>,
+    cx: &Types<'tcx>,
+    instantiations: &Instantiations<'tcx>,
+    suspects: Vec<Suspect<'tcx>>,
+) {
     let tcx = cx.tcx;
     let mut reported = FxHashSet::default();
     for suspect in suspects {
         let (def_id, body) = (suspect.def_id.to_def_id(), suspect.body);
-        let frame = Frame { cx, instance: calls.as_declared(def_id), env: env_of(cx, body), body };
+        let env = TypingEnv::fully_monomorphized();
+        let instances = instantiations.get(&def_id).into_iter().flatten();
+        let mut frames: Vec<_> =
+            instances.map(|&instance| Frame { cx, instance, env, body }).collect();
+        // Other crates do not have the lifetimes to go by.
+        let root = tcx.typeck_root_def_id_local(suspect.def_id);
+        if frames.is_empty() || (calls.is_generic(def_id) && tcx.reachable_set(()).contains(&root))
+        {
+            let (instance, env) = (calls.as_declared(def_id), env_of(cx, body));
+            frames.push(Frame { cx, instance, env, body });
+        }
         let deferred = deferred_blocks(cx, body);
         let held = (suspect.held_at_end_of.iter().filter(|&&it| !deferred.contains(it)))
             .map(|&it| body[it].terminator())
-            .find_map(|it| Some((it.source_info.span, may_collect_at(calls, frame, it)?)));
+            .flat_map(|it| frames.iter().map(move |&frame| (it, frame)))
+            .find_map(|(it, frame)| Some((it.source_info.span, may_collect_at(calls, frame, it)?)));
         let escapes = suspect.escapes && !cx.allows.stays(tcx, def_id);
         let span = suspect.span.source_callsite();
         if (held.is_none() && !escapes)

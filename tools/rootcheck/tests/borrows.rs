@@ -241,6 +241,28 @@ pub fn unknown_callback_through_the_standard_library(owner: &Owner, run: impl Fn
     owner.shared.iter().copied().for_each(run); //~ borrow: held while this may collect
 }
 
+fn known_callback(owner: &Owner, run: impl FnOnce(Text<'_>)) {
+    run(owner.text()); //~ borrow: held while this may collect
+}
+
+fn harmless_callback(owner: &Owner, run: impl FnOnce(Text<'_>)) {
+    run(owner.text());
+}
+
+fn reached_from_another_crate(owner: &Owner, run: impl FnOnce(Text<'_>)) {
+    run(owner.text()); //~ borrow: held while this may collect
+}
+
+pub fn callbacks(vm: &Vm, owner: &Owner) {
+    known_callback(owner, |text| see(text));
+    known_callback(owner, |text| see(JsString::from_text(vm, text)));
+    harmless_callback(owner, |text| see(text));
+}
+
+pub fn passes_on(owner: &Owner, run: impl FnOnce(Text<'_>)) {
+    reached_from_another_crate(owner, run);
+}
+
 pub trait Named: CellKind {
     fn name(&self) -> Text<'_>;
 }

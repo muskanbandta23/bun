@@ -92,7 +92,10 @@ function lint(): boolean {
   const scope = isScoped ? [] : [...dependentsOfVm().flatMap(name => ["-p", name]), "--all-targets"];
   const { messages, ok } = check([...scope, ...args]);
   const diagnostics = messages.flatMap(it => (it.reason === "compiler-message" ? [it.message] : []));
-  const distinct = [...new Map(diagnostics.map(it => [it.rendered, it])).values()];
+  // A crate is checked as a library and as a test.
+  const distinct = [
+    ...new Map(diagnostics.map(it => [it.rendered.split("\n", 2).join().replace(/ +/g, " "), it])).values(),
+  ];
   const fileOf = (it: Diagnostic) => it.spans.find(span => span.is_primary)!.file_name.replaceAll("\\", "/");
   const borrows = Object.groupBy(
     distinct.filter(it => ruleOf(it) === "borrow"),

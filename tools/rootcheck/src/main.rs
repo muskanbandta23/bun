@@ -61,8 +61,8 @@ impl Callbacks for Rootcheck {
             }
             let suspects = borrows::find_suspects(&cx);
             let calls = calls::Calls::new(&cx);
-            calls::check(&calls, &cx);
-            borrows::report(&calls, &cx, suspects);
+            let instantiations = calls::check(&calls, &cx);
+            borrows::report(&calls, &cx, &instantiations, suspects);
             allow::check(&cx);
         }
         Compilation::Continue

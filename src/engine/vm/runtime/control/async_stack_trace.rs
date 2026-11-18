@@ -60,7 +60,7 @@ impl JsAsyncFunctionGenerator {
     /// Where it is suspended. `None` if stack traces do not show it.
     pub fn stack_frame(&self) -> Option<StackFrame> {
         let function = self.callee().downcast::<JsFunction>()?;
-        let executable = function.script_executable()?;
+        let executable = self.executable();
         if executable.is_private_builtin() {
             return None;
         }

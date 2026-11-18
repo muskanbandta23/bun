@@ -199,7 +199,7 @@ fn concat(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
         let argument = argument.to_string(cx)?;
         builder.push(cx, argument)?;
     }
-    builder.finish(cx).map(Into::into)
+    Ok(builder.finish(cx).into())
 }
 
 #[native_abi]
@@ -311,7 +311,7 @@ fn pad(cx: &mut Cx, frame: &CallFrame, side: PadSide, message: &'static str) -> 
         return Ok(string.into());
     }
     let filler = match frame.argument(1) {
-        Value::UNDEFINED => cx.small_strings.single_character(cx, b' '),
+        Value::UNDEFINED => cx.small_strings.single_character(b' '),
         filler => filler.to_string(cx)?,
     };
     string.pad(cx, side, length, &filler).map(Into::into)

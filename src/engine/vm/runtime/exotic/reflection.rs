@@ -71,9 +71,8 @@ impl JsObject {
             .filter(|&index| !has_holes || self.try_get_dense(index).is_some())
             .take(index_count)
             .map(|index| JsString::from_number(cx, index.into()).into());
-        let mut all = indices.chain(names.iter().map(|name| Value::from_name(cx, name)));
-        let count = index_count + names.iter().count();
-        let keys = ImmutableArray::try_from_fn(cx, count, |_| all.next().unwrap_or_default());
+        let all = indices.chain(names.iter().map(|name| Value::from_name(cx, name)));
+        let keys = ImmutableArray::try_from_iter(cx, index_count + names.count(), all);
         let keys = cx.or_out_of_memory(keys)?;
         if let Some(kind) = cached_kind(kinds, mode)
             && self.shape() == shape

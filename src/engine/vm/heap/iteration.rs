@@ -1,8 +1,10 @@
 //! Going through the cells of the heap.
 
+use core::mem::needs_drop;
+
 use super::directory::Directory;
 use super::{AllocationKind, CellKind, Gc, Heap, IsoSpace, JsCell, MutatorState, space};
-use crate::FastHashSet;
+use crate::{FastHashSet, TypeFlags};
 
 fn for_each_live_cell_of(directory: &Directory, visit: &mut impl FnMut(Gc<JsCell>)) {
     if directory.attributes().kind == AllocationKind::Cell {
@@ -36,10 +38,17 @@ impl Heap {
         }
     }
 
-    /// Of a type that needs no destruction. `visit` does not allocate.
+    /// Of a type that needs no destruction or whose shape is immortal. `visit` does not allocate.
     pub fn for_each_live<T: CellKind>(&self, mut visit: impl FnMut(Gc<T>)) {
-        const { assert!(!core::mem::needs_drop::<T>() && size_of::<T>() <= space::LARGE_CUTOFF) };
-        let Some(allocator) = self.cells.allocator_for(size_of::<T>()) else {
+        const {
+            assert!(size_of::<T>() <= space::LARGE_CUTOFF);
+            assert!(!needs_drop::<T>() || T::FLAGS.contains(TypeFlags::SHAPE_IS_IMMORTAL));
+        };
+        let space = match needs_drop::<T>() {
+            true => &self.destructible_cells,
+            false => &self.cells,
+        };
+        let Some(allocator) = space.allocator_for(size_of::<T>()) else {
             return;
         };
         allocator.stop_allocating(self);

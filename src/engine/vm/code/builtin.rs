@@ -6,6 +6,7 @@ use std::rc::Rc;
 use bun_engine_bytecode::{
     BuiltinFunction, BuiltinValue, FunctionInfo, FunctionKind, FunctionRef, Host, Visibility,
 };
+use bun_engine_macros::FieldOffsets;
 use bun_engine_text::{Atom, Identifier, PropertyName, StringRef, Text};
 
 use super::builtin_values::BUILTIN_VALUES;
@@ -17,6 +18,8 @@ use crate::{
 #[derive(Default)]
 pub(super) struct Builtins {
     functions: RefCell<FastHashMap<u16, (SourceProviderRef, FunctionRef)>>,
+    /// By the address of the text.
+    embedder_functions: RefCell<FastHashMap<usize, UnlinkedFunction>>,
     /// By the address of the symbol.
     values: OnceCell<FastHashMap<usize, BuiltinValue>>,
     embedder_names: RefCell<FastHashMap<Identifier, Identifier>>,
@@ -43,7 +46,7 @@ impl Host for Vm {
 }
 
 /// What can be told of `(function (..) { .. })` without parsing it. The offsets count from the first parenthesis.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, FieldOffsets)]
 #[repr(C)]
 pub struct BuiltinOutline {
     pub parameters_start: u32,
@@ -115,17 +118,67 @@ pub fn describe_builtin(
         is_strict: outline.is_strict,
         is_async: outline.is_async,
         is_generator: outline.is_generator,
-        visibility: if outline.is_async {
-            visibility.max(Visibility::Private)
-        } else {
-            visibility
+        // The frame is that of the body too, which only `PrivateRecursive` hides.
+        visibility: match visibility {
+            Visibility::Private if outline.is_async => Visibility::Public,
+            _ => visibility,
         },
         has_positions: source.provider.url().is_some(),
     }
     .into_function()
 }
 
+/// A function that refers to nothing but globals, and its code.
+pub struct UnlinkedFunction {
+    pub provider: SourceProviderRef,
+    pub function: FunctionRef,
+}
+
+impl UnlinkedFunction {
+    /// A new one, whose code is linked to the realm that calls it first.
+    pub fn link(&self, vm: &Vm) -> Gc<FunctionExecutable> {
+        FunctionExecutable::create(vm, self.provider.clone(), None, self.function.clone())
+    }
+}
+
+/// One of the embedder, whose source has no URL.
+pub struct StaticBuiltin {
+    pub text: &'static [u8],
+    pub outline: BuiltinOutline,
+    pub name: &'static str,
+    pub kind: FunctionKind,
+    pub visibility: Visibility,
+}
+
 impl Vm {
+    /// See `UnlinkedFunction::link`.
+    pub fn link_static_builtin(&self, builtin: StaticBuiltin) -> Gc<FunctionExecutable> {
+        let _defer = self.heap.defer_collection();
+        let mut functions = self.services.code.builtins.embedder_functions.borrow_mut();
+        let function = functions.entry(builtin.text.as_ptr().addr());
+        let function = function.or_insert_with(|| {
+            let text = StringRef::from_static_units(builtin.text);
+            let provider = SourceProvider::build(text, None, SourceType::Program);
+            let source = SourceCode::whole(provider.finish());
+            let (name, kind) = (Identifier::from_literal(builtin.name), builtin.kind);
+            UnlinkedFunction {
+                function: describe_builtin(
+                    &source,
+                    &builtin.outline,
+                    name,
+                    kind,
+                    builtin.visibility,
+                ),
+                provider: source.provider,
+            }
+        });
+        function.link(self)
+    }
+
+    pub(super) fn forget_static_builtins(&self) {
+        self.services.code.builtins.embedder_functions.take();
+    }
+
     /// Makes `@name` stand for `symbol`.
     pub fn register_private_name(&self, name: Atom, symbol: Identifier) {
         let mut names = self.services.code.builtins.embedder_names.borrow_mut();

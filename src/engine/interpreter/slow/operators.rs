@@ -1,9 +1,7 @@
 use core::cmp::Ordering::{Equal, Greater, Less};
 
 use bun_engine_vm::arithmetic;
-use bun_engine_vm::{
-    ArithmeticProfile, CellType, Cx, PreferredType, RopeBuilder, ShapeFlags, Value,
-};
+use bun_engine_vm::{ArithmeticProfile, CellType, Cx, JsString, PreferredType, ShapeFlags, Value};
 
 use super::{Next, execute};
 
@@ -110,11 +108,8 @@ execute! {
         f.set(op.dst, f.get(op.value).type_of(cx));
     }
     Concatenate(op, cx, f) {
-        let mut builder = RopeBuilder::default();
-        for index in 0..op.count {
-            builder.push(cx, f.reg(op.first.nth(index)).primitive_to_string(cx)?)?;
-        }
-        f.set(op.dst, builder.finish(cx)?);
+        let operands = (0..op.count).map(|index| f.reg(op.first.nth(index)));
+        f.set(op.dst, JsString::concat_primitives(cx, operands)?);
     }
     ToString(op, cx, f) {
         f.set(op.dst, f.get(op.value).to_string(cx)?);

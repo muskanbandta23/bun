@@ -3,7 +3,7 @@
 use core::mem::offset_of;
 
 use bun_engine_macros::cell;
-use bun_engine_text::{Identifier, PropertyName};
+use bun_engine_text::Identifier;
 
 use crate::{
     CellType, Cx, DontEnumMode, FastHashSet, Gc, ImmutableArray, JsArrayBufferView, JsCell,
@@ -146,7 +146,7 @@ impl PropertyNameEnumerator {
             Some(_) => object.snapshot_own_non_index_keys(cx, kinds, mode)?,
             None => object.snapshot_own_keys(cx, kinds, mode)?,
         };
-        let own_count = own.iter().count();
+        let own_count = own.count();
         let own_shape_count = if indexed_length.is_some()
             && names_are_in_slot_order(object)
             && own_count == shape.slot_count()
@@ -163,10 +163,9 @@ impl PropertyNameEnumerator {
                 !own.contains(&name.name()) && name.name().as_index().is_none_or(|it| it >= length)
             });
         }
-        let mut all = own.iter().chain(inherited.iter().map(Identifier::name));
-        let names = ImmutableArray::try_from_fn(cx, own_count + inherited.len(), |_| {
-            JsString::from_name(cx, all.next().unwrap_or(PropertyName::EMPTY)).into()
-        });
+        let all = (own.iter().chain(inherited.iter().map(Identifier::name)))
+            .map(|name| JsString::from_name(cx, name).into());
+        let names = ImmutableArray::try_from_iter(cx, own_count + inherited.len(), all);
         let names = cx.or_out_of_memory(names)?;
         let is_same = object.shape() == shape;
         let chain = (is_same && indexed_length.is_some())

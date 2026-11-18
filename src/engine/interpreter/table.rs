@@ -157,7 +157,6 @@ fast_handlers! {
     NewArrayFromConstant new_array_from_constant,
     NewArrayWithSize new_array_with_size,
     CreateRest create_rest,
-    InByVal in_by_val,
     NewObject new_object,
     NewObjectLiteral new_object_literal,
     NewFunction new_function,

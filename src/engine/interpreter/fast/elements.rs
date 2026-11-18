@@ -4,7 +4,7 @@ use bun_engine_vm::{ArrayModes, ElementKind, IndexingMode, JsObject, Value};
 
 use super::barrier_and_next;
 use super::properties::{get_by_name, put_by_name, put_by_name_direct};
-use crate::machine::{EMPTY, boolean, cell, go, handler, next, slow};
+use crate::machine::{EMPTY, cell, go, handler, next, slow};
 
 const INT32: u8 = ElementKind::Int32 as u8;
 const DOUBLE: u8 = ElementKind::Double as u8;
@@ -44,18 +44,6 @@ handler! {
         entry.array.record_shape(&object);
         entry.value.record_bits(value);
         m.set(op.dst, value);
-        next!(m, op)
-    }
-}
-
-handler! {
-    fn in_by_val(m, op: op::InByVal) {
-        let (base, key) = (m.get(op.base), m.get(op.key));
-        if !m.is_cell(base) || !m.is_int32(key) || cell::<JsObject>(base).try_get_dense(key as u32).is_none() {
-            slow!(m, op::InByVal)
-        }
-        m.entry::<ArrayAccess>(op.metadata).array.record_shape(&cell(base));
-        m.set(op.dst, boolean(true));
         next!(m, op)
     }
 }

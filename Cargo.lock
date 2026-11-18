@@ -664,7 +664,6 @@ name = "bun_engine_asm"
 version = "0.0.0"
 dependencies = [
  "bitflags",
- "bun_engine_standalone",
  "smallvec",
 ]
 
@@ -754,10 +753,11 @@ dependencies = [
 name = "bun_engine_exec_memory"
 version = "0.0.0"
 dependencies = [
+ "bun_alloc",
  "bun_engine_asm",
- "bun_engine_standalone",
  "bun_threading",
  "libc",
+ "smallvec",
 ]
 
 [[package]]

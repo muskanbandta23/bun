@@ -113,7 +113,7 @@ impl Simplifier<'_> {
 
     pub(super) fn visit_end(&mut self, last: Value) {
         self.point_at(last);
-        if self.op(last) != Op::Jump {
+        if !matches!(self.op(last), Op::Jump) {
             self.function.resolve_operands(last);
             self.note_writes(last);
             if let Some(position) = self.simplify_end(last) {

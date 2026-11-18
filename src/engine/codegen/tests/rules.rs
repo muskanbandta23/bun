@@ -97,8 +97,9 @@ impl Subject for Counting<'_> {
     fn test(&mut self, case: &Case) -> Result<(), String> {
         let mut function = case.program.function.clone();
         self.analyses.invalidate();
+        self.analyses.take_fired_rules();
         pass_named("simplify").run(&mut function, &mut self.analyses, case.world.target);
-        for place in self.analyses.fired_rules() {
+        for place in self.analyses.take_fired_rules() {
             let file = place.file().rsplit(['/', '\\']).next().unwrap();
             *self
                 .own

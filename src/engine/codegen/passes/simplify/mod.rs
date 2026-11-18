@@ -76,7 +76,7 @@ pub(super) struct Tables {
     signatures: Vec<(u32, u32)>,
     predecessor_counts: Table<Block, u32>,
     #[cfg(debug_assertions)]
-    pub(super) fired_rules: Vec<&'static core::panic::Location<'static>>,
+    pub(super) fired_rules: Option<Vec<&'static core::panic::Location<'static>>>,
 }
 
 struct Simplifier<'a> {
@@ -84,6 +84,7 @@ struct Simplifier<'a> {
     cfg: &'a Cfg,
     dominators: &'a Dominators,
     target: Target,
+    effort: Effort,
     tables: Tables,
     block: Block,
     /// Of the block in the walk.
@@ -108,55 +109,75 @@ struct Simplifier<'a> {
     withdraws_all_promises: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Effort {
+    Low,
+    High,
+}
+
 pub(super) fn run(function: &mut Function, analyses: &mut Analyses, target: Target) {
     const MOST_WALKS: usize = 3;
-    #[cfg(debug_assertions)]
-    analyses.simplify.fired_rules.clear();
     for _ in 0..MOST_WALKS {
-        let tables = core::mem::take(&mut analyses.simplify);
-        let (cfg, dominators) = analyses.dominators(function);
-        let mut simplifier = Simplifier {
-            function,
-            cfg,
-            dominators,
-            target,
-            tables,
-            block: Block::NONE,
-            position: 0,
-            end_of_subtree: 0,
-            cursor: Value::NONE,
-            budget: 0,
-            has_touched_operands: false,
-            changed_control: false,
-            may_be_untidy: false,
-            left_aliases: false,
-            left_aliases_in_states: false,
-            changed_args_in_loops: false,
-            would_find_more: false,
-            has_promises: false,
-            has_set_free: false,
-            withdraws_all_promises: false,
-        };
-        simplifier.run();
-        let (changed_control, would_find_more) =
-            (simplifier.changed_control, simplifier.would_find_more);
-        analyses.simplify = simplifier.tables;
-        if changed_control {
-            analyses.invalidate();
-        }
-        if !would_find_more {
+        if !walk_once(function, analyses, target, Effort::High) {
             break;
         }
     }
 }
 
+/// Returns whether another walk would find more.
+pub(super) fn walk_once(
+    function: &mut Function,
+    analyses: &mut Analyses,
+    target: Target,
+    effort: Effort,
+) -> bool {
+    let tables = core::mem::take(&mut analyses.simplify);
+    let (cfg, dominators) = analyses.dominators(function);
+    let mut simplifier = Simplifier {
+        function,
+        cfg,
+        dominators,
+        target,
+        effort,
+        tables,
+        block: Block::NONE,
+        position: 0,
+        end_of_subtree: 0,
+        cursor: Value::NONE,
+        budget: 0,
+        has_touched_operands: false,
+        changed_control: false,
+        may_be_untidy: false,
+        left_aliases: false,
+        left_aliases_in_states: false,
+        changed_args_in_loops: false,
+        would_find_more: false,
+        has_promises: false,
+        has_set_free: false,
+        withdraws_all_promises: false,
+    };
+    simplifier.run();
+    let (changed_control, would_find_more) =
+        (simplifier.changed_control, simplifier.would_find_more);
+    analyses.simplify = simplifier.tables;
+    if changed_control {
+        analyses.invalidate();
+    }
+    would_find_more
+}
+
 impl Simplifier<'_> {
     fn run(&mut self) {
         self.count_uses();
-        self.replace_cycles_of_params();
+        if self.effort == Effort::High {
+            self.replace_cycles_of_params();
+        }
         self.walk();
         self.keep_promises();
-        if self.changed_args_in_loops && self.replace_cycles_of_params() {
+        if self.effort == Effort::High
+            && self.changed_args_in_loops
+            && self.replace_cycles_of_params()
+        {
             (self.left_aliases, self.would_find_more) = (true, true);
         }
         if self.changed_control || self.may_be_untidy {
@@ -259,7 +280,7 @@ impl Simplifier<'_> {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     fn point_at(&mut self, value: Value) {
         const BUDGET: u32 = 40;
         (self.cursor, self.budget) = (value, BUDGET);

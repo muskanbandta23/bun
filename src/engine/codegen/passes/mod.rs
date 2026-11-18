@@ -25,6 +25,7 @@ mod reaching;
 mod readability;
 mod rotate_loops;
 mod simplify;
+mod simplify_quickly;
 mod sink_into_cold_blocks;
 mod specialize_selects;
 mod unroll_loops;
@@ -101,9 +102,12 @@ impl Analyses {
 
 #[cfg(debug_assertions)]
 impl Analyses {
-    /// The places in the source of the rules that the last run of `simplify` applied.
-    pub fn fired_rules(&self) -> &[&'static core::panic::Location<'static>] {
-        &self.simplify.fired_rules
+    /// The places in the source of the rules that `simplify` has applied since this was called first.
+    pub fn take_fired_rules(&mut self) -> Vec<&'static core::panic::Location<'static>> {
+        self.simplify
+            .fired_rules
+            .replace(Vec::new())
+            .unwrap_or_default()
     }
 }
 
@@ -134,6 +138,7 @@ passes! {
     LOWER_TOTAL_DIVISION: lower_total_division,
     ROTATE_LOOPS: rotate_loops,
     SIMPLIFY: simplify,
+    SIMPLIFY_QUICKLY: simplify_quickly,
     SINK_INTO_COLD_BLOCKS: sink_into_cold_blocks,
     SPECIALIZE_SELECTS: specialize_selects,
     UNROLL_LOOPS: unroll_loops,

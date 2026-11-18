@@ -22,9 +22,9 @@ impl Simplifier<'_> {
     #[inline]
     pub(super) fn hit(&mut self) {
         #[cfg(debug_assertions)]
-        self.tables
-            .fired_rules
-            .push(core::panic::Location::caller());
+        if let Some(fired_rules) = &mut self.tables.fired_rules {
+            fired_rules.push(core::panic::Location::caller());
+        }
     }
 
     #[cfg_attr(debug_assertions, track_caller)]

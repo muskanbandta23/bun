@@ -1,6 +1,6 @@
 //! Parameters that always get the same value.
 
-use super::Simplifier;
+use super::{Effort, Simplifier};
 use crate::ir::{Block, Edge, Op, Value};
 
 /// The marks of parameters: zero is for one that stands for itself, and the others are values plus one.
@@ -59,7 +59,7 @@ impl Simplifier<'_> {
             }
             has_dead = true;
         }
-        has_dead |= is_entered && self.replace_twins(block, edges);
+        has_dead |= is_entered && self.effort == Effort::High && self.replace_twins(block, edges);
         if has_dead {
             self.drop_dead_params(block, edges);
         }

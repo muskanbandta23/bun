@@ -2,12 +2,10 @@
 
 use bun_engine_asm::{Sign, Size, VectorReduce, Width};
 
-use super::Simplifier;
 use super::facts::{Facts, greatest, least, low_bits};
 use super::numbering::unchecked;
+use super::{Effort, Simplifier};
 use crate::ir::{Binary, Checked, Lanes, Load, Op, Type, Unary, Value};
-
-const DEPTH: u32 = 6;
 
 /// At the start of `Tables::facts`.
 pub(super) const COMMON: [Facts; 3] = [
@@ -18,13 +16,21 @@ pub(super) const COMMON: [Facts; 3] = [
 
 impl Simplifier<'_> {
     #[inline(always)]
+    fn depth(&self) -> u32 {
+        match self.effort {
+            Effort::Low => 2,
+            Effort::High => 6,
+        }
+    }
+
+    #[inline(always)]
     pub(super) fn facts(&mut self, value: Value) -> Facts {
-        self.facts_within(value, DEPTH)
+        self.facts_within(value, self.depth())
     }
 
     /// Of an operation that may have no value yet.
     pub(super) fn facts_of(&mut self, op: Op, ty: Type) -> Facts {
-        self.work_out(op, ty.width(), DEPTH)
+        self.work_out(op, ty.width(), self.depth())
     }
 
     pub(super) fn is_boolean(&mut self, value: Value) -> bool {
@@ -55,6 +61,7 @@ impl Simplifier<'_> {
                 return Facts::BOOLEAN;
             }
             _ if depth == 0 => return Facts::none(width),
+            Op::Param(_) if self.effort == Effort::Low => Facts::none(width),
             Op::Param(position) => {
                 // This is what a cycle finds when it comes back here.
                 self.tables.values[value].facts = nothing;

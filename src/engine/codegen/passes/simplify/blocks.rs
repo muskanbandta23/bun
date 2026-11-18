@@ -63,7 +63,7 @@ impl Simplifier<'_> {
 
     fn only_jump(&self, block: Block) -> Option<Edge> {
         let last = self.function.last(block).expand()?;
-        (self.op(last) == Op::Jump).then(|| self.function.successor(block, 0))
+        matches!(self.op(last), Op::Jump).then(|| self.function.successor(block, 0))
     }
 
     fn goes_one_way(&self, block: Block) -> bool {

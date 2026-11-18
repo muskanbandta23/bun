@@ -3,6 +3,7 @@
 use core::cmp::Ordering;
 
 use bun_engine_text::{CodeUnit, Text, with_text};
+use bun_pod::slice_as_bytes;
 
 use crate::latin1::split_accent;
 
@@ -48,18 +49,24 @@ pub(super) struct RootOrder {
 }
 
 impl RootOrder {
+    /// `None` unless the first characters of two Latin-1 strings that differ decide their order.
+    #[inline(always)]
+    pub(super) fn decide(self, x: u8, y: u8) -> Option<Ordering> {
+        let (x, y) = (WEIGHTS[usize::from(x)], WEIGHTS[usize::from(y)]);
+        (x.min(y) != 0 && (x ^ y) >> PRIMARY_SHIFT != 0 && !self.is_numeric).then(|| x.cmp(&y))
+    }
+
     /// `None` if it depends on a character that this does not order.
-    #[inline]
+    #[inline(always)]
     pub(super) fn compare(self, a: Text<'_>, b: Text<'_>) -> Option<Ordering> {
         let (Text::Latin1(a), Text::Latin1(b)) = (a, b) else {
             return self.compare_wide(a, b);
         };
-        let common = common_bytes(a, b);
-        if let (Some(&x), Some(&y), false) = (a.get(common), b.get(common), self.is_numeric)
-            && let (Some(x), Some(y)) = (weight(x), weight(y))
-            && (x ^ y) >> PRIMARY_SHIFT != 0
+        let common = bun_highway::common_prefix_length(a, b);
+        if let (Some(&x), Some(&y)) = (a.get(common), b.get(common))
+            && let Some(order) = self.decide(x, y)
         {
-            return Some(x.cmp(&y));
+            return Some(order);
         }
         self.compare_from(common, a, b)
     }
@@ -67,7 +74,7 @@ impl RootOrder {
     fn compare_wide(self, a: Text<'_>, b: Text<'_>) -> Option<Ordering> {
         let common = match (a, b) {
             (Text::Utf16(a), Text::Utf16(b)) => {
-                common_bytes(bun_pod::slice_as_bytes(a), bun_pod::slice_as_bytes(b)) / 2
+                bun_highway::common_prefix_length(slice_as_bytes(a), slice_as_bytes(b)) / 2
             }
             _ => (a.code_units().zip(b.code_units()))
                 .take_while(|(a, b)| a == b)
@@ -146,17 +153,4 @@ fn take_number<'a, T: CodeUnit>(units: &mut &'a [T]) -> Option<&'a [T]> {
 
 fn compare_numbers<A: CodeUnit, B: CodeUnit>(a: &[A], b: &[B]) -> Ordering {
     (a.len().cmp(&b.len())).then_with(|| A::text(a).cmp(&B::text(b)))
-}
-
-#[inline(always)]
-fn common_bytes(a: &[u8], b: &[u8]) -> usize {
-    const WORD: usize = size_of::<u64>();
-
-    let (Some(a_word), Some(b_word)) = (a.first_chunk::<WORD>(), b.first_chunk::<WORD>()) else {
-        return a.iter().zip(b).take_while(|(a, b)| a == b).count();
-    };
-    match u64::from_le_bytes(*a_word) ^ u64::from_le_bytes(*b_word) {
-        0 => WORD + bun_highway::common_prefix_length(&a[WORD..], &b[WORD..]),
-        difference => difference.trailing_zeros() as usize / 8,
-    }
 }

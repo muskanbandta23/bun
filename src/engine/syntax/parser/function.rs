@@ -129,7 +129,7 @@ impl Session<'_> {
 
     fn skip_known_function(&mut self) -> Option<Summary> {
         let functions = self.functions.as_deref()?;
-        let found = functions.find(self.lexer.token.start)?;
+        let found = functions.find(self.lexer.token.start())?;
         let summary = functions.summary(found);
         if summary.traits.contains(Traits::IN_STRICT_CODE) != self.is_strict()
             || summary.end > self.lexer.end()
@@ -329,7 +329,7 @@ impl Session<'_> {
             end: if flags.contains(FunctionFlags::EXPRESSION_BODY) {
                 self.previous_end()
             } else {
-                self.token().end
+                self.token().end()
             },
             length: open.length,
             flags,
@@ -616,7 +616,7 @@ impl Session<'_> {
     #[inline(always)]
     fn function_name(&mut self, flags: FunctionFlags, is_expression: bool) -> Parsed<Option<Name>> {
         let token = self.token();
-        match token.kind {
+        match token.kind() {
             TokenKind::OpenParen => return Ok(None),
             TokenKind::Identifier => {}
             _ if self.is_unusual_function_name(flags, is_expression)? => {}

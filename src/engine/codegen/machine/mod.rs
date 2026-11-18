@@ -13,7 +13,7 @@ mod slots;
 mod vector;
 
 pub(crate) use code::{Class, Place, Registers, Role};
-pub use emit::Emitted;
+pub use emit::{Emitted, StateLocations};
 pub(crate) use emit::{Emitter, Isa, Operands};
 pub(crate) use lower::{Instruction, Lowering};
 pub(crate) use shared::{Shared, SharesInstructions};

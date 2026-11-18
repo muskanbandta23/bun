@@ -5,25 +5,31 @@ use bun_engine_text::{AllocError, Text};
 
 use crate::authority::{leading_port, serialize_port};
 use crate::buffer::Buffer;
-use crate::class::{self, FRAGMENT, NUMBER_SIGN, PATH, QUESTION_MARK, TAIL_SCAN, USERINFO};
+use crate::class::{FRAGMENT, NUMBER_SIGN, PATH, QUESTION_MARK, TAIL_SCAN, USERINFO};
 use crate::components::Components;
 use crate::input::{Source, Transcoder};
-use crate::parser::{Parser, Tail};
+use crate::parser::{Parser, Step};
 use crate::record::{View, concat};
+use crate::scheme::scan_scheme;
 use crate::{Error, Punycode, Result, Scheme, Url, percent};
 
-/// Runs `then` on what the basic URL parser reads of `value` when it is given a URL.
-#[inline]
+#[inline(always)]
 fn without_tab_or_newline<T>(
     value: Text<'_>,
-    then: impl FnOnce(Source<'_>) -> Result<T>,
+    attempt: impl FnMut(Source<'_>) -> Result<T>,
 ) -> Result<T> {
-    let (mut transcoder, mut storage) = (Transcoder::new(), Buffer::new());
-    then(
-        transcoder
-            .source(value)?
-            .without_tab_or_newline(&mut storage)?,
-    )
+    Transcoder::new()
+        .source(value)?
+        .retry_without_tab_or_newline(attempt)
+}
+
+/// The port state with a state override, whatever the default port is.
+fn assigned_port(text: &[u8]) -> Result<Option<u16>> {
+    let (count, port) = leading_port(text);
+    match text.get(count) {
+        Some(b'\t' | b'\n' | b'\r') => Err(Error::Invalid),
+        _ => Ok(port),
+    }
 }
 
 fn strip_prefix(value: Text<'_>, prefix: u8) -> Text<'_> {
@@ -41,7 +47,7 @@ fn shift<const N: usize>(offsets: [&mut u32; N], from: u32, to: u32) {
 /// The port state with a state override. `None` stands for the default port.
 pub fn parse_port(value: Text<'_>, scheme: Scheme) -> Result<Option<u16>> {
     without_tab_or_newline(value, |value| {
-        let port = leading_port(value.bytes).1.ok_or(Error::Invalid)?;
+        let port = assigned_port(value.bytes)?.ok_or(Error::Invalid)?;
         Ok(Some(port).filter(|&port| Some(port) != scheme.default_port()))
     })
 }
@@ -64,7 +70,7 @@ impl<'a> Parser<'a> {
     fn into_url(self, end: usize, rest: [&[u8]; 2]) -> Result<Url> {
         let [head, body, pending] = self.out.pieces(end);
         Ok(Url {
-            text: Some(concat(&[head, body, pending, rest[0], rest[1]])?),
+            text: Some(concat([head, body, pending, rest[0], rest[1]])?),
             parts: self.parts,
         })
     }
@@ -82,15 +88,9 @@ impl Url {
     pub fn set_protocol(&mut self, value: Text<'_>) -> Result<()> {
         without_tab_or_newline(value, |value| {
             let url = self.valid_view()?;
-            let length = value
-                .bytes
-                .iter()
-                .take_while(|&&byte| class::is_in_scheme(byte))
-                .count();
+            let (length, _) = scan_scheme(value.bytes);
             let (name, rest) = value.bytes.split_at(length);
-            if !name.first().is_some_and(u8::is_ascii_alphabetic)
-                || !matches!(rest, [] | [b':', ..])
-            {
+            if name.is_empty() || !matches!(rest, [] | [b':', ..]) {
                 return Err(Error::Invalid);
             }
             let scheme = Scheme::of_any_case(name);
@@ -111,7 +111,7 @@ impl Url {
             } else {
                 old.host_end
             };
-            let text = concat(&[
+            let text = concat([
                 &lowercase,
                 url.slice(old.scheme_end..old.host_end),
                 url.slice_from(after_port),
@@ -146,7 +146,7 @@ impl Url {
         let has_none = username.is_empty() && password.is_empty();
         let at_sign: &[u8] = if has_none { b"" } else { b"@" };
         let rest = self.slice_from(old.host_start);
-        let text = concat(&[
+        let text = concat([
             self.slice(0..start),
             username,
             colon,
@@ -229,7 +229,7 @@ impl Url {
                 return Err(Error::Invalid);
             }
 
-            let port = match port_text.and_then(|text| leading_port(text).1) {
+            let port = match assigned_port(port_text.unwrap_or_default())? {
                 None => old.port(),
                 port => port.filter(|_| port != old.scheme.default_port()),
             };
@@ -258,7 +258,7 @@ impl Url {
         let mut storage = [0; 6];
         let port_text = port.map_or(&[][..], |port| serialize_port(port, &mut storage));
         let rest = self.slice_from(old.path_start);
-        self.text = Some(concat(&[self.slice(0..old.host_end), port_text, rest])?);
+        self.text = Some(concat([self.slice(0..old.host_end), port_text, rest])?);
         self.parts.port = port.unwrap_or(0);
         self.parts
             .shift_from_path(old.path_start, old.host_end + port_text.len() as u32);
@@ -276,9 +276,10 @@ impl Url {
                 Parser::resuming(value, &url, old.authority_end(), Punycode::Unchecked);
             parser.parts.path_start = old.authority_end();
             let stays_empty = value.bytes.is_empty() && old.has_host() && !parser.is_special();
-            if !stays_empty && let Tail::Segments(start) = parser.first_slash(0)? {
+            if !stays_empty && let Step::Segments(start) = parser.first_slash(0)? {
                 let syntax = parser.path_syntax(PATH | QUESTION_MARK | NUMBER_SIGN);
-                parser.path(start, &mut TAIL_SCAN.scan(value.bytes, start), syntax)?;
+                let start = parser.segment_start(start as usize, syntax)?;
+                parser.path(&mut TAIL_SCAN.scan(value.bytes, start), syntax)?;
             }
             let end = value.bytes.len();
             parser.parts.path_end = parser.mark(end);
@@ -307,7 +308,7 @@ impl Url {
             let [head, body, pending] = parser.out.pieces(end);
             let delimiter: &[u8] = if value.is_some() { b"?" } else { b"" };
             let rest = url.slice_from(old.query_end);
-            let text = concat(&[head, delimiter, body, pending, rest])?;
+            let text = concat([head, delimiter, body, pending, rest])?;
             self.parts.query_end = (text.len() - rest.len()) as u32;
             self.text = Some(text);
             Ok(())
@@ -328,7 +329,7 @@ impl Url {
             while parser.encode_up_to_fragment(&mut scan, FRAGMENT)? < source.bytes.len() {}
             let [head, body, pending] = parser.out.pieces(source.bytes.len());
             let delimiter: &[u8] = if value.is_some() { b"#" } else { b"" };
-            self.text = Some(concat(&[head, delimiter, body, pending])?);
+            self.text = Some(concat([head, delimiter, body, pending])?);
             Ok(())
         })
     }

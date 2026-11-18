@@ -187,6 +187,7 @@ code
 codePointAt
 collation
 column
+compactDisplay
 compare
 compareExchange
 compile
@@ -205,6 +206,9 @@ cosh
 count
 create
 css
+currency
+currencyDisplay
+currencySign
 customSections
 dateStyle
 day
@@ -229,6 +233,7 @@ deref
 description
 detached
 difference
+direction
 disambiguation
 displayName
 dispose
@@ -273,6 +278,7 @@ find
 findIndex
 findLast
 findLastIndex
+firstDay
 firstDayOfWeek
 fixed
 flags
@@ -676,7 +682,9 @@ toGMTString
 toHex
 toISOString
 toInstant
+toIntegerOrInfinity
 toJSON
+toLength
 toLocaleDateString
 toLocaleLowerCase
 toLocaleString
@@ -723,6 +731,7 @@ unicode
 unicodeSets
 union
 unit
+unitDisplay
 unregister
 unscopables
 unshift
@@ -736,6 +745,7 @@ value
 valueOf
 values
 var
+variants
 void
 wait
 waitAsync
@@ -743,6 +753,7 @@ webassembly
 week
 weekOfYear
 weekday
+weekend
 weeks
 weeksDisplay
 while
@@ -779,6 +790,17 @@ dollarBacktick = $`
 dollarPlus = $+
 dollarStar = $*
 dollarUnderscore = $_
+intlCollator = Intl.Collator
+intlDateTimeFormat = Intl.DateTimeFormat
+intlDisplayNames = Intl.DisplayNames
+intlDurationFormat = Intl.DurationFormat
+intlListFormat = Intl.ListFormat
+intlLocale = Intl.Locale
+intlNumberFormat = Intl.NumberFormat
+intlPluralRules = Intl.PluralRules
+intlRelativeTimeFormat = Intl.RelativeTimeFormat
+intlSegmenter = Intl.Segmenter
+invalidDate = Invalid Date
 negativeInfinity = -Infinity
 notEqual = not-equal
 objectArguments = [object Arguments]
@@ -793,6 +815,7 @@ objectObject = [object Object]
 objectRegExp = [object RegExp]
 objectString = [object String]
 objectUndefined = [object Undefined]
+segmenterStringIterator = Segmenter String Iterator
 starDefaultText = *default*
 stopBeforePartial = stop-before-partial
 timedOut = timed-out

@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use bun_engine_text::{CodeUnit, StringRef, Text, with_text};
-use bun_icu::break_iterator::{BreakIterator, BreakRules, Kind};
+use bun_icu::break_iterator::{BreakIterator, BreakRules, Kind, MAX_TEXT_LENGTH};
 
 use crate::error::IcuResult;
 use crate::locale_resolver::ResolvedLocale;
@@ -21,6 +21,8 @@ option_enum! {
         Sentence = "sentence",
     }
 }
+
+const ESTIMATED_ITERATOR_SIZE: usize = 2048;
 
 /// Those with the same locale and granularity are one.
 #[derive(Clone)]
@@ -42,6 +44,7 @@ impl Segmenter {
         cache.segmenters.find_or_insert(
             |it| it.0.granularity == granularity && it.0.locale == locale,
             || {
+                cache.note_allocation(ESTIMATED_ITERATOR_SIZE);
                 Ok(Segmenter(Rc::new(Shared {
                     locale: locale.clone(),
                     granularity,
@@ -59,15 +62,18 @@ impl Segmenter {
         self.0.granularity
     }
 
-    pub fn segment(&self, string: StringRef) -> Segments {
-        Segments {
+    pub fn segment(&self, string: StringRef) -> Result<Segments> {
+        if string.len() > MAX_TEXT_LENGTH {
+            return Err(Error::OutOfMemory);
+        }
+        Ok(Segments {
             input: Rc::new(Input {
                 segmenter: self.clone(),
                 string,
                 units: OnceCell::new(),
             }),
             iterator: RefCell::new(None),
-        }
+        })
     }
 
     fn rules(&self) -> Result<&BreakRules> {
@@ -125,6 +131,10 @@ impl Input {
         }
     }
 
+    fn is_plain(&self) -> bool {
+        self.segmenter.granularity() == Granularity::Grapheme && self.string.is_latin1()
+    }
+
     /// Whether the units on both sides of `index` tell that it is a boundary.
     fn is_plain_boundary(&self, index: usize) -> bool {
         self.segmenter.granularity() == Granularity::Grapheme
@@ -177,6 +187,14 @@ impl Segments {
         Ok(Some(self.input.segment(start..end, iterator)))
     }
 
+    /// Of what it can come to own.
+    pub fn estimated_size(&self) -> usize {
+        match self.input.is_plain() {
+            true => 0,
+            false => self.input.string.len() * size_of::<u16>(),
+        }
+    }
+
     pub fn iterate(&self) -> SegmentIterator {
         SegmentIterator {
             input: Rc::clone(&self.input),
@@ -199,6 +217,14 @@ struct IteratorState {
 }
 
 impl SegmentIterator {
+    /// Of what it can come to own.
+    pub fn estimated_size(&self) -> usize {
+        match self.input.is_plain() {
+            true => 0,
+            false => ESTIMATED_ITERATOR_SIZE,
+        }
+    }
+
     pub fn next(&self) -> Result<Option<Segment>> {
         let state = &mut *self.state.borrow_mut();
         let (start, length) = (state.position, self.input.string.len());

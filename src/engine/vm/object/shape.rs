@@ -141,7 +141,7 @@ impl Default for ShapeRareData {
 }
 
 /// What objects with the same class, prototype and properties share.
-#[cell(name = "Structure", cell_type = Shape, flags = TypeFlags::SHAPE_IS_IMMORTAL,
+#[cell(name = "Structure", cell_type = Shape, export = "engine_class_Shape", flags = TypeFlags::SHAPE_IS_IMMORTAL,
     visit_children, reconcile_weak_references, estimated_size)]
 pub struct Shape {
     base: JsCell,
@@ -1100,6 +1100,16 @@ impl Shape {
                 | ShapeFlags::HAS_BEEN_DICTIONARY
                 | ShapeFlags::IS_CLAIMED,
         );
+        target
+    }
+
+    /// The same, but without a history of transitions, for one object.
+    pub(super) fn clone_for_watching(&self, vm: &Vm, deferred: &mut DeferredFire<'_>) -> Gc<Shape> {
+        debug_assert!(!self.is_dictionary());
+        let mode = self.instance_indexing_mode();
+        let target = self.derive(vm, TransitionKind::None, mode, deferred);
+        target.table.set(Some(self.share_table()));
+        target.pin();
         target
     }
 

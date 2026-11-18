@@ -766,6 +766,7 @@ impl<I: Instruction> Lowering<'_, I> {
         }
         self.site = self.code.sites.push(SiteData {
             value,
+            is_exit: !matches!(self.function.op(value), Op::Patchpoint(_)),
             state,
             state_vregs,
             recoverable,
@@ -816,10 +817,23 @@ impl<I: Instruction> Lowering<'_, I> {
     #[inline]
     pub(crate) fn finish(&mut self, instruction: I) {
         let end = self.code.operands.len();
+        let (mut result_count, mut has_late_uses, mut writes_early) = (0, false, false);
+        for operand in &self.code.operands[self.first_operand..] {
+            result_count += u8::from(!operand.is_use());
+            has_late_uses |= operand.role == Role::LateUse;
+            writes_early |= matches!(operand.role, Role::EarlyDef | Role::Temp);
+        }
+        debug_assert!(
+            self.code.operands[self.first_operand..].is_sorted_by_key(|operand| operand.is_use())
+        );
+        let is_constrained = core::mem::take(&mut self.is_constrained);
         self.code.heads.push(Head {
             first_operand: self.first_operand as u32,
             operand_count: (end - self.first_operand) as u16,
-            is_constrained: core::mem::take(&mut self.is_constrained),
+            is_constrained,
+            result_count,
+            is_plain: !is_constrained && !has_late_uses && !writes_early,
+            has_late_uses,
             site: core::mem::replace(&mut self.site, Site::NONE),
             origin: self.origin,
         });

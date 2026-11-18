@@ -454,7 +454,12 @@ impl<'a> Validator<'a> {
     #[inline(always)]
     fn top_is(&self, types: &[ValType]) -> bool {
         let top = self.top_slice(types.len());
-        top.len() == types.len() && top.iter().zip(types).all(|(a, b)| a == b)
+        top.len() == types.len()
+            && if types.len() <= 8 {
+                top.iter().zip(types).all(|(a, b)| a == b)
+            } else {
+                ValType::all_equal(top, types)
+            }
     }
 
     /// Pairs those of the top values that are there with what is expected and its index.

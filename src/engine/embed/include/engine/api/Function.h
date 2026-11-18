@@ -219,8 +219,8 @@ protected:
     enum class PropertyAdditionMode { WithStructureTransition,
         WithoutStructureTransition };
 
-    InternalFunction(VM& vm, Structure* structure, NativeFunction functionForCall, NativeFunction functionForConstruct = nullptr)
-        : Base(vm, structure)
+    InternalFunction(VM& vm, Structure* structure, NativeFunction functionForCall, NativeFunction functionForConstruct = nullptr, Butterfly* butterfly = nullptr)
+        : Base(vm, structure, butterfly)
         , m_globalObject(structure->realm())
         , m_executable(vm.internalFunctionExecutable())
         , m_functionForCall(functionForCall)

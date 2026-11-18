@@ -379,9 +379,8 @@ public:
     {
         JSC::Structure* structure = globalObject->mockModule.mockFunctionStructure.getInitializedOnMainThread(globalObject);
         JSC::JSCell* lazyPrototype = globalObject->mockModule.lazyPrototype.getInitializedOnMainThread(globalObject);
-        JSC::Butterfly* butterfly = JSC::Butterfly::create(vm, nullptr, 0, structure->outOfLineCapacity(), false, JSC::IndexingHeader(), 0);
-        JSMockFunction* function = new (NotNull, JSC::allocateCell<JSMockFunction>(vm)) JSMockFunction(vm, structure);
-        function->setButterfly(vm, butterfly);
+        JSC::Butterfly* butterfly = JSC::Butterfly::create(vm, structure);
+        JSMockFunction* function = new (NotNull, JSC::allocateCell<JSMockFunction>(vm)) JSMockFunction(vm, structure, butterfly);
         function->putDirectOffset(vm, prototypeOffset, lazyPrototype);
         function->finishCreation(vm);
 
@@ -904,8 +903,8 @@ public:
         return WebCore::subspaceForImpl<JSMockFunction, UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSMockFunction, m_subspaceForJSMockFunction));
     }
 
-    JSMockFunction(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure, jsMockFunctionCall, jsMockFunctionConstruct)
+    JSMockFunction(JSC::VM& vm, JSC::Structure* structure, JSC::Butterfly* butterfly)
+        : Base(vm, structure, jsMockFunctionCall, jsMockFunctionConstruct, butterfly)
     {
     }
 

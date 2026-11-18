@@ -171,8 +171,9 @@ fn math_functions() {
             ("sqrt", &[], "NaN"),
         ];
         for (name, arguments, expected) in cases {
-            let arguments: Vec<Value> = arguments.iter().map(|&it| it.into()).collect();
-            assert_eq!(invoke(cx, math, name, &arguments), expected);
+            let mut values = root_vec();
+            values.extend(arguments.iter().map(|&it| Value::from(it)));
+            assert_eq!(invoke(cx, math, name, &values), expected);
         }
         cx.global().random_state().set(Random::new(42));
         assert_eq!(invoke(cx, math, "random", &[]), "3.911585177984733e-8");

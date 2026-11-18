@@ -14,7 +14,6 @@ bun_engine_text.workspace = true
 bun_highway.workspace = true
 bun_icu.workspace = true
 bun_simdutf_sys.workspace = true
-smallvec.workspace = true
 
 [dev-dependencies]
 bun_engine_standalone.workspace = true

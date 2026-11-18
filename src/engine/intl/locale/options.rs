@@ -1,5 +1,6 @@
-use bun_engine_text::Text;
+use bun_engine_text::{CodeUnit, Text};
 
+use super::WEEKDAYS;
 use crate::collator::CaseFirst;
 use crate::language_tag::subtag::{
     Subtag, Subtags, is_language, is_region, is_script, lowercase_subtags,
@@ -59,11 +60,9 @@ impl Options {
     }
 
     pub fn set_first_day_of_week(&mut self, text: Text<'_>) -> Result<()> {
-        const NAMES: [&str; 8] = ["sun", "mon", "tue", "wed", "thu", "fri", "sat", "sun"];
-
-        let number = (text.get(0)).and_then(|unit| unit.checked_sub(b'0'.into()));
-        let name = match number.and_then(|number| NAMES.get(usize::from(number))) {
-            Some(name) if text.len() == 1 => Text::from_ascii(name),
+        // Sunday is both 0 and 7.
+        let name = match text.get(0).and_then(|unit| unit.digit_value(8)) {
+            Some(day) if text.len() == 1 => Text::from_ascii(WEEKDAYS[(day as usize + 6) % 7]),
             _ => text,
         };
         let value = KeywordValue::parse(Key::FIRST_DAY, name)?.ok_or(Error::Range(
@@ -74,13 +73,13 @@ impl Options {
     }
 
     /// UpdateLanguageId and MakeLocaleRecord
-    pub(super) fn apply_to<'a>(&'a self, id: &mut LocaleId<'a>) {
+    pub(super) fn apply_to<'a>(&'a mut self, id: &mut LocaleId<'a>) {
         let language_id = &mut id.language_id;
         language_id.language = self.language.unwrap_or(language_id.language);
         language_id.script = self.script.or(language_id.script);
         language_id.region = self.region.or(language_id.region);
-        if let Some(variants) = &self.variants {
-            language_id.variants.clone_from(variants);
+        if let Some(variants) = self.variants.take() {
+            language_id.variants = variants;
         }
         let bytes = |value: &'a Option<KeywordValue>| value.as_ref().map(KeywordValue::as_bytes);
         let numeric = (self.numeric).map(|it| if it { "true" } else { "false" });

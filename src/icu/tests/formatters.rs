@@ -103,6 +103,20 @@ fn collation() {
 }
 
 #[test]
+fn collation_of_equivalent_text_with_any_number_of_marks() {
+    let mut collator = Collator::open(c"en").unwrap();
+    collator.set(Attribute::Normalization, Value::On).unwrap();
+    for count in [10, 31, 32, 63, 64, 79, 80, 81, 160, 20_000] {
+        let composed = units(&format!("\u{e1}{}", "\u{f73}".repeat(count)));
+        let marks = ["\u{f72}".repeat(count), "\u{f71}".repeat(count)].concat();
+        let reordered = units(&format!("a\u{301}{marks}"));
+        assert_eq!(collator.compare(&composed, &reordered), Ok(Ordering::Equal));
+        let upper = units(&format!("A\u{301}{marks}"));
+        assert_eq!(collator.compare(&composed, &upper), Ok(Ordering::Less));
+    }
+}
+
+#[test]
 fn data() {
     assert_eq!(
         NumberingSystem::for_locale(c"fa").unwrap().name(),

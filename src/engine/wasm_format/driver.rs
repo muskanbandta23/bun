@@ -3,7 +3,7 @@
 use core::convert::Infallible;
 use core::ops::Range;
 
-use crate::decode::{Decoder, Progress, Run};
+use crate::decode::{Context, Decoder, Run};
 use crate::index::{CodeIndex, FuncIndex, MemoryIndex, TableIndex, TypeIndex};
 use crate::module::{FunctionFacts, ModuleHeader};
 use crate::ops::{Catches, Flow};
@@ -69,19 +69,21 @@ impl<'a> FunctionBody<'a> {
 
     /// The locals after the parameters: how many in a row, which can be none, and of what type.
     pub fn local_groups(&self) -> impl ExactSizeIterator<Item = (u32, ValType)> + use<'a> {
-        let reader = Reader::new(self.bytes, 0);
-        let mut decoder = Decoder::<Run<Infallible>>::new(self.header, reader, Progress::START);
-        let groups = decoder.reader.u32().expect("the body was validated");
+        let (header, mut reader) = (self.header, Reader::new(self.bytes, 0));
+        let groups = reader.u32().expect("the body was validated");
         (0..groups).map(move |_| {
-            let count = decoder.reader.u32();
-            count
-                .zip(decoder.value_type())
-                .expect("the body was validated")
+            let group = reader.u32().zip(header.value_type(&mut reader));
+            group.expect("the body was validated")
         })
     }
 
     pub fn driver(&self) -> Driver<'a> {
-        Driver::new(self.header, self.bytes, self.facts.code_offset)
+        self.driver_at(self.facts.code_offset)
+    }
+
+    /// From the instruction at `offset` to the end of its block. Calls and loops count from there.
+    pub fn driver_at(&self, offset: u32) -> Driver<'a> {
+        Driver::new(self.header, self.bytes, offset)
     }
 }
 
@@ -92,17 +94,15 @@ impl<'a> FunctionBody<'a> {
 /// A visitor may run another driver on itself from one of its methods.
 #[derive(Clone, Copy)]
 pub struct Driver<'a> {
-    header: &'a ModuleHeader,
     reader: Reader<'a>,
-    progress: Progress,
+    cx: Context<'a>,
 }
 
 impl<'a> Driver<'a> {
     pub(crate) fn new(header: &'a ModuleHeader, bytes: &'a [u8], offset: u32) -> Self {
         Self {
-            header,
             reader: Reader::new(bytes, offset as usize),
-            progress: Progress::START,
+            cx: Context::new(header),
         }
     }
 
@@ -113,16 +113,17 @@ impl<'a> Driver<'a> {
 
     /// After an error of the visitor, another call goes on behind the instruction that caused it.
     pub fn run<V: Visitor>(&mut self, visitor: &mut V) -> Result<(), V::Error> {
-        if self.progress.depth == 0 {
+        if self.cx.depth == 0 {
             return Ok(());
         }
-        let mut decoder = Decoder::<Run<V::Error>>::new(self.header, self.reader, self.progress);
-        if decoder.progress.dead != 0 {
+        let mut cx = self.cx;
+        let mut decoder = Decoder::<Run<V::Error>>::new(self.reader, &mut cx);
+        if decoder.cx.dead != 0 {
             decoder.skip_dead_code();
         }
         let result = decoder.run(visitor);
         self.reader = decoder.reader;
-        self.progress = decoder.progress;
+        self.cx = cx;
         result
     }
 }

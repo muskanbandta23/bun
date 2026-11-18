@@ -1,38 +1,35 @@
-use core::ops::Deref;
+use core::mem::MaybeUninit;
 
 use bun_engine_text::Text;
-use smallvec::SmallVec;
 
-use crate::Result;
+use crate::{Error, Result};
 
-/// Text in the width that ICU reads.
-#[expect(clippy::large_enum_variant, reason = "a buffer on the stack")]
-pub(crate) enum Utf16<'a> {
-    Borrowed(&'a [u16]),
-    Widened(SmallVec<[u16; 128]>),
+/// Room for text in the width that ICU reads.
+pub(crate) struct Utf16Buffer {
+    stack: [MaybeUninit<u16>; 128],
+    heap: Vec<u16>,
 }
 
-impl<'a> Utf16<'a> {
-    pub(crate) fn new(text: Text<'a>) -> Result<Utf16<'a>> {
-        match text {
-            Text::Utf16(units) => Ok(Utf16::Borrowed(units)),
-            Text::Latin1(characters) => {
-                let mut units = SmallVec::new();
-                units.try_reserve_exact(characters.len())?;
-                units.extend(characters.iter().map(|&character| u16::from(character)));
-                Ok(Utf16::Widened(units))
-            }
+impl Utf16Buffer {
+    #[inline]
+    pub(crate) fn new() -> Utf16Buffer {
+        Utf16Buffer {
+            stack: [MaybeUninit::uninit(); _],
+            heap: Vec::new(),
         }
     }
-}
 
-impl Deref for Utf16<'_> {
-    type Target = [u16];
-
-    fn deref(&self) -> &[u16] {
-        match self {
-            Utf16::Borrowed(units) => units,
-            Utf16::Widened(units) => units,
+    #[inline]
+    pub(crate) fn widen<'a>(&'a mut self, text: Text<'a>) -> Result<&'a [u16]> {
+        let characters = match text {
+            Text::Latin1(characters) => characters,
+            Text::Utf16(units) => return Ok(units),
+        };
+        if let Some(stack) = self.stack.get_mut(..characters.len()) {
+            return Ok(stack.write_with(|index| characters[index].into()));
         }
+        (self.heap.try_reserve_exact(characters.len())).map_err(|_| Error::OutOfMemory)?;
+        (self.heap).extend(characters.iter().map(|&character| u16::from(character)));
+        Ok(&self.heap)
     }
 }

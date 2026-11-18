@@ -26,7 +26,7 @@ use super::memory::{
     ARGUMENTS_SIZE, ARGUMENTS_START, CALLEE_TABLE, CONSTANTS, DATA_SIZE, Input, Layout,
     OBJECT_COUNT, OBJECT_SIZE, OBJECT_TABLE, READ_ONLY_SIZE, Region, position,
 };
-use super::random::Random;
+use super::random::{Random, mix};
 use super::vocabulary::{Registers, bank_of, registers};
 
 /// How often each kind of statement is chosen, relative to the others.
@@ -69,6 +69,8 @@ pub(crate) struct Shape {
     pub(crate) leaks_per_mille: u32,
     /// Lets the builder fold what it can. The seed gives the same program otherwise.
     pub(crate) folds: bool,
+    /// About how many in a hundred of the registers that can be spared are pinned without a use.
+    pub(crate) withheld_percent: u32,
 }
 
 pub(crate) const PROFILES: [&str; 11] = [
@@ -222,6 +224,7 @@ impl Shape {
             observed_percent: random.pick(&[0, 10, 50, 100]),
             leaks_per_mille: random.pick(&[0, 0, 5, 30]),
             folds: random.one_in(4),
+            withheld_percent: random.pick(&[0, 0, 50, 100]),
         }
     }
 }
@@ -340,6 +343,7 @@ struct Generator<'a> {
     target: Target,
     layout: &'a Layout,
     registers: &'static Registers,
+    usable: RegisterSet,
     block: Block,
     next_origin: u32,
     next_token: u32,
@@ -358,15 +362,35 @@ struct Generator<'a> {
     trips: u32,
 }
 
+fn withhold(seed: u64, shape: &Shape, registers: &Registers) -> RegisterSet {
+    let mut random = Random::new(mix(seed, 5));
+    let mut spare = (registers.usable | registers.allocatable_scratch) - registers.indispensable;
+    if shape.weights.calls != 0 {
+        spare -= registers.of_signatures;
+    }
+    let mut spare: Vec<Reg> = spare.into_iter().collect();
+    random.shuffle(&mut spare);
+    let mut withheld = RegisterSet::EMPTY;
+    for reg in spare {
+        let left = (registers.usable - withheld).in_bank(reg.bank()).len();
+        if left > registers.least[reg.bank() as usize] && random.percent(shape.withheld_percent) {
+            withheld.insert(reg);
+        }
+    }
+    withheld
+}
+
 pub(crate) fn generate(seed: u64, shape: &Shape, target: Target, layout: &Layout) -> Program {
     let registers = registers(target);
+    let withheld = withhold(seed, shape, registers);
     let mut generator = Generator {
-        function: Function::new(RegisterSet::of(&registers.pinned, &[])),
+        function: Function::new(RegisterSet::of(&registers.pinned, &[]) | withheld),
         random: Random::new(seed),
         shape: *shape,
         target,
         layout,
         registers,
+        usable: registers.usable - withheld,
         block: Block::NONE,
         next_origin: 1,
         next_token: 1,
@@ -498,7 +522,7 @@ impl Generator<'_> {
     }
 
     fn boundaries(&mut self, types: &[Type]) -> Vec<Boundary> {
-        let mut registers: Vec<Reg> = self.registers.usable.into_iter().collect();
+        let mut registers: Vec<Reg> = self.usable.into_iter().collect();
         let mut offsets: Vec<i32> = (0..ARGUMENTS_SIZE as i32).step_by(16).collect();
         self.random.shuffle(&mut registers);
         self.random.shuffle(&mut offsets);

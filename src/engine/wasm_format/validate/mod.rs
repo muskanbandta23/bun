@@ -31,11 +31,12 @@ use core::mem;
 pub(crate) use self::constant::validate_const_expr;
 use self::locals::Locals;
 use crate::alloc::TryPush;
-use crate::decode::{Check, Decoder, Progress};
+use crate::decode::{Check, Context, Decoder, Mode, STRUCT_SET, VectorOp, opcodes_at};
 use crate::error::{Error, Missing};
 use crate::index::{CodeIndex, TypeIndex};
 use crate::limits::{MAX_LOCALS, MAX_OPERAND_STACK_HEIGHT};
-use crate::module::{FunctionFacts, FunctionFlags, ModuleHeader};
+use crate::module::{Features, FunctionFacts, FunctionFlags, ModuleHeader};
+use crate::opcode::{GC_PREFIX, TRY_TABLE, VECTOR_PREFIX};
 use crate::reader::Reader;
 use crate::types::{BlockType, HeapType, RefType, Types, ValType};
 use crate::visitor::Visit;
@@ -67,6 +68,7 @@ fn numbered(reason: Arguments<'_>) -> Error {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum FrameKind {
     Body,
+    Constant,
     Block,
     Loop,
     If,
@@ -112,15 +114,15 @@ pub(crate) struct Validator<'a> {
     values: Vec<ValType>,
     height: usize,
     /// That of the innermost frame.
-    base: usize,
+    base: u32,
     /// Whether the innermost frame has values of any type below those on the stack.
     is_unreachable: bool,
     frames: Vec<Frame>,
     locals: Locals,
     br_tables: u32,
+    catch_depth: u32,
+    max_catch_depth: u32,
     uses_simd: bool,
-    /// As constant expressions may.
-    may_name_any_func: bool,
 }
 
 const NEVER_USED: ValType = ValType::NONE;
@@ -146,8 +148,9 @@ impl<'a> Validator<'a> {
             frames,
             locals,
             br_tables: 0,
+            catch_depth: 0,
+            max_catch_depth: 0,
             uses_simd: false,
-            may_name_any_func: false,
         };
         let result = work(&mut validator);
         if validator.values.len().max(validator.frames.capacity()) <= RETAINED_LENGTH {
@@ -178,22 +181,19 @@ impl<'a> Validator<'a> {
 
     fn check_function(&mut self, code: CodeIndex, body: &[u8]) -> Result<FunctionFacts, Error> {
         let ty = self.header.func_type_index(self.header.func_index(code));
-        let reader = Reader::new(body, 0);
-        let mut decoder = Decoder::<Check>::new(self.header, reader, Progress::START);
+        let mut reader = Reader::new(body, 0);
         self.uses_simd = self.types().signature_has_v128(ty);
-        self.declare_locals(ty, &mut decoder)?;
-        let code_offset = decoder.reader.position() as u32;
+        self.declare_locals(ty, &mut reader)?;
+        let code_offset = reader.position() as u32;
 
-        self.enter_body(BlockType::Func(ty));
-        self.run(&mut decoder)?;
-        if decoder.reader.remaining() != 0 {
-            return Err(Error::parse(
-                decoder.reader.position(),
-                format_args!("function body size doesn't match the expected size"),
-            ));
+        self.enter(FrameKind::Body, BlockType::Func(ty));
+        let (end, cx) = self.run(body, reader.position())?;
+        if end != body.len() {
+            let reason = format_args!("function body size doesn't match the expected size");
+            return Err(Error::parse(end, reason));
         }
 
-        let mut flags = decoder.progress.flags;
+        let mut flags = cx.flags;
         if self.uses_simd {
             flags |= FunctionFlags::USES_SIMD;
         }
@@ -201,41 +201,83 @@ impl<'a> Validator<'a> {
             code_offset,
             local_count: self.locals.count(),
             max_stack_height: 0,
-            call_count: decoder.progress.calls,
-            loop_count: decoder.progress.loops,
+            max_catch_depth: self.max_catch_depth,
+            call_count: cx.calls,
+            loop_count: cx.loops,
             flags,
         })
     }
 
+    /// Returns where the code ends.
     #[inline(never)]
-    fn run(&mut self, decoder: &mut Decoder<'_, Check>) -> Checked {
-        decoder.run(self)
+    fn run<'b>(&mut self, bytes: &'b [u8], start: usize) -> Result<(usize, Context<'b>), Error>
+    where
+        'a: 'b,
+    {
+        let mut cx = Context::new(self.header);
+        let mut decoder = Decoder::<Check>::new(Reader::new(bytes, start), &mut cx);
+        match decoder.run(self) {
+            Ok(()) => Ok((decoder.reader.position(), cx)),
+            Err(error) => Err(self.first_error(error, bytes, cx)),
+        }
     }
 
-    fn declare_locals(&mut self, ty: TypeIndex, decoder: &mut Decoder<'_, Check>) -> Checked {
+    /// Some instructions have operands checked before all their immediates are read.
+    #[cold]
+    fn first_error<'b>(&mut self, mut error: Error, bytes: &'b [u8], mut cx: Context<'b>) -> Error {
+        let (Some(Missing::OperandCheck(start)), 0) = (error.take_missing(), cx.dead) else {
+            return error;
+        };
+        let (first, second, immediates) = opcodes_at(bytes, start);
+        let mut decoder = Decoder::<Check>::new(Reader::new(bytes, immediates), &mut cx);
+        let has_simd = self.header.features.contains(Features::SIMD);
+        let mut lane_access = |name, size| {
+            self.pop_lane_vector(name)?;
+            let arg = decoder.vector_mem_arg(size);
+            arg.map_or(Ok(()), |arg| self.pop_vector_address(arg))
+        };
+        let earlier = match (first, VectorOp::from_number(second)) {
+            (VECTOR_PREFIX, _) if !has_simd => Ok(()),
+            (VECTOR_PREFIX, VectorOp::LoadLane(size)) => lane_access("load_lane", size),
+            (VECTOR_PREFIX, VectorOp::StoreLane(size)) => lane_access("store_lane", size),
+            (VECTOR_PREFIX, VectorOp::Store) => self.pop_stored_vector(),
+            (GC_PREFIX, _) if second == STRUCT_SET => self.pop_early("struct.set value").map(drop),
+            (TRY_TABLE, _) => match decoder.block_type(first) {
+                Ok(BlockType::Func(index)) => self.check_block_params(index).map(drop),
+                _ => Ok(()),
+            },
+            _ => Ok(()),
+        };
+        match earlier {
+            Ok(()) => error,
+            Err(earlier) => Check::complete(earlier, bytes, start, decoder.reader.position()),
+        }
+    }
+
+    fn declare_locals(&mut self, ty: TypeIndex, reader: &mut Reader<'_>) -> Checked {
         let params = self.types().func_type(ty).params;
-        let error = |decoder: &Decoder<'_, Check>, reason: Arguments<'_>| {
-            Err(Error::parse(decoder.reader.position(), reason))
+        let error = |reader: &Reader<'_>, reason: Arguments<'_>| {
+            Err(Error::parse(reader.position(), reason))
         };
-        let Some(groups) = decoder.reader.u32() else {
-            return error(decoder, format_args!("can't get local groups count"));
+        let Some(groups) = reader.u32() else {
+            return error(reader, format_args!("can't get local groups count"));
         };
-        self.locals.start(params, decoder.reader.remaining());
+        self.locals.start(params, reader.remaining());
         for i in 0..groups {
-            let Some(count) = decoder.reader.u32() else {
+            let Some(count) = reader.u32() else {
                 let reason = format_args!("can't get Function's number of locals in group {i}");
-                return error(decoder, reason);
+                return error(reader, reason);
             };
             let total = u64::from(self.locals.count()) + u64::from(count);
             if total > MAX_LOCALS.into() {
                 let reason = format_args!(
                     "Function's number of locals is too big {total} maximum {MAX_LOCALS}"
                 );
-                return error(decoder, reason);
+                return error(reader, reason);
             }
-            let Some(ty) = decoder.value_type() else {
+            let Some(ty) = self.header.value_type(reader) else {
                 let reason = format_args!("can't get Function local's type in group {i}");
-                return error(decoder, reason);
+                return error(reader, reason);
             };
             self.uses_simd |= ty == ValType::V128;
             self.locals.declare(count, ty);
@@ -243,13 +285,13 @@ impl<'a> Validator<'a> {
         Ok(())
     }
 
-    fn enter_body(&mut self, ty: BlockType) {
+    fn enter(&mut self, kind: FrameKind, ty: BlockType) {
         self.frames.push(Frame {
             ty,
             base: 0,
             initialized_height: 0,
             checked_by: 0,
-            kind: FrameKind::Body,
+            kind,
             outer_is_unreachable: false,
         });
     }
@@ -269,6 +311,8 @@ impl<'a> Validator<'a> {
         self.frames.clear();
         self.locals.forget_initializations(0);
         self.br_tables = 0;
+        self.catch_depth = 0;
+        self.max_catch_depth = 0;
         max_height
     }
 
@@ -285,7 +329,7 @@ impl<'a> Validator<'a> {
     /// The number of values that the innermost frame has on the stack.
     #[inline(always)]
     fn available(&self) -> usize {
-        self.height - self.base
+        self.height - self.base as usize
     }
 
     #[inline(always)]
@@ -295,16 +339,15 @@ impl<'a> Validator<'a> {
 
     #[inline(always)]
     fn push(&mut self, ty: impl Into<ValType>) -> Checked {
-        let ty = ty.into();
-        match self.values.get_mut(self.height) {
-            Some(slot) => *slot = ty,
-            None => {
-                self.grow(1)?;
-                self.values[self.height] = ty;
+        let height = self.height;
+        match self.values.get_mut(height) {
+            Some(slot) => {
+                *slot = ty.into();
+                self.height = height + 1;
+                Ok(())
             }
+            None => self.push_many(&[ty.into()]),
         }
-        self.height += 1;
-        Ok(())
     }
 
     #[inline]
@@ -353,7 +396,7 @@ impl<'a> Validator<'a> {
 
     #[inline(always)]
     fn pop(&mut self, what: &'static str) -> Result<ValType, Error> {
-        if self.height > self.base {
+        if self.height > self.base as usize {
             self.height -= 1;
             return Ok(self.values[self.height]);
         }
@@ -396,10 +439,10 @@ impl<'a> Validator<'a> {
     /// The top `N` values, if the innermost frame has them.
     #[inline(always)]
     fn top<const N: usize>(&mut self) -> Option<&mut [ValType; N]> {
-        if self.available() < N {
+        if self.height < self.base as usize + N {
             return None;
         }
-        self.values.get_mut(self.height - N..)?.first_chunk_mut()
+        self.values.get_mut(..self.height)?.last_chunk_mut()
     }
 
     /// Those of the top `count` values that are there.
@@ -411,7 +454,12 @@ impl<'a> Validator<'a> {
     #[inline(always)]
     fn top_is(&self, types: &[ValType]) -> bool {
         let top = self.top_slice(types.len());
-        top.len() == types.len() && top.iter().zip(types).all(|(a, b)| a == b)
+        top.len() == types.len()
+            && if types.len() <= 8 {
+                top.iter().zip(types).all(|(a, b)| a == b)
+            } else {
+                ValType::all_equal(top, types)
+            }
     }
 
     /// Pairs those of the top values that are there with what is expected and its index.
@@ -437,7 +485,7 @@ impl<'a> Validator<'a> {
 
     #[inline(always)]
     fn set_unreachable(&mut self) -> Checked {
-        self.height = self.base;
+        self.height = self.base as usize;
         self.is_unreachable = true;
         Ok(())
     }
@@ -445,10 +493,10 @@ impl<'a> Validator<'a> {
     /// The parameters are on the stack.
     #[inline(always)]
     fn push_frame(&mut self, kind: FrameKind, ty: BlockType, params: usize) -> Checked {
-        self.base = self.height - params;
+        self.base = (self.height - params) as u32;
         let frame = Frame {
             ty,
-            base: self.base as u32,
+            base: self.base,
             initialized_height: self.locals.initialized_height(),
             checked_by: 0,
             kind,

@@ -4,9 +4,10 @@ use core::ffi::{CStr, c_char};
 use core::{mem, ptr};
 use std::sync::PoisonError;
 
+use crate::argument::zone_id_length;
 use crate::enumeration::UEnumeration;
 use crate::error::Status;
-use crate::ffi::{filled, length};
+use crate::ffi::filled;
 use crate::{Buffer, Enumeration, Result};
 
 icu_functions! {
@@ -47,7 +48,7 @@ pub fn host() -> Result<Buffer<u16>> {
 
 /// The name that CLDR files the zone under (`Asia/Calcutta`), or the normal form of an offset (`GMT+05:30`).
 pub fn canonical_id(id: &[u16]) -> Result<Buffer<u16>> {
-    let length = length(id)?;
+    let length = zone_id_length(id)?;
     // SAFETY: `id` has `length` units, `out` has room for `capacity`, and `is_system` is optional.
     filled(|out, capacity, status| unsafe {
         ucal_getCanonicalTimeZoneID(id.as_ptr(), length, out, capacity, ptr::null_mut(), status)
@@ -57,7 +58,7 @@ pub fn canonical_id(id: &[u16]) -> Result<Buffer<u16>> {
 /// The name that the IANA database files the zone under (`Asia/Kolkata`).
 #[cfg(not(system_icucore))]
 pub fn iana_id(id: &[u16]) -> Result<Buffer<u16>> {
-    let length = length(id)?;
+    let length = zone_id_length(id)?;
     // SAFETY: `id` has `length` units, and `out` has room for `capacity`.
     filled(|out, capacity, status| unsafe {
         ucal_getIanaTimeZoneID(id.as_ptr(), length, out, capacity, status)

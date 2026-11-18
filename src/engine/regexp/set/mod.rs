@@ -144,6 +144,14 @@ impl Set {
         }
     }
 
+    /// With the same members above U+00FF.
+    pub(crate) fn with_latin1(&self, latin1: Latin1Set) -> Result<Set, AllocError> {
+        Ok(Set {
+            latin1,
+            above: self.above.try_clone()?,
+        })
+    }
+
     pub fn try_clone(&self) -> Result<Set, AllocError> {
         Ok(Set {
             latin1: self.latin1,

@@ -302,22 +302,28 @@ impl ZonedDateTime {
         largest_unit: Unit,
     ) -> Result<InternalDuration> {
         let (start, end) = (self.iso_date_time(), other.iso_date_time());
-        if start.date == end.date {
-            return Ok(self.instant.until(other.instant).into());
+        let elapsed = self.instant.until(other.instant);
+        let backwards = -elapsed.sign();
+        // Clocks that are set back across midnight can give the later instant the earlier date.
+        if start.date == end.date || start.date.cmp(&end.date) as i8 != backwards {
+            return Ok(elapsed.into());
         }
-        let backwards = self.instant.cmp(&other.instant) as i8;
-        let last_correction = if backwards < 0 { 2 } else { 1 };
-        let mut correction = i8::from(start.time.until(end.time).sign() == backwards);
+        let mut date = end.date;
+        if start.time.until(end.time).sign() == backwards {
+            date = date.add_few_days(backwards);
+        }
         loop {
-            let date = end.date.add_few_days(correction * backwards);
             let intermediate = (self.time_zone)
                 .instant_for(IsoDateTime { date, ..start }, Disambiguation::Compatible)?;
             let time = intermediate.instant.until(other.instant);
-            if time.sign() != backwards || correction == last_correction {
+            if time.sign() != backwards {
                 let date = self.calendar.until(start.date, date, largest_unit)?;
                 return Ok(InternalDuration { date, time });
             }
-            correction += 1;
+            if date == start.date {
+                return Ok(elapsed.into());
+            }
+            date = date.add_few_days(backwards);
         }
     }
 

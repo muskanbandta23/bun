@@ -2,6 +2,7 @@
 
 use core::ffi::{CStr, c_char};
 
+use crate::argument::locale_id;
 use crate::enumeration::UEnumeration;
 use crate::error::Status;
 use crate::ffi::{borrowed, call};
@@ -31,19 +32,13 @@ pub enum NameStyle {
 
 /// `code` is ASCII.
 pub fn name(code: [u8; 3], locale: &CStr, style: NameStyle) -> Result<Option<&'static [u16]>> {
+    let locale = locale_id(locale)?;
     let [first, second, third] = code.map(|letter| u16::from(letter & 0x7f));
     let code = [first, second, third, 0];
     let mut length = 0;
     // SAFETY: both strings are terminated.
     let name = call(|status| unsafe {
-        ucurr_getName(
-            code.as_ptr(),
-            locale.as_ptr(),
-            style,
-            &mut 0,
-            &mut length,
-            status,
-        )
+        ucurr_getName(code.as_ptr(), locale, style, &mut 0, &mut length, status)
     })?;
     if name == code.as_ptr() {
         return Ok(None);

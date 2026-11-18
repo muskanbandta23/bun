@@ -3,28 +3,27 @@
 mod cache;
 mod components;
 mod era;
+mod formats;
 mod layout;
+mod locale_data;
 mod options;
 pub(crate) mod pattern;
 mod range;
 mod selection;
+mod template;
 mod text;
 mod value;
-mod writer;
 
-use core::cell::{OnceCell, RefCell};
+use core::cell::{OnceCell, RefMut};
 use std::rc::Rc;
 
 use bun_engine_date::TimeZone;
 use bun_engine_temporal::{CalendarId, ZonedDateTime};
-use bun_engine_text::{StringRef, Text};
-use bun_icu::CText;
+use bun_engine_text::StringRef;
 use bun_icu::calendar::Calendar;
 use bun_icu::date_format::DateFormat;
-use bun_icu::date_interval_format::DateIntervalFormat;
-use bun_icu::date_pattern::Pattern;
+use bun_icu::date_interval_format::{DateIntervalFormat, FormattedDateInterval};
 use bun_icu::formatted_value::FormattedValue;
-use smallvec::SmallVec;
 
 pub(crate) use cache::DateCache;
 pub use components::{Component, ComponentStyle, ComponentValue, Components};
@@ -34,54 +33,22 @@ pub use options::{
 pub use value::DateTimeValue;
 
 use crate::error::IcuResult;
-use crate::language_tag::Key;
-use crate::locale_resolver::{LocaleResolver, ResolvedLocale};
+use crate::parts::new_string;
 use crate::{
-    AvailableLocales, Cache, Error, HourCycle, LanguageTag, Named, NumberingSystem, Parts, Result,
-    Source, calendar,
+    Cache, Error, HourCycle, LanguageTag, NumberingSystem, Part, PartKind, Parts, Result, Source,
 };
-use era::EarlyEra;
+use formats::Formats;
 use layout::{FORMAT_FAILURE, Layout};
+use locale_data::Calendars;
 use range::RANGE_FAILURE;
-use selection::{Clock, Patterns, Selection};
-use value::{Moment, TemporalType};
-use writer::Writer;
+use template::Template;
+use text::{DateText, use_plain_spaces};
+use value::Moment;
 
-const INITIALIZE_FAILURE: &str = "failed to initialize DateTimeFormat";
-
-/// A clone shares everything, and so do formats that were made from the same arguments.
-#[derive(Clone)]
-pub struct DateTimeFormat(Rc<State>);
-
-struct State {
-    locale: DateLocale,
+pub struct DateTimeFormat {
+    formats: Rc<Formats>,
     time_zone: TimeZone,
-    clock: Clock,
-    /// As in the options.
-    components: Components,
-    date_style: Option<Style>,
-    time_style: Option<Style>,
-    /// For time values.
-    layout: Layout,
-    temporal_layouts: [OnceCell<TemporalLayout>; TemporalType::COUNT],
-    writer: OnceCell<Rc<Writer>>,
-    zoned_calendar: OnceCell<RefCell<Calendar>>,
-}
-
-enum TemporalLayout {
-    OfTimeValues,
-    Own(Box<Layout>),
-    Inapplicable,
-}
-
-struct DateLocale {
-    resolved: ResolvedLocale,
-    /// With the calendar and the numbering system that were asked for.
-    icu_locale: CText,
-    /// Set to the default of the locale when it is first needed, unless one was asked for.
-    calendar: OnceCell<CalendarId>,
-    /// Likewise.
-    numbering_system: OnceCell<NumberingSystem>,
+    zoned_calendars: OnceCell<Rc<Calendars>>,
 }
 
 pub struct ResolvedOptions<'a> {
@@ -96,312 +63,48 @@ pub struct ResolvedOptions<'a> {
     pub time_style: Option<Style>,
 }
 
-impl DateLocale {
-    fn resolve(
-        cache: &Cache,
-        requested: &[LanguageTag],
-        options: &Options,
-    ) -> Result<(DateLocale, Clock)> {
-        let mut resolver = LocaleResolver::new(cache, AvailableLocales::general(), requested);
-        let calendar = calendar::resolve(&mut resolver, options.calendar.as_ref());
-        let clock = match options.hour12 {
-            Some(hour12) => Clock::Hour12(hour12),
-            None => resolver
-                .keyword(
-                    Key::HOUR_CYCLE,
-                    options.hour_cycle.map(|it| it.as_str().as_bytes()),
-                    |name| HourCycle::from_name(Text::Latin1(name)),
-                )
-                .map_or(Clock::OfLocale, Clock::Cycle),
-        };
-        let numbering_system =
-            NumberingSystem::resolve(&mut resolver, options.numbering_system.as_ref());
-        let resolved = resolver.finish()?;
-        let locale = DateLocale {
-            icu_locale: icu_locale(&resolved, calendar, None, numbering_system.as_ref())?,
-            resolved,
-            calendar: calendar.map_or_else(OnceCell::new, OnceCell::from),
-            numbering_system: numbering_system.map_or_else(OnceCell::new, OnceCell::from),
-        };
-        Ok((locale, clock))
-    }
-
-    fn calendar(&self) -> Result<CalendarId> {
-        (self.calendar)
-            .get_or_try_init(|| calendar::default_for(&self.icu_locale))
-            .copied()
-    }
-
-    fn numbering_system(&self) -> Result<NumberingSystem> {
-        (self.numbering_system)
-            .get_or_try_init(|| NumberingSystem::default_for(&self.icu_locale))
-            .copied()
-    }
-
-    fn icu_locale_with(&self, hour_cycle: Option<HourCycle>) -> Result<CText> {
-        let calendar = self.calendar.get().copied();
-        icu_locale(
-            &self.resolved,
-            calendar,
-            hour_cycle,
-            self.numbering_system.get(),
-        )
-    }
-
-    fn layout(&self, pattern: Pattern) -> Result<Layout> {
-        let shows_era = pattern::fields(&pattern).any(|field| field.letter == b'G');
-        Ok(Layout {
-            early_era: if shows_era {
-                EarlyEra::of(self.calendar()?)
-            } else {
-                None
-            },
-            pattern,
-            range_format: OnceCell::new(),
-        })
-    }
-}
-
-fn icu_locale(
-    locale: &ResolvedLocale,
-    calendar: Option<CalendarId>,
-    hour_cycle: Option<HourCycle>,
-    numbering_system: Option<&NumberingSystem>,
-) -> Result<CText> {
-    let keywords: SmallVec<[_; 3]> = [
-        calendar.map(|it| (Key::CALENDAR, it.identifier().as_bytes())),
-        hour_cycle.map(|it| (Key::HOUR_CYCLE, it.as_str().as_bytes())),
-        numbering_system.map(|it| (Key::NUMBERING_SYSTEM, it.as_bytes())),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    locale.icu_locale(&keywords)
-}
-
-fn check_styles(options: &Options, purpose: Purpose) -> Result<()> {
-    if options.components != Components::default() {
-        return Err(Error::Type(
-            "dateStyle and timeStyle may not be used with other DateTimeFormat options",
-        ));
-    }
-    if purpose == Purpose::Date && options.time_style.is_some() {
-        return Err(Error::Type(
-            "timeStyle is specified while formatting date is requested",
-        ));
-    }
-    if purpose == Purpose::Time && options.date_style.is_some() {
-        return Err(Error::Type(
-            "dateStyle is specified while formatting time is requested",
-        ));
-    }
-    Ok(())
-}
-
-impl State {
-    fn new(
-        cache: &Cache,
-        requested: &[LanguageTag],
-        options: &Options,
-        purpose: Purpose,
-    ) -> Result<State> {
-        let (locale, clock) = DateLocale::resolve(cache, requested, options)?;
-        let patterns = Patterns {
-            cache: &cache.dates,
-            locale: &locale.icu_locale,
-            clock,
-        };
-        let pattern = match (options.date_style, options.time_style) {
-            (None, None) => patterns.for_components(&purpose.add_defaults(options.components)),
-            (date_style, time_style) => {
-                check_styles(options, purpose)?;
-                patterns.for_styles(date_style, time_style)
-            }
-        };
-        Ok(State {
-            layout: locale.layout(pattern.or_type_error(INITIALIZE_FAILURE)?)?,
-            locale,
-            time_zone: options.time_zone,
-            clock,
-            components: options.components,
-            date_style: options.date_style,
-            time_style: options.time_style,
-            temporal_layouts: Default::default(),
-            writer: OnceCell::new(),
-            zoned_calendar: OnceCell::new(),
-        })
-    }
-
-    fn has_style(&self) -> bool {
-        self.date_style.is_some() || self.time_style.is_some()
-    }
-
-    fn make_temporal_layout(
-        &self,
-        cache: &Cache,
-        temporal_type: TemporalType,
-    ) -> Result<TemporalLayout> {
-        let patterns = Patterns {
-            cache: &cache.dates,
-            locale: &self.locale.icu_locale,
-            clock: self.clock,
-        };
-        let selection = Selection::for_type(temporal_type);
-        let pattern = if self.has_style() {
-            patterns.adjust_style(&self.layout.pattern, selection)
-        } else {
-            (selection.apply(self.components))
-                .map(|components| patterns.for_components(&components))
-                .transpose()
-        };
-        Ok(match pattern.or_type_error(INITIALIZE_FAILURE)? {
-            Some(pattern) if pattern == self.layout.pattern => TemporalLayout::OfTimeValues,
-            Some(pattern) => TemporalLayout::Own(Box::new(self.locale.layout(pattern)?)),
-            None => TemporalLayout::Inapplicable,
-        })
-    }
-
-    /// HandleDateTimeValue, but for the check that a number is a time value.
-    fn handle(&self, cache: &Cache, value: DateTimeValue) -> Result<(&Layout, Moment)> {
-        let moment = value.moment()?;
-        if let Some(calendar) = moment.calendar
-            && calendar != self.locale.calendar()?
-        {
-            return Err(Error::Range(
-                "Temporal object's calendar does not match DateTimeFormat calendar",
-            ));
-        }
-        let Some(temporal_type) = moment.temporal_type else {
-            return Ok((&self.layout, moment));
-        };
-        let layout = (self.temporal_layouts[temporal_type as usize])
-            .get_or_try_init(|| self.make_temporal_layout(cache, temporal_type))?;
-        match layout {
-            TemporalLayout::OfTimeValues => Ok((&self.layout, moment)),
-            TemporalLayout::Own(layout) => Ok((layout, moment)),
-            TemporalLayout::Inapplicable => Err(Error::Type(
-                "DateTimeFormat has no fields applicable to this Temporal type",
-            )),
-        }
-    }
-
-    fn writer(&self, cache: &Cache) -> Result<&Writer> {
-        (self.writer)
-            .get_or_try_init(|| cache.dates.writer(&self.locale.icu_locale))
-            .map(|writer| &**writer)
-            .or_type_error(INITIALIZE_FAILURE)
-    }
-
-    fn calendar_for(&self, cache: &Cache, moment: &Moment) -> Result<&RefCell<Calendar>> {
-        let writer = self.writer(cache)?;
-        if moment.is_plain() {
-            return Ok(writer.utc_calendar());
-        }
-        (self.zoned_calendar)
-            .get_or_try_init(|| writer.new_calendar(self.time_zone).map(RefCell::new))
-            .or_type_error(INITIALIZE_FAILURE)
-    }
-
-    fn write<T>(
-        &self,
-        cache: &Cache,
-        layout: &Layout,
-        moment: &Moment,
-        write: impl FnOnce(&Layout, &DateFormat, &mut Calendar) -> Result<T>,
-    ) -> Result<T> {
-        let mut calendar = self.calendar_for(cache, moment)?.borrow_mut();
-        (calendar.set_millis(moment.time)).or_type_error(FORMAT_FAILURE)?;
-        let format = self.writer(cache)?.format_for(&layout.pattern);
-        write(
-            layout,
-            &*format.or_type_error(FORMAT_FAILURE)?,
-            &mut calendar,
-        )
-    }
-
-    fn range_format<'a>(&self, layout: &'a Layout) -> Result<&'a DateIntervalFormat> {
-        (layout.range_format).get_or_try_init(|| {
-            // ICU takes from the skeleton only whether the clock has twelve hours.
-            let locale = (self.locale).icu_locale_with(pattern::hour_cycle(&layout.pattern))?;
-            pattern::skeleton(&layout.pattern)
-                .and_then(|skeleton| DateIntervalFormat::open(&locale, &skeleton))
-                .or_type_error("failed to initialize DateIntervalFormat")
-        })
-    }
-
-    /// PartitionDateTimeRangePattern
-    fn write_range<T>(
-        &self,
-        cache: &Cache,
-        [start, end]: [DateTimeValue; 2],
-        write_range: impl FnOnce(FormattedValue<'_>) -> Result<T>,
-        write_single: impl FnOnce(&Layout, &DateFormat, &mut Calendar) -> Result<T>,
-    ) -> Result<T> {
-        if !start.is_same_type(&end) {
-            return Err(Error::Type(
-                "formatRange requires both arguments to be the same Temporal type",
-            ));
-        }
-        let (layout, start) = self.handle(cache, start)?;
-        let (_, end) = self.handle(cache, end)?;
-        if start.time.is_nan() || end.time.is_nan() {
-            return Err(Error::Range("Passed date is out of range"));
-        }
-        let format = self.range_format(layout)?;
-        let range = {
-            let mut start_calendar = self.calendar_for(cache, &start)?.borrow_mut();
-            (start_calendar.try_clone()).and_then(|mut end_calendar| {
-                start_calendar.set_millis(start.time)?;
-                end_calendar.set_millis(end.time)?;
-                format.format(&mut start_calendar, &mut end_calendar)
-            })
-        };
-        let range = range.or_type_error(RANGE_FAILURE)?;
-        let value = range.value().or_type_error(RANGE_FAILURE)?;
-        if range::shows_both_ends(value)? {
-            write_range(value)
-        } else {
-            self.write(cache, layout, &start, write_single)
-        }
-    }
-}
-
 impl DateTimeFormat {
-    /// CreateDateTimeFormat
+    /// CreateDateTimeFormat. `time_zone` is that of the system if the option is absent.
     pub fn new(
         cache: &Cache,
         requested: &[LanguageTag],
         options: &Options,
+        time_zone: TimeZone,
         purpose: Purpose,
     ) -> Result<DateTimeFormat> {
-        if let Some(format) = cache.dates.find_format(requested, options, purpose) {
-            return Ok(format);
-        }
-        let format = DateTimeFormat(Rc::new(State::new(cache, requested, options, purpose)?));
-        (cache.dates).keep_format(requested, options, purpose, &format);
-        Ok(format)
+        let formats = match cache.dates.find_formats(requested, options, purpose) {
+            Some(formats) => formats,
+            None => {
+                let formats = Rc::new(Formats::new(cache, requested, options, purpose)?);
+                (cache.dates).keep_formats(requested, options, purpose, &formats);
+                formats
+            }
+        };
+        Ok(DateTimeFormat {
+            formats,
+            time_zone,
+            zoned_calendars: OnceCell::new(),
+        })
     }
 
     pub fn format(&self, cache: &Cache, value: DateTimeValue) -> Result<StringRef> {
-        let (layout, moment) = self.0.handle(cache, value)?;
+        let (layout, moment) = self.formats.handle(cache, value)?;
         if moment.time.is_nan() {
             return Err(Error::Range(
                 "date value is not finite in DateTimeFormat format()",
             ));
         }
-        self.0.write(cache, layout, &moment, Layout::string)
+        self.string(layout, &moment)
     }
 
     pub fn format_to_parts(&self, cache: &Cache, value: DateTimeValue) -> Result<Parts> {
-        let (layout, moment) = self.0.handle(cache, value)?;
+        let (layout, moment) = self.formats.handle(cache, value)?;
         if moment.time.is_nan() {
             return Err(Error::Range(
                 "date value is not finite in DateTimeFormat formatToParts()",
             ));
         }
-        (self.0).write(cache, layout, &moment, |layout, format, calendar| {
-            layout.parts(format, calendar, None)
-        })
+        self.parts(layout, &moment, None)
     }
 
     pub fn format_range(
@@ -410,7 +113,7 @@ impl DateTimeFormat {
         start: DateTimeValue,
         end: DateTimeValue,
     ) -> Result<StringRef> {
-        (self.0).write_range(cache, [start, end], range::string, Layout::string)
+        self.write_range(cache, [start, end], range::string, DateTimeFormat::string)
     }
 
     pub fn format_range_to_parts(
@@ -419,12 +122,9 @@ impl DateTimeFormat {
         start: DateTimeValue,
         end: DateTimeValue,
     ) -> Result<Parts> {
-        self.0.write_range(
-            cache,
-            [start, end],
-            range::parts,
-            |layout, format, calendar| layout.parts(format, calendar, Some(Source::Shared)),
-        )
+        self.write_range(cache, [start, end], range::parts, |this, layout, moment| {
+            this.parts(layout, moment, Some(Source::Shared))
+        })
     }
 
     /// For a format that was made with `Purpose::ZonedDateTime` and the time zone of `value`.
@@ -434,7 +134,7 @@ impl DateTimeFormat {
         value: &ZonedDateTime,
     ) -> Result<StringRef> {
         let calendar = value.calendar();
-        if calendar != CalendarId::Iso8601 && calendar != self.0.locale.calendar()? {
+        if calendar != CalendarId::Iso8601 && calendar != self.formats.data.calendar()? {
             return Err(Error::Range(
                 "ZonedDateTime calendar does not match locale calendar",
             ));
@@ -444,22 +144,139 @@ impl DateTimeFormat {
     }
 
     pub fn resolved_options(&self) -> Result<ResolvedOptions<'_>> {
-        let state = &*self.0;
-        let hour_cycle = pattern::hour_cycle(&state.layout.pattern);
+        let formats = &*self.formats;
+        let pattern = &formats.of_time_values.pattern;
+        let hour_cycle = pattern::hour_cycle(pattern);
         Ok(ResolvedOptions {
-            locale: state.locale.resolved.tag(),
-            calendar: state.locale.calendar()?,
-            numbering_system: state.locale.numbering_system()?,
-            time_zone: state.time_zone,
+            locale: formats.locale.tag(),
+            calendar: formats.data.calendar()?,
+            numbering_system: formats.data.numbering_system()?,
+            time_zone: self.time_zone,
             hour_cycle,
             hour12: hour_cycle.map(HourCycle::is_twelve_hour),
-            components: if state.has_style() {
+            components: if formats.has_style() {
                 Components::default()
             } else {
-                pattern::components(&state.layout.pattern)
+                pattern::components(pattern)
             },
-            date_style: state.date_style,
-            time_style: state.time_style,
+            date_style: formats.date_style,
+            time_style: formats.time_style,
         })
+    }
+
+    /// In milliseconds.
+    fn local_time(&self, moment: &Moment) -> i64 {
+        let time = moment.time as i64;
+        let offset_seconds = match self.time_zone {
+            _ if moment.is_plain() => 0,
+            TimeZone::Named(id) => id.rules().offset_at(time.div_euclid(1000)),
+            TimeZone::Offset { minutes } => i32::from(minutes) * 60,
+        };
+        time + i64::from(offset_seconds) * 1000
+    }
+
+    fn calendars(&self, moment: &Moment) -> bun_icu::Result<&Calendars> {
+        let data = &self.formats.data;
+        if moment.is_plain() {
+            return data.utc_calendars();
+        }
+        (self.zoned_calendars)
+            .get_or_try_init(|| data.zoned_calendars(self.time_zone))
+            .map(|calendars| &**calendars)
+    }
+
+    fn prepare(
+        &self,
+        pattern: &[u16],
+        moment: &Moment,
+    ) -> bun_icu::Result<(RefMut<'_, DateFormat>, RefMut<'_, Calendar>)> {
+        let mut calendar = self.calendars(moment)?.first.borrow_mut();
+        calendar.set_millis(moment.time)?;
+        Ok((self.formats.data.format(pattern)?, calendar))
+    }
+
+    fn fill(
+        &self,
+        template: &Template,
+        moment: &Moment,
+        text: &mut DateText,
+        each_part: impl FnMut(PartKind, &[u16]) -> Result<()>,
+    ) -> Result<()> {
+        let mut zone_name = DateText::new();
+        if let Some(field) = template.time_zone_field() {
+            self.prepare(field, moment)
+                .and_then(|(format, mut calendar)| format.format(&mut calendar, &mut zone_name))
+                .or_type_error(FORMAT_FAILURE)?;
+            use_plain_spaces(&mut zone_name);
+        }
+        template.write(self.local_time(moment), &zone_name, text, each_part)
+    }
+
+    fn string(&self, layout: &Layout, moment: &Moment) -> Result<StringRef> {
+        let Some(template) = layout.template(&self.formats.data)? else {
+            let (format, mut calendar) =
+                (self.prepare(&layout.pattern, moment)).or_type_error(FORMAT_FAILURE)?;
+            return layout.string(&format, &mut calendar);
+        };
+        let mut text = DateText::new();
+        self.fill(template, moment, &mut text, |_, _| Ok(()))?;
+        new_string(&text)
+    }
+
+    fn parts(&self, layout: &Layout, moment: &Moment, source: Option<Source>) -> Result<Parts> {
+        let Some(template) = layout.template(&self.formats.data)? else {
+            let (format, mut calendar) =
+                (self.prepare(&layout.pattern, moment)).or_type_error(FORMAT_FAILURE)?;
+            return layout.parts(&format, &mut calendar, source);
+        };
+        let (mut text, mut parts) = (DateText::new(), Parts::default());
+        self.fill(template, moment, &mut text, |kind, value| {
+            let unit = None;
+            parts.push(Part { kind, unit, source }, value)
+        })?;
+        Ok(parts)
+    }
+
+    fn range(
+        &self,
+        format: &DateIntervalFormat,
+        start: &Moment,
+        end: &Moment,
+    ) -> Result<FormattedDateInterval> {
+        let range = self.calendars(start).and_then(|calendars| {
+            let mut second = calendars.second()?.borrow_mut();
+            let mut first = calendars.first.borrow_mut();
+            first.set_millis(start.time)?;
+            second.set_millis(end.time)?;
+            format.format(&mut first, &mut second)
+        });
+        range.or_type_error(RANGE_FAILURE)
+    }
+
+    /// PartitionDateTimeRangePattern
+    fn write_range<T>(
+        &self,
+        cache: &Cache,
+        [start, end]: [DateTimeValue; 2],
+        write_range: impl FnOnce(FormattedValue<'_>) -> Result<T>,
+        write_single: impl FnOnce(&DateTimeFormat, &Layout, &Moment) -> Result<T>,
+    ) -> Result<T> {
+        if !start.is_same_type(&end) {
+            return Err(Error::Type(
+                "formatRange requires both arguments to be the same Temporal type",
+            ));
+        }
+        let (layout, start) = self.formats.handle(cache, start)?;
+        let (_, end) = self.formats.handle(cache, end)?;
+        if start.time.is_nan() || end.time.is_nan() {
+            return Err(Error::Range("Passed date is out of range"));
+        }
+        let range = self.range(self.formats.range_format(cache, layout)?, &start, &end)?;
+        let value = range.value().or_type_error(RANGE_FAILURE)?;
+        if range::shows_both_ends(value)? {
+            write_range(value)
+        } else {
+            write_single(self, layout, &start)
+        }
     }
 }

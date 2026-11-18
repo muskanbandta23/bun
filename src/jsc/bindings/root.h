@@ -35,13 +35,6 @@
  *
  */
 
-#define HAVE_CONFIG_H 1
-#define BUILDING_WITH_CMAKE 1
-
-#if defined(HAVE_CONFIG_H) && HAVE_CONFIG_H && defined(BUILDING_WITH_CMAKE)
-#include "cmakeconfig.h"
-#endif
-
 #define JSC_API_AVAILABLE(...)
 #define JSC_CLASS_AVAILABLE(...) JS_EXPORT
 #define JSC_API_DEPRECATED(...)

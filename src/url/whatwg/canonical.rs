@@ -5,6 +5,7 @@ use crate::class::{
     self, BACKSLASH, DIGIT_OR_X, FRAGMENT, HOST_SCAN, PATH, SPECIAL_QUERY, TAIL_SCAN,
 };
 use crate::components::{Components, State};
+use crate::parser::Step;
 use crate::path::PathSyntax;
 use crate::{Punycode, Scheme, domain, ipv4};
 
@@ -12,88 +13,88 @@ pub(crate) enum Outcome {
     Canonical(Components),
     /// Canonical with a `/` behind it.
     LacksPath(Components),
-    /// Canonical up to the first slash of the path. The end of the path and of the query are not filled in.
-    CanonicalAuthority(Components),
-    Unknown,
+    /// Canonical up to where the parser has to step in.
+    Unfinished(Components, Step),
+}
+
+/// And where the host starts.
+#[inline(always)]
+fn scheme(input: &[u8]) -> Option<(Scheme, usize)> {
+    let start = u64::from_le_bytes(*input.first_chunk()?);
+    if start as u32 != u32::from_le_bytes(*b"http") {
+        return (start == u64::from_le_bytes(*b"file:///")).then_some((Scheme::File, 7));
+    }
+    let is_secure = (start >> 32) as u8 == b's';
+    let host_start = 7 + usize::from(is_secure);
+    let up_to_host = start << (64 - 8 * host_start);
+    let scheme = if is_secure {
+        Scheme::Https
+    } else {
+        Scheme::Http
+    };
+    (up_to_host >> 40 == u64::from_le_bytes(*b"://\0\0\0\0\0")).then_some((scheme, host_start))
 }
 
 /// For a domain of which a label starts with a digit or an `x`.
 #[inline(never)]
 fn stays_as_it_is(domain: &[u8], punycode: Punycode) -> bool {
-    if ipv4::ends_in_number(domain) {
-        return ipv4::is_serialized(domain);
-    }
-    punycode == Punycode::Unchecked || domain::has_valid_ace_labels(domain)
+    ipv4::is_serialized(domain)
+        || (!ipv4::ends_in_number(domain)
+            && (punycode == Punycode::Unchecked || domain::has_valid_ace_labels(domain)))
 }
 
-/// Returns the stops of [`TAIL_SCAN`] from `host_start` on too.
+/// Where the host ends, the port, and where the path starts.
 #[inline(always)]
-fn authority(input: &[u8], punycode: Punycode) -> Option<(Components, u64)> {
-    let word = u64::from_le_bytes(*input.first_chunk()?);
-    let is_https = word == u64::from_le_bytes(*b"https://");
-    let is_http = word << 8 == u64::from_le_bytes(*b"\0http://");
-    let is_file = word == u64::from_le_bytes(*b"file:///");
-    if !(is_https | is_http | is_file) {
-        return None;
-    }
-    let host_start = 7 + usize::from(is_https);
-    let host_stops = HOST_SCAN.stops_in_32(input, host_start);
-    let tail_stops = TAIL_SCAN.stops_in_64(input, host_start);
-
-    let mut host_end = host_start + host_stops.trailing_zeros() as usize;
-    let mut path_start = host_end;
-    let mut port = 0;
-    if input.get(host_end) != Some(&b'/') || host_stops == 0 {
-        let mut stops = HOST_SCAN.scan(input, host_end.min(host_start + 32));
-        let mut is_plain = true;
-        host_end = loop {
-            match stops.next() {
-                Some(at) if class::host_traits(input[at]) & DIGIT_OR_X != 0 => is_plain = false,
-                at => break at.unwrap_or(input.len()),
-            }
+fn host_and_port(
+    input: &[u8],
+    (scheme, host_start): (Scheme, usize),
+    host_stops: u64,
+    punycode: Punycode,
+) -> Option<(usize, u16, usize)> {
+    let mut is_plain = true;
+    let mut stops = HOST_SCAN.resume_scan(input, host_start + 32, host_stops << 32);
+    let (host_end, mut next) = loop {
+        let Some(at) = stops.next() else {
+            break (input.len(), b'/');
         };
-        if !is_plain && !stays_as_it_is(&input[host_start..host_end], punycode) {
+        if class::host_traits(input[at]) & DIGIT_OR_X == 0 {
+            break (at, input[at]);
+        }
+        is_plain = false;
+    };
+    let (mut path_start, mut port) = (host_end, 0);
+    if next == b':' {
+        let digits = &input[host_end + 1..];
+        let (count, value) = leading_port(digits);
+        port = value?;
+        if digits[0] == b'0' || value == scheme.default_port() {
             return None;
         }
-        path_start = host_end;
-        if let [b':', digits @ ..] = &input[host_end..] {
-            let (count, value) = leading_port(digits);
-            port = value?;
-            if digits[0] == b'0' || port == if is_https { 443 } else { 80 } {
-                return None;
-            }
-            path_start += 1 + count;
-        }
-        if input.get(path_start).is_some_and(|&byte| byte != b'/') {
-            return None;
-        }
+        path_start += 1 + count;
+        next = input.get(path_start).copied().unwrap_or(b'/');
     }
-    if (host_end == host_start) != is_file || (is_file && input.get(9) == Some(&b'|')) {
+    if next != b'/'
+        || (host_end == host_start) != (scheme == Scheme::File)
+        || (scheme == Scheme::File && input.get(9) == Some(&b'|'))
+        || !(is_plain || stays_as_it_is(&input[host_start..host_end], punycode))
+    {
         return None;
     }
-    let parts = Components {
-        scheme_end: host_start as u32 - 3,
-        username_end: host_start as u32,
-        host_start: host_start as u32,
-        host_end: host_end as u32,
-        path_start: path_start as u32,
-        path_end: 0,
-        query_end: 0,
-        port,
-        scheme: match (is_https, is_http) {
-            (true, _) => Scheme::Https,
-            (_, true) => Scheme::Http,
-            _ => Scheme::File,
-        },
-        state: State::Hierarchical,
-    };
-    Some((parts, tail_stops))
+    Some((host_end, port, path_start))
 }
 
 /// Whether `input` is a valid URL whatever comes after its authority.
 #[inline(always)]
 pub(crate) fn has_canonical_authority(input: &[u8], punycode: Punycode) -> bool {
-    authority(input, punycode).is_some()
+    scheme(input).is_some_and(|start| {
+        host_and_port(
+            input,
+            start,
+            HOST_SCAN.stops_in_32(input, start.1),
+            punycode,
+        )
+        .is_some()
+    })
 }
 
 #[inline(always)]
@@ -102,21 +103,40 @@ pub(crate) fn recognize(input: &[u8], punycode: Punycode) -> Outcome {
         set: PATH,
         backslash_is_slash: true,
     };
-    let Some((mut parts, tail_stops)) = authority(input, punycode) else {
-        return Outcome::Unknown;
+    let Some((scheme, host_start)) = scheme(input) else {
+        return Outcome::Unfinished(Components::INVALID, Step::Start);
     };
+    let host_stops = HOST_SCAN.stops_in_32(input, host_start);
+    let tail_stops = TAIL_SCAN.stops_in_64(input, host_start);
+    let mut parts = Components {
+        scheme_end: host_start as u32 - 3,
+        scheme,
+        state: State::Hierarchical,
+        ..Components::INVALID
+    };
+    let Some((host_end, port, path_start)) =
+        host_and_port(input, (scheme, host_start), host_stops, punycode)
+    else {
+        let step = match input.get(host_start) {
+            Some(b'/' | b'\\') => Step::Start,
+            _ => Step::Authority(host_start as u32),
+        };
+        return Outcome::Unfinished(parts, step);
+    };
+    parts.set_empty_authority(host_start as u32);
+    parts.host_end = host_end as u32;
+    parts.port = port;
+    parts.path_start = path_start as u32;
     let length = input.len();
-    if parts.path_start as usize == length {
+    if path_start == length {
         parts.path_end = parts.path_start + 1;
         parts.query_end = parts.path_end;
         return Outcome::LacksPath(parts);
     }
 
-    let mut scan = TAIL_SCAN.scan_with(input, parts.host_start as usize, tail_stops);
-    scan.skip_to(parts.path_start as usize);
     let (mut path_end, mut query_end) = (length, length);
     let mut changes = PATH | BACKSLASH;
-    for at in scan {
+    for at in TAIL_SCAN.resume_scan(input, host_start + 64, tail_stops) {
         let byte = input[at];
         if byte == b'?' && path_end == length {
             path_end = at;
@@ -125,12 +145,22 @@ pub(crate) fn recognize(input: &[u8], punycode: Punycode) -> Outcome {
             path_end = path_end.min(at);
             query_end = at;
             changes = FRAGMENT;
-        } else if class::is_in(changes, byte)
-            || (path_end == length
-                && input[at - 1] == b'/'
-                && SYNTAX.dot_segment(&input[at..]).is_some())
+        } else if at > path_start
+            && (class::is_in(changes, byte)
+                || (path_end == length
+                    && input[at - 1] == b'/'
+                    && SYNTAX.dot_segment(&input[at..]).is_some()))
         {
-            return Outcome::CanonicalAuthority(parts);
+            parts.path_end = path_end as u32;
+            parts.query_end = query_end as u32;
+            let step = if path_end == length {
+                Step::RestOfPath(at as u32)
+            } else if query_end == length {
+                Step::RestOfQuery(at as u32)
+            } else {
+                Step::RestOfFragment(at as u32)
+            };
+            return Outcome::Unfinished(parts, step);
         }
     }
     parts.path_end = path_end as u32;

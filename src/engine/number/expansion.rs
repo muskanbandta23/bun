@@ -10,7 +10,7 @@ const MAX_WHOLE_BLOCKS: usize = 17;
 /// At most 768 binary places are left once a value is scaled past the zeros after its decimal point.
 const MAX_FRACTION_LIMBS: usize = 12;
 
-/// Yields blocks of 19 digits, the most significant first, until only zeros are left.
+/// Yields blocks of 19 characters, the most significant first, until only zeros are left. The first is not all zeros.
 pub(crate) struct Expansion {
     /// In base 10^19, the least significant first.
     whole: [u64; MAX_WHOLE_BLOCKS],
@@ -103,22 +103,27 @@ impl Expansion {
         }
     }
 
-    pub(crate) fn digits(mut self) -> Digits {
-        let mut point = self.point;
-        let block = self.next().unwrap_or_default();
-        let at = block.iter().take_while(|&&digit| digit == b'0').count();
-        point -= at as i32;
-        Digits {
-            expansion: self,
+    /// Takes the first block.
+    pub(crate) fn head(&mut self) -> Head {
+        let block = self.next().unwrap_or([b'0'; BLOCK_DIGITS]);
+        let zeros = block.iter().take_while(|&&digit| digit == b'0').count();
+        Head {
             block,
-            at,
-            point,
+            zeros,
+            point: self.point - zeros as i32,
         }
     }
 }
 
+pub(crate) struct Head {
+    pub(crate) block: [u8; BLOCK_DIGITS],
+    /// How many zeros the block starts with.
+    pub(crate) zeros: usize,
+    /// How many digits from the first nonzero one precede the decimal point.
+    pub(crate) point: i32,
+}
+
 impl Iterator for Expansion {
-    /// Characters. The first block has a nonzero digit.
     type Item = [u8; BLOCK_DIGITS];
 
     fn next(&mut self) -> Option<[u8; BLOCK_DIGITS]> {
@@ -134,36 +139,9 @@ impl Iterator for Expansion {
     }
 }
 
-/// Yields digit values from the first nonzero one. Zeros may follow the last nonzero one.
-pub(crate) struct Digits {
-    expansion: Expansion,
-    block: [u8; BLOCK_DIGITS],
-    at: usize,
-    point: i32,
-}
-
-impl Digits {
-    /// How many digits precede the decimal point.
-    pub(crate) fn point(&self) -> i32 {
-        self.point
-    }
-}
-
-impl Iterator for Digits {
-    type Item = u8;
-
-    fn next(&mut self) -> Option<u8> {
-        if self.at == BLOCK_DIGITS {
-            self.block = self.expansion.next()?;
-            self.at = 0;
-        }
-        self.at += 1;
-        Some(self.block[self.at - 1] - b'0')
-    }
-}
-
 /// Returns the limb that is carried out.
-fn multiply(limbs: &mut [u64], factor: u64) -> u64 {
+#[inline]
+pub(crate) fn multiply(limbs: &mut [u64], factor: u64) -> u64 {
     let mut carry = 0;
     for limb in limbs {
         (*limb, carry) = limb.carrying_mul(factor, carry);

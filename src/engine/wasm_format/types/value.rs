@@ -323,6 +323,18 @@ impl ValType {
         StorageType(self.0).size_in_bytes()
     }
 
+    /// To compare two at once.
+    #[inline(always)]
+    pub(crate) const fn pair([low, high]: [Self; 2]) -> u64 {
+        low.0 as u64 | (high.0 as u64) << 32
+    }
+
+    /// For slices of the same length. Looking at all elements lets the compiler take several at once.
+    #[inline(never)]
+    pub(crate) fn all_equal(a: &[Self], b: &[Self]) -> bool {
+        a.iter().zip(b).fold(0, |bits, (a, b)| bits | a.0 ^ b.0) == 0
+    }
+
     #[inline]
     pub(crate) const fn defined_index(self) -> Option<TypeIndex> {
         HeapType(self.0).index()

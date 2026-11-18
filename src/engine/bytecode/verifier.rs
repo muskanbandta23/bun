@@ -112,6 +112,7 @@ fn is_primitive(constant: &Constant) -> bool {
             | Constant::Int32(_)
             | Constant::Double(_)
             | Constant::String(_)
+            | Constant::LongString(_)
             | Constant::BigInt(_)
     )
 }
@@ -375,7 +376,7 @@ impl Verifier<'_> {
                 None => self.is_readable(register),
                 Some(constant) => match code.constants.get(constant as usize) {
                     None | Some(Constant::Array(_) | Constant::RegExp(_)) => false,
-                    Some(Constant::String(_)) => true,
+                    Some(Constant::String(_) | Constant::LongString(_)) => true,
                     Some(_) => opcode != Opcode::ThrowError,
                 },
             },

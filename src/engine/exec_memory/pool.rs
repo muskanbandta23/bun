@@ -105,6 +105,14 @@ pub fn contains(address: usize) -> bool {
     start != 0 && address.wrapping_sub(start) < POOL_SIZE
 }
 
+/// The addresses for which `contains` holds.
+pub fn address_range() -> core::ops::Range<usize> {
+    match POOL_START.load(Ordering::Acquire) {
+        0 => 0..0,
+        start => start..start + POOL_SIZE,
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Usage {
     pub bytes_in_use: usize,

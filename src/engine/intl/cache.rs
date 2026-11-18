@@ -1,11 +1,12 @@
-use core::cell::RefCell;
+use core::cell::{Cell, RefCell};
 
-use bun_engine_text::{StaticString, StringImpl, StringRef, Text};
+use bun_engine_text::{StringImpl, StringRef, Text};
 
 use crate::collator::Collator;
 use crate::date_time_format::DateCache;
 use crate::default_instances::DefaultInstances;
 use crate::display_names::DisplayNames;
+use crate::duration_format::DurationFormat;
 use crate::list_format::ListFormat;
 use crate::number_format::NumberFormat;
 use crate::plural_rules::PluralRules;
@@ -23,10 +24,12 @@ pub struct Cache {
     /// By the hash of the tag as it was written.
     canonical_tags: RefCell<[Option<(StringRef, LanguageTag)>; CANONICAL_TAG_SLOTS]>,
     default_locale: RefCell<Option<LanguageTag>>,
+    allocated_bytes: Cell<usize>,
     pub(crate) collators: RecentSet<Collator, 4>,
     pub(crate) default_collators: DefaultInstances<Collator>,
     pub(crate) dates: DateCache,
     pub(crate) display_names: RecentSet<DisplayNames, 4>,
+    pub(crate) duration_formats: RecentSet<DurationFormat, 4>,
     pub(crate) list_formats: RecentSet<ListFormat, 4>,
     pub(crate) number_formats: RecentSet<NumberFormat, 8>,
     pub(crate) default_number_formats: DefaultInstances<NumberFormat>,
@@ -68,6 +71,16 @@ impl Cache {
             .clone()
     }
 
+    /// An estimate of the memory that new objects have taken since the last call, for the collector to take into account.
+    #[inline]
+    pub fn take_allocated_bytes(&self) -> usize {
+        self.allocated_bytes.take()
+    }
+
+    pub(crate) fn note_allocation(&self, bytes: usize) {
+        self.allocated_bytes.update(|it| it.saturating_add(bytes));
+    }
+
     /// In place of the language of the host.
     pub fn set_preferred_languages(&mut self, languages: &[Text<'_>]) {
         *self = Cache::default();
@@ -78,8 +91,6 @@ impl Cache {
 }
 
 fn first_locale(languages: &[Text<'_>]) -> LanguageTag {
-    static LAST_RESORT: StaticString = StaticString::new(b"en");
-
     let without_extensions = |language: Text<'_>| {
         let tag = LanguageTag::canonicalize(language).ok()??;
         let base_name = tag.base_name();
@@ -94,5 +105,5 @@ fn first_locale(languages: &[Text<'_>]) -> LanguageTag {
             let tag = bun_icu::locale::to_language_tag(bun_icu::locale::default()).ok()?;
             without_extensions(Text::Latin1(&tag))
         })
-        .unwrap_or_else(|| LanguageTag::from_static(&LAST_RESORT))
+        .unwrap_or_else(LanguageTag::english)
 }

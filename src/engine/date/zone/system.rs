@@ -5,72 +5,72 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use bun_engine_text::Text;
 use bun_icu::{Buffer, time_zone};
 
-use super::id::{TimeZoneId, names_utc, widen};
-use super::table::Table;
+use super::data;
+use super::id::{TimeZoneId, names_utc};
 
 const LOW_BITS: u32 = 16;
-const NO_OVERRIDE: u16 = u16::MAX;
+const HOST: u16 = u16::MAX;
+const UTC: u16 = u16::MAX - 1;
 
-/// The generation, and below it the index in the table of the name that was set.
-static OVERRIDE: AtomicU64 = AtomicU64::new(1 << LOW_BITS | NO_OVERRIDE as u64);
-/// A generation, and below it the `TimeZoneId` that it has.
+/// The generation, and below it `HOST`, `UTC` or a position in `data::names`.
+static CHOICE: AtomicU64 = AtomicU64::new(1 << LOW_BITS | HOST as u64);
+/// A generation, and below it the `TimeZoneId` that its choice comes to.
 static RESOLVED: AtomicU64 = AtomicU64::new(0);
 
-/// Changes whenever the result of `system_time_zone` can have changed. It is never zero.
+/// Changes whenever the result of `system_time_zone` can have changed.
 #[inline]
 pub fn time_zone_generation() -> u64 {
-    OVERRIDE.load(Ordering::Relaxed) >> LOW_BITS
+    CHOICE.load(Ordering::Relaxed) >> LOW_BITS
 }
 
 /// Puts the process in another zone, or back in that of the host if `name` is empty. Returns whether ICU knows the name, for
 /// which case matters. One that is not available to scripts, such as the offset `GMT+5`, stands for UTC.
 pub fn set_time_zone_override(name: Text<'_>) -> bool {
-    let index = if name.is_empty() {
-        NO_OVERRIDE
-    } else if let Some(index) = index_of_known_name(name) {
-        index
-    } else {
+    let Some(choice) = choice_named(name) else {
         return false;
     };
-    OVERRIDE.update(Ordering::Relaxed, Ordering::Relaxed, |state| {
-        ((state >> LOW_BITS) + 1) << LOW_BITS | u64::from(index)
+    CHOICE.update(Ordering::Relaxed, Ordering::Relaxed, |state| {
+        ((state >> LOW_BITS) + 1) << LOW_BITS | u64::from(choice)
     });
     true
 }
 
-fn index_of_known_name(name: Text<'_>) -> Option<u16> {
+/// Loads little, as a process that is started with `TZ` may never ask for the time.
+fn choice_named(name: Text<'_>) -> Option<u16> {
     const LONGEST: usize = 128;
-    if names_utc(name) {
-        return Some(Table::UTC);
+    let position_of = |name| u16::try_from(data::position_of(name)?).ok();
+    if name.is_empty() {
+        return Some(HOST);
     }
-    let table = Table::get();
-    if let Some(index) = table.find(name)
-        && name.eq_ascii(table.name(index))
-    {
-        return Some(index);
+    if names_utc(name) {
+        return Some(UTC);
+    }
+    if let Some(position) = position_of(name) {
+        return Some(position);
     }
     if name.len() > LONGEST || name.code_units().any(|unit| unit == 0) {
         return None;
     }
     let canonical = time_zone::canonical_id(&name.code_units().collect::<Buffer<u16>>()).ok()?;
-    Some(table.find(Text::Utf16(&canonical)).unwrap_or(Table::UTC))
+    Some(position_of(Text::Utf16(&canonical)).unwrap_or(UTC))
+}
+
+fn resolve(choice: u16) -> Option<TimeZoneId> {
+    match choice {
+        HOST => TimeZoneId::primary_of(&time_zone::host().ok()?),
+        UTC => Some(TimeZoneId::UTC),
+        position => TimeZoneId::primary_of(data::names().ok()?.string_at(position.into()).ok()?),
+    }
 }
 
 /// SystemTimeZoneIdentifier: UTC if the zone has no name that is available.
 pub fn system_time_zone() -> TimeZoneId {
-    let state = OVERRIDE.load(Ordering::Relaxed);
+    let state = CHOICE.load(Ordering::Relaxed);
     let resolved = RESOLVED.load(Ordering::Relaxed);
     if resolved >> LOW_BITS == state >> LOW_BITS {
         return TimeZoneId(resolved as u16);
     }
-    let zone = match state as u16 {
-        NO_OVERRIDE => time_zone::host()
-            .ok()
-            .and_then(|name| TimeZoneId::primary_of(&name)),
-        Table::UTC => None,
-        index => TimeZoneId::primary_of(&widen(Table::get().name(index))),
-    }
-    .unwrap_or(TimeZoneId::UTC);
+    let zone = resolve(state as u16).unwrap_or(TimeZoneId::UTC);
     RESOLVED.store(
         state >> LOW_BITS << LOW_BITS | u64::from(zone.0),
         Ordering::Relaxed,

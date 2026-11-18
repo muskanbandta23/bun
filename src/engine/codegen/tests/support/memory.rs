@@ -150,7 +150,7 @@ impl Layout {
         }
     }
 
-    fn faults_at(&self, address: u64) -> bool {
+    pub(crate) fn faults_at(&self, address: u64) -> bool {
         address < NULL_PAGE_END || (self.data_end()..self.read_only_start()).contains(&address)
     }
 }

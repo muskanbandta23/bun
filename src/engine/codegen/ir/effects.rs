@@ -166,6 +166,7 @@ impl Function {
             },
             Op::Check(..) | Op::Checked(..) => Effects::with_flags(EffectFlags::EXITS),
             Op::Patchpoint(patchpoint) => self.patchpoint(patchpoint).effects,
+            Op::Node { kind, .. } | Op::WideNode { kind, .. } => self.node_info(kind).effects,
             Op::GetVariable(_) => Effects::with_flags(EffectFlags::READS_VARIABLE),
             Op::SetVariable(..) => Effects::with_flags(EffectFlags::WRITES_VARIABLE),
             Op::Jump | Op::Branch(_) | Op::Switch(..) | Op::JumpTable(..) | Op::Unreachable => {

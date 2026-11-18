@@ -4,6 +4,17 @@
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Label(pub(crate) u32);
 
+impl Label {
+    /// The other bits are the index of the target. Without it they are that of the state.
+    pub(crate) const EXTERNAL: u32 = 1 << 31;
+
+    /// An alias of such a label is not one.
+    #[inline]
+    pub(crate) fn is_external(self) -> bool {
+        self.0 & Self::EXTERNAL != 0
+    }
+}
+
 /// What an external label stands for.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Target {
@@ -51,7 +62,13 @@ impl LabelState {
 
 #[inline]
 pub(crate) fn resolve(labels: &[LabelState], label: Label) -> LabelState {
-    let mut state = labels[label.0 as usize];
+    let Some(mut state) = labels.get(label.0 as usize).copied() else {
+        assert!(label.is_external());
+        return LabelState {
+            offset: LabelState::EXTERNAL,
+            link: label.0 & !Label::EXTERNAL,
+        };
+    };
     while state.offset == LabelState::ALIAS {
         state = labels[state.link as usize];
     }

@@ -11,6 +11,9 @@ use crate::language_tag::subtag::{Subtags, is_region, is_script, is_variant};
 use crate::language_tag::{Key, LanguageId, LocaleId};
 use crate::{Cache, Error, LanguageTag, Result};
 
+/// The values of the `fw` key.
+const WEEKDAYS: [&str; 7] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+
 #[derive(Clone)]
 pub struct Locale(LanguageTag);
 
@@ -23,7 +26,7 @@ impl Locale {
             .ok_or(Error::Range("invalid language tag"))
     }
 
-    pub fn with_options(&self, options: &Options) -> Result<Locale> {
+    pub fn with_options(&self, mut options: Options) -> Result<Locale> {
         let mut id = self.parse()?;
         options.apply_to(&mut id);
         id.into_canonical().map(Locale)

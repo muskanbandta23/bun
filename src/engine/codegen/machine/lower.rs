@@ -68,6 +68,8 @@ pub(crate) struct Lowering<'a, I: Instruction> {
     pressure: [u32; 2],
     defined_globals: [u32; 2],
     claimed: RegisterSet,
+    allocatable: RegisterSet,
+    barrier: [Option<u32>; 2],
 }
 
 /// How far a load is looked for from its user.
@@ -78,6 +80,7 @@ pub(crate) fn lower<I: Instruction>(
     cfg: &Cfg,
     frequencies: &Frequencies,
     features: I::Features,
+    allocatable: RegisterSet,
     slot_offsets: &Table<Slot, i32>,
     code: &mut Code,
     instructions: &mut Vec<I>,
@@ -123,6 +126,8 @@ pub(crate) fn lower<I: Instruction>(
         pressure: [0; 2],
         defined_globals: [0; 2],
         claimed: RegisterSet::EMPTY,
+        allocatable,
+        barrier: [None; 2],
     };
     for &block in cfg.order().iter().rev() {
         lowering.lower_block(block);
@@ -160,6 +165,7 @@ impl<I: Instruction> Lowering<'_, I> {
         self.is_cold = self.frequencies.is_cold(block);
         (self.live_locals, self.pressure, self.defined_globals) = Default::default();
         self.claimed = RegisterSet::EMPTY;
+        self.barrier = [None; 2];
         let after = self.instructions.len() as u32;
 
         let last = self.function.last(block);
@@ -187,6 +193,9 @@ impl<I: Instruction> Lowering<'_, I> {
         (data.first, data.end) = (self.instructions.len() as u32, after);
         data.pressure = [0, 1].map(|bank| self.pressure[bank] + self.defined_globals[bank]);
         data.claimed = self.claimed;
+        data.barrier = self
+            .barrier
+            .map(|position| position.map_or(0, |position| data.first - position));
         if let Some(own) = self.cfg.loop_of(block).expand() {
             if !self.is_cold {
                 self.code.loop_claims[own] |= self.claimed;
@@ -402,6 +411,9 @@ impl<I: Instruction> Lowering<'_, I> {
 
     pub(crate) fn absorb(&mut self, value: Value) {
         self.tables.is_absorbed[value] = true;
+        if self.function.effects(value).has(EffectFlags::EXITS) {
+            self.origin = self.function.origin(value);
+        }
     }
 
     /// The register of an I32 has its upper half clear.
@@ -417,11 +429,10 @@ impl<I: Instruction> Lowering<'_, I> {
                     });
                 }
                 Op::Patchpoint(patchpoint) => {
-                    return !self
-                        .function
-                        .patchpoint(patchpoint)
-                        .flags
-                        .contains(PatchpointFlags::UNEXTENDED_RESULTS);
+                    let data = self.function.patchpoint(patchpoint);
+                    // No instruction can follow a call that ends a block, so the emitter extends what it returns.
+                    return !data.flags.contains(PatchpointFlags::UNEXTENDED_RESULTS)
+                        || data.effects.has(EffectFlags::ENDS_BLOCK);
                 }
                 _ => return true,
             }
@@ -747,9 +758,15 @@ impl<I: Instruction> Lowering<'_, I> {
         let recoverable = if is_wanted { recoverable } else { VReg::NONE };
         if !(early | late | upper_halves).is_empty() {
             self.claim(early | late);
+            for bank in [Bank::Gpr, Bank::Fpr] {
+                if (self.allocatable - early - late).in_bank(bank).is_empty() {
+                    self.barrier[bank as usize] = Some(self.instructions.len() as u32);
+                }
+            }
         }
         self.site = self.code.sites.push(SiteData {
             value,
+            is_exit: !matches!(self.function.op(value), Op::Patchpoint(_)),
             state,
             state_vregs,
             recoverable,
@@ -800,10 +817,23 @@ impl<I: Instruction> Lowering<'_, I> {
     #[inline]
     pub(crate) fn finish(&mut self, instruction: I) {
         let end = self.code.operands.len();
+        let (mut result_count, mut has_late_uses, mut writes_early) = (0, false, false);
+        for operand in &self.code.operands[self.first_operand..] {
+            result_count += u8::from(!operand.is_use());
+            has_late_uses |= operand.role == Role::LateUse;
+            writes_early |= matches!(operand.role, Role::EarlyDef | Role::Temp);
+        }
+        debug_assert!(
+            self.code.operands[self.first_operand..].is_sorted_by_key(|operand| operand.is_use())
+        );
+        let is_constrained = core::mem::take(&mut self.is_constrained);
         self.code.heads.push(Head {
             first_operand: self.first_operand as u32,
             operand_count: (end - self.first_operand) as u16,
-            is_constrained: core::mem::take(&mut self.is_constrained),
+            is_constrained,
+            result_count,
+            is_plain: !is_constrained && !has_late_uses && !writes_early,
+            has_late_uses,
             site: core::mem::replace(&mut self.site, Site::NONE),
             origin: self.origin,
         });

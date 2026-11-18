@@ -7,8 +7,9 @@ use std::sync::OnceLock;
 use smallvec::SmallVec;
 
 use crate::Result;
+use crate::argument::expandable_length;
 use crate::error::Status;
-use crate::ffi::{call, fill, length, open};
+use crate::ffi::{call, fill, open};
 
 bun_opaque::opaque_ffi! { struct UIDNA; }
 bun_opaque::opaque_ffi! { struct UNormalizer2; }
@@ -98,7 +99,7 @@ fn convert(conversion: Conversion, name: &[u16], out: &mut Name) -> Result<Verdi
     let idna = constant(&IDNA, |status| unsafe {
         uidna_openUTS46(CHECK_BIDI | CHECK_CONTEXTJ | NONTRANSITIONAL, status)
     })?;
-    let length = length(name)?;
+    let length = expandable_length(name)?;
     let mut info = UIDNAInfo {
         size: size_of::<UIDNAInfo>() as i16,
         is_transitional_different: 0,
@@ -143,7 +144,7 @@ pub fn is_mapped(text: &[u16]) -> Result<bool> {
     let mapping = constant(&MAPPING, |status| unsafe {
         unorm2_getInstance(core::ptr::null(), c"uts46".as_ptr(), COMPOSE, status)
     })?;
-    let length = length(text)?;
+    let length = expandable_length(text)?;
     // SAFETY: `text` has `length` units.
     call(|status| unsafe { unorm2_isNormalized(mapping, text.as_ptr(), length, status) } != 0)
 }

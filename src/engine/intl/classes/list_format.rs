@@ -1,5 +1,5 @@
 use bun_engine_text::StringRef;
-use bun_engine_vm::{JsArray, errors};
+use bun_engine_vm::for_each_in_iterable;
 
 use super::prelude::*;
 use super::results::{part_to_object, values_to_array};
@@ -55,56 +55,6 @@ fn string_list_from_iterable(cx: &mut Cx, iterable: Value) -> JsResult<Vec<Strin
         Ok(())
     })?;
     Ok(list)
-}
-
-fn for_each_in_iterable(
-    cx: &mut Cx,
-    iterable: Value,
-    mut visit: impl FnMut(&Cx, Value) -> JsResult<()>,
-) -> JsResult<()> {
-    if let Some(array) = iterable.downcast::<JsArray>()
-        && array.is_iteration_pristine()
-    {
-        let mut index = 0;
-        while index < array.length() {
-            let value = array.get_index(cx, index.into())?;
-            visit(cx, value)?;
-            index += 1;
-        }
-        return Ok(());
-    }
-    let callable = |cx: &Cx, value: Value| match value.is_callable() {
-        true => Ok(value),
-        false => Err(cx.throw_type_error("Type error")),
-    };
-    let method = iterable.get(cx, symbols::iterator)?;
-    let iterator = cx.call(callable(cx, method)?, iterable, &[])?;
-    if !iterator.is_object() {
-        return Err(cx.throw_type_error("Type error"));
-    }
-    let next = iterator.get(cx, names::next)?;
-    loop {
-        let result = cx.call(callable(cx, next)?, iterator, &[])?;
-        if !result.is_object() {
-            return Err(cx.throw_type_error(errors::ITERATOR_RESULT_NOT_OBJECT));
-        }
-        if result.get(cx, names::done)?.to_boolean(cx) {
-            return Ok(());
-        }
-        let value = result.get(cx, names::value)?;
-        if let Err(thrown) = visit(cx, value) {
-            let exception = cx.catch(thrown)?;
-            let closed =
-                (iterator.get(cx, names::r#return)).and_then(|method| match method.is_callable() {
-                    true => cx.call(method, iterator, &[]),
-                    false => Ok(method),
-                });
-            if let Err(thrown) = closed {
-                cx.discard_unless_termination(thrown);
-            }
-            return Err(cx.throw_exception(exception));
-        }
-    }
 }
 
 #[native_abi]

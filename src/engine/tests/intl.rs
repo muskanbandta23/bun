@@ -4,7 +4,7 @@ use bun_engine_vm::heap::{HeapKind, Scope};
 use bun_engine_vm::*;
 
 const DEFAULT_HOOKS: RealmHooks = RealmHooks {
-    modules: ModuleHooks {},
+    modules: ModuleHooks::DEFAULT,
     promise_rejection_tracker: |_, _, _| {},
     report_uncaught_exception: |_, _| {},
     current_script_execution_owner: |cx| cx.global().upcast(),
@@ -54,6 +54,21 @@ fn construct(cx: &mut Cx, class: PropertyName<'_>, arguments: &[Value]) -> JsRes
 fn invoke(cx: &mut Cx, this: Value, method: PropertyName<'_>, arguments: &[Value]) -> Value {
     let method = this.get(cx, method).unwrap();
     cx.call(method, this, arguments).unwrap()
+}
+
+#[test]
+fn bound_methods_keep_their_receiver() {
+    with_realm(&HOOKS, |cx| {
+        let locale = string(cx, "de");
+        let options = record(cx, &[(names::style, "currency"), (names::currency, "eur")]);
+        let format = construct(cx, names::NumberFormat, &[locale, options]).unwrap();
+        let format = format.get(cx, names::format).unwrap();
+        cx.heap.collect_and_sweep(Some(Scope::Full));
+        let formatted = cx.call(format, Value::UNDEFINED, &[1234.5.into()]).unwrap();
+        assert_eq!(text(cx, formatted), "1.234,50\u{a0}\u{20ac}");
+        let name = format.get(cx, names::name).unwrap();
+        assert_eq!(text(cx, name), "");
+    });
 }
 
 #[test]

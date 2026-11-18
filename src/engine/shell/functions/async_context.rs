@@ -2,15 +2,14 @@
 
 use crate::prelude::*;
 
-pub(super) const FUNCTIONS: Functions = &[
+pub(super) const VM_FUNCTIONS: Functions = &[
     ("asyncContext", async_context, 0),
     ("setAsyncContext", set_async_context, 1),
 ];
 
 #[native_abi]
 fn async_context(cx: &mut Cx, _: &CallFrame) -> JsResult<Value> {
-    cx.start_tracking_async_context();
-    Ok(cx.current_async_context())
+    Ok(cx.async_context().fields().at(0))
 }
 
 #[native_abi]

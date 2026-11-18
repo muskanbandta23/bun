@@ -34,11 +34,11 @@ impl Cx {
 }
 
 /// A job neither inherits what an earlier one has left nor leaves anything to a later one.
-pub(super) struct AsyncContextScope(Option<(Gc<InternalFieldTuple>, Value)>);
+pub(crate) struct AsyncContextScope(Option<(Gc<InternalFieldTuple>, Value)>);
 
 impl AsyncContextScope {
     #[inline(always)]
-    pub(super) fn enter(cx: &Cx, context: Value) -> AsyncContextScope {
+    pub(crate) fn enter(cx: &Cx, context: Value) -> AsyncContextScope {
         if !cx.is_async_context_tracked() {
             return AsyncContextScope(None);
         }

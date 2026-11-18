@@ -22,6 +22,16 @@ pub(super) fn record_mode(modes: &Flags, mode: IterationMode) {
     modes.0.set(modes.0.get() | mode.flag());
 }
 
+fn record_step(entry: &IteratorNext, record: &IteratorRecord) {
+    record_mode(&entry.modes, record.mode());
+    if let Some((object, index)) = record.next_element() {
+        entry.array.record_base(object.into());
+        if index < object.public_length() {
+            entry.array.record_index(&object, index, false);
+        }
+    }
+}
+
 execute! {
     NewArray(op, cx, f) {
         let profile = f.entry::<ArrayAllocationProfile>(op.metadata);
@@ -31,7 +41,11 @@ execute! {
     NewArrayFromConstant(op, cx, f) {
         let elements = f.code_block.constant(op.elements.0).expect("an array").cast();
         // SAFETY: as above.
-        f.set(op.dst, unsafe { vm::new_array_from_constant(cx, f.entry(op.metadata), elements) }?);
+        let array = unsafe { vm::new_array_from_constant(cx, f.entry(op.metadata), elements) }?;
+        if let Some(generalized) = array.shared_elements().filter(|&it| it != elements) {
+            f.code_block.replace_array_constant(op.elements.0, generalized);
+        }
+        f.set(op.dst, array);
     }
     NewArrayWithSize(op, cx, f) {
         // SAFETY: as above.
@@ -68,7 +82,7 @@ execute! {
     }
     IteratorNext(op, cx, f) {
         let mut record = f.iterator(op.state);
-        record_mode(&f.entry::<IteratorNext>(op.metadata).modes, record.mode());
+        record_step(f.entry(op.metadata), &record);
         if record.mode() == IterationMode::Generic {
             return Ok(Next::SecondTarget);
         }
@@ -86,7 +100,7 @@ execute! {
     }
     IteratorStep(op, cx, f) {
         let mut record = f.iterator(op.state);
-        record_mode(&f.entry::<IteratorNext>(op.metadata).modes, record.mode());
+        record_step(f.entry(op.metadata), &record);
         let value = record.step_in_pattern(cx)?;
         f.set_iterator(op.state, record);
         f.set_profiled(op.value, op.metadata, value);

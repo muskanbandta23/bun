@@ -10,7 +10,7 @@ use super::control::Exit;
 use super::scope::{Layout, Place};
 use super::{Dest, Generator, Suspension, This};
 use crate::assembler::Label;
-use crate::code::{CodeFlags, CodeKind, HandlerKind};
+use crate::code::{CodeFlags, CodeKind, CoverageKind, HandlerKind};
 use crate::function::{FunctionInfo, FunctionName, Origin, Visibility};
 use crate::operand::{DebugHook, FunctionIndex, Register, StaticError, SuspendKind, Unresolved};
 use crate::scope::ScopeKind;
@@ -392,8 +392,12 @@ impl<'a> Generator<'a> {
         {
             handler = Some(self.begin_generator(generator));
         }
-        if let Some(body) = ast.get(root.body, 0).filter(|_| self.suspends()) {
-            self.cover(ast[body].start, root.end);
+        if let Some(body) = ast.get(root.body, 0)
+            && self.suspends()
+            && self.covers
+        {
+            let (start, end) = (ast[body].start as i32, root.end as i32);
+            self.emit_cover(start, end, CoverageKind::SuspendableBody);
         }
         if let Some(body) = root.body_scope {
             self.enter_body_scope(scope, body, merged_body, &mut next_variable);

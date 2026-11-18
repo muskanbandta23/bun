@@ -28,7 +28,7 @@ use hashbrown::HashTable;
 use smallvec::SmallVec;
 
 use crate::assembler::{Assembler, Label, Site};
-use crate::code::{CodeFlags, CodeKind, CoverageBlock};
+use crate::code::{CodeFlags, CodeKind, CoverageBlock, CoverageKind};
 use crate::constant::{Constant, LinkTimeConstant};
 use crate::function::{FunctionInfo, Origin, Visibility};
 use crate::host::Host;
@@ -536,7 +536,7 @@ impl<'a> Generator<'a> {
     #[inline]
     fn cover(&mut self, start: u32, end: u32) {
         if self.covers {
-            self.emit_cover(start as i32, end as i32, false);
+            self.emit_cover(start as i32, end as i32, CoverageKind::Plain);
         }
     }
 
@@ -545,7 +545,8 @@ impl<'a> Generator<'a> {
     #[inline]
     fn cover_expression(&mut self, expression: ExprId, end: u32) {
         if self.covers {
-            self.emit_cover(self.ast[expression].start as i32 - 1, end as i32, false);
+            let start = self.ast[expression].start as i32 - 1;
+            self.emit_cover(start, end as i32, CoverageKind::Plain);
         }
     }
 
@@ -563,17 +564,14 @@ impl<'a> Generator<'a> {
             && let Some(expression) = expression
         {
             let node = &self.ast[expression];
-            self.emit_cover(node.start as i32 - 1, node.end as i32, true);
+            let (start, end) = (node.start as i32 - 1, node.end as i32);
+            self.emit_cover(start, end, CoverageKind::LoopHeader);
         }
     }
 
     #[cold]
-    fn emit_cover(&mut self, start: i32, end: i32, is_in_loop_header: bool) {
-        let block = self.asm().add_coverage_block(CoverageBlock {
-            start,
-            end,
-            is_in_loop_header,
-        });
+    fn emit_cover(&mut self, start: i32, end: i32, kind: CoverageKind) {
+        let block = (self.asm()).add_coverage_block(CoverageBlock { start, end, kind });
         self.asm().cover(block);
     }
 
@@ -583,7 +581,7 @@ impl<'a> Generator<'a> {
         self.asm().add_coverage_block(CoverageBlock {
             start: start as i32,
             end: end as i32,
-            is_in_loop_header: false,
+            kind: CoverageKind::Plain,
         });
     }
 

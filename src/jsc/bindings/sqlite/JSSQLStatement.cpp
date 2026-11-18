@@ -30,7 +30,6 @@
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
 #include <JavaScriptCore/TypedArrayInlines.h>
-#include "GCDefferalContext.h"
 
 #include <JavaScriptCore/DOMJITAbstractHeap.h>
 #include "JSBuffer.h"
@@ -869,7 +868,6 @@ static bool holdsNamedParameters(JSC::JSObject* object)
     switch (object->type()) {
     case FinalObjectType:
     case ObjectType:
-    case CompiledObjectType:
     case ProxyObjectType:
     case DirectArgumentsType:
     case ScopedArgumentsType:

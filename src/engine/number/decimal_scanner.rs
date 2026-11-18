@@ -26,7 +26,7 @@ pub fn parse_decimal_prefix<T: CodeUnit>(units: &[T]) -> Option<(f64, usize)> {
 #[inline(always)]
 fn signed_decimal<T: CodeUnit>(units: &[T]) -> (f64, usize) {
     let (is_negative, start) = scan_sign(units, 0);
-    let (point, whole) = scan_few_digits(units, start, 0);
+    let (point, whole) = scan_whole_digits(units, start);
     match finish_decimal(units, start, point, whole) {
         Some((magnitude, end)) => (with_sign(magnitude, is_negative), end),
         None => (0.0, 0),
@@ -47,11 +47,7 @@ pub(crate) fn scan_sign<T: CodeUnit>(units: &[T], at: usize) -> (bool, usize) {
 
 /// Appends the digits from `at` to `value`, which wraps around, and returns where they end.
 #[inline(always)]
-pub(crate) fn scan_few_digits<T: CodeUnit>(
-    units: &[T],
-    mut at: usize,
-    mut value: u64,
-) -> (usize, u64) {
+fn scan_few_digits<T: CodeUnit>(units: &[T], mut at: usize, mut value: u64) -> (usize, u64) {
     while let Some(unit) = units.get(at)
         && unit.is_ascii_digit()
     {
@@ -65,32 +61,50 @@ pub(crate) fn scan_few_digits<T: CodeUnit>(
 
 /// `scan_few_digits`, eight at a time.
 #[inline(always)]
-fn scan_many_digits<T: CodeUnit>(units: &[T], mut at: usize, mut value: u64) -> (usize, u64) {
-    while let Some(chunk) = units.get(at..).and_then(<[T]>::first_chunk) {
+fn scan_many_digits<T: CodeUnit>(units: &[T], at: usize, mut value: u64) -> (usize, u64) {
+    let (Some(last), Some(mut rest)) = (units.last_chunk(), units.get(at..)) else {
+        return scan_few_digits(units, at, value);
+    };
+    let (characters, stop) = loop {
+        let Some((chunk, following)) = rest.split_first_chunk() else {
+            // Zero bytes take the place of what is past the end.
+            let characters = load(last) >> ((7 - rest.len()) * 8) >> 8;
+            break (characters, non_digits(characters));
+        };
         let characters = load(chunk);
-        let digits = characters.wrapping_sub(ZEROS);
         let stop = non_digits(characters);
         if stop != 0 {
-            let count = stop.trailing_zeros() / 8;
-            // In two steps, for `count` may be zero.
-            let digits = digits << (56 - 8 * count) << 8;
-            let value = value.wrapping_mul(SMALL_POWERS[count as usize]);
-            return (
-                at + count as usize,
-                value.wrapping_add(gather_digits(digits)),
-            );
+            break (characters, stop);
         }
-        value = value
-            .wrapping_mul(100_000_000)
-            .wrapping_add(gather_digits(digits));
-        at += 8;
+        let digits = gather_digits(characters.wrapping_sub(ZEROS));
+        value = value.wrapping_mul(100_000_000).wrapping_add(digits);
+        rest = following;
+    };
+    let count = (stop.trailing_zeros() / 8 % 8) as usize;
+    // In two steps, for `count` may be zero.
+    let digits = gather_digits(characters.wrapping_sub(ZEROS) << (56 - 8 * count) << 8);
+    (
+        units.len() - rest.len() + count,
+        value.wrapping_mul(SMALL_POWERS[count]).wrapping_add(digits),
+    )
+}
+
+/// The digits before a decimal point, which are mostly few.
+#[inline(always)]
+pub(crate) fn scan_whole_digits<T: CodeUnit>(units: &[T], start: usize) -> (usize, u64) {
+    let Some(few) = units.get(start..).and_then(<[T]>::first_chunk::<4>) else {
+        return scan_few_digits(units, start, 0);
+    };
+    let (count, value) = scan_few_digits(few, 0, 0);
+    if count == few.len() {
+        return scan_many_digits(units, start + count, value);
     }
-    scan_few_digits(units, at, value)
+    (start + count, value)
 }
 
 /// The exponent part at `at`, if there is a complete one, and where it ends.
 #[inline(always)]
-pub(crate) fn scan_exponent<T: CodeUnit>(units: &[T], at: usize) -> (i64, usize) {
+fn scan_exponent<T: CodeUnit>(units: &[T], at: usize) -> (i64, usize) {
     /// More than the digits of any text can offset.
     const LIMIT: i64 = 1 << 56;
     if !units
@@ -102,8 +116,10 @@ pub(crate) fn scan_exponent<T: CodeUnit>(units: &[T], at: usize) -> (i64, usize)
     let (is_negative, start) = scan_sign(units, at + 1);
     let mut end = start;
     let mut exponent = 0;
-    while let Some(digit) = units.get(end).and_then(|unit| unit.digit_value(10)) {
-        exponent = (exponent * 10 + i64::from(digit)).min(LIMIT);
+    while let Some(unit) = units.get(end)
+        && unit.is_ascii_digit()
+    {
+        exponent = (exponent * 10 + i64::from(unit.to_u16() - u16::from(b'0'))).min(LIMIT);
         end += 1;
     }
     if end == start {
@@ -143,9 +159,22 @@ pub(crate) fn finish_decimal<T: CodeUnit>(
 #[cold]
 #[inline(never)]
 pub(crate) fn long_decimal<T: CodeUnit>(whole: &[T], fraction: &[T], exponent: i64) -> f64 {
-    let digits = whole.iter().chain(fraction);
+    let whole = &whole[count_zeros(whole)..];
+    let skipped = if whole.is_empty() {
+        count_zeros(fraction)
+    } else {
+        0
+    };
+    let digits = whole.iter().chain(&fraction[skipped..]);
     from_long_decimal(
         digits.map(|digit| digit.to_u16() as u8 - b'0'),
-        whole.len() as i64 + exponent,
+        whole.len() as i64 - skipped as i64 + exponent,
     )
+}
+
+fn count_zeros<T: CodeUnit>(digits: &[T]) -> usize {
+    let chunks = digits.as_chunks().0.iter();
+    let skipped = 8 * chunks.take_while(|chunk| load(chunk) == ZEROS).count();
+    let rest = digits[skipped..].iter();
+    skipped + rest.take_while(|digit| digit.is(b'0')).count()
 }

@@ -15,12 +15,12 @@ use super::{handled_promise, react};
 use crate::scope::realm_of_scope;
 use crate::{
     AbstractModuleRecord, AnalysisError, CodeBlock, Cx, CyclicModuleRecord, Environment,
-    ErrorInstance, ErrorType, FetchParameters, Field, Gc, InternalMicrotask, JsCell, JsPromise,
-    JsResult, JsSourceCode, JsString, ModuleEnvironment, ModuleKey, ModuleKeyRef, ModuleName,
-    ModuleRegistryEntry, ModuleRequest, ModuleType, PromiseStatus, RegistryStatus, SourceCode,
-    SourceProvider, SourceProviderRef, SourceTextModuleRecord, SourceType, SyntheticExports,
-    SyntheticModuleRecord, TracedMap, TypeFlags, Value, Vm, create_compile_error_in, json, options,
-    origin_of_caller,
+    ErrorInstance, ErrorType, FetchParameters, Field, Gc, GlobalObject, InternalMicrotask, JsCell,
+    JsPromise, JsResult, JsSourceCode, JsString, ModuleEnvironment, ModuleKey, ModuleKeyRef,
+    ModuleName, ModuleRegistryEntry, ModuleRequest, ModuleType, PromiseStatus, RegistryStatus,
+    SourceCode, SourceProvider, SourceProviderRef, SourceTextModuleRecord, SourceType,
+    SyntheticExports, SyntheticModuleRecord, TracedMap, TypeFlags, Value, Vm,
+    create_compile_error_in, json, options, origin_of_caller,
 };
 
 /// The key of the referrer and the specifier.
@@ -90,6 +90,10 @@ impl ModuleLoader {
 
     pub fn module_scope(&self) -> Gc<JsCell> {
         self.module_scope
+    }
+
+    pub fn realm(&self) -> Gc<GlobalObject> {
+        realm_of_scope(self.module_scope)
     }
 
     /// What `import()` in that scope uses. The embedder can bind `@moduleLoader`.

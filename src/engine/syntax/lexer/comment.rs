@@ -1,8 +1,8 @@
 //! Comments, and the directives in them.
 
-use super::Lexer;
+use super::{Flaw, Lexer};
 use crate::chars::{self, Start};
-use crate::token::TokenKind;
+use crate::token::{Detail, TokenKind};
 
 impl Lexer<'_> {
     /// Where the line ends.
@@ -27,41 +27,68 @@ impl Lexer<'_> {
         offset
     }
 
-    /// `offset` is past the slashes.
+    /// Where the next token starts. None if a comment does not end.
     #[inline(always)]
-    pub(super) fn line_comment(&mut self, offset: usize) -> usize {
-        if matches!(self.byte(offset), b'#' | b'@') {
-            self.directive(offset + 1);
+    pub(super) fn skip_trivia(
+        &mut self,
+        mut offset: usize,
+        mut lead: Detail,
+    ) -> Option<(usize, Detail)> {
+        loop {
+            match chars::start(self.byte(offset)) {
+                Start::Blank => offset += 1,
+                Start::Newline => {
+                    lead = Detail::FOLLOWS_NEWLINE;
+                    offset = self.stop(offset + 1, |stops| stops.after_blanks);
+                }
+                Start::Slash if self.byte(offset + 1) == b'/' => {
+                    if matches!(self.byte(offset + 2), b'#' | b'@') {
+                        self.directive(offset + 3);
+                    }
+                    offset = self.skip_line(offset + 2);
+                }
+                Start::Slash if self.byte(offset + 1) == b'*' => {
+                    offset = self.skip_block_comment(offset, &mut lead)?;
+                }
+                Start::Less if self.opens_html_comment(offset) => offset = self.skip_line(offset),
+                Start::Minus if self.closes_html_comment(offset, lead) => {
+                    offset = self.skip_line(offset);
+                }
+                _ => return Some((offset, lead)),
+            }
         }
-        self.skip_line(offset)
     }
 
-    /// Where it ends, if it does.
-    #[inline(never)]
-    pub(super) fn block_comment(&mut self, start: usize) -> Option<usize> {
+    #[inline(always)]
+    fn skip_block_comment(&mut self, start: usize, lead: &mut Detail) -> Option<usize> {
         let rest = &self.bytes[start + 2..];
-        let (text, end) = match bun_highway::memmem(rest, b"*/") {
-            Some(length) => (&rest[..length], Some(start + length + 4)),
-            None => (rest, None),
-        };
-        if !self.token.follows_newline {
-            self.token.follows_newline = bun_highway::index_of_any_char(text, b"\n\r").is_some();
+        let length = bun_highway::memmem(rest, b"*/");
+        let text = &rest[..length.unwrap_or(rest.len())];
+        if !lead.follows_newline() && bun_highway::index_of_any_char(text, b"\n\r").is_some() {
+            *lead = Detail::FOLLOWS_NEWLINE;
         }
-        if end.is_none() {
-            self.fail(
-                TokenKind::UnterminatedMultiline,
-                start,
-                self.bytes.len(),
-                "Multiline comment was not closed properly",
-            );
+        if length.is_none() {
+            let flaw = Flaw {
+                kind: TokenKind::UnterminatedMultiline,
+                end: self.bytes.len(),
+                message: "Multiline comment was not closed properly",
+            };
+            self.fail(start, *lead, flaw);
         }
-        end
+        Some(start + length? + 4)
     }
 
-    /// Whether `-->` starts a comment here (ECMA-262 B.1.1).
-    #[cold]
-    pub(super) fn may_close_html_comment(&self) -> bool {
-        !self.is_module && (self.token.follows_newline || self.previous_end == self.first_offset)
+    /// ECMA-262 B.1.1.
+    #[inline(always)]
+    pub(super) fn opens_html_comment(&self, offset: usize) -> bool {
+        !self.is_module && self.bytes[offset..].starts_with(b"<!--")
+    }
+
+    #[inline(always)]
+    pub(super) fn closes_html_comment(&self, offset: usize, lead: Detail) -> bool {
+        self.bytes[offset..].starts_with(b"-->")
+            && !self.is_module
+            && (lead.follows_newline() || self.previous_end == self.first_offset)
     }
 
     fn skip_blanks(&self, mut offset: usize) -> usize {

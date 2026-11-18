@@ -18,7 +18,7 @@ mod statement;
 use std::rc::Rc;
 
 use bun_engine_number::exact_int32;
-use bun_engine_syntax::ast::{Ast, ExprId, ExprKind, StmtId};
+use bun_engine_syntax::ast::{Ast, ExprId, ExprKind};
 use bun_engine_syntax::{EvalContext, FunctionFlags, FunctionKind, Name, NameKind};
 use bun_engine_text::{
     Atom, Identifier, PropertyName, StringRef, Text, find_private_name, find_well_known_symbol,

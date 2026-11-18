@@ -160,7 +160,7 @@ impl Session<'_> {
                 self.scopes.declare_class_internal(name);
             }
         }
-        let end = self.token().end;
+        let end = self.token().end();
         let body_scope = self.pop_scope::<BUILD>();
         self.scopes.initialize_lexicals(declared, end);
         let head_scope = self.pop_scope::<BUILD>();
@@ -187,13 +187,13 @@ impl Session<'_> {
 
     fn class_name(&mut self, is_needed: bool) -> Parsed<Option<Name>> {
         let token = self.token();
-        if token.kind == TokenKind::Await && self.context.contains(Context::STATIC_BLOCK) {
+        if token.kind() == TokenKind::Await && self.context.contains(Context::STATIC_BLOCK) {
             return Err(self.reject("Cannot use 'await' as a class name within static block"));
         }
         if token.spells(TokenKind::Await) {
             self.facts |= Facts::AWAIT_OR_YIELD_AS_NAME;
         }
-        if token.kind == TokenKind::Identifier
+        if token.kind() == TokenKind::Identifier
             || (token.spells(TokenKind::Await) && !self.is_await_reserved())
         {
             self.next();
@@ -206,7 +206,7 @@ impl Session<'_> {
         if !is_needed {
             return Ok(None);
         }
-        if token.kind == TokenKind::OpenBrace {
+        if token.kind() == TokenKind::OpenBrace {
             return Err(self.reject("Class statements must have a name"));
         }
         self.refuse_keyword(token, "class name", "")?;
@@ -278,8 +278,8 @@ impl Session<'_> {
             flags |= FunctionFlags::GENERATOR;
         }
         let token = self.token();
-        head.key_start = token.start;
-        let key = match token.kind {
+        head.key_start = token.start();
+        let key = match token.kind() {
             TokenKind::PrivateName => {
                 self.next();
                 self.declare_private_field_or_method(body, token.name(), head.is_static)?;

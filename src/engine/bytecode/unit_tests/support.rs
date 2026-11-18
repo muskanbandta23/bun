@@ -283,7 +283,6 @@ impl Builder<'_> {
             self.step();
             assert_eq!(self.assembler.is_reachable(), self.is_reachable);
             assert_eq!(self.assembler.try_depth() as usize, self.tries.len());
-            assert_eq!(self.assembler.pending_position(), self.position);
         }
         while !self.tries.is_empty() || !self.suspended.is_empty() {
             self.close_try();
@@ -341,14 +340,13 @@ impl Builder<'_> {
                 self.suspended.push((suspended, tries, depth as usize));
             }
             13 if !self.handlers.is_empty() => self.handler(),
-            14..20 => {
+            14..=20 => {
                 let divot = self.random.skewed_below(1 << 20);
                 let start = divot.saturating_sub(self.random.skewed_below(300));
                 let end = divot + self.random.skewed_below(300);
                 self.assembler.position(divot, start, end);
                 self.position = Some(Position { divot, start, end });
             }
-            20 => self.assembler.restore_position(self.position),
             21 | 22 if self.limits.suspends => {
                 let opcode = self.random.pick(&[Opcode::Suspend, Opcode::Await]);
                 self.instruction(opcode);

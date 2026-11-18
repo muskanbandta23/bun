@@ -178,6 +178,7 @@ impl Drop for DeferredFire<'_> {
 
 /// One word until something watches it.
 #[repr(transparent)]
+#[cfg_attr(rootcheck, rootcheck::stays("lends nothing"))]
 pub struct InlineWatchpointSet(Cell<usize>);
 
 impl InlineWatchpointSet {

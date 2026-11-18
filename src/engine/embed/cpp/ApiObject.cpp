@@ -86,7 +86,7 @@ static EncodedJSValue SYSV_ABI callNativeStdFunction(JSGlobalObject* globalObjec
 
 JSNativeStdFunction* JSNativeStdFunction::create(VM& vm, JSGlobalObject* globalObject, unsigned length, const String& name, NativeStdFunction&& function, Intrinsic intrinsic, NativeFunction constructor)
 {
-    auto* executable = vm.getHostFunction(callNativeStdFunction, ImplementationVisibility::Private, intrinsic, constructor, nullptr, length, name);
+    auto* executable = vm.getHostFunction(callNativeStdFunction, ImplementationVisibility::Private, intrinsic, constructor, length, name);
     auto* structure = Engine::shape_for_class(globalObject, globalObject->functionPrototype(), JSFunctionType, StructureFlags, info());
     auto* result = new (NotNull, allocateCell<JSNativeStdFunction>(vm)) JSNativeStdFunction(vm, executable, globalObject, structure, WTF::move(function));
     result->finishCreation(vm);

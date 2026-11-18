@@ -13,6 +13,9 @@ pub const MAX_TIME_VALUE: f64 = 8.64e15;
 pub(crate) const TIME_VALUES: RangeInclusive<i64> =
     -(MAX_TIME_VALUE as i64)..=MAX_TIME_VALUE as i64;
 pub(crate) const DAY: i64 = MS_PER_DAY as i64;
+/// What a clock can show at some time value.
+pub(crate) const LOCAL_TIMES: RangeInclusive<i64> =
+    *TIME_VALUES.start() - DAY..=*TIME_VALUES.end() + DAY;
 
 /// The time value of now.
 pub fn current_time() -> f64 {
@@ -44,6 +47,12 @@ pub(crate) fn time_clip_integer(time: i64) -> f64 {
 #[inline(always)]
 pub(crate) fn time_as_integer(time: f64) -> Option<i64> {
     (time.to_int_checked()).filter(|time| TIME_VALUES.contains(time))
+}
+
+/// The same for `LOCAL_TIMES`.
+#[inline(always)]
+pub(crate) fn local_time_as_integer(time: f64) -> Option<i64> {
+    (time.to_int_checked()).filter(|time| LOCAL_TIMES.contains(time))
 }
 
 /// Day and TimeWithinDay. `time` is within a day of the range of time values.

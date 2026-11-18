@@ -43,7 +43,7 @@ impl DateFields {
 
     /// CalendarMergeFields, for fields that come from ISODateToFields and so have neither an era nor a month number.
     #[inline]
-    pub(crate) fn merged(self, additional: DateFields) -> DateFields {
+    pub(crate) fn merged(self, additional: &DateFields) -> DateFields {
         let names_era = additional.era.is_some() || additional.era_year.is_some();
         let year = self.year.filter(|_| !names_era);
         let month_code = self.month_code.filter(|_| additional.month.is_none());
@@ -51,7 +51,7 @@ impl DateFields {
             year: additional.year.or(year),
             month_code: additional.month_code.or(month_code),
             day: additional.day.or(self.day),
-            ..additional
+            ..*additional
         }
     }
 }

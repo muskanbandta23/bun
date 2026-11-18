@@ -3,7 +3,7 @@ use std::rc::Rc;
 use bun_engine_bytecode::{CodeKind, HandlerKind, Opcode, RawInstruction, Visibility};
 
 use crate::{
-    CallFrame, CellType, CodeBlock, CodeOrigin, CompiledCode, EntryRecord, Gc, JsCell,
+    CallFrame, CellType, CodeBlock, CodeOrigin, CompiledCode, Cx, EntryRecord, Gc, JsCell,
     JsFunction, JsObject, LineColumn, RealmSlot, Value, ValueVec, Vm,
 };
 
@@ -329,6 +329,31 @@ impl Vm {
                     ) && handler.range.contains(&offset)
                 })
             })
+    }
+}
+
+impl Cx {
+    /// For what a call throws before the context of the callee is there or after it has gone. The innermost `skip`
+    /// frames are those of the callee.
+    pub(super) fn in_realm_of_caller(&self, skip: usize) -> &Cx {
+        let caller = StackVisitor::frames(self).nth(skip);
+        match caller.and_then(|it| it.callee?.realm()) {
+            Some(realm) => self.in_realm_shared(realm),
+            None => self,
+        }
+    }
+
+    /// Whether the innermost code is a constructor at the last of the steps that `[[Construct]]` takes.
+    pub(super) fn is_leaving_constructor(&self) -> bool {
+        let next_opcode = |frame: VisitedFrame<'_>| {
+            let code_block = frame
+                .code_block
+                .filter(|it| it.body().kind() == CodeKind::Construct)?;
+            let bytes = code_block.body().instructions();
+            let current = RawInstruction::read(bytes, frame.bytecode_offset)?;
+            code_block.opcode_at(frame.bytecode_offset + u32::from(current.size))
+        };
+        StackVisitor::frames(self).next().and_then(next_opcode) == Some(Opcode::Return)
     }
 }
 

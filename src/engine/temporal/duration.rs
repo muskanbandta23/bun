@@ -14,13 +14,17 @@ const CALENDAR_LIMIT: u64 = 1 << 32;
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Duration([f64; UNIT_COUNT]);
 
-/// A Partial Duration Record. A field that is not set is NaN.
+/// The fields of a duration, replaced by those of a Partial Duration Record.
 #[derive(Clone, Copy, Debug)]
-pub struct PartialDuration([f64; UNIT_COUNT]);
+pub struct PartialDuration {
+    unchecked: Duration,
+    is_empty: bool,
+}
 
 impl Default for PartialDuration {
+    #[inline]
     fn default() -> PartialDuration {
-        PartialDuration([f64::NAN; UNIT_COUNT])
+        PartialDuration::over(&Duration::ZERO)
     }
 }
 
@@ -39,14 +43,47 @@ impl PartialDuration {
         (Unit::Year, names::years),
     ];
 
-    /// The validation of ToIntegerIfIntegral.
+    /// For `with`.
     #[inline]
+    pub fn over(base: &Duration) -> PartialDuration {
+        PartialDuration {
+            unchecked: *base,
+            is_empty: true,
+        }
+    }
+
+    /// The validation of ToIntegerIfIntegral.
+    #[inline(always)]
     pub fn set(&mut self, unit: Unit, number: f64) -> Result<()> {
-        if number.fract() != 0.0 {
+        if number.trunc() != number || number.is_infinite() {
             return Err(Error::DurationFieldNotInteger);
         }
-        self.0[unit as usize] = number + 0.0;
+        self.unchecked.0[unit as usize] = number + 0.0;
+        self.is_empty = false;
         Ok(())
+    }
+
+    /// For the constructor.
+    pub fn finish(&self) -> Result<&Duration> {
+        self.unchecked.check(Error::InvalidDuration)?;
+        Ok(&self.unchecked)
+    }
+
+    /// For the properties of an object, which has to have one.
+    #[inline]
+    pub fn finish_some(&self) -> Result<&Duration> {
+        if self.is_empty {
+            return Err(Error::NoDurationFields);
+        }
+        self.finish()
+    }
+
+    /// ParseTemporalDurationString. `self` is the default.
+    #[inline]
+    pub(crate) fn parse<'a>(&mut self, text: Text<'a>) -> Result<&Duration, InputError<'a>> {
+        parse::duration(text, &mut self.unchecked.0)
+            .ok_or(InputError::Text(TextError::Duration, text))?;
+        Ok(self.finish()?)
     }
 }
 
@@ -55,40 +92,28 @@ impl Eq for Duration {}
 impl Duration {
     pub const ZERO: Duration = Duration([0.0; UNIT_COUNT]);
 
-    /// The constructor.
-    pub fn new(arguments: &PartialDuration) -> Result<Duration> {
-        Duration::ZERO.merged(arguments)
+    /// The constructor, for fields that are too small to be out of range.
+    #[inline]
+    pub fn from_small_integers(fields: [i32; UNIT_COUNT]) -> Result<Duration> {
+        let has_negative = fields.iter().fold(false, |any, &it| any | (it < 0));
+        let has_positive = fields.iter().fold(false, |any, &it| any | (it > 0));
+        if has_negative && has_positive {
+            return Err(Error::InvalidDuration);
+        }
+        Ok(Duration(fields.map(f64::from)))
     }
 
     /// ToTemporalDuration of an object.
     pub fn from_partial(partial: &PartialDuration) -> Result<Duration> {
-        Duration::ZERO.with(partial)
-    }
-
-    pub fn with(&self, partial: &PartialDuration) -> Result<Duration> {
-        if partial.0.iter().all(|field| field.is_nan()) {
-            return Err(Error::NoDurationFields);
-        }
-        self.merged(partial)
-    }
-
-    fn merged(&self, partial: &PartialDuration) -> Result<Duration> {
-        let mut merged = *self;
-        for (field, &given) in merged.0.iter_mut().zip(&partial.0) {
-            *field = if given.is_nan() { *field } else { given };
-        }
-        merged.check(Error::InvalidDuration)?;
-        Ok(merged)
+        partial.finish_some().copied()
     }
 
     pub fn parse(text: Text<'_>) -> Result<Duration, InputError<'_>> {
-        let mut parsed = Duration::ZERO;
-        parse::duration(text, &mut parsed.0).ok_or(InputError::Text(TextError::Duration, text))?;
-        parsed.check(Error::InvalidDuration)?;
-        Ok(parsed)
+        PartialDuration::default().parse(text).copied()
     }
 
     /// IsValidDuration, for fields that are integers.
+    #[inline(always)]
     fn check(&self, invalid: Error) -> Result<()> {
         /// Further from the limit of 2^53 seconds than any rounding error.
         const SURELY_VALID: f64 = 9.0e24;
@@ -124,9 +149,14 @@ impl Duration {
             && (date_fields.iter()).all(|it| it.unsigned_abs() < CALENDAR_LIMIT)
             && date.sign() * time.sign() >= 0;
         if !is_surely_valid {
-            duration.check(Error::DurationOutOfRange)?;
+            duration.check_balanced()?;
         }
         Ok(duration)
+    }
+
+    #[cold]
+    fn check_balanced(&self) -> Result<()> {
+        self.check(Error::DurationOutOfRange)
     }
 
     /// The last steps of `until` and `since`.
@@ -174,13 +204,23 @@ impl Duration {
             .unwrap_or(Unit::Nanosecond)
     }
 
-    /// The sum of the fields from `largest_unit` down, leaving out years, months and weeks.
     #[inline]
+    pub(crate) fn has_date_units(&self) -> bool {
+        (self.0[..Unit::Hour as usize].iter()).fold(false, |any, &it| any | (it != 0.0))
+    }
+
+    /// The sum of the fields from `largest_unit` down, leaving out years, months and weeks.
+    #[inline(always)]
     pub fn nanoseconds_from(&self, largest_unit: Unit) -> i128 {
         let estimate = self.estimate_nanoseconds_from(largest_unit);
         if estimate.abs() < (1u64 << f64::MANTISSA_DIGITS) as f64 {
             return i128::from(estimate as i64);
         }
+        self.many_nanoseconds_from(largest_unit)
+    }
+
+    #[inline(never)]
+    fn many_nanoseconds_from(&self, largest_unit: Unit) -> i128 {
         Unit::ALL[largest_unit.min(Unit::Day) as usize..]
             .iter()
             .map(|&unit| exact(self.get(unit)) * i128::from(unit.nanoseconds()))
@@ -252,24 +292,29 @@ impl Duration {
         self.add(&other.negated())
     }
 
+    #[inline]
     pub fn precision(options: PrecisionOptions) -> Result<Precision> {
         options.resolve(Unit::Second, Error::SmallestUnitAboveSecond)
     }
 
-    /// Cannot fail with `Precision::AUTO`.
-    pub fn to_text(&self, precision: Precision) -> Result<IsoText> {
-        let mut text = IsoText::new();
+    /// The step of `toString` that comes before `to_text`.
+    #[inline]
+    pub fn round_for_text(&self, precision: Precision) -> Result<Duration> {
         if precision.rounding.is_to_one(Unit::Nanosecond) {
-            text.push_duration(self, precision.format);
-            return Ok(text);
+            return Ok(*self);
         }
         let internal = InternalDuration {
             date: self.date(),
             time: self.time().round(precision.rounding)?,
         };
-        let rounded = Duration::from_internal(internal, self.largest_unit().max(Unit::Second))?;
-        text.push_duration(&rounded, precision.format);
-        Ok(text)
+        Duration::from_internal(internal, self.largest_unit().max(Unit::Second))
+    }
+
+    #[inline(always)]
+    pub fn to_text(&self, precision: Precision) -> IsoText {
+        let mut text = IsoText::new();
+        text.push_duration(self, precision.format);
+        text
     }
 }
 

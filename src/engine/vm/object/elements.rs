@@ -11,8 +11,8 @@ use crate::heap::{Owned, barrier};
 use crate::{
     Attributes, CellType, Cx, DeferredFire, DontEnumMode, ElementKind, Field, Gc, GetterSetter,
     GlobalObject, HoleMode, ImmutableArray, IndexingMode, JsArrayBufferView, JsObject, JsResult,
-    NoGc, PropertyDescriptor, PropertyNameList, PropertySlot, ProxyObject, PutPropertySlot, ShapeFlags,
-    SparseElements, SparseEntry, Storage, TransitionKind, TypeFlags, Value, Vm, errors,
+    NoGc, PropertyDescriptor, PropertyNameList, PropertySlot, ProxyObject, PutPropertySlot,
+    ShapeFlags, SparseElements, SparseEntry, Storage, TransitionKind, TypeFlags, Value, Vm, errors,
 };
 
 pub(super) const MIN_SPARSE_INDEX: u32 = 100_000;

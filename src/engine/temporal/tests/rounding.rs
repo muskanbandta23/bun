@@ -3,8 +3,8 @@ mod support;
 use bun_engine_temporal::DifferenceOperation::{Since, Until};
 use bun_engine_temporal::RoundingMode::{Ceil, Expand, Floor, HalfEven, HalfExpand, Trunc};
 use bun_engine_temporal::{
-    DifferenceOptions, DurationRoundOptions, Error, Instant, OptionValue, RelativeTo, RoundOptions,
-    RoundingIncrement, RoundingMode, Unit, UnitOption,
+    DifferenceOptions, DurationRoundOptions, Error, Instant, OptionValue, PartialDuration,
+    RelativeTo, RoundOptions, RoundingIncrement, RoundingMode, Unit, UnitOption,
 };
 use support::*;
 
@@ -147,9 +147,10 @@ fn increments_and_units_are_checked() {
     );
     for unit in Unit::ALL {
         assert_eq!(Unit::find(text(unit.singular())), Some(unit));
-        assert_eq!(Unit::find(text(unit.plural())), Some(unit));
     }
-    assert!(Unit::ALPHABETICAL.is_sorted_by_key(|it| it.plural()));
+    for (unit, plural) in PartialDuration::PROPERTIES {
+        assert_eq!(Unit::find(plural.text()), Some(unit));
+    }
 }
 
 #[test]

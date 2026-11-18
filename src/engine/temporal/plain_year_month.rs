@@ -41,8 +41,13 @@ impl ParsedPlainYearMonth {
 
 impl PlainYearMonth {
     /// The constructor.
-    pub fn new(year: i32, month: i32, calendar: CalendarId, day: i32) -> Result<PlainYearMonth> {
-        let (month, day) = (saturate(month), saturate(day));
+    pub fn new(
+        year: i32,
+        month: i32,
+        calendar: CalendarId,
+        day: Option<i32>,
+    ) -> Result<PlainYearMonth> {
+        let (month, day) = (saturate(month), day.map_or(1, saturate));
         if !(1..=12).contains(&month) || !(1..=days_in_month(year, month)).contains(&day) {
             return Err(Error::InvalidPlainYearMonth);
         }

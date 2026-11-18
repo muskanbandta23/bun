@@ -89,9 +89,7 @@ pub(super) fn or_invalid_date(cx: &Cx, string: Option<StringRef>) -> Value {
 
 #[native_abi]
 fn to_string(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
-    let fields = this_date(cx, frame)?.local_fields(cx);
-    let string = fields.map(|fields| cx.date_cache().date_time_string(fields));
-    Ok(or_invalid_date(cx, string))
+    Ok(this_date(cx, frame)?.to_date_string(cx).into())
 }
 
 #[native_abi]

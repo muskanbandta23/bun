@@ -41,6 +41,7 @@ pub use class::{AsciiLiteral, Class, ClassOps};
 pub use condition::{
     ConditionKind, ConditionSet, PropertyCondition, Watchability, watch_condition,
 };
+pub(crate) use condition::may_be_special_property;
 pub use define::validate_property_descriptor;
 pub use descriptor::PropertyDescriptor;
 pub use element_search::{Direction, SearchResult};
@@ -57,7 +58,7 @@ pub use property_key::PropertyKey;
 pub use property_name_list::{DontEnumMode, PropertyNameList, PropertyNameMode};
 pub use property_offset::{Attributes, PropertyOffset};
 pub(crate) use reify::function_name;
-pub use shape::{CachedNames, Properties, Shape, ShapeFlags, ShapeId, ShapeSpec};
+pub use shape::{CachedNames, Properties, Shape, ShapeFlags, ShapeId, ShapeRareData, ShapeSpec};
 pub(crate) use shape_cache::ShapeCache;
 pub use slot::{
     CustomGetter, CustomSetter, DeleteKind, DeletePropertySlot, InternalMethod, PropertySlot,

@@ -160,6 +160,50 @@ impl JsObject {
         Ok(())
     }
 
+    /// Whether the property is still the function that the static table describes. It is in the shape afterwards.
+    pub fn reify_if_pristine(&self, cx: &Cx, name: PropertyName<'_>) -> bool {
+        let shape = self.shape();
+        let Some((table, entry)) = shape.find_static_property(name) else {
+            return false;
+        };
+        let original = entry.value();
+        if matches!(
+            original,
+            StaticValue::Callback(_) | StaticValue::LazyCell(_) | StaticValue::LazyClass(_)
+        ) {
+            return false;
+        }
+        let Some(mut value) = self.get_direct(name) else {
+            // SAFETY: the other kinds of entries run no script.
+            let cx = unsafe { Cx::from_global(cx.global()) };
+            return shape.has_non_reified_static_properties()
+                && self.reify_static_property(cx, table, entry, name).is_ok();
+        };
+        if let Some(accessor) = value.downcast::<GetterSetter>() {
+            value = accessor.getter().map_or_default(Into::into);
+        }
+        let function = value.downcast::<JsFunction>();
+        let function = function.filter(|it| Some(it.function_realm()) == self.realm());
+        match original {
+            StaticValue::Function {
+                function: native, ..
+            }
+            | StaticValue::Accessor {
+                getter: Some(native),
+                ..
+            } => function
+                .and_then(|it| it.native_executable())
+                .is_some_and(|it| core::ptr::fn_addr_eq(it.function(), native)),
+            StaticValue::EngineBuiltin(id) => function
+                .and_then(|it| it.script_executable())
+                .is_some_and(|it| it == cx.builtin_executable(id)),
+            StaticValue::RealmSlot(slot) => self
+                .realm()
+                .is_some_and(|global| value == global.slot(cx, slot).into()),
+            _ => false,
+        }
+    }
+
     pub fn reify_all_static_properties(&self, cx: &mut Cx) -> JsResult<()> {
         if !self.shape().has_non_reified_static_properties() {
             return Ok(());

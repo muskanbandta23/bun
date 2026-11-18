@@ -16,6 +16,7 @@
 
 extern crate self as bun_engine_vm;
 
+mod caches;
 pub mod call;
 mod cell_type;
 pub mod code;

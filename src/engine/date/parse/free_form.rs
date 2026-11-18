@@ -244,7 +244,6 @@ impl Parts {
                 self.clock.push(value)?;
                 return self.clock.push(0);
             }
-            cursor.skip(b'.');
             return self.clock.push(value);
         }
 

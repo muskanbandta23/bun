@@ -39,11 +39,12 @@ type Window = [u8; WINDOW];
 /// what it has, or take one apart, piece by piece.
 #[inline(always)]
 fn afresh<const N: usize>(bytes: &[u8]) -> &[u8; N] {
-    let mut start = bytes[..N].as_ptr();
-    // SAFETY: no instruction, so it points where it did.
+    let start = bytes[..N].as_ptr();
+    let mut address = start.addr();
+    // SAFETY: no instruction, so the address is what it was.
     unsafe {
-        core::arch::asm!("/* {0} */", inout(reg) start, options(pure, nomem, nostack, preserves_flags));
-        &*start.cast()
+        core::arch::asm!("/* {0} */", inout(reg) address, options(pure, nomem, nostack, preserves_flags));
+        &*start.with_addr(address).cast()
     }
 }
 
@@ -126,12 +127,6 @@ impl<'a, R: Recorder> Parser<'a, R> {
     extern "rust-cold" fn any_array(&mut self, elements: &[Value]) -> Option<Value> {
         let array = self.cx.new_array_from(elements);
         self.or_thrown(array).map(Into::into)
-    }
-
-    #[cold]
-    #[inline(never)]
-    extern "rust-cold" fn fail_at(&mut self, cursor: Cursor<'a>, expected: Expected) {
-        self.unexpected::<()>(&cursor, expected);
     }
 
     #[inline(always)]
@@ -244,8 +239,7 @@ impl<'a, R: Recorder> Parser<'a, R> {
                     cursor = self.skip_to_token(cursor);
                     go!($label, $this)
                 } else {
-                    self.fail_at(cursor, $expected);
-                    return None;
+                    return self.unexpected(&cursor, $expected);
                 }
                 if let Some(start) = start {
                     let end = self.reader.position(&cursor);
@@ -272,8 +266,7 @@ impl<'a, R: Recorder> Parser<'a, R> {
                                 go!('next, Resume)
                             }
                             if window[0] != b'"' {
-                                self.fail_at(cursor, Expected::ClosingBrace);
-                                return None;
+                                return self.unexpected(&cursor, Expected::ClosingBrace);
                             }
                         }
                         // SAFETY: from `bits`.
@@ -331,8 +324,7 @@ impl<'a, R: Recorder> Parser<'a, R> {
                         if window[0] == b',' {
                             go!('next, NextMember)
                         }
-                        self.fail_at(cursor, Expected::ClosingBrace);
-                        return None;
+                        return self.unexpected(&cursor, Expected::ClosingBrace);
                     }
                     State::AfterElement => {
                         let mut window = self.reader.window(&mut cursor);
@@ -349,8 +341,7 @@ impl<'a, R: Recorder> Parser<'a, R> {
                         if window[0] == b',' {
                             go!('next, NextElement)
                         }
-                        self.fail_at(cursor, Expected::ClosingBracket);
-                        return None;
+                        return self.unexpected(&cursor, Expected::ClosingBracket);
                     }
                     State::NextMember => {
                         grow!(stack.push(&mut tables.stack, value));
@@ -360,8 +351,7 @@ impl<'a, R: Recorder> Parser<'a, R> {
                         if window[0] != b'"' {
                             (cursor, window) = self.token(cursor);
                             if window[0] != b'"' {
-                                self.fail_at(cursor, Expected::Key);
-                                return None;
+                                return self.unexpected(&cursor, Expected::Key);
                             }
                         }
                         if let Some(length) = Self::find_key(tables, window, next) {

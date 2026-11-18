@@ -192,8 +192,9 @@ impl<'a, R: Recorder> Parser<'a, R> {
         Some((cursor, value?))
     }
 
-    #[cold]
+    #[inline(always)]
     fn unexpected<T>(&mut self, cursor: &Cursor<'a>, expected: Expected) -> Option<T> {
+        core::hint::cold_path();
         let at = self.position(cursor);
         self.failure = Some(Failure::Syntax(SyntaxError { at, expected }));
         None

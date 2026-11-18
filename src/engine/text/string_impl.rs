@@ -245,16 +245,20 @@ impl StringImpl {
         core::ptr::from_ref(self).addr()
     }
 
-    /// The bytes to charge to the collector: those of the buffer the first time, then none.
+    /// The bytes to charge to the collector: those of the buffer the first time, then none. Of a buffer that threads
+    /// share, each holder is charged its share.
     #[inline]
     pub fn take_cost(&self) -> usize {
         let owner = self.owner();
         let flags = owner.flags();
-        if flags & (Self::DID_REPORT_COST | Self::NEVER_ATOMIZE) != 0 {
-            return 0;
+        if flags & (Self::DID_REPORT_COST | Self::NEVER_ATOMIZE) == 0 {
+            owner.set_flags(flags | Self::DID_REPORT_COST);
+            owner.byte_length()
+        } else if flags & Self::NEVER_ATOMIZE == 0 {
+            0
+        } else {
+            self.shared_cost()
         }
-        owner.set_flags(flags | Self::DID_REPORT_COST);
-        owner.byte_length()
     }
 
     /// This holder's share of the buffer.

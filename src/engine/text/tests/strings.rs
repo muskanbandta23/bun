@@ -113,3 +113,19 @@ fn utf8_round_trip() {
     let lossy = StringRef::try_from_utf8_lossy(b"a\xf0\x9fb").unwrap();
     assert!(lossy.text() == Text::Utf16(&[0x61, 0xfffd, 0x62]));
 }
+
+#[test]
+fn the_collector_is_charged_once_or_by_share() {
+    let own = StringRef::from_latin1(&[b'x'; 900]);
+    assert_eq!([own.take_cost(), own.take_cost()], [900, 0]);
+
+    let shared = StringRef::to_shared(&own);
+    drop(own);
+    assert_eq!([shared.take_cost(), shared.take_cost()], [900, 900]);
+    let holders = [shared.to_string_ref(), shared.to_string_ref()];
+    assert_eq!(holders[0].take_cost(), 300);
+
+    let literal = StringRef::to_shared(&StringRef::from_literal("x y"));
+    assert_eq!(StringRef::empty().take_cost(), 0);
+    assert!(literal.take_cost() <= 3);
+}

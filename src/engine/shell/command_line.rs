@@ -25,7 +25,7 @@ Usage: engine-shell [options] [files] [-- arguments]
   --inspect                   Speaks the inspector protocol on the standard streams, and outlives errors
   --footprint                 Prints the memory footprint before exiting
   --useDollarVM               Defines `$vm`
-  --useControlFlowProfiler    Counts the executions of blocks
+  --sample                    Prints where the time went before exiting
   --<option>=<value>          Sets an option of the engine. One that is not known is ignored
 ";
 
@@ -64,7 +64,7 @@ pub(crate) struct CommandLine {
     pub(crate) destroys_vm: bool,
     pub(crate) collects_at_end: bool,
     pub(crate) exposes_vm: bool,
-    pub(crate) collects_coverage: bool,
+    pub(crate) prints_samples: bool,
 }
 
 fn exit_with_usage(code: i32) -> ! {
@@ -101,6 +101,11 @@ impl CommandLine {
                 "--destroy-vm" => line.destroys_vm = true,
                 "--inspect" => line.is_inspected = true,
                 "--footprint" => line.prints_footprint = true,
+                "--sample" => {
+                    line.prints_samples = true;
+                    options.use_sampling_profiler = true;
+                    options.collect_extra_sampling_data = true;
+                }
                 _ => match argument.strip_prefix("--") {
                     Some(option) => line.set_option(option, &mut options),
                     None => line.add_file(&argument, false, argument.ends_with(".mjs")),
@@ -141,7 +146,6 @@ impl CommandLine {
             "watchdog" => self.watchdog_milliseconds = value.parse().ok().filter(|&it| it != 0),
             "gcAtEnd" => self.collects_at_end = is_set,
             "useDollarVM" => self.exposes_vm = is_set,
-            "useControlFlowProfiler" => self.collects_coverage = is_set,
             _ => {
                 options.set(name.as_bytes(), value.as_bytes());
             }

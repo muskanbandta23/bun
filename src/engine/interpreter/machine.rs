@@ -103,6 +103,7 @@ macro_rules! handler {
     )*};
     (@define [$($attribute:tt)*] $name:ident [$($generics:tt)*] $m:ident, $a:ident, $b:ident, $c:ident $body:block) => {
         $($attribute)*
+        #[bun_engine_macros::in_call_frame]
         #[allow(unused_unsafe, unreachable_code, clippy::undocumented_unsafe_blocks)]
         pub(crate) unsafe extern "rust-preserve-none" fn $name<$($generics)* W: bun_engine_bytecode::Width>(
             pc: $crate::machine::Pc,

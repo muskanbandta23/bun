@@ -124,7 +124,7 @@ pub(super) fn clear_what_the_collector_left() {
 /// # Safety
 /// The address is mapped and aligned.
 #[inline(always)]
-pub(super) unsafe fn load_word(address: usize) -> usize {
+pub unsafe fn load_word(address: usize) -> usize {
     let word: usize;
     // SAFETY: the caller's.
     unsafe {

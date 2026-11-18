@@ -1,5 +1,3 @@
-use core::alloc::Allocator;
-
 use super::{Gc, Visitor};
 use crate::{CellKind, JsCell, Value};
 
@@ -46,8 +44,8 @@ trace_elements! {
     impl<> Option<T>;
     impl<> [T];
     impl<; const N> [T; N];
-    impl<A: Allocator> Vec<T, A>;
-    impl<A: Allocator> std::collections::VecDeque<T, A>;
+    impl<> Vec<T>;
+    impl<> std::collections::VecDeque<T>;
     impl<S> hashbrown::HashSet<T, S>;
 }
 

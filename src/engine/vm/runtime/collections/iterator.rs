@@ -22,6 +22,7 @@ pub struct IteratorFields<K: TableKind> {
     number: Cell<u64>,
     collection: Gc<OrderedCollection<K>>,
     place: Field<Gc<JsCell>>,
+    #[cfg_attr(rootcheck, rootcheck::allow("an int32"))]
     kind: Value,
     table_kind: PhantomData<K>,
 }

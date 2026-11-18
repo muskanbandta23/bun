@@ -5,10 +5,9 @@
 use core::ffi::{c_char, c_void};
 
 use bun_engine_macros::export;
-use bun_engine_text::{StringImpl, StringRef};
+use bun_engine_text::StringImpl;
 use bun_engine_vm::{
-    ArrayBuffer, Cx, Executable, Gc, JsCell, JsFunction, JsObject, JsPromise, JsResult, LineColumn,
-    Value, Vm,
+    ArrayBuffer, Cx, Gc, JsCell, JsFunction, JsObject, JsPromise, JsResult, Value, Vm,
 };
 
 use crate::abi::returned_as_pointer;
@@ -205,56 +204,3 @@ fn ffi_invocation_run(_: &mut FfiInvocation) {}
 
 #[export]
 unsafe fn ffi_invocation_destroy(_: *mut FfiInvocation) {}
-
-// Profilers
-
-#[export]
-fn sampling_profiler_exists(_: &Vm) -> bool {
-    false
-}
-
-#[export]
-fn sampling_profiler_create(_: &Vm) {}
-
-#[export]
-fn sampling_profiler_set_interval(_: &Vm, _microseconds: f64) {}
-
-#[export]
-fn sampling_profiler_start(_: &Vm) {}
-
-#[export]
-fn sampling_profiler_pause(_: &Vm) {}
-
-#[export]
-fn sampling_profiler_clear(_: &Vm) {}
-
-#[export]
-unsafe fn sampling_profiler_release_traces(
-    _: &Vm,
-    _context: *mut c_void,
-    _add_trace: unsafe extern "C" fn(*mut c_void, f64, usize),
-    _add_frame: unsafe extern "C" fn(
-        *mut c_void,
-        &StringImpl,
-        Option<Gc<Executable>>,
-        i32,
-        u32,
-        Option<&LineColumn>,
-    ),
-) {
-}
-
-#[export]
-fn sampling_profiler_traces_json(_: &Vm) -> StringRef {
-    unimplemented!()
-}
-
-#[export]
-fn sampling_profiler_top_functions(_: &Vm) -> StringRef {
-    unimplemented!()
-}
-
-#[export]
-fn sampling_profiler_top_bytecodes(_: &Vm) -> StringRef {
-    unimplemented!()
-}

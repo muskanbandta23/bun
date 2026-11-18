@@ -1,6 +1,8 @@
 //! The locals and temporaries of one function.
 
+use rustc_abi::FIRST_VARIANT;
 use rustc_data_structures::fx::FxHashSet;
+use rustc_hir::def_id::DefId;
 use rustc_index::bit_set::DenseBitSet;
 use rustc_index::{IndexSlice, IndexVec};
 use rustc_middle::mir::visit::{
@@ -8,7 +10,8 @@ use rustc_middle::mir::visit::{
 };
 use rustc_middle::mir::{
     BasicBlock, BasicBlockData, Body, BorrowKind, CastKind, Local, Location, Operand, Place,
-    RETURN_PLACE, Rvalue, START_BLOCK, Terminator, TerminatorKind,
+    PlaceElem, PlaceTy, ProjectionElem, RETURN_PLACE, Rvalue, START_BLOCK, Terminator,
+    TerminatorKind,
 };
 use rustc_middle::ty::adjustment::PointerCoercion;
 use rustc_middle::ty::{
@@ -284,22 +287,19 @@ impl<'a, 'tcx> Uses<'a, 'tcx> {
             ));
             frame.instantiate(cx.normalize(frame.env, ty::Unnormalized::new(ty)))
         };
-        let is_lent_by_nothing_that_refers = |ty: Ty<'tcx>| {
-            let ty::Ref(region, pointee, _) = *ty.kind() else {
-                return false;
+        let comes_from_nowhere = |ty: Ty<'tcx>| {
+            let ty::Ref(region, pointee, _) = *ty.kind() else { return false };
+            let lends = |input: &&Ty<'tcx>| input.walk().any(|it| it.as_region() == Some(region));
+            let may_refer = |&input: &Ty<'tcx>| {
+                let input = instantiate(input);
+                frame.refers(input) || input.peel_refs().is_trait()
             };
-            let lends = |input: &Ty<'tcx>| input.walk().any(|it| it.as_region() == Some(region));
             frame.refers(instantiate(pointee))
-                && !(signature.inputs().iter().copied().filter(lends))
-                    .any(|input| frame.refers(instantiate(input)))
+                && !signature.inputs().is_empty()
+                && !signature.inputs().iter().filter(lends).any(may_refer)
         };
         if signature.safety().is_safe()
-            && signature
-                .output()
-                .walk()
-                .filter_map(|it| it.as_type())
-                .any(is_lent_by_nothing_that_refers)
-            && types().any(|ty| ty.walk().filter_map(|it| it.as_type()).any(|it| frame.refers(it)))
+            && signature.output().walk().filter_map(|it| it.as_type()).any(comes_from_nowhere)
         {
             let message = format!("`{result}` points to memory that the collector does not know");
             self.report("hidden", span, message, HELP);
@@ -518,6 +518,13 @@ pub fn deferred_blocks<'tcx>(cx: &Types<'tcx>, body: &Body<'tcx>) -> DenseBitSet
         }
     }
     deferred
+}
+
+pub fn field_of(base: PlaceTy<'_>, projection: PlaceElem<'_>) -> Option<DefId> {
+    let (ProjectionElem::Field(index, _), ty::Adt(def, _)) = (projection, base.ty.kind()) else {
+        return None;
+    };
+    Some(def.variant(base.variant_index.unwrap_or(FIRST_VARIANT)).fields[index].did)
 }
 
 /// It writes the elements through the box that becomes the `Vec`.

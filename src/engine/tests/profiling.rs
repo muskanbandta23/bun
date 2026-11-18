@@ -281,3 +281,94 @@ fn cells_are_counted_by_kind() {
         assert_eq!(count(cx, "UnlinkedFunctionCodeBlock"), 1);
     });
 }
+
+/// Runs `step` until a sample has these frames, innermost first.
+fn wait_for_trace(cx: &mut Cx, step: &str, expected: &[&str]) {
+    SamplingProfiler::set_interval_microseconds(cx, 50.0);
+    SamplingProfiler::start(cx);
+    let start = std::time::Instant::now();
+    while start.elapsed().as_secs() < 30 {
+        evaluate(cx, step);
+        cx.heap.collect_and_sweep(Some(Scope::Full));
+        let profile = SamplingProfiler::take_profile(cx);
+        let mut traces = profile.traces();
+        if traces.any(|trace| {
+            trace
+                .frames()
+                .map(|it| it.name().to_string())
+                .eq(expected.iter().copied())
+        }) {
+            return;
+        }
+    }
+    panic!("no sample of {expected:?}");
+}
+
+#[test]
+fn samples_outlive_the_code_that_ran() {
+    with_realm(|cx| {
+        let step = "(function outer() { [0].map(function inner() { for (let i = 0; i < 1e4; i++); }); })()";
+        wait_for_trace(cx, step, &["inner", "map", "outer", "(program)"]);
+    });
+}
+
+#[test]
+fn samples_go_through_native_code() {
+    with_realm(|cx| {
+        let step = "({ get x() { eval('for (let i = 0; i < 1e4; i++);'); } }).x";
+        wait_for_trace(cx, step, &["(program)", "eval", "get x", "(program)"]);
+        let step = "for (let i = 0; i < 100; i++) /(a+)+b/.test('aaaaaaaaaa')";
+        wait_for_trace(cx, step, &["/(a+)+b/", "test", "(program)"]);
+    });
+}
+
+#[test]
+fn a_deep_stack_is_sampled_whole() {
+    with_realm(|cx| {
+        let step =
+            "(function deep(n) { if (n) deep(n - 1); else for (let i = 0; i < 1e4; i++); })(999)";
+        let mut expected = vec!["deep"; 1000];
+        expected.push("(program)");
+        wait_for_trace(cx, step, &expected);
+    });
+}
+
+#[test]
+fn frames_know_where_they_are() {
+    with_realm(|cx| {
+        let step = "\n  function spin() {\n for (let i = 0; i < 1e4; i++); }\nspin()";
+        wait_for_trace(cx, step, &["spin", "(program)"]);
+        loop {
+            evaluate(cx, step);
+            let profile = SamplingProfiler::take_profile(cx);
+            let mut frames = profile.traces().map(|trace| trace.innermost);
+            let is_in_loop = |it: &SampledFrame<'_>| it.position().is_some_and(|it| it.line == 3);
+            if let Some(frame) = frames.find(is_in_loop) {
+                assert_eq!(frame.kind(), SampledFrameKind::Executable);
+                let (line, column) = (2, 16);
+                assert_eq!(frame.start_of_code(), Some(LineColumn { line, column }));
+                assert_eq!(frame.caller().unwrap().position().unwrap().line, 4);
+                return;
+            }
+        }
+    });
+}
+
+#[test]
+fn nothing_is_sampled_during_a_pause() {
+    with_realm(|cx| {
+        let step = "for (let i = 0; i < 1e5; i++);";
+        assert!(!SamplingProfiler::exists(cx));
+        wait_for_trace(cx, step, &["(program)"]);
+        SamplingProfiler::pause(cx);
+        SamplingProfiler::clear(cx);
+        evaluate(cx, step);
+        assert_eq!(SamplingProfiler::take_profile(cx).traces().len(), 0);
+        assert_eq!(
+            SamplingProfiler::top_functions_report(cx).to_string(),
+            "\n\nSampling rate: 50.000000 microseconds. Total samples: 0\n\
+             Top functions as <numSamples  'functionName#hash:sourceID'>\n"
+        );
+        wait_for_trace(cx, step, &["(program)"]);
+    });
+}

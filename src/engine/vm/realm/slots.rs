@@ -308,6 +308,23 @@ realm_slots! {
         // Namespaces that other crates fill
         intl_object: JsObject,
         temporal_object: JsObject,
+        temporal_now_object: JsObject,
+        temporal_duration_constructor: JsObject,
+        temporal_duration_shape: Shape,
+        temporal_instant_constructor: JsObject,
+        temporal_instant_shape: Shape,
+        temporal_plain_date_constructor: JsObject,
+        temporal_plain_date_shape: Shape,
+        temporal_plain_date_time_constructor: JsObject,
+        temporal_plain_date_time_shape: Shape,
+        temporal_plain_month_day_constructor: JsObject,
+        temporal_plain_month_day_shape: Shape,
+        temporal_plain_time_constructor: JsObject,
+        temporal_plain_time_shape: Shape,
+        temporal_plain_year_month_constructor: JsObject,
+        temporal_plain_year_month_shape: Shape,
+        temporal_zoned_date_time_constructor: JsObject,
+        temporal_zoned_date_time_shape: Shape,
         webassembly_object: JsObject,
 
         // Only for built-ins

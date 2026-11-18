@@ -21,11 +21,41 @@ pub(crate) fn delta(c: u32, deltas: &[i32; 256]) -> i32 {
     }
 }
 
+const CHUNK: usize = 16;
+
+/// A position before which nothing passes `test`, less than a chunk before the first character that does.
+macro_rules! position {
+    ($characters:expr, $test:expr) => {{
+        static PASSES: [bool; 256] = {
+            let (mut table, mut c) = ([false; 256], 0);
+            while c < table.len() {
+                table[c] = $test(c as u8);
+                c += 1;
+            }
+            table
+        };
+        position($characters, $test, &PASSES)
+    }};
+}
+
+#[inline(always)]
+fn position(characters: &[u8], test: impl Fn(u8) -> bool, passes: &[bool; 256]) -> Option<usize> {
+    let Some(last) = characters.last_chunk() else {
+        let any = (characters.iter()).fold(false, |any, &c| any | passes[usize::from(c)]);
+        return any.then_some(0);
+    };
+    let any = |chunk: &[u8; CHUNK]| chunk.iter().fold(false, |any, &c| any | test(c));
+    match characters.as_chunks().0.iter().position(any) {
+        Some(index) => Some(index * CHUNK),
+        None => any(last).then(|| characters.len() - CHUNK),
+    }
+}
+
 /// `None` if nothing changes.
 pub fn to_lower_case(text: Text<'_>) -> Result<Option<StringRef>, AllocError> {
     match text {
         Text::Latin1(characters) => {
-            let Some(unchanged) = position(characters, |c| lower_latin1(c) != c) else {
+            let Some(unchanged) = position!(characters, changes_in_lower_case) else {
                 return Ok(None);
             };
             let mut out = StringWriter::try_new(characters.len())?;
@@ -41,11 +71,10 @@ pub fn to_lower_case(text: Text<'_>) -> Result<Option<StringRef>, AllocError> {
 pub fn to_upper_case(text: Text<'_>) -> Result<Option<StringRef>, AllocError> {
     match text {
         Text::Latin1(characters) => {
-            let changes = |c| (upper_latin1(c) != c) | is_irregular_in_upper_case(c);
-            let Some(unchanged) = position(characters, changes) else {
+            let Some(unchanged) = position!(characters, changes_in_upper_case) else {
                 return Ok(None);
             };
-            if position(&characters[unchanged..], is_irregular_in_upper_case).is_some() {
+            if position!(&characters[unchanged..], is_irregular_in_upper_case).is_some() {
                 return irregular_latin1_to_upper_case(characters).map(Some);
             }
             let mut out = StringWriter::try_new(characters.len())?;
@@ -57,39 +86,14 @@ pub fn to_upper_case(text: Text<'_>) -> Result<Option<StringRef>, AllocError> {
     }
 }
 
-const CHUNK: usize = 16;
-
-/// A position before which nothing passes `test`, less than a chunk before the first unit that does.
 #[inline(always)]
-fn position<T: Copy>(units: &[T], test: impl Fn(T) -> bool) -> Option<usize> {
-    let any = |chunk: &[T; CHUNK]| chunk.iter().fold(false, |any, &unit| any | test(unit));
-    let Some(last) = units.last_chunk() else {
-        return units.iter().position(|&unit| test(unit));
-    };
-    match units.as_chunks().0.iter().position(any) {
-        Some(index) => Some(index * CHUNK),
-        None => any(last).then(|| units.len() - CHUNK),
-    }
+const fn changes_in_lower_case(c: u8) -> bool {
+    (c.wrapping_sub(b'A') < 26) | ((c.wrapping_sub(0xc0) < 31) & (c != 0xd7))
 }
 
 #[inline(always)]
-fn within<T: CodeUnit>(unit: T, range: RangeInclusive<u16>) -> bool {
-    let (first, last) = range.into_inner();
-    T::from_u16_truncating(unit.to_u16().wrapping_sub(first))
-        <= T::from_u16_truncating(last - first)
-}
-
-#[inline(always)]
-fn lower_latin1(c: u8) -> u8 {
-    let is_upper = within(c, 0x41..=0x5a) | (within(c, 0xc0..=0xde) & (c != 0xd7));
-    c | u8::from(is_upper) << 5
-}
-
-/// Leaves the irregular characters as they are.
-#[inline(always)]
-fn upper_latin1(c: u8) -> u8 {
-    let is_lower = within(c, 0x61..=0x7a) | (within(c, 0xe0..=0xfe) & (c != 0xf7));
-    c ^ u8::from(is_lower) << 5
+const fn lower_latin1(c: u8) -> u8 {
+    c | (changes_in_lower_case(c) as u8) << 5
 }
 
 const MICRO: u8 = 0xb5;
@@ -97,8 +101,24 @@ const SHARP_S: u8 = 0xdf;
 const Y_WITH_DIAERESIS: u8 = 0xff;
 
 #[inline(always)]
-fn is_irregular_in_upper_case(c: u8) -> bool {
+const fn is_regular_lower_case(c: u8) -> bool {
+    (c.wrapping_sub(b'a') < 26) | ((c.wrapping_sub(0xe0) < 31) & (c != 0xf7))
+}
+
+#[inline(always)]
+const fn is_irregular_in_upper_case(c: u8) -> bool {
     (c == MICRO) | (c == SHARP_S) | (c == Y_WITH_DIAERESIS)
+}
+
+#[inline(always)]
+const fn changes_in_upper_case(c: u8) -> bool {
+    is_regular_lower_case(c) | is_irregular_in_upper_case(c)
+}
+
+/// Leaves the irregular characters as they are.
+#[inline(always)]
+const fn upper_latin1(c: u8) -> u8 {
+    c ^ (is_regular_lower_case(c) as u8) << 5
 }
 
 #[cold]
@@ -116,10 +136,16 @@ fn irregular_latin1_to_upper_case(characters: &[u8]) -> Result<StringRef, AllocE
         }
         Ok(out.finish())
     }
-    match position(characters, |c| (c == MICRO) | (c == Y_WITH_DIAERESIS)) {
-        Some(_) => write::<u16>(characters),
-        None => write::<u8>(characters),
+    if (characters.iter()).any(|&c| matches!(c, MICRO | Y_WITH_DIAERESIS)) {
+        write::<u16>(characters)
+    } else {
+        write::<u8>(characters)
     }
+}
+
+#[inline(always)]
+fn within(unit: u16, range: RangeInclusive<u16>) -> bool {
+    unit.wrapping_sub(*range.start()) <= range.end() - range.start()
 }
 
 trait Conversion {
@@ -302,7 +328,12 @@ fn contains(ranges: &[u32], c: u32) -> bool {
 
 /// A character that is both cased and case-ignorable is ignored.
 fn starts_with_cased(mut code_points: impl Iterator<Item = u32>) -> bool {
-    (code_points.find(|&c| !contains(&CASE_IGNORABLE, c))).is_some_and(|c| contains(&CASED, c))
+    let is_cased_unless_ignored = |c| match c {
+        0x20 => Some(false),
+        0x388..=0x38a | 0x38e..=0x3a1 | 0x3a3..=0x3f5 => Some(true),
+        _ => (!contains(&CASE_IGNORABLE, c)).then(|| contains(&CASED, c)),
+    };
+    code_points.find_map(is_cased_unless_ignored) == Some(true)
 }
 
 fn is_final_sigma(units: &[u16], at: usize) -> bool {

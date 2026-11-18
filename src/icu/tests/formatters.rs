@@ -111,13 +111,17 @@ fn data() {
     assert!(NumberingSystem::by_name(c"roman").unwrap().is_algorithmic());
     assert!(NumberingSystem::by_name(c"none").is_err());
 
-    let aliases = ResourceBundle::named(c"metadata").unwrap();
-    let aliases = aliases.get(c"alias").unwrap().get(c"language").unwrap();
+    let aliases = ResourceBundle::open_direct(c"metadata").unwrap();
+    let aliases = aliases
+        .by_key(c"alias")
+        .unwrap()
+        .by_key(c"language")
+        .unwrap();
     assert_eq!(
-        aliases.get(c"sh").unwrap().get_string(c"replacement"),
+        aliases.by_key(c"sh").unwrap().string_by_key(c"replacement"),
         Ok(&units("sr_Latn")[..])
     );
-    assert_eq!(aliases.get(c"en").err(), Some(Error::MISSING_RESOURCE));
+    assert_eq!(aliases.by_key(c"en").err(), Some(Error::MISSING_RESOURCE));
 
     assert!(locale::available().any(|it| it == c"sr_Latn_BA"));
     assert_eq!(

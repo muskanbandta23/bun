@@ -277,6 +277,28 @@ ENGINE_OFFSET(GlobalProxy, target, 16)
 // Errors, stack and code
 
 // Buffers, WebAssembly and FFI
+ENGINE_CONSTANT(maxArrayBufferSize, 0x100000000, MAX_ARRAY_BUFFER_SIZE)
+ENGINE_SIZE(ArrayBufferContents, 56)
+ENGINE_OFFSET(ArrayBufferContents, data, 0)
+ENGINE_OFFSET(ArrayBufferContents, byte_length, 8)
+ENGINE_OFFSET(ArrayBufferContents, max_byte_length, 16)
+ENGINE_OFFSET(ArrayBufferContents, backing, 24)
+ENGINE_CONSTANT(ArrayBufferContents_shared_byte_length, 40, ArrayBufferContents::OFFSET_OF_SHARED_BYTE_LENGTH)
+ENGINE_OFFSET(ArrayBufferContents, is_resizable, 48)
+ENGINE_CONSTANT(sharedBacking, 4, ArrayBufferContents::SHARED_BACKING)
+ENGINE_OFFSET(ArrayBuffer, ref_count, 0)
+ENGINE_OFFSET(ArrayBuffer, contents, 8)
+ENGINE_OFFSET(ArrayBuffer, wrapper, 64)
+ENGINE_OFFSET(JsArrayBuffer, buffer, 16)
+ENGINE_OFFSET(JsArrayBufferView, vector, 16)
+ENGINE_OFFSET(JsArrayBufferView, length, 24)
+ENGINE_OFFSET(JsArrayBufferView, byte_offset_and_mode, 32)
+ENGINE_OFFSET(JsArrayBufferView, buffer, 40)
+ENGINE_CONSTANT(JsArrayBufferView_mode, 39, JsArrayBufferView::OFFSET_OF_MODE)
+ENGINE_CONSTANT(JsArrayBufferView_declared_length, 48, JsArrayBufferView::OFFSET_OF_DECLARED_LENGTH)
+ENGINE_CONSTANT(byteOffsetMask, 0xffffffffffffff, JsArrayBufferView::BYTE_OFFSET_MASK)
+ENGINE_CONSTANT(maxSmallViewLength, 1000, JsArrayBufferView::MAX_SMALL_LENGTH)
+ENGINE_CONSTANT(packedElementSizeShifts, 0xfe6940, ElementType::PACKED_SIZE_SHIFTS)
 
 // Promises, collections, text and time
 

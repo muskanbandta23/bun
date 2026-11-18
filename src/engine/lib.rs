@@ -33,6 +33,7 @@ fn hooks() -> Hooks {
         temporal_to_locale_string: |cx, this, _, _| this.as_value().to_string(cx).map(Into::into),
         find_wasm_handler: |_, _| None,
         debugger_did_parse: |_, _, _| {},
+        debugger_microtask_event: |_, _, _, _| {},
         debugger_will_unwind: |_, _| {},
         debugger_did_unwind_frame: |_, _| {},
         visit_roots: |_, _| {},

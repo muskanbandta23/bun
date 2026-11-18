@@ -3,6 +3,7 @@
 use bun_engine_asm::{Fpr, Gpr, Label, RegisterSet};
 
 use crate::ir::{Function, Location, Origin, Slot, Table, Token};
+use crate::machine::StateLocations;
 
 /// The frame pointer and the stack pointer are multiples of 16.
 pub struct Frame {
@@ -23,7 +24,7 @@ pub struct ExitSite<'a> {
     pub frame: &'a Frame,
     pub token: Token,
     pub origin: Origin,
-    pub state: &'a [Location],
+    pub state: StateLocations<'a>,
 }
 
 pub struct PatchpointSite<'a> {
@@ -33,7 +34,7 @@ pub struct PatchpointSite<'a> {
     pub origin: Origin,
     pub results: &'a [Location],
     pub operands: &'a [Location],
-    pub state: &'a [Location],
+    pub state: StateLocations<'a>,
     pub scratch_gprs: &'a [Gpr],
     pub scratch_fprs: &'a [Fpr],
     /// Hold values that are needed afterwards and that the patchpoint does not produce.
@@ -51,13 +52,13 @@ pub struct CallSite<'a> {
     pub token: Token,
     pub origin: Origin,
     pub return_address: Label,
-    pub state: &'a [Location],
+    pub state: StateLocations<'a>,
     /// Where an unwinder resumes, once it has restored the frame pointer, the stack pointer and what is pinned.
     pub handlers: &'a [Label],
 }
 
 /// The scratch registers of the macro assembler are set to those that the code may overwrite: what is never
-/// allocated, and the usual ones where a patchpoint clobbers them early.
+/// allocated, and the usual ones where a patchpoint clobbers them both early and late.
 pub trait Client<Masm> {
     /// Enters the frame and moves the stack pointer down by its size. Keeps the parameters.
     fn prologue(&mut self, masm: &mut Masm, entry: usize, frame: &Frame);

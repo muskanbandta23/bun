@@ -6,7 +6,11 @@ use bun_icu::date_format::{DateFormat, field};
 use bun_icu::date_interval_format::DateIntervalFormat;
 use bun_icu::date_pattern::Pattern;
 
+use super::components::Component;
 use super::era::{EarlyEra, EarlyEraText};
+use super::locale_data::LocaleData;
+use super::pattern;
+use super::template::Template;
 use super::text::{DateText, PartSplitter, use_plain_spaces};
 use crate::error::IcuResult;
 use crate::parts::new_string;
@@ -18,11 +22,32 @@ pub(super) const FORMAT_FAILURE: &str = "failed to format date value";
 pub(super) struct Layout {
     pub(super) pattern: Pattern,
     /// Only if the pattern shows the era.
-    pub(super) early_era: Option<EarlyEra>,
+    early_era: Option<EarlyEra>,
+    template: OnceCell<Option<Template>>,
     pub(super) range_format: OnceCell<DateIntervalFormat>,
 }
 
 impl Layout {
+    pub(super) fn new(pattern: Pattern, locale: &LocaleData) -> Result<Layout> {
+        let shows_era = pattern::fields(&pattern).any(|it| it.component() == Some(Component::Era));
+        Ok(Layout {
+            early_era: if shows_era {
+                EarlyEra::of(locale.calendar()?)
+            } else {
+                None
+            },
+            pattern,
+            template: OnceCell::new(),
+            range_format: OnceCell::new(),
+        })
+    }
+
+    pub(super) fn template(&self, locale: &LocaleData) -> Result<Option<&Template>> {
+        (self.template)
+            .get_or_try_init(|| Template::new(&self.pattern, locale))
+            .map(Option::as_ref)
+    }
+
     fn early_era_text(
         &self,
         format: &DateFormat,

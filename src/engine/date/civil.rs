@@ -19,10 +19,20 @@ const fn multiply_high(a: u64, b: u64) -> u64 {
     ((a as u128 * b as u128) >> 64) as u64
 }
 
-/// Joffe, "A very fast 64-bit date algorithm" (2025). Counted backwards from the leap day that ends an era, the long century
-/// and the long year come first, so each is found with one multiplication.
 #[inline]
 pub const fn civil_from_days(days: i32) -> CivilDate {
+    let (year, month, day) = year_month_day(days);
+    CivilDate {
+        year,
+        month: month as u8,
+        day: day as u8,
+    }
+}
+
+/// Joffe, "A very fast 64-bit date algorithm" (2025). Counted backwards from the leap day that ends an era, the long century
+/// and the long year come first, so each is found with one multiplication.
+#[inline(always)]
+pub(crate) const fn year_month_day(days: i32) -> (i32, u32, u32) {
     const ERAS: u64 = (i32::MAX as u64 + DAYS_TO_EPOCH) / DAYS_PER_ERA + 1;
     const LAST_DAY: u64 = ERAS * DAYS_PER_ERA - DAYS_TO_EPOCH - 1;
     const LAST_YEAR: u64 = ERAS * YEARS_PER_ERA - 1;
@@ -32,7 +42,6 @@ pub const fn civil_from_days(days: i32) -> CivilDate {
     const UNITS_PER_YEAR: u64 = 782_432;
     const UNITS_IN_JANUARY_AND_FEBRUARY: u32 = 126_464;
     const END_OF_FEBRUARY: u32 = 191_360;
-    const PER_DAY: u64 = u64::MAX / 2140;
 
     let days_back = LAST_DAY.wrapping_sub(days as u64);
     let centuries_back = multiply_high(days_back, PER_CENTURY);
@@ -45,11 +54,11 @@ pub const fn civil_from_days(days: i32) -> CivilDate {
     let is_next_year = units_back < UNITS_IN_JANUARY_AND_FEBRUARY;
     let end = END_OF_FEBRUARY + if is_next_year { 0 } else { 12 << 16 };
     let units = (year_from_march as u32 & 3) * 512 + end - units_back;
-    CivilDate {
-        year: year_from_march + is_next_year as i32,
-        month: (units >> 16) as u8,
-        day: multiply_high((units & 0xffff) as u64, PER_DAY) as u8 + 1,
-    }
+    (
+        year_from_march + is_next_year as i32,
+        units >> 16,
+        (units & 0xffff) / 2140 + 1,
+    )
 }
 
 /// Neri and Schneider, "Euclidean affine functions and their application to calendar algorithms" (2022). `month` is 1 to 12.

@@ -162,3 +162,38 @@ impl Operands {
         &self.0[(0..places.len()).max_by_key(|&kind| places[kind]).unwrap()]
     }
 }
+
+/// Those that have short forms, and their neighbours.
+pub(crate) fn constants(random: &mut Random) -> Vec<u128> {
+    let mut all = vec![random.bits()];
+    for Boundaries { lanes, values } in boundaries() {
+        all.extend(values.into_iter().map(|value| lanes::splat(lanes, value)));
+    }
+    for byte in 0..=255u64 {
+        for size in [Size::S8, Size::S16, Size::S32] {
+            for shift in (0..size.bits()).step_by(8) {
+                all.push(lanes::splat(size, byte << shift));
+                all.push(lanes::splat(size, byte << shift | ((1 << shift) - 1)));
+            }
+        }
+        let bytes = (0..8).fold(0, |bytes, bit| {
+            bytes | ((byte >> bit & 1) * 0xff) << (8 * bit)
+        });
+        let magnitude = (16 + byte % 16) as f64 / 128.0 * f64::from(1 << (byte / 16 % 8));
+        let float = if byte < 128 { magnitude } else { -magnitude };
+        all.extend([
+            lanes::splat(Size::S64, bytes),
+            lanes::splat(Size::S64, float.to_bits()),
+            lanes::splat(Size::S32, (float as f32).to_bits().into()),
+        ]);
+    }
+    let variants = all.into_iter().flat_map(|bits| {
+        let flipped = bits ^ 1 << random.below(128);
+        let (low32, low64) = (u128::from(bits as u32), u128::from(bits as u64));
+        [bits, !bits, low32, low64, bits << 64, flipped]
+    });
+    let mut all: Vec<_> = variants.collect();
+    all.sort_unstable();
+    all.dedup();
+    all
+}

@@ -676,7 +676,9 @@ toGMTString
 toHex
 toISOString
 toInstant
+toIntegerOrInfinity
 toJSON
+toLength
 toLocaleDateString
 toLocaleLowerCase
 toLocaleString
@@ -906,6 +908,7 @@ useStrict = use strict
 @evalInRealm
 @exec
 @executor
+@flatIntoArray
 @fulfillPromise
 @fulfillPromiseWithFirstResolvingFunctionCallCheck
 @generator
@@ -1104,3 +1107,9 @@ useStrict = use strict
 @wrapForValidIteratorCreate
 @wrapForValidIteratorFieldIteratedIterator
 @wrapForValidIteratorFieldIteratedNextMethod
+@Promise
+@apply
+@call
+@forEach
+@get
+@has

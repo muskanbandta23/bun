@@ -4,7 +4,7 @@ use bun_engine_syntax::ast::{BindingKind, ScopeFlags, ScopeId, StmtId, StmtKind}
 use bun_engine_syntax::{FunctionKind, Name};
 use smallvec::SmallVec;
 
-use super::{Generator, Suspension, This};
+use super::{Dest, Generator, Suspension, This};
 use crate::assembler::{Label, SuspendedTries};
 use crate::code::{CodeKind, HandlerKind};
 use crate::operand::{CloseMode, DebugHook, Operand, Register, StaticError};
@@ -117,6 +117,12 @@ impl Generator<'_> {
         let needs_work =
             |it: &Control| matches!(it, Control::Iterator { .. } | Control::Finally(_));
         (!self.b.controls[depth..].iter().any(needs_work)).then_some(target)
+    }
+
+    /// Where the value of a `return` waits while `finally` code runs.
+    pub(super) fn return_dest(&self) -> Dest {
+        let value = self.b.finallys.last().and_then(|finally| finally.value);
+        value.map_or(Dest::Any, Dest::Prefer)
     }
 
     pub(super) fn exit(&mut self, exit: Exit) {
@@ -333,10 +339,6 @@ impl Generator<'_> {
         }
         self.asm().bind(finally.entry);
         Some(finally)
-    }
-
-    pub(super) fn completion_register(finally: &Finally) -> Register {
-        finally.completion
     }
 
     /// Goes on with what was under way when the code was entered.

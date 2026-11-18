@@ -31,7 +31,7 @@ impl<'a> Validator<'a> {
     {
         let ty = self.types().block_type(&target.ty);
         match target.kind {
-            FrameKind::Loop => ty.params,
+            FrameKind::Loop | FrameKind::Constant => ty.params,
             _ => ty.results,
         }
     }
@@ -51,7 +51,7 @@ impl<'a> Validator<'a> {
 
     /// Returns their number.
     #[inline(never)]
-    fn check_block_params(&mut self, index: TypeIndex) -> Result<usize, crate::Error> {
+    pub(super) fn check_block_params(&mut self, index: TypeIndex) -> Result<usize, crate::Error> {
         self.uses_simd |= self.types().signature_has_v128(index);
         let ty = self.types().func_type(index);
         let (count, available) = (ty.params.len(), self.available());
@@ -77,7 +77,7 @@ impl<'a> Validator<'a> {
     fn check_results(&mut self, ty: BlockType) -> Checked {
         let is_exact = match ty {
             BlockType::Empty => self.available() == 0,
-            BlockType::Value(result) => self.available() == 1 && self.values[self.base] == result,
+            BlockType::Value(result) => self.available() == 1 && self.top() == Some(&mut [result]),
             BlockType::Func(_) => false,
         };
         if is_exact {
@@ -110,7 +110,7 @@ impl<'a> Validator<'a> {
         self.check_results(frame.ty)?;
         self.innermost().kind = kind;
         self.locals.forget_initializations(frame.initialized_height);
-        self.height = self.base;
+        self.height = self.base as usize;
         self.is_unreachable = false;
         self.push_all(values)
     }
@@ -136,7 +136,7 @@ impl<'a> Validator<'a> {
         self.frames.pop();
         self.locals.forget_initializations(frame.initialized_height);
         self.is_unreachable = frame.outer_is_unreachable;
-        self.base = self.frames.last().map_or(0, |outer| outer.base as usize);
+        self.base = self.frames.last().map_or(0, |outer| outer.base);
         Ok(())
     }
 
@@ -196,8 +196,9 @@ impl<'a> Validator<'a> {
 
     /// The branch takes the reference along. It is not on the stack afterwards.
     fn check_branch_with(&mut self, name: &'static str, label: u32, ty: RefType) -> Checked {
+        let target = self.target(label);
         ensure!(
-            !self.label_types(self.target(label)).is_empty(),
+            !self.label_types(target).is_empty() || target.kind == FrameKind::Constant,
             validation,
             "{name} target expects no values"
         );
@@ -320,8 +321,9 @@ impl<'a> Validator<'a> {
     }
 
     fn check_tail_call(&mut self, ty: TypeIndex, callee: Callee) -> Checked {
-        let body = self.frames[0];
-        let (results, expected) = (self.types().func_type(ty).results, self.label_types(&body));
+        let body = self.frames[0].ty;
+        let results = self.types().func_type(ty).results;
+        let expected = self.types().block_type(&body).results;
         let (count, expected_count) = (results.len(), expected.len());
         if count != expected_count {
             match callee {
@@ -490,9 +492,11 @@ impl VisitControl for Validator<'_> {
 
     #[inline(always)]
     fn call(&mut self, func: FuncIndex, _: u32) -> Checked {
-        let ty = self.header.func_type_index(func);
-        self.pop_arguments(self.types().func_type(ty).params, Callee::Func(func))?;
-        self.push_results(ty)
+        let index = self.header.func_type_index(func);
+        let ty = self.types().func_type(index);
+        self.uses_simd |= self.types().signature_has_v128(index);
+        self.pop_arguments(ty.params, Callee::Func(func))?;
+        self.push_all(ty.results)
     }
 
     #[inline(never)]

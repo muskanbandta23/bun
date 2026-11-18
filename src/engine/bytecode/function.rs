@@ -4,7 +4,7 @@ use core::cell::Cell;
 use core::ops::Range;
 use std::rc::Rc;
 
-use bun_engine_syntax::{EvalContext, FieldSource, FunctionFlags, FunctionKind};
+use bun_engine_syntax::{EvalContext, FieldSource, FunctionFlags, FunctionKind, Name};
 use bun_engine_text::{Identifier, Text};
 
 use crate::code::Code;
@@ -41,7 +41,12 @@ bitflags::bitflags! {
 
 #[derive(Clone, Debug)]
 pub(crate) enum FunctionName {
-    Source { start: u32, length: u32 },
+    Source {
+        start: u32,
+        length: u32,
+    },
+    /// A constant of `Name`.
+    Known(Name),
     Owned(Identifier),
 }
 
@@ -108,6 +113,15 @@ impl FunctionInfo {
         self.instance_fields
     }
 
+    /// Whether the name stands in the source as that of the function or class.
+    pub fn has_own_name(&self) -> bool {
+        self.has_own_name
+    }
+
+    pub fn has_no_outer_scope(&self) -> bool {
+        self.scope.is_none()
+    }
+
     pub fn origin(&self) -> Origin {
         self.origin
     }
@@ -119,8 +133,8 @@ impl FunctionInfo {
     /// Without the `get` or `set` of an accessor. Empty if it has none or it is computed.
     pub fn name(&self, source: Text<'_>) -> Identifier {
         match &self.name {
-            FunctionName::Source { .. } => Identifier::new(self.name_text(source)),
             FunctionName::Owned(name) => name.clone(),
+            _ => Identifier::new(self.name_text(source)),
         }
     }
 
@@ -128,6 +142,9 @@ impl FunctionInfo {
         match &self.name {
             &FunctionName::Source { start, length } => {
                 source.slice(start as usize..start as usize + length as usize)
+            }
+            FunctionName::Known(name) => {
+                Text::from_ascii(Name::known_text(name.index()).unwrap_or_default())
             }
             FunctionName::Owned(name) => name.name().text(),
         }
@@ -146,6 +163,12 @@ impl FunctionInfo {
     /// From its first token to the end of its body.
     pub fn range(&self) -> Range<u32> {
         self.start..self.end
+    }
+
+    /// Whether it stands in the source as a function.
+    pub fn is_written(&self) -> bool {
+        !self.origin.contains(Origin::DEFAULT_CONSTRUCTOR)
+            && self.kind != FunctionKind::FieldInitializer
     }
 
     /// The position of an error before the first one that the code records.

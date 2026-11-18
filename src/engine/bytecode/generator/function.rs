@@ -49,6 +49,9 @@ impl<'a> Generator<'a> {
 
     pub(super) fn function_name_of(&mut self, name: Option<Name>) -> FunctionName {
         let (names, name) = (&self.ast.names, name.unwrap_or(Name::EMPTY));
+        if Name::known_text(name.index()).is_some() {
+            return FunctionName::Known(name);
+        }
         match names.source_start(name) {
             Some(start) if names.kind(name) == NameKind::Ordinary => FunctionName::Source {
                 start,
@@ -64,10 +67,7 @@ impl<'a> Generator<'a> {
         position: u32,
     ) -> FunctionInfo {
         FunctionInfo {
-            name: FunctionName::Source {
-                start: 0,
-                length: 0,
-            },
+            name: FunctionName::Known(Name::EMPTY),
             kind,
             flags: FunctionFlags::STRICT,
             origin: self.origin - Origin::DEFAULT_CONSTRUCTOR,
@@ -280,7 +280,9 @@ impl<'a> Generator<'a> {
             && !has(binding, BindingFlags::CAPTURED)
             && !has(binding, BindingFlags::WRITTEN)
             && !self.suspends();
-        if is_only_read && self.uses(Features::ONLY_ARGUMENTS_LENGTH) {
+        let body = self.ast.root.body_scope.map(|it| self.ast.bindings(it));
+        let is_redeclared = body.is_some_and(|it| it.iter().any(|it| it.name == Name::ARGUMENTS));
+        if is_only_read && !is_redeclared && self.uses(Features::ONLY_ARGUMENTS_LENGTH) {
             Arguments::OnlyLength(NO_REGISTER)
         } else if is_only_read && !has_mappings {
             let (register, empty) = (self.temp(), self.empty());
@@ -702,7 +704,10 @@ impl<'a> Generator<'a> {
             };
             let is_changed = changes(binding) || shared.iter().any(changes);
             if in_slot(binding) {
-                if let Some(position) = position.filter(|_| is_simple) {
+                if let Some(position) = position
+                    && is_simple
+                    && !has(binding, BindingFlags::FUNCTION)
+                {
                     let mark = self.top;
                     let value = self.load_argument(position, Dest::Any);
                     self.initialize(binding.name, value.into());

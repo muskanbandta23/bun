@@ -2,10 +2,12 @@ use core::io::BorrowedBuf;
 use core::mem::MaybeUninit;
 
 use bun_engine_text::{AllocError, MAX_LENGTH, StringImpl, StringRef, Text};
+use bun_highway::url::narrow_to_latin1;
 use bun_simdutf_sys::simdutf::{self, WithUtf8Len};
 
+use crate::Error;
 use crate::buffer::Buffer;
-use crate::class::{self, TAB_OR_NEWLINE};
+use crate::class::{self, CONTROL_SCAN, TAB_OR_NEWLINE};
 
 /// What to parse.
 #[derive(Clone, Copy)]
@@ -82,19 +84,29 @@ impl<'a> Source<'a> {
     }
 
     pub(crate) fn has_tab_or_newline(self) -> bool {
-        bun_highway::index_of_any_char(self.bytes, b"\t\n\r").is_some()
+        let mut candidates = CONTROL_SCAN.scan(self.bytes, 0);
+        candidates.any(|at| class::is_in(TAB_OR_NEWLINE, self.bytes[at]))
     }
 
-    pub(crate) fn without_tab_or_newline<'b>(
+    /// Runs what fails on a tab or a newline, and again without them if it has.
+    #[inline(always)]
+    pub(crate) fn retry_without_tab_or_newline<T>(
         self,
-        storage: &'b mut Buffer,
-    ) -> Result<Source<'b>, AllocError>
-    where
-        'a: 'b,
-    {
-        if !self.has_tab_or_newline() {
-            return Ok(self);
+        mut attempt: impl FnMut(Source<'_>) -> crate::Result<T>,
+    ) -> crate::Result<T> {
+        match attempt(self) {
+            Err(Error::Invalid) if self.has_tab_or_newline() => {
+                attempt(self.without_tab_or_newline(&mut Buffer::new())?)
+            }
+            outcome => outcome,
         }
+    }
+
+    #[cold]
+    pub(crate) fn without_tab_or_newline(
+        self,
+        storage: &mut Buffer,
+    ) -> Result<Source<'_>, AllocError> {
         for &byte in self.bytes {
             if !class::is_in(TAB_OR_NEWLINE, byte) {
                 storage.push(byte)?;
@@ -125,7 +137,7 @@ impl Transcoder {
     pub(crate) fn source<'a>(&'a mut self, text: Text<'a>) -> Result<Source<'a>, AllocError> {
         match text {
             Text::Latin1(characters) => Ok(Source::new(characters, Encoding::Latin1)),
-            Text::Utf16(units) => Ok(Source::new(self.encode(units)?, Encoding::Utf8)),
+            Text::Utf16(units) => self.encode(units),
         }
     }
 
@@ -140,7 +152,10 @@ impl Transcoder {
     }
 
     /// A lone surrogate becomes U+FFFD.
-    fn encode(&mut self, units: &[u16]) -> Result<&[u8], AllocError> {
+    fn encode(&mut self, units: &[u16]) -> Result<Source<'_>, AllocError> {
+        if let Some(characters) = narrow_to_latin1(units, &mut self.inline) {
+            return Ok(Source::new(characters, Encoding::Latin1));
+        }
         let measured = WithUtf8Len::utf16_worst_case(units, Transcoder::INLINE_CAPACITY)
             .unwrap_or_else(|| WithUtf8Len::utf16_with_replacement(units));
         let mut out = self.storage(measured.utf8_len())?;
@@ -153,7 +168,7 @@ impl Transcoder {
                     .append(character.encode_utf8(&mut [0; 4]).as_bytes());
             }
         }
-        Ok(out.into_filled())
+        Ok(Source::new(out.into_filled(), Encoding::Utf8))
     }
 
     /// Each maximal invalid sequence becomes U+FFFD.

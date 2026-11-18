@@ -1,6 +1,6 @@
 use bun_engine_asm::Sign;
 
-use super::{Checked, Validator, is};
+use super::{Checked, FrameKind, Validator, is};
 use crate::error::Error;
 use crate::index::{DataIndex, ElemIndex, FuncIndex, TypeIndex};
 use crate::limits::MAX_ARRAY_NEW_FIXED_OPERANDS;
@@ -159,7 +159,7 @@ impl VisitReference for Validator<'_> {
     #[inline(never)]
     fn ref_func(&mut self, func: FuncIndex) -> Checked {
         ensure!(
-            self.header.is_declared(func) || self.may_name_any_func,
+            self.header.is_declared(func) || self.frames[0].kind == FrameKind::Constant,
             validation,
             "ref.func index {func} isn't declared"
         );

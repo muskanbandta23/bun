@@ -94,6 +94,28 @@ fn every_length_of_every_part() {
 }
 
 #[test]
+fn what_is_removed_does_not_count() {
+    for (input, expected) in [
+        ("http://h/a/.. ", "http://h/"),
+        ("file:///a/%2e\0", "file:///a/"),
+        ("http://h/a/.\t./b", "http://h/b"),
+        ("ht\ntp://h:8\r0/", "http://h/"),
+        ("a:\t/\t/u\t:\t@h", "a://u@h"),
+        ("a:b \t?c", "a:b%20?c"),
+    ] {
+        assert_eq!(ascii(url(input).href()), expected);
+    }
+    let base = url("http://h/");
+    for input in ["/\t/a b", "ht\ttp://a b", "a:\t//a b", "file:/\n/a b"] {
+        assert!(!Url::can_parse(
+            string(input).text(),
+            Some(&base),
+            Punycode::Checked
+        ));
+    }
+}
+
+#[test]
 fn derived_strings() {
     let full = url("https://%C3%A9:%FF@h:1/p?q#f");
     assert_eq!(full.decoded_username().unwrap(), Some(string("é")));

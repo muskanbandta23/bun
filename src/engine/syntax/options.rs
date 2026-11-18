@@ -143,3 +143,9 @@ pub struct Options<'a> {
     /// The parse fails before the stack grows below this address.
     pub stack_limit: usize,
 }
+
+impl Options<'_> {
+    pub(crate) fn is_module_code(&self) -> bool {
+        self.in_module || matches!(self.goal, Goal::Module)
+    }
+}

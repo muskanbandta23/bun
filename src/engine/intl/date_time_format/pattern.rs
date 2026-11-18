@@ -8,6 +8,8 @@ use bun_icu::date_pattern;
 use super::components::{Component, ComponentStyle, ComponentValue, Components};
 use crate::HourCycle;
 
+const QUOTE: u16 = b'\'' as u16;
+
 /// A run of one letter outside quotes.
 pub(super) struct Field {
     pub(super) letter: u8,
@@ -17,7 +19,6 @@ pub(super) struct Field {
 impl Field {
     /// The first field from `start` on, which is outside quotes.
     fn find(pattern: &[u16], start: usize) -> Option<Field> {
-        const QUOTE: u16 = b'\'' as u16;
         // Two quotes in a row stand for one, and leave the state as it was.
         let mut is_quoted = false;
         for (index, &unit) in pattern.iter().enumerate().skip(start) {
@@ -86,6 +87,19 @@ impl Field {
 pub(super) fn fields(pattern: &[u16]) -> impl Iterator<Item = Field> {
     core::iter::successors(Field::find(pattern, 0), |previous| {
         Field::find(pattern, previous.range.end)
+    })
+}
+
+/// The text that what is between two fields stands for.
+pub(super) fn unquote(literal: &[u16]) -> impl Iterator<Item = u16> {
+    let mut units = literal.iter().copied().peekable();
+    core::iter::from_fn(move || {
+        loop {
+            let unit = units.next()?;
+            if unit != QUOTE || units.next_if_eq(&QUOTE).is_some() {
+                return Some(unit);
+            }
+        }
     })
 }
 

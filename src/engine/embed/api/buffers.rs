@@ -204,7 +204,7 @@ fn view_is_out_of_bounds(view: &JsArrayBufferView) -> bool {
 #[export]
 unsafe fn view_create_buffer(view: &JsArrayBufferView) -> *mut ArrayBuffer {
     // SAFETY: Rust does not call out while it borrows the elements.
-    let buffer = unsafe { view.buffer_unchecked(view.heap().vm()) };
+    let buffer = unsafe { view.buffer_unchecked(view.heap_unchecked().vm()) };
     buffer.map_or(core::ptr::null_mut(), |it| (&raw const *it).cast_mut())
 }
 
@@ -216,7 +216,7 @@ fn view_js_buffer(view: &JsArrayBufferView, cx: &mut Cx) -> JsResult<Gc<JsArrayB
 #[export]
 unsafe fn view_try_pin(view: &JsArrayBufferView) -> bool {
     // SAFETY: as above.
-    unsafe { view.pin(view.heap().vm()) }.is_ok()
+    unsafe { view.pin(view.heap_unchecked().vm()) }.is_ok()
 }
 
 #[export]

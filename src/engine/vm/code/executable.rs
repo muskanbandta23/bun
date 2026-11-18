@@ -208,7 +208,7 @@ impl NativeExecutable {
         if let Some(text) = self.cached_source_text() {
             return Ok(text);
         }
-        let text = native_source_text(cx, self.name.text())?;
+        let text = native_source_text(cx, crate::anchor!(self).name.text())?;
         self.set_cached_source_text(Some(text));
         Ok(text)
     }

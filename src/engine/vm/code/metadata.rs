@@ -184,6 +184,24 @@ pub struct NewObject {
 #[repr(transparent)]
 pub struct Word(pub Cell<u64>);
 
+/// The address of the count to increment. Set before the code runs.
+#[repr(transparent)]
+pub struct Cover(Cell<*const Cell<u64>>);
+
+impl Cover {
+    /// # Safety
+    /// `count` outlives the entry.
+    pub(super) unsafe fn link(&self, count: &Cell<u64>) {
+        self.0.set(count);
+    }
+
+    #[inline(always)]
+    pub fn count(&self) -> &Cell<u64> {
+        // SAFETY: an entry is only seen once its code block is linked.
+        unsafe { &*self.0.get() }
+    }
+}
+
 #[repr(C)]
 pub struct NewArrayWithSpecies {
     pub value: ValueProfile,
@@ -242,6 +260,7 @@ entries! {
     Flags {}
     Counter {}
     Word {}
+    Cover {}
     CasesAndValue { cases }
     GetById { cache }
     GetLength { cache array }
@@ -404,7 +423,7 @@ entry_types! {
     IterationModes => Flags,
     IteratorNext => IteratorNext,
     Catch => Counter,
-    Coverage => Word,
+    Coverage => Cover,
 }
 
 #[derive(Default)]

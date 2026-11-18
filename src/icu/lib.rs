@@ -5,6 +5,8 @@ mod ffi;
 mod c_text;
 pub mod calendar;
 pub mod collator;
+pub mod date_format;
+pub mod date_interval_format;
 pub mod date_pattern;
 mod enumeration;
 mod error;

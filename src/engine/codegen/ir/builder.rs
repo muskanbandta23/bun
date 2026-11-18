@@ -448,7 +448,7 @@ impl<'a> Builder<'a> {
     /// Gives nothing, the one result, or a tuple.
     pub fn patchpoint(
         &mut self,
-        data: PatchpointData,
+        data: &PatchpointData,
         operands: &[(Value, Input)],
         results: &[(Type, Output)],
     ) -> Value {
@@ -464,12 +464,13 @@ impl<'a> Builder<'a> {
     /// The code goes to one of the successors or leaves the function.
     pub fn terminal_patchpoint(
         &mut self,
-        mut data: PatchpointData,
+        data: &PatchpointData,
         operands: &[(Value, Input)],
         successors: &[Successor<'_>],
     ) {
+        let mut data = *data;
         data.effects.flags |= EffectFlags::ENDS_BLOCK;
-        self.patchpoint(data, operands, &[]);
+        self.patchpoint(&data, operands, &[]);
         self.function.set_successors(self.block, successors);
     }
 

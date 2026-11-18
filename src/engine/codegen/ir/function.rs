@@ -996,10 +996,11 @@ impl Function {
 
     pub fn add_patchpoint(
         &mut self,
-        mut data: PatchpointData,
+        data: &PatchpointData,
         operands: &[(Value, Input)],
         results: &[(Type, Output)],
     ) -> Patchpoint {
+        let mut data = *data;
         data.operands = self
             .value_lists
             .add(operands.iter().map(|&(value, _)| value));

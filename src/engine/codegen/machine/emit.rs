@@ -31,6 +31,7 @@ pub(crate) trait Isa: Instruction {
     fn emit_move(
         masm: &mut Self::Masm,
         function: &Function,
+        frame: &Frame,
         from: Location,
         to: Location,
         class: Class,
@@ -477,7 +478,14 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
         if step.kind == MoveKind::Swap {
             self.masm.swap(from.gpr(), to.gpr());
         } else if from != to {
-            I::emit_move(self.masm, self.places.function, from, to, step.class);
+            I::emit_move(
+                self.masm,
+                self.places.function,
+                self.frame,
+                from,
+                to,
+                step.class,
+            );
         }
     }
 

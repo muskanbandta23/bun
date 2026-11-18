@@ -1,4 +1,4 @@
-use bun_engine_asm::{MacroAssembly, x64};
+use bun_engine_asm::{MacroAssembly, arm64, x64};
 
 use crate::client::{Client, Frame};
 use crate::ir::{Function, validate};
@@ -59,4 +59,5 @@ macro_rules! compilers {
 
 compilers! {
     X64Compiler: crate::x64::Inst, x64::MacroAssembler, Target::X64;
+    Arm64Compiler: crate::arm64::Inst, arm64::MacroAssembler, Target::Arm64;
 }

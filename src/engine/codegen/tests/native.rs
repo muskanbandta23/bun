@@ -9,3 +9,8 @@ use support::native::{Architecture, Native};
 fn x64() {
     campaign(600, || Native::new(Architecture::X64));
 }
+
+#[test]
+fn arm64() {
+    campaign(600, || Native::new(Architecture::Arm64));
+}

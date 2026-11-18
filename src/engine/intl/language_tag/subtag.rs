@@ -21,6 +21,15 @@ impl Subtag {
         Some(Subtag(padded))
     }
 
+    pub(crate) fn from_text(text: Text<'_>) -> Option<Subtag> {
+        let mut bytes = [0; MAX_LENGTH];
+        let bytes = bytes.get_mut(..text.len())?;
+        for (byte, unit) in bytes.iter_mut().zip(text.code_units()) {
+            *byte = u8::try_from(unit).ok()?;
+        }
+        Subtag::new(bytes)
+    }
+
     pub(crate) fn as_bytes(&self) -> &[u8] {
         let padding = u64::from_be_bytes(self.0).trailing_zeros() as usize / 8;
         &self.0[..MAX_LENGTH - padding]

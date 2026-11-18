@@ -1,1 +1,1 @@
-//! WebAssembly: memories, tables, instances, tiers and the JavaScript API.
+//! The JavaScript API of WebAssembly, and its objects in the heap.

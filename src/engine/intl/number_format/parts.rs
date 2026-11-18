@@ -11,7 +11,7 @@ use crate::{Part, PartKind, Parts, Result};
 pub(crate) type Fields = SmallVec<[Field; 8]>;
 
 /// What the kind of a field depends on.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub(crate) struct FieldContext {
     pub(crate) is_negative: bool,
     pub(crate) is_infinite: bool,

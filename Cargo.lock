@@ -665,6 +665,7 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bun_engine_exec_memory",
+ "libc",
  "smallvec",
 ]
 
@@ -814,9 +815,12 @@ dependencies = [
  "bun_engine_date",
  "bun_engine_number",
  "bun_engine_standalone",
+ "bun_engine_temporal",
  "bun_engine_text",
  "bun_engine_unicode",
+ "bun_highway",
  "bun_icu",
+ "bun_pod",
  "hashbrown 0.15.5",
  "smallvec",
 ]
@@ -984,6 +988,7 @@ dependencies = [
  "bun_engine_vm",
  "bun_engine_wasm_compiler",
  "bun_engine_wasm_format",
+ "bun_engine_wasm_runtime",
  "bun_threading",
  "hashbrown 0.15.5",
  "libc",
@@ -1009,6 +1014,20 @@ dependencies = [
  "bun_engine_asm",
  "bun_threading",
  "hashbrown 0.15.5",
+ "smallvec",
+]
+
+[[package]]
+name = "bun_engine_wasm_runtime"
+version = "0.0.0"
+dependencies = [
+ "bun_alloc",
+ "bun_engine_asm",
+ "bun_engine_exec_memory",
+ "bun_engine_wasm_compiler",
+ "bun_engine_wasm_format",
+ "bun_threading",
+ "libc",
  "smallvec",
 ]
 
@@ -2537,6 +2556,18 @@ dependencies = [
  "bun_paths",
  "bun_wyhash",
  "thiserror",
+]
+
+[[package]]
+name = "bun_url_whatwg"
+version = "0.0.0"
+dependencies = [
+ "bun_engine_standalone",
+ "bun_engine_text",
+ "bun_highway",
+ "bun_icu",
+ "bun_simdutf_sys",
+ "smallvec",
 ]
 
 [[package]]

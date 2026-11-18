@@ -86,6 +86,17 @@ option_enum! {
     }
 }
 
+option_enum! {
+    /// Of `ListFormat` and `RelativeTimeFormat`.
+    #[derive(Default)]
+    pub enum Style: "style must be either \"long\", \"short\", or \"narrow\"" {
+        #[default]
+        Long = "long",
+        Short = "short",
+        Narrow = "narrow",
+    }
+}
+
 /// DefaultNumberOption from the result of ToNumber on.
 pub fn integer_option(
     value: f64,

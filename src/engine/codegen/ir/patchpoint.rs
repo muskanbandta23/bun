@@ -91,6 +91,8 @@ bitflags::bitflags! {
         const UNEXTENDED_RESULTS = 1 << 1;
         /// The stack pointer has to be computed from the frame pointer afterwards.
         const MOVES_STACK_POINTER = 1 << 2;
+        /// The upper half of the register that an I32 operand asks for may hold anything. Otherwise it is clear.
+        const UNEXTENDED_OPERANDS = 1 << 3;
     }
 }
 

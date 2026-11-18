@@ -1,0 +1,20 @@
+[package]
+name = "bun_url_whatwg"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_engine_text.workspace = true
+bun_highway.workspace = true
+bun_icu.workspace = true
+bun_simdutf_sys.workspace = true
+smallvec.workspace = true
+
+[dev-dependencies]
+bun_engine_standalone.workspace = true

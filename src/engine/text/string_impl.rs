@@ -471,6 +471,7 @@ impl StaticString {
     }
 }
 
+#[unsafe(export_name = "engine_empty_string")]
 pub(crate) static EMPTY: StaticString = StaticString::atom(b"", hash_latin1(b""));
 
 const _: () = {

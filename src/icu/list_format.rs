@@ -4,6 +4,7 @@ use core::ffi::{CStr, c_char};
 
 use smallvec::SmallVec;
 
+use crate::argument::locale_id;
 use crate::error::Status;
 use crate::ffi::{call, length, open};
 use crate::formatted_value::{FormattedValue, UFormattedValue};
@@ -59,8 +60,9 @@ icu_handle! {
 
 impl ListFormatter {
     pub fn open(locale: &CStr, kind: Kind, width: Width) -> Result<ListFormatter> {
+        let locale = locale_id(locale)?;
         // SAFETY: `locale` is terminated.
-        open(|status| unsafe { ulistfmt_openForType(locale.as_ptr(), kind, width, status) })
+        open(|status| unsafe { ulistfmt_openForType(locale, kind, width, status) })
             .map(ListFormatter)
     }
 

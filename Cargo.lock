@@ -590,6 +590,7 @@ dependencies = [
  "bun_engine_inspector",
  "bun_engine_interpreter",
  "bun_engine_intl",
+ "bun_engine_number",
  "bun_engine_optimizer",
  "bun_engine_regexp_jit",
  "bun_engine_standalone",
@@ -871,7 +872,6 @@ dependencies = [
  "bun_pod",
  "bun_simdutf_sys",
  "hashbrown 0.15.5",
- "smallvec",
 ]
 
 [[package]]
@@ -1175,6 +1175,7 @@ dependencies = [
 name = "bun_icu"
 version = "0.0.0"
 dependencies = [
+ "bun_alloc",
  "bun_engine_standalone",
  "bun_opaque",
  "libc",

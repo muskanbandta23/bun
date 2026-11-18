@@ -107,16 +107,6 @@ pub fn f16round(x: f64) -> f64 {
     float16_to_f64(float16_from_f64(x))
 }
 
-#[inline]
-pub fn clz32(x: u32) -> u32 {
-    x.leading_zeros()
-}
-
-#[inline]
-pub fn imul(a: i32, b: i32) -> i32 {
-    a.wrapping_mul(b)
-}
-
 /// A factor that has the same effect on every number as dividing by `divisor`.
 pub fn exact_reciprocal(divisor: f64) -> Option<f64> {
     let bits = divisor.to_bits();

@@ -29,7 +29,13 @@ struct Window {
     end: DateDuration,
     start_nanoseconds: i128,
     end_nanoseconds: i128,
-    is_shifted: bool,
+}
+
+impl Window {
+    fn contains(&self, nanoseconds: i128) -> bool {
+        let (start, end) = (self.start_nanoseconds, self.end_nanoseconds);
+        (start.min(end)..=start.max(end)).contains(&nanoseconds)
+    }
 }
 
 /// A Duration Nudge Result Record.
@@ -80,8 +86,11 @@ impl Span {
         if !self.varies_in_length(unit) {
             return Ok(duration.time.add_days(duration.date.days)?.total(unit));
         }
-        let sign = direction(duration);
-        let window = self.window_around_end(sign, duration.date, unit, 1)?;
+        let step = i64::from(direction(duration));
+        let mut window = self.window(duration.date, unit, step, 0)?;
+        if !window.contains(self.end_nanoseconds) {
+            window = self.window(duration.date, unit, step, step)?;
+        }
         let length = (window.end_nanoseconds - window.start_nanoseconds).abs();
         let progress = self.end_nanoseconds - window.start_nanoseconds;
         let numerator = i128::from(window.start_count) * length + progress;
@@ -111,22 +120,15 @@ impl Span {
         self.nanoseconds_on(self.date_after(duration)?)
     }
 
-    /// ComputeNudgeWindow
-    fn window(
-        &self,
-        duration: DateDuration,
-        unit: Unit,
-        step: i64,
-        is_shifted: bool,
-    ) -> Result<Window> {
+    /// ComputeNudgeWindow. The result is not empty.
+    fn window(&self, duration: DateDuration, unit: Unit, step: i64, shift: i64) -> Result<Window> {
         let count = match unit {
             Unit::Year => duration.years,
             Unit::Month => duration.months,
             Unit::Week => duration.weeks + duration.days / 7,
             _ => duration.days,
         };
-        let shifts = is_shifted && unit >= Unit::Month;
-        let start_count = count - count % step + if shifts { step } else { 0 };
+        let start_count = count - count % step + shift;
         let start = truncated(duration, unit, start_count);
         let end = truncated(duration, unit, start_count + step);
         let start_nanoseconds = if start == DateDuration::ZERO {
@@ -134,37 +136,17 @@ impl Span {
         } else {
             self.nanoseconds_after(start)?
         };
+        let end_nanoseconds = self.nanoseconds_after(end)?;
+        if start_nanoseconds == end_nanoseconds {
+            return Err(Error::RoundingAcrossSkippedDay);
+        }
         Ok(Window {
             start_count,
             start,
             end,
             start_nanoseconds,
-            end_nanoseconds: self.nanoseconds_after(end)?,
-            is_shifted,
+            end_nanoseconds,
         })
-    }
-
-    /// The first steps of NudgeToCalendarUnit. The window is not empty.
-    fn window_around_end(
-        &self,
-        sign: i8,
-        duration: DateDuration,
-        unit: Unit,
-        increment: i64,
-    ) -> Result<Window> {
-        let step = increment * i64::from(sign);
-        let mut window = self.window(duration, unit, step, false)?;
-        let (earlier, later) = match sign {
-            1 => (window.start_nanoseconds, window.end_nanoseconds),
-            _ => (window.end_nanoseconds, window.start_nanoseconds),
-        };
-        if !(earlier..=later).contains(&self.end_nanoseconds) {
-            window = self.window(duration, unit, step, true)?;
-        }
-        if window.start_nanoseconds == window.end_nanoseconds {
-            return Err(Error::RoundingAcrossSkippedDay);
-        }
-        Ok(window)
     }
 
     /// NudgeToCalendarUnit
@@ -174,8 +156,13 @@ impl Span {
         duration: DateDuration,
         rounding: Rounding,
     ) -> Result<Nudged> {
-        let increment = rounding.increment.get();
-        let window = self.window_around_end(sign, duration, rounding.unit, increment)?;
+        let (unit, increment) = (rounding.unit, rounding.increment.get());
+        let step = increment * i64::from(sign);
+        let mut window = self.window(duration, unit, step, 0)?;
+        let is_outside = !window.contains(self.end_nanoseconds);
+        if is_outside && unit >= Unit::Month {
+            window = self.window(duration, unit, step, step)?;
+        }
         let length = (window.end_nanoseconds - window.start_nanoseconds) * i128::from(sign);
         let progress = (self.end_nanoseconds - window.start_nanoseconds) * i128::from(sign);
         let lesser_is_odd = || window.start_count / increment % 2 != 0;
@@ -190,7 +177,7 @@ impl Span {
         Ok(Nudged {
             duration: date.into(),
             nanoseconds,
-            did_expand: rounds_up || window.is_shifted,
+            did_expand: rounds_up || is_outside,
         })
     }
 

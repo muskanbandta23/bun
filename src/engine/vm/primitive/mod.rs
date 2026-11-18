@@ -1,6 +1,7 @@
 //! The primitive values that are cells.
 
 mod bigint;
+mod number_string;
 mod rope;
 mod string;
 mod string_cache;

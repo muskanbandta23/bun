@@ -50,7 +50,7 @@ impl SparseElements {
         self.map().get(&index)
     }
 
-    pub(super) fn insert(&self, index: u32, value: Value, attributes: Attributes) {
+    pub(crate) fn insert(&self, index: u32, value: Value, attributes: Attributes) {
         let old = self.map().insert(index, SparseEntry { value, attributes });
         self.did_drop(old);
         if old.is_none() {

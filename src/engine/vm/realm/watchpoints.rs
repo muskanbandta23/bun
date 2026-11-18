@@ -60,6 +60,8 @@ realm_watchpoints! {
     StringToString,
     StringValueOf,
     NumberToString,
+    /// `Symbol.toPrimitive`, `valueOf`, `toString`, `toJSON` and `toISOString` of `Date.prototype`.
+    DateConversions,
     MapSet,
     SetAdd,
     SetPrimordialProperties,

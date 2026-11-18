@@ -1,6 +1,7 @@
 //! Strings, regular expressions, dates and JSON.
 
 mod date;
+pub mod json;
 mod regexp;
 mod string;
 

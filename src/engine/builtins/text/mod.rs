@@ -1,5 +1,6 @@
 //! `String`, `RegExp`, `JSON` and the escaping of text.
 
+mod json;
 pub(crate) mod string;
 mod uri;
 
@@ -9,7 +10,9 @@ use crate::prelude::*;
 use crate::watchpoints::Conditions;
 
 pub(crate) fn initialize_slot(cx: &Cx, slot: RealmSlot) -> bool {
-    string::initialize_slot(cx, slot) || uri::initialize_slot(cx, slot)
+    string::initialize_slot(cx, slot)
+        || uri::initialize_slot(cx, slot)
+        || json::initialize_slot(cx, slot)
 }
 
 pub(crate) fn add_conditions(

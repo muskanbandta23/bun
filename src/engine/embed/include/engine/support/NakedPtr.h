@@ -9,7 +9,7 @@ namespace WTF {
 template<typename T>
 class NakedPtr {
 public:
-    NakedPtr() = default;
+    NakedPtr() {}
     NakedPtr(T* pointer)
         : m_ptr(pointer)
     {

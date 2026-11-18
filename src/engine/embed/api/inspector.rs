@@ -2,13 +2,12 @@ use core::cell::Cell;
 use core::ptr::NonNull;
 use std::rc::Rc;
 
+use bun_engine_inspector::{AsyncCallType, Controller, Host, ProfilingReason};
 use bun_engine_macros::export;
 use bun_engine_text::{StringImpl, StringRef, Text};
 use bun_engine_vm::{
     Cx, GcFree, GlobalObject, JsResult, MessageLevel, MessageType, SourceProvider, Value,
 };
-
-use super::missing::inspector::{AsyncCallType, Controller, Host, ProfilingReason};
 
 /// What owns the `InspectorBackend` in C++.
 enum InspectorController {}

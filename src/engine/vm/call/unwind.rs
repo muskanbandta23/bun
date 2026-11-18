@@ -57,7 +57,7 @@ pub unsafe fn unwind(vm: &Vm, frame: &CallFrame) {
         if let Some((address, bytecode_offset)) = handler {
             return vm.set_catch_target(frame.address(), address, bytecode_offset);
         }
-        if vm.has_debugger() {
+        if vm.has_debugger() && is_catchable {
             vm.set_top_call_frame(frame);
             // SAFETY: as above.
             unsafe { debugger::did_unwind_frame(frame) };

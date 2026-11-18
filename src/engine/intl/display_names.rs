@@ -88,6 +88,8 @@ pub struct Options {
     pub language_display: LanguageDisplay,
 }
 
+const ESTIMATED_SIZE: usize = 4 << 10;
+
 /// Those with the same locale and options are one.
 #[derive(Clone)]
 pub struct DisplayNames(Rc<Shared>);
@@ -116,6 +118,7 @@ impl DisplayNames {
         cache.display_names.find_or_insert(
             |it| it.0.options == options && it.0.locale == locale,
             || {
+                cache.note_allocation(ESTIMATED_SIZE);
                 let icu_locale = locale.icu_locale(&[])?;
                 Ok(DisplayNames(Rc::new(Shared {
                     source: Source::open(&icu_locale, options)?,

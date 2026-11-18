@@ -2279,7 +2279,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_sliceBody(JSC::JSGlobalObje
         return {};
     }
 
-    RefPtr<ArrayBuffer> buffer = castedThis->possiblySharedBuffer();
+    auto* buffer = castedThis->possiblySharedBuffer();
     if (!buffer) {
         throwOutOfMemoryError(globalObject, throwScope);
         return {};
@@ -2287,7 +2287,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_sliceBody(JSC::JSGlobalObje
 
     if (castedThis->isResizableOrGrowableShared()) {
         auto* subclassStructure = globalObject->JSResizableOrGrowableSharedBufferSubclassStructure();
-        auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(buffer), byteOffset + startOffset, newLength);
+        auto* uint8Array = JSC::JSUint8Array::createOn(lexicalGlobalObject, subclassStructure, *buffer, byteOffset + startOffset, newLength);
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!uint8Array) [[unlikely]] {
             throwOutOfMemoryError(globalObject, throwScope);
@@ -2297,7 +2297,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_sliceBody(JSC::JSGlobalObje
     }
 
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
-    auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(buffer), byteOffset + startOffset, newLength);
+    auto* uint8Array = JSC::JSUint8Array::createOn(lexicalGlobalObject, subclassStructure, *buffer, byteOffset + startOffset, newLength);
     RETURN_IF_EXCEPTION(throwScope, {});
     if (!uint8Array) [[unlikely]] {
         throwOutOfMemoryError(globalObject, throwScope);
@@ -3843,7 +3843,7 @@ EncodedJSValue constructBufferFromArrayBuffer(JSC::ThrowScope& throwScope, JSGlo
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
     auto* jsBuffer = uncheckedDowncast<JSC::JSArrayBuffer>(arrayBufferValue.asCell());
-    RefPtr<ArrayBuffer> buffer = jsBuffer->impl();
+    auto* buffer = jsBuffer->impl();
     if (buffer->isDetached()) {
         return throwVMTypeError(globalObject, throwScope, "Buffer is detached"_s);
     }
@@ -3885,7 +3885,7 @@ EncodedJSValue constructBufferFromArrayBuffer(JSC::ThrowScope& throwScope, JSGlo
         // Node only returns a length-tracking Buffer when no explicit length is given.
         std::optional<size_t> viewLength;
         if (!lengthValue.isUndefined()) viewLength = length;
-        auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(buffer), offset, viewLength);
+        auto* uint8Array = JSC::JSUint8Array::createOn(lexicalGlobalObject, subclassStructure, *buffer, offset, viewLength);
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!uint8Array) [[unlikely]] {
             throwOutOfMemoryError(globalObject, throwScope);
@@ -3894,7 +3894,7 @@ EncodedJSValue constructBufferFromArrayBuffer(JSC::ThrowScope& throwScope, JSGlo
         RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
     }
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
-    auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(buffer), offset, length);
+    auto* uint8Array = JSC::JSUint8Array::createOn(lexicalGlobalObject, subclassStructure, *buffer, offset, length);
     RETURN_IF_EXCEPTION(throwScope, {});
     if (!uint8Array) [[unlikely]] {
         throwOutOfMemoryError(globalObject, throwScope);

@@ -148,7 +148,7 @@ using IdentifierSet = UncheckedKeyHashSet<RefPtr<UniquedStringImpl>, IdentifierR
     N(line) N(message) N(name) N(next) N(origin) N(parse) N(prototype) N(resolve) N(set) N(size) N(sourceURL) \
     N(stack) N(stackTraceLimit) N(target) N(then) N(toJSON) N(toString) N(type) N(value) N(values) K(default) \
     K(delete) K(private) K(public) K(return) K(throw) K(undefined) S(asyncDispose) S(asyncIterator) S(dispose) \
-    S(iterator) S(species) S(toPrimitive) S(toStringTag) P(ArrayBuffer) P(meta) P(moduleLoader) P(starDefault) \
+    S(iterator) S(species) S(toPrimitive) S(toStringTag) P(meta) P(moduleLoader) P(starDefault) \
     P(starNamespace) P(then)
 // clang-format on
 
@@ -178,7 +178,6 @@ class BuiltinNames {
 public:
     const Identifier& entriesPublicName() const { return m_names.entries; }
     const Identifier& valuesPublicName() const { return m_names.values; }
-    const Identifier& ArrayBufferPrivateName() const { return m_names.ArrayBufferPrivateName; }
     const Identifier& metaPrivateName() const { return m_names.metaPrivateName; }
     const Identifier& moduleLoaderPrivateName() const { return m_names.moduleLoaderPrivateName; }
     const Identifier& thenPrivateName() const { return m_names.thenPrivateName; }

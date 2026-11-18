@@ -95,6 +95,7 @@ impl Heap {
         self.policy.will_collect(scope);
         self.activity.will_collect(scope);
         self.notify_observers(|observer| observer.will_collect());
+        (self.vm()).notify_collection_observers(|observer| observer.will_collect());
 
         let roots = if has_nothing_to_find {
             self.policy.did_collect(scope, 0, 0);
@@ -115,6 +116,7 @@ impl Heap {
             self.vm().did_collect(scope, &roots.cells);
         }
         self.notify_observers(|observer| observer.did_collect(scope));
+        (self.vm()).notify_collection_observers(|observer| observer.did_collect(scope));
         if roots.is_some() {
             self.give_memory_back(scope);
         }

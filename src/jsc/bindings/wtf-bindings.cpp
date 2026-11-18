@@ -242,8 +242,7 @@ extern "C" size_t WTF__base64URLEncode(const char* __restrict inputDataBuffer, s
 // JS `Date.parse` with no VM, except that a date-time with no time zone reads as UTC.
 extern "C" double Bun__parseDateTimeString(const Latin1Character* string, size_t length)
 {
-    bool isLocalTime = false;
-    return v8::TimeClip(v8::ParseDateTimeString(byteCast<uint8_t>(string), length, isLocalTime));
+    return JSC::parseDateAsUTC({ byteCast<uint8_t>(string), length });
 }
 
 namespace Bun {

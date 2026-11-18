@@ -36,8 +36,6 @@ public:
         JSC::SourceProviderSourceType sourceType = JSC::SourceProviderSourceType::Module,
         bool isBuiltIn = false);
     ~SourceProvider();
-    unsigned hash() const override;
-    StringView source() const override;
 
     RefPtr<JSC::CachedBytecode> cachedBytecode() const final
     {
@@ -52,17 +50,15 @@ public:
     uint64_t m_madeFromHash { 0 };
 
 private:
-    SourceProvider(void* bunVM, ResolvedSource& resolvedSource, Ref<WTF::StringImpl>&& sourceImpl,
-        JSC::SourceTaintedOrigin taintedness,
+    SourceProvider(void* bunVM, ResolvedSource& resolvedSource, const WTF::String& source,
         const SourceOrigin& sourceOrigin, WTF::String&& sourceURL,
         const TextPosition& startPosition, JSC::SourceProviderSourceType sourceType)
-        : Base(sourceOrigin, WTF::move(sourceURL), String(), taintedness, startPosition, sourceType, resolvedSource.is_static ? JSC::SourceProvenance::Static : JSC::SourceProvenance::GeneratedAtRuntime)
+        : Base(source, sourceOrigin, WTF::move(sourceURL), startPosition, sourceType, resolvedSource.is_static ? JSC::SourceProvenance::Static : JSC::SourceProvenance::GeneratedAtRuntime)
         , m_moduleInfo(WTF::move(resolvedSource.module_info))
         , m_tag(resolvedSource.tag)
         , m_alreadyBundled(resolvedSource.already_bundled)
         , m_dependsOnMoreThanSource(resolvedSource.depends_on_more_than_source)
         , m_bunVM(bunVM)
-        , m_source(WTF::move(sourceImpl))
     {
     }
 
@@ -70,8 +66,6 @@ private:
     // valid when the provider outlives its global under --isolate caching.
     void* m_bunVM;
     RefPtr<JSC::CachedBytecode> m_cachedBytecode;
-    Ref<WTF::StringImpl> m_source;
-    unsigned m_hash = 0;
 };
 
 } // namespace Zig

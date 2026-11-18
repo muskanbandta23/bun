@@ -84,7 +84,7 @@ impl BigIntRef<'_> {
 }
 
 /// NumberToBigInt of ECMA-262.
-#[inline]
+#[inline(always)]
 pub fn from_number(number: f64) -> Result<New<impl Fill>, Error> {
     let integer = number as i64;
     if integer as f64 == number && integer != i64::MAX {

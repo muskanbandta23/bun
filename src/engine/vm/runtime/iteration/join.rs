@@ -78,7 +78,7 @@ impl JsArray {
             // SAFETY: made since the last collection.
             return Ok(unsafe { Gc::from_address(string) });
         }
-        let comma = cx.small_strings.single_character(cx, b',');
+        let comma = cx.small_strings.single_character(b',');
         let join = |cx: &mut Cx| self.join_elements(cx, self.length().into(), comma);
         let string = self.unless_being_joined(cx, join)?;
         if let Some(shared) = shared.filter(|it| it.iter().all(Value::is_primitive)) {

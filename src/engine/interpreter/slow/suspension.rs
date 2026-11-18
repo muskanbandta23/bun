@@ -3,7 +3,7 @@ use bun_engine_macros::native_abi;
 use bun_engine_vm::code::metadata::{self, WeakCell};
 use bun_engine_vm::{
     self as vm, CallFrame, Coroutine, Gc, IterationMode, JsAsyncFunctionGenerator,
-    JsAsyncGenerator, JsFunction, JsGenerator, JsPromise, Value, Vm,
+    JsAsyncGenerator, JsGenerator, JsPromise, Value, Vm,
 };
 
 use super::calls::{PreparedCall, Returns, write_header};
@@ -121,9 +121,11 @@ execute! {
         Next::Return(vm::async_throw(cx, f.get_or_empty(op.generator), f.reg(op.value)).into())
     }
     DebugAwait(op, cx, f) {
-        let coroutine = Coroutine::ensure(cx, f.header, f.reg_or_empty(op.generator))?;
-        (cx.hooks().debug_await)(cx, f.header, op.hook, coroutine)?;
-        f.set(op.generator, coroutine);
+        if cx.stepping_debugger_count().get() != 0 {
+            let coroutine = Coroutine::ensure(cx, f.header, f.reg_or_empty(op.generator))?;
+            f.set(op.generator, coroutine);
+            cx.debug_await(f.header, op.hook, coroutine);
+        }
     }
 }
 
@@ -154,7 +156,7 @@ pub(crate) unsafe fn prepare_resumption(
         let generator = f.get(op.generator).cast::<JsGenerator>();
         generator.mark_executing();
         let callee = generator.callee();
-        let executable = JsFunction::executable_of(callee.cell());
+        let executable = generator.executable();
         let profile = &f.entry::<metadata::Call>(op.metadata).profile;
         if profile.callee().bits() != callee.address()
             && profile.executable().bits() != executable.address()

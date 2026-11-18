@@ -45,10 +45,11 @@ impl<'a> BigIntRef<'a> {
 }
 
 /// An integer of at most two digits.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct SmallBigInt {
     digits: [u64; 2],
-    is_negative: bool,
+    /// Does not count for zero.
+    has_minus: bool,
 }
 
 impl SmallBigInt {
@@ -59,13 +60,13 @@ impl SmallBigInt {
     pub const fn new(is_negative: bool, magnitude: u128) -> SmallBigInt {
         SmallBigInt {
             digits: [magnitude as u64, (magnitude >> 64) as u64],
-            is_negative: is_negative && magnitude != 0,
+            has_minus: is_negative,
         }
     }
 
     #[inline(always)]
     pub fn is_negative(self) -> bool {
-        self.is_negative
+        self.has_minus && !self.is_zero()
     }
 
     #[inline(always)]
@@ -90,7 +91,7 @@ impl SmallBigInt {
 
     #[inline(always)]
     pub fn as_ref(&self) -> BigIntRef<'_> {
-        BigIntRef::new(self.is_negative, &self.digits[..self.length()])
+        BigIntRef::new(self.is_negative(), &self.digits[..self.length()])
     }
 }
 

@@ -21,6 +21,7 @@ pub enum Fault {
     Switches,
     SuspendPoints,
     SavedRegisters,
+    ScopeRegisters,
     Constants,
     NameLists,
     NotAnInstruction,
@@ -97,7 +98,9 @@ const fn required_flags(opcode: Opcode) -> CodeFlags {
         | Opcode::NewArrayWithSpecies
         | Opcode::ToObject => CodeFlags::BUILTIN,
         Opcode::TailCall | Opcode::TailCallVarargs => CodeFlags::HAS_TAIL_CALLS,
-        Opcode::Debug | Opcode::DebugAwait => CodeFlags::HAS_DEBUG_HOOKS,
+        Opcode::Debug | Opcode::DebugAwait | Opcode::JumpIfFrameIsKept => {
+            CodeFlags::HAS_DEBUG_HOOKS
+        }
         Opcode::Cover => CodeFlags::HAS_COVERAGE,
         _ => CodeFlags::empty(),
     }
@@ -234,7 +237,11 @@ impl Verifier<'_> {
             is_valid.ok_or(Fault::SavedRegisters)?;
             last = range.clone();
         }
-        (last.end as usize == saved.len()).ok_or(Fault::SavedRegisters)
+        (last.end as usize == saved.len()).ok_or(Fault::SavedRegisters)?;
+
+        let scopes = (body.tables.as_ref()).map_or(&[][..], |tables| &tables.scope_registers);
+        (scopes.is_sorted_by_key(|it| it.0) && scopes.iter().all(|it| self.is_run(it.1, 1)))
+            .ok_or(Fault::ScopeRegisters)
     }
 
     fn check_instructions(&mut self) -> Result<(), VerifyError> {

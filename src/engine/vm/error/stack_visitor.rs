@@ -110,6 +110,7 @@ pub struct StackVisitor<'a> {
     return_address: usize,
     next: Next,
     compiled: Option<Rc<dyn CompiledCode>>,
+    visits_tail_deleted_frames: bool,
 }
 
 impl<'a> StackVisitor<'a> {
@@ -123,6 +124,15 @@ impl<'a> StackVisitor<'a> {
             return_address: 0,
             next: Next::First,
             compiled: None,
+            visits_tail_deleted_frames: false,
+        }
+    }
+
+    /// With those that a tail call would have removed.
+    pub(crate) fn frames_for_debugger(vm: &'a Vm) -> StackVisitor<'a> {
+        StackVisitor {
+            visits_tail_deleted_frames: true,
+            ..Self::frames(vm)
         }
     }
 
@@ -269,7 +279,14 @@ impl<'a> Iterator for StackVisitor<'a> {
             if let Some(index) = origin.inline_frame {
                 return Some(self.visit_inlined(frame, origin.bytecode_offset, index));
             }
+            let has_called = self.return_address != 0;
             self.leave_machine_frame();
+            if has_called
+                && code_block.keeps_frame_at(origin.bytecode_offset)
+                && !self.visits_tail_deleted_frames
+            {
+                continue;
+            }
             visited.code_block = Some(code_block.baseline());
             visited.bytecode_offset = origin.bytecode_offset;
             return Some(visited);
@@ -349,19 +366,25 @@ impl Cx {
 }
 
 impl Vm {
+    fn entries_with_context(&self) -> impl Iterator<Item = &EntryContext> {
+        // SAFETY: each is in the frame of a call of `with_entry_context` that has not returned.
+        let at = |entry: *const EntryContext| unsafe { entry.as_ref() };
+        let innermost = at(self.services.errors.entry_contexts.0.get());
+        core::iter::successors(innermost, move |entry| at(entry.previous))
+    }
+
+    /// Of the calls that have not returned, innermost first.
+    pub fn entry_contexts(&self) -> impl Iterator<Item = Value> {
+        self.entries_with_context().map(|entry| entry.context)
+    }
+
     /// # Safety
     /// The address of an entry frame that is on the stack.
     pub unsafe fn entry_context(&self, entry_frame: usize) -> Option<Value> {
         // SAFETY: the caller's.
         let outer = unsafe { EntryRecord::of(entry_frame) }.previous_top_entry_frame;
-        let mut next = self.services.errors.entry_contexts.0.get();
-        // SAFETY: each is in the frame of a call of `with_entry_context` that has not returned.
-        while let Some(entry) = unsafe { next.as_ref() } {
-            if entry.outer_entry_frame == outer {
-                return Some(entry.context);
-            }
-            next = entry.previous;
-        }
-        None
+        (self.entries_with_context())
+            .find(|entry| entry.outer_entry_frame == outer)
+            .map(|entry| entry.context)
     }
 }

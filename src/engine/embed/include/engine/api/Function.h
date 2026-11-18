@@ -53,7 +53,7 @@ public:
     static bool preventExtensions(JSObject*, JSGlobalObject*) ENGINE_SYMBOL(engine_Function_prevent_extensions);
     ENGINE_DECLARE_VISIT_CHILDREN(Function);
 
-    static JSFunction* create(VM&, JSGlobalObject* globalObject, unsigned length, const String& name, NativeFunction function, ImplementationVisibility visibility, Intrinsic intrinsic = NoIntrinsic, NativeFunction constructor = callHostFunctionAsConstructor, const DOMJIT::Signature* = nullptr)
+    static JSFunction* create(VM&, JSGlobalObject* globalObject, unsigned length, const String& name, NativeFunction function, ImplementationVisibility visibility, Intrinsic intrinsic = NoIntrinsic, NativeFunction constructor = callHostFunctionAsConstructor)
     {
         return Engine::function_create_native(globalObject, length, name, function, constructor, intrinsic, visibility);
     }
@@ -219,8 +219,8 @@ protected:
     enum class PropertyAdditionMode { WithStructureTransition,
         WithoutStructureTransition };
 
-    InternalFunction(VM& vm, Structure* structure, NativeFunction functionForCall, NativeFunction functionForConstruct = nullptr)
-        : Base(vm, structure)
+    InternalFunction(VM& vm, Structure* structure, NativeFunction functionForCall, NativeFunction functionForConstruct = nullptr, Butterfly* butterfly = nullptr)
+        : Base(vm, structure, butterfly)
         , m_globalObject(structure->realm())
         , m_executable(vm.internalFunctionExecutable())
         , m_functionForCall(functionForCall)

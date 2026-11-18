@@ -23,8 +23,9 @@ impl CellList {
     fn take_many(&self) -> Option<Box<Many>> {
         let word = self.0.get();
         // SAFETY: from `put_many`, and forgotten by the list.
-        (word != 0 && word & IS_SINGLE == 0)
-            .then(|| unsafe { Box::from_raw(core::ptr::with_exposed_provenance_mut(self.0.take())) })
+        (word != 0 && word & IS_SINGLE == 0).then(|| unsafe {
+            Box::from_raw(core::ptr::with_exposed_provenance_mut(self.0.take()))
+        })
     }
 
     #[inline(always)]

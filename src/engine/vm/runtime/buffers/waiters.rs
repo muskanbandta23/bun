@@ -13,8 +13,8 @@ use smallvec::SmallVec;
 
 use super::element::Element;
 use crate::{
-    Cx, Gc, GcFree, JsPromise, JsResult, JsString, Timer, Trap, Traps, TypedArray, Value, Vm, WeakTicket,
-    WorkKind,
+    Cx, Gc, GcFree, JsPromise, JsResult, JsString, Timer, Trap, Traps, TypedArray, Value, Vm,
+    WeakTicket, WorkKind,
 };
 
 /// The numbers are what `memory.atomic.wait` returns.
@@ -178,7 +178,8 @@ pub fn wait_at_address(
             Some(timeout) => Some(timeout.min(IDLE_AFTER)),
             None => Some(IDLE_AFTER),
         };
-        let nanoseconds = until.map(|it| u64::try_from((it - elapsed).as_nanos()).unwrap_or(u64::MAX));
+        let nanoseconds =
+            until.map(|it| u64::try_from((it - elapsed).as_nanos()).unwrap_or(u64::MAX));
         let _ = Futex::wait(&thread.state, state, nanoseconds);
     }
     if !remove(address, Arc::as_ptr(&thread).addr()) {

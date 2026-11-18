@@ -66,6 +66,8 @@ impl<T: Element> BufferSlice<'_, T> {
         }
         let (lanes, infinity) = (self.bits(), Bits::truncate(T::TYPE.bits_of_infinity()));
         // SAFETY: as above.
-        unsafe { Lane::index_of_magnitude_above(lanes.as_ptr(), lanes.len(), infinity) < self.len() }
+        unsafe {
+            Lane::index_of_magnitude_above(lanes.as_ptr(), lanes.len(), infinity) < self.len()
+        }
     }
 }

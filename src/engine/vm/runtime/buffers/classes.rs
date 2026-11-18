@@ -2,8 +2,8 @@
 
 use super::view::ResizableView;
 use crate::{
-    CellKind, CellType, CellTypeRange, ClampedU8, Class, ElementType, Float16, IndexingMode, JsDataView,
-    JsTypedArray, ShapeSpec, TypedArray, ascii_literal,
+    CellKind, CellType, CellTypeRange, ClampedU8, Class, ElementType, Float16, IndexingMode,
+    JsDataView, JsTypedArray, ShapeSpec, TypedArray, ascii_literal,
 };
 
 macro_rules! classes {

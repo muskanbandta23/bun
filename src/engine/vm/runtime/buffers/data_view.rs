@@ -17,7 +17,11 @@ impl JsDataView {
         byte_offset: u64,
     ) -> Option<BufferSlice<'a, T>> {
         let bytes = self.bytes(no_gc);
-        Some(bytes.try_slice(byte_offset as usize, size_of::<T>())?.cast())
+        Some(
+            bytes
+                .try_slice(byte_offset as usize, size_of::<T>())?
+                .cast(),
+        )
     }
 
     #[cold]
@@ -37,11 +41,17 @@ impl JsDataView {
         byte_offset: u64,
         is_little_endian: bool,
     ) -> JsResult<T> {
-        let element = self.element_at::<T>(&cx.no_gc(), byte_offset).map(|it| it.bits().at(0));
+        let element = self
+            .element_at::<T>(&cx.no_gc(), byte_offset)
+            .map(|it| it.bits().at(0));
         let Some(bits) = element else {
             return self.throw_no_element(cx);
         };
-        Ok(T::from_bits(if is_little_endian { bits } else { bits.swap_bytes() }))
+        Ok(T::from_bits(if is_little_endian {
+            bits
+        } else {
+            bits.swap_bytes()
+        }))
     }
 
     /// SetViewValue, once the arguments are converted.
@@ -54,7 +64,11 @@ impl JsDataView {
         is_little_endian: bool,
     ) -> JsResult<()> {
         let bits = value.to_bits();
-        let bits = if is_little_endian { bits } else { bits.swap_bytes() };
+        let bits = if is_little_endian {
+            bits
+        } else {
+            bits.swap_bytes()
+        };
         match self.element_at::<T>(&cx.no_gc(), byte_offset) {
             Some(element) => element.bits().set(0, bits),
             None => return self.throw_no_element(cx),

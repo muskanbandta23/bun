@@ -410,7 +410,8 @@ impl ArrayBuffer {
         self.wrapper.store(0, Ordering::Relaxed);
         self.reported_size.set(0);
         self.has_new_referrers.set(false);
-        (self.ref_count.load(Ordering::Acquire) == 1).then(|| self.change(ArrayBufferContents::take))
+        (self.ref_count.load(Ordering::Acquire) == 1)
+            .then(|| self.change(ArrayBufferContents::take))
     }
 
     /// DetachArrayBuffer, whatever pins it. Panics if it is shared.

@@ -120,7 +120,8 @@ impl<'a, T: Element> BufferSlice<'a, T> {
     #[inline(always)]
     pub fn slice(self, range: Range<usize>) -> BufferSlice<'a, T> {
         let count = range.end.wrapping_sub(range.start);
-        self.try_slice(range.start, count).expect("inside the slice")
+        self.try_slice(range.start, count)
+            .expect("inside the slice")
     }
 
     /// As much of the range as is inside.
@@ -170,7 +171,9 @@ impl<'a, T: Element> BufferSlice<'a, T> {
     pub fn copy_from(self, source: BufferSlice<'_, T>) {
         assert!(self.length == source.length);
         // SAFETY: both have that many bytes.
-        unsafe { volatile_copy_memory::<u8>(self.start.cast(), source.start.cast(), self.byte_len()) }
+        unsafe {
+            volatile_copy_memory::<u8>(self.start.cast(), source.start.cast(), self.byte_len())
+        }
     }
 
     /// Byte by byte from the first on, so that it may come to read what it has written. Panics if the lengths differ.

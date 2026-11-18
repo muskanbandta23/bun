@@ -47,7 +47,8 @@ searches! {
 /// `len` lanes at `elements` are readable, and they are at least [`MIN_LANE_BYTES`].
 pub trait Lane: Copy {
     /// The first lane whose bits under the mask are `needle`.
-    unsafe fn index_of_masked(elements: *const Self, len: usize, mask: Self, needle: Self) -> usize;
+    unsafe fn index_of_masked(elements: *const Self, len: usize, mask: Self, needle: Self)
+    -> usize;
 
     /// The last one.
     unsafe fn last_index_of_masked(

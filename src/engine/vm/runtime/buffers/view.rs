@@ -369,13 +369,15 @@ impl JsArrayBufferView {
     }
 
     fn update_length(&self, buffer: &ArrayBuffer) -> Option<usize> {
-        let length = (buffer.byte_length().checked_sub(self.declared_byte_offset()))
-            .filter(|_| !self.is_detached())
-            .map(|rest| rest >> self.size_shift())
-            .and_then(|available| match self.declared_length() {
-                Some(length) => (length <= available).then_some(length),
-                None => Some(available),
-            });
+        let length = (buffer
+            .byte_length()
+            .checked_sub(self.declared_byte_offset()))
+        .filter(|_| !self.is_detached())
+        .map(|rest| rest >> self.size_shift())
+        .and_then(|available| match self.declared_length() {
+            Some(length) => (length <= available).then_some(length),
+            None => Some(available),
+        });
         self.length.set(length.unwrap_or(0));
         length
     }
@@ -526,7 +528,8 @@ impl JsArrayBufferView {
             // SAFETY: what the fields have in each mode. Neither is freed before marking ends.
             unsafe {
                 if mode.contains(ViewMode::HAS_BUFFER) {
-                    let buffer = core::ptr::with_exposed_provenance::<ArrayBuffer>(self.buffer.get());
+                    let buffer =
+                        core::ptr::with_exposed_provenance::<ArrayBuffer>(self.buffer.get());
                     visitor.append_word((*buffer).wrapper_address() as u64);
                 } else if mode.contains(ViewMode::OVERSIZE) {
                     visitor.report_extra_memory(self.byte_length());
@@ -540,7 +543,11 @@ impl JsArrayBufferView {
     fn estimated_size(&self, vm: &Vm) -> usize {
         // SAFETY: the method of the base.
         let own = unsafe { (JsObject::OPS.estimated_size)(self, vm) };
-        own + if self.has_buffer() { 0 } else { self.byte_length() }
+        own + if self.has_buffer() {
+            0
+        } else {
+            self.byte_length()
+        }
     }
 }
 

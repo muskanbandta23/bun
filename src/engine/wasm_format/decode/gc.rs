@@ -8,6 +8,8 @@ use crate::index::{DataIndex, ElemIndex, TypeIndex};
 use crate::types::{RefType, TypeKind};
 use crate::visitor::Visitor;
 
+pub(crate) const STRUCT_SET: u32 = 5;
+
 const FROM_IS_NULLABLE: u8 = 1;
 const TO_IS_NULLABLE: u8 = 2;
 
@@ -31,7 +33,7 @@ impl<M: Mode> Decoder<'_, M> {
                 let (ty, field) = self.field(name)?;
                 v.struct_get(ty, field, sign)
             }
-            5 => {
+            STRUCT_SET => {
                 let (ty, field) = self.field("struct.set")?;
                 v.struct_set(ty, field)
             }

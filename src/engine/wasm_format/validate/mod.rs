@@ -31,11 +31,12 @@ use core::mem;
 pub(crate) use self::constant::validate_const_expr;
 use self::locals::Locals;
 use crate::alloc::TryPush;
-use crate::decode::{Check, Decoder, Progress};
+use crate::decode::{Check, Decoder, Mode, Progress, STRUCT_SET, VectorOp, opcodes_at};
 use crate::error::{Error, Missing};
 use crate::index::{CodeIndex, TypeIndex};
 use crate::limits::{MAX_LOCALS, MAX_OPERAND_STACK_HEIGHT};
-use crate::module::{FunctionFacts, FunctionFlags, ModuleHeader};
+use crate::module::{Features, FunctionFacts, FunctionFlags, ModuleHeader};
+use crate::opcode::{GC_PREFIX, TRY_TABLE, VECTOR_PREFIX};
 use crate::reader::Reader;
 use crate::types::{BlockType, HeapType, RefType, Types, ValType};
 use crate::visitor::Visit;
@@ -67,6 +68,7 @@ fn numbered(reason: Arguments<'_>) -> Error {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum FrameKind {
     Body,
+    Constant,
     Block,
     Loop,
     If,
@@ -119,8 +121,6 @@ pub(crate) struct Validator<'a> {
     locals: Locals,
     br_tables: u32,
     uses_simd: bool,
-    /// As constant expressions may.
-    may_name_any_func: bool,
 }
 
 const NEVER_USED: ValType = ValType::NONE;
@@ -147,7 +147,6 @@ impl<'a> Validator<'a> {
             locals,
             br_tables: 0,
             uses_simd: false,
-            may_name_any_func: false,
         };
         let result = work(&mut validator);
         if validator.values.len().max(validator.frames.capacity()) <= RETAINED_LENGTH {
@@ -184,7 +183,7 @@ impl<'a> Validator<'a> {
         self.declare_locals(ty, &mut decoder)?;
         let code_offset = decoder.reader.position() as u32;
 
-        self.enter_body(BlockType::Func(ty));
+        self.enter(FrameKind::Body, BlockType::Func(ty));
         self.run(&mut decoder)?;
         if decoder.reader.remaining() != 0 {
             return Err(Error::parse(
@@ -209,7 +208,44 @@ impl<'a> Validator<'a> {
 
     #[inline(never)]
     fn run(&mut self, decoder: &mut Decoder<'_, Check>) -> Checked {
-        decoder.run(self)
+        decoder
+            .run(self)
+            .map_err(|error| self.first_error(error, decoder))
+    }
+
+    /// Some instructions have operands checked before all their immediates are read.
+    #[cold]
+    fn first_error(&mut self, mut error: Error, decoder: &Decoder<'_, Check>) -> Error {
+        let (Some(Missing::OperandCheck(start)), 0) = (error.take_missing(), decoder.progress.dead)
+        else {
+            return error;
+        };
+        let bytes = decoder.reader.bytes();
+        let (first, second, immediates) = opcodes_at(bytes, start);
+        let mut decoder = *decoder;
+        decoder.reader.set_position(immediates);
+        let has_simd = self.header.features.contains(Features::SIMD);
+        let mut lane_access = |name, size| {
+            self.pop_lane_vector(name)?;
+            let arg = decoder.vector_mem_arg(size);
+            arg.map_or(Ok(()), |arg| self.pop_vector_address(arg))
+        };
+        let earlier = match (first, VectorOp::from_number(second)) {
+            (VECTOR_PREFIX, _) if !has_simd => Ok(()),
+            (VECTOR_PREFIX, VectorOp::LoadLane(size)) => lane_access("load_lane", size),
+            (VECTOR_PREFIX, VectorOp::StoreLane(size)) => lane_access("store_lane", size),
+            (VECTOR_PREFIX, VectorOp::Store) => self.pop_stored_vector(),
+            (GC_PREFIX, _) if second == STRUCT_SET => self.pop_early("struct.set value").map(drop),
+            (TRY_TABLE, _) => match decoder.block_type(first) {
+                Ok(BlockType::Func(index)) => self.check_block_params(index).map(drop),
+                _ => Ok(()),
+            },
+            _ => Ok(()),
+        };
+        match earlier {
+            Ok(()) => error,
+            Err(earlier) => Check::complete(earlier, bytes, start, decoder.reader.position()),
+        }
     }
 
     fn declare_locals(&mut self, ty: TypeIndex, decoder: &mut Decoder<'_, Check>) -> Checked {
@@ -243,13 +279,13 @@ impl<'a> Validator<'a> {
         Ok(())
     }
 
-    fn enter_body(&mut self, ty: BlockType) {
+    fn enter(&mut self, kind: FrameKind, ty: BlockType) {
         self.frames.push(Frame {
             ty,
             base: 0,
             initialized_height: 0,
             checked_by: 0,
-            kind: FrameKind::Body,
+            kind,
             outer_is_unreachable: false,
         });
     }

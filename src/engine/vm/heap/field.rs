@@ -6,6 +6,8 @@ use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{AtomicU64, Ordering};
 
+use bun_alloc::AllocError;
+
 use super::cell::CellLockGuard;
 use super::{Gc, GcFree, RootVec, Trace, Visitor, barrier, gc::keep_alive, root_vec};
 use crate::{CellKind, Cx, FastHashMap, JsCell, Value, Vm};
@@ -313,6 +315,7 @@ impl<'a, T: FieldValue, const N: usize> Owned<'a, FieldArray<T, N>> {
 }
 
 /// A growable list that a cell owns. Elements are copied in and out, so nothing borrows it across other code.
+#[cfg_attr(rootcheck, rootcheck::allow("filled and read only through `Owned`"))]
 pub struct TracedVec<T>(UnsafeCell<Vec<T>>);
 
 impl<T> TracedVec<T> {
@@ -438,6 +441,7 @@ impl<'a, T: Copy> Owned<'a, TracedVec<T>> {
 }
 
 /// A hash map that a cell owns. Values are copied in and out.
+#[cfg_attr(rootcheck, rootcheck::allow("filled and read only through `Owned`"))]
 pub struct TracedMap<K, V>(UnsafeCell<FastHashMap<K, V>>);
 
 impl<K, V> TracedMap<K, V> {
@@ -525,6 +529,14 @@ impl<K: PlainKey, V: Copy> Owned<'_, TracedMap<K, V>> {
         self.change(|map| map.insert(key, value))
     }
 
+    pub fn try_reserve(self, additional: usize) -> Result<(), AllocError> {
+        self.change(|map| map.try_reserve(additional).map_err(|_| AllocError))
+    }
+
+    pub fn capacity(self) -> usize {
+        self.read(FastHashMap::capacity)
+    }
+
     pub fn remove<Q: Hash + hashbrown::Equivalent<K> + ?Sized>(self, key: &Q) -> Option<V> {
         self.change(|map| map.remove(key))
     }
@@ -542,6 +554,14 @@ impl<K: PlainKey, V: Copy> Owned<'_, TracedMap<K, V>> {
         self.read(|map| map.keys().cloned().collect())
     }
 
+    /// Of those that `filter`, which touches no cell, lets pass.
+    pub(crate) fn min_key(self, filter: impl Fn(&K) -> bool) -> Option<K>
+    where
+        K: Ord,
+    {
+        self.read(|map| map.keys().filter(|key| filter(key)).min().cloned())
+    }
+
     pub fn entries(self) -> RootVec<(K, V)> {
         let mut entries = root_vec();
         self.read(|map| entries.extend(map.iter().map(|(key, &value)| (key.clone(), value))));
@@ -551,6 +571,7 @@ impl<K: PlainKey, V: Copy> Owned<'_, TracedMap<K, V>> {
 
 /// State of any shape that a cell owns. Reading it borrows the `Vm`, so no script runs meanwhile. Changing it borrows
 /// the `Cx` exclusively, so nothing is allocated either.
+#[cfg_attr(rootcheck, rootcheck::allow("filled and read only through `Owned`"))]
 pub struct GcCell<T>(UnsafeCell<T>);
 
 impl<T: Default> GcCell<T> {

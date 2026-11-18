@@ -5,7 +5,8 @@ use core::mem::MaybeUninit;
 use super::new_array::as_spread;
 use crate::call::MAX_ARGUMENTS;
 use crate::{
-    CellType, Cx, Elements, Gc, ImmutableArray, JsArrayBufferView, JsObject, JsResult, NoGc, Value,
+    CellType, Cx, Elements, Gc, ImmutableArray, JsArrayBufferView, JsObject, JsResult, MappedArguments,
+    NoGc, Value,
     ValueVec, errors,
 };
 
@@ -14,6 +15,11 @@ fn number_view(object: &JsObject) -> Option<Gc<JsArrayBufferView>> {
     (CellType::Int8Array..=CellType::Float64Array)
         .contains(&cell_type)
         .then(|| object.as_object().cast())
+}
+
+#[inline(always)]
+fn pristine_mapped_length(object: &JsObject) -> Option<usize> {
+    Some(object.downcast::<MappedArguments>()?.pristine_values()?.len())
 }
 
 /// `to_argument_list`, of a value that is not empty.
@@ -26,6 +32,9 @@ pub fn to_argument_list(cx: &mut Cx, value: Value) -> JsResult<Value> {
         let message = "second argument to Function.prototype.apply must be an Array-like object";
         return Err(errors::throw_type_error_with_source(cx, message));
     };
+    if pristine_mapped_length(&object).is_some() {
+        return Ok(value);
+    }
     let length = object.length_of_array_like(cx)?;
     if length > MAX_ARGUMENTS as u64 {
         return Err(cx.throw_stack_overflow());
@@ -69,7 +78,9 @@ pub fn argument_list_length(list: Value, skip: u32) -> usize {
     let length = if let Some(list) = list.downcast::<ImmutableArray>() {
         list.len() as usize
     } else if let Some(object) = list.as_object() {
-        number_view(&object).map_or(object.public_length() as usize, |view| view.length())
+        pristine_mapped_length(&object).unwrap_or_else(|| {
+            number_view(&object).map_or(object.public_length() as usize, |view| view.length())
+        })
     } else {
         0
     };
@@ -108,6 +119,14 @@ pub fn load_argument_list(
         return load_elements(list.elements().slice(range), target);
     }
     let object = list.cast::<JsObject>();
+    if let Some(arguments) = object.downcast::<MappedArguments>()
+        && let Some(values) = arguments.pristine_values()
+    {
+        for (target, value) in target.iter_mut().zip(values.skip(skip as usize)) {
+            target.write(value);
+        }
+        return;
+    }
     match number_view(&object) {
         Some(view) => {
             for (target, index) in target.iter_mut().zip(range) {

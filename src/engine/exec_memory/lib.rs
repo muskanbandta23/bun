@@ -11,5 +11,5 @@ pub use code::{
     owner_of_running_code, replace_with_jump, set_move_value, set_observer, set_transfer_target,
     transfer_target,
 };
-pub use instruction_cache::synchronize_instructions;
+pub use instruction_cache::{synchronize_instructions, synchronize_instructions_of_all_threads};
 pub use pool::{Usage, address_range, contains, is_available, usage};

@@ -4,8 +4,10 @@ use core::ops::Deref;
 
 use bun_engine_macros::FieldOffsets;
 
-use super::async_stack_trace;
-use crate::{Gc, GcFree, JsObject, RootVec, StackFrame, StackVisitor, Vm, options, root_vec};
+use crate::{
+    Gc, GcFree, JsAsyncFunctionGenerator, JsObject, RootVec, StackFrame, StackVisitor, Vm, options,
+    root_vec,
+};
 
 /// Frames in memory of the global allocator, laid out as the vector of the embedder is. It is no root: whoever has
 /// one keeps what the frames refer to alive, or finds out when that dies.
@@ -142,7 +144,7 @@ impl StackTraceRequest<'_> {
             }
             // SAFETY: that of a frame which is on the stack.
             let context = unsafe { vm.entry_context(entry_frame) }?;
-            Some((async_stack_trace::async_function_in(context)?, position))
+            Some((context.downcast::<JsAsyncFunctionGenerator>()?, position))
         };
         for frame in frames {
             if frame.entry_frame != last_visible.0 {
@@ -162,7 +164,8 @@ impl StackTraceRequest<'_> {
         }
         if let Some((function, position)) = resumed.or_else(|| find_resumed(last_visible)) {
             let before = out.len();
-            out.extend(async_stack_trace::frames_awaiting(function).take(self.limit));
+            let waiting = function.awaiters().filter_map(|it| it.stack_frame());
+            out.extend(waiting.take(self.limit));
             out[position..].rotate_left(before - position);
         }
     }

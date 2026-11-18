@@ -127,6 +127,8 @@ unsafe impl Allocator for RootAlloc {
     }
 }
 
+impl core::alloc::AllocatorNightly for RootAlloc {}
+
 /// The address range of each allocation of this thread.
 pub(super) fn for_each_range(mut visit: impl FnMut(usize, usize)) {
     let mut header = FIRST.get();

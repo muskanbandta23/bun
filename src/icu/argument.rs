@@ -9,7 +9,8 @@ fn require(condition: bool) -> Result<()> {
     condition.then_some(()).ok_or(Error::ILLEGAL_ARGUMENT)
 }
 
-/// `language[_Script][_REGION][_VARIANT…][@key=value;…]`, with `_` or `-` between the subtags and no extension of BCP 47.
+/// `language[_Script][_REGION][_VARIANT…][@key=value;…]` or `root[@key=value;…]`, with `_` or `-` between the subtags
+/// and no extension of BCP 47.
 pub(crate) fn locale_id(id: &CStr) -> Result<*const c_char> {
     /// `ULOC_KEYWORDS_CAPACITY`, the smaller of the two sizes that ICU documents for an identifier or a part of one.
     const CAPACITY: usize = 96;
@@ -37,7 +38,10 @@ pub(crate) fn locale_id(id: &CStr) -> Result<*const c_char> {
         };
         let length = index - start;
         require(match part {
-            Part::Language => matches!(length, 0 | 2 | 3 | 5..=8) || &bytes[..index] == b"root",
+            Part::Language => {
+                matches!(length, 0 | 2 | 3 | 5..=8)
+                    || matches!(bytes[..=index], [b'r', b'o', b'o', b't', 0 | b'@'])
+            }
             Part::Subtag => matches!(length, 0 | 2..=8),
             Part::Key => matches!(length, 2..=24),
             Part::Value => length != 0,

@@ -2,7 +2,7 @@ use bun_engine_text::{StringRef, names};
 
 use crate::{
     CallData, CellKind, CellType, Cx, DateInstance, Gc, JsBigInt, JsCell, JsObject, JsResult,
-    JsString, JsSymbol, JsWrapperObject, PropertyKey, SpecialProperty, StringObject, StringView,
+    JsString, JsSymbol, JsWrapperObject, PropertyKey, RealmSlot, SpecialProperty, StringObject, StringView,
     TypeFlags, Value, errors,
 };
 
@@ -456,7 +456,14 @@ impl JsObject {
         }
         for property in order {
             let method = self.get_special_property(cx, property)?;
-            if method != cx.object_prototype_value_of().into() && method.is_callable() {
+            let is = |slot| method.as_cell() == cx.global().slot_if_initialized(slot);
+            if !method.is_cell() || is(RealmSlot::object_prototype_value_of) {
+                continue;
+            }
+            if is(RealmSlot::object_prototype_to_string) {
+                return self.to_tagged_string(cx).map(Into::into);
+            }
+            if method.is_callable() {
                 let result = cx.call(method, self.as_value(), &[])?;
                 if !result.is_object() {
                     return Ok(result);

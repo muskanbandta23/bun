@@ -4,9 +4,12 @@ use super::Emitter;
 use super::output::{Label, Section};
 use super::state::Fail;
 use crate::Error;
-use crate::compile::graph::{Id, Kind, Traits};
+use crate::compile::graph::{Id, Kind, MAX_REACH, Traits};
 use crate::program::{ClassId, Comparison, Direction, MAX_LENGTH, Op, Place, Stride, UNBOUNDED};
 use crate::set::CharRange;
+
+/// Of the characters of a subject.
+const SHARE_OF_LONG_RUN: f32 = 0.5;
 
 impl Emitter<'_> {
     #[inline(never)]
@@ -26,23 +29,46 @@ impl Emitter<'_> {
             return Ok(fail);
         }
         if !greedy {
-            return self.lazy_run(class, max, code_points, filter, rest, fail);
+            let exhausted = match self.first_run.filter(|it| it.node == id) {
+                Some(first_run) => {
+                    self.repeats = false;
+                    first_run.restart
+                }
+                None => self.later_target(fail)?,
+            };
+            return self.lazy_run(class, max, code_points, filter, rest, exhausted);
         }
         if !node.is(Traits::REENTERED) {
             self.settle()?;
             self.pass(class, max, code_points, rest)?;
-            return Ok(fail);
+            return self.after_run(id, fail);
         }
         let floor = self.settle_at_anchor()?;
         self.pass(class, max, code_points, rest)?;
+        let fail = self.after_run(id, fail)?;
         let again = self.output.label()?;
+        self.commit()?;
         self.bind_after_giving_back(again, floor, rest)?;
-        let stride = if code_points {
-            Stride::CODE_POINT
-        } else {
-            Stride::UNIT
+        let stride = match code_points {
+            true => Stride::CODE_POINT,
+            false => Stride::UNIT,
         };
         self.give_back(again, floor, stride, filter, fail)
+    }
+
+    /// Where to go once the rest of the pattern has failed wherever the run can end.
+    pub(super) fn after_run(&mut self, id: Id, fail: Fail) -> Result<Fail, Error> {
+        let Some(first_run) = self.first_run.filter(|it| it.node == id) else {
+            return Ok(fail);
+        };
+        self.repeats = false;
+        let undo = self.plan_undo(self.is_costly_to_retry())?;
+        self.fail_to(first_run.restart, undo)
+    }
+
+    /// Whether coming back here after the rest of the pattern has failed has to count as work.
+    fn is_costly_to_retry(&self) -> bool {
+        self.repeats || self.following > MAX_REACH
     }
 
     /// Returns a place that is equal to the position.
@@ -65,6 +91,7 @@ impl Emitter<'_> {
         self.op(Op::Run {
             direction: self.direction,
             code_points,
+            is_long: self.frequencies.of_latin1(self.graph[class].latin1()) > SHARE_OF_LONG_RUN,
             class,
             max,
             reserve: rest,
@@ -114,7 +141,7 @@ impl Emitter<'_> {
     pub(super) fn bind_retry(&mut self) -> Result<(Label, Label), Error> {
         let (direct, later) = (self.output.label()?, self.output.label()?);
         let (room, scope) = (self.state.room, self.state.scope);
-        let undo = self.plan_undo(true)?;
+        let undo = self.plan_undo(self.is_costly_to_retry())?;
         self.write_undo(later, Section::Cold, undo)?;
         self.output.bind(direct, Section::Cold, room, scope);
         Ok((direct, later))
@@ -152,7 +179,7 @@ impl Emitter<'_> {
         code_points: bool,
         passed_at_once: Option<ClassId>,
         rest: u32,
-        fail: Fail,
+        exhausted: Label,
     ) -> Result<Fail, Error> {
         let start = match max {
             UNBOUNDED => {
@@ -161,7 +188,6 @@ impl Emitter<'_> {
             }
             _ => Some(self.settle_at_anchor()?),
         };
-        let exhausted = self.later_target(fail)?;
         let (again, go_on) = (self.output.label()?, self.output.label()?);
         let (room, scope) = (
             self.state.room.with(self.direction, rest),

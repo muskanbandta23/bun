@@ -22,7 +22,8 @@ use crate::{
 };
 
 /// What the instances of a scope that one code block makes have in common.
-#[cell(name = "SymbolTable", cell_type = ScopeTemplate, flags = TypeFlags::SHAPE_IS_IMMORTAL)]
+#[cell(name = "SymbolTable", cell_type = ScopeTemplate, flags = TypeFlags::SHAPE_IS_IMMORTAL,
+    export = "engine_class_ScopeTemplate")]
 pub struct ScopeTemplate {
     base: JsCell,
     slot_count: u32,

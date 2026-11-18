@@ -54,24 +54,34 @@ impl Shape {
         global: Gc<GlobalObject>,
         prototype: Gc<JsObject>,
     ) -> Gc<Shape> {
+        // SAFETY: as true of the one as of the other.
+        let spec = unsafe {
+            ShapeSpec::from_parts(
+                self.class(),
+                self.instance_type(),
+                self.type_flags(),
+                self.instance_indexing_mode(),
+                self.inline_capacity() as u8,
+            )
+        };
+        Self::cached(vm, global, prototype, spec)
+    }
+
+    /// An empty shape that is shared with whoever asks for the same.
+    pub fn cached(
+        vm: &Vm,
+        global: Gc<GlobalObject>,
+        prototype: Gc<JsObject>,
+        spec: ShapeSpec,
+    ) -> Gc<Shape> {
+        let (class, header_and_capacity) = spec.identity();
         let key = Key {
             prototype: prototype.address(),
             global: global.address(),
-            class: core::ptr::from_ref(self.class()).addr(),
-            header_or_capacity: self.instance_header() & 0x00ff_ffff
-                | (self.inline_capacity() as u32) << 24,
+            class: core::ptr::from_ref(class).addr(),
+            header_or_capacity: header_and_capacity,
         };
         vm.shape_cache.0.get(vm, &key).unwrap_or_else(|| {
-            // SAFETY: as true of the one as of the other.
-            let spec = unsafe {
-                ShapeSpec::from_parts(
-                    self.class(),
-                    self.instance_type(),
-                    self.type_flags(),
-                    self.instance_indexing_mode(),
-                    self.inline_capacity() as u8,
-                )
-            };
             let shape = Shape::create(vm, Some(global), prototype.into(), spec);
             vm.shape_cache.0.insert(key, shape);
             shape

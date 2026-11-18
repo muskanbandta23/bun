@@ -42,6 +42,10 @@ pub enum AccessKind {
     LoadGlobalBinding,
     /// From the target of the proxy, which has `new_shape`.
     LoadOwnThroughGlobalProxy,
+    /// For any key. Unless that is private, compiled code calls `private_proxy_get`, and so on.
+    ProxyGet,
+    ProxySet,
+    ProxyHas,
     Replace,
     Transition,
     TransitionAndGrow,
@@ -63,6 +67,13 @@ pub enum AccessKind {
 impl AccessKind {
     pub fn is_last(self) -> bool {
         self as u8 <= AccessKind::Generic as u8
+    }
+
+    fn is_for_any_key(self) -> bool {
+        matches!(
+            self,
+            AccessKind::ProxyGet | AccessKind::ProxySet | AccessKind::ProxyHas
+        )
     }
 }
 
@@ -191,7 +202,7 @@ impl AccessCase {
 
     #[inline(always)]
     pub fn matches(&self, shape: ShapeId, key: usize) -> bool {
-        self.shape() == shape && self.key.as_ref().map_or(0, |it| it.name().address()) == key
+        self.shape() == shape && (self.key.as_ref()).is_none_or(|it| it.name().address() == key)
     }
 
     #[inline(always)]
@@ -364,7 +375,8 @@ impl AccessCases {
         if !case.new_shape.is_none() {
             owner.caches.has_transitions.set(true);
         }
-        case.key = variable_key.map(PropertyName::to_identifier);
+        case.key = (variable_key.filter(|_| !case.kind().is_for_any_key()))
+            .map(PropertyName::to_identifier);
         self.push(vm, owner, case, key);
         owner.write_barrier_for_cell();
     }

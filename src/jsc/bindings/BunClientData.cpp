@@ -5,7 +5,6 @@
 #include "WebCoreJSBuiltins.h"
 
 #include "ExtendedDOMClientIsoSubspaces.h"
-#include "ExtendedDOMIsoSubspaces.h"
 #include <JavaScriptCore/FastMallocAlignedMemoryAllocator.h>
 #include <JavaScriptCore/HeapInlines.h>
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
@@ -18,7 +17,6 @@
 
 #include "JSDOMConstructorBase.h"
 
-#include "BunGCOutputConstraint.h"
 #include "WebCoreTypedArrayController.h"
 #include <JavaScriptCore/JSCInlines.h>
 
@@ -33,62 +31,18 @@ using namespace JSC;
 
 RefPtr<JSC::SourceProvider> createBuiltinsSourceProvider();
 
-JSHeapData::JSHeapData(Heap& heap)
-    : m_domConstructorSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMConstructorBase)
-    , m_domNamespaceObjectSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMObject)
-    , m_subspaces(makeUnique<ExtendedDOMIsoSubspaces>())
-
-{
-}
-
-JSHeapData::~JSHeapData() = default;
-
-#define CLIENT_ISO_SUBSPACE_INIT(subspace) subspace(m_heapData->subspace)
-
 JSVMClientData::JSVMClientData(VM& vm, RefPtr<JSC::SourceProvider> sourceProvider)
     : commonStrings(vm)
     , schemaStrings(vm)
     , m_builtinNames(vm)
     , m_builtinFunctions(makeUnique<JSBuiltinFunctions>(vm, sourceProvider, m_builtinNames))
-    , m_heapData(JSHeapData::ensureHeapData(vm.heap))
     , m_consoleClient(makeUniqueRef<Bun::ConsoleObject>())
-    , CLIENT_ISO_SUBSPACE_INIT(m_domConstructorSpace)
-    , CLIENT_ISO_SUBSPACE_INIT(m_domNamespaceObjectSpace)
     , m_clientSubspaces(makeUnique<ExtendedDOMClientIsoSubspaces>())
     , m_heapSizeAfterLastCollection(vm.heap)
 {
 }
 
-#undef CLIENT_ISO_SUBSPACE_INIT
-
-JSHeapData* JSHeapData::ensureHeapData(Heap& heap)
-{
-    if (!Options::useGlobalGC())
-        return new JSHeapData(heap);
-
-    static JSHeapData* singleton = nullptr;
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [&] {
-        singleton = new JSHeapData(heap);
-    });
-    return singleton;
-}
-
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(JSVMClientData);
-
-// Frees a per-VM `JSHeapData`; leaves the `useGlobalGC` singleton alone (it is
-// shared by every VM and lives for the process lifetime). This runs as part of
-// `~JSVMClientData` member teardown — after the client `IsoSubspace` members,
-// whose `~LocalAllocator` dereferences a `BlockDirectory` inside this object
-// (see the member-ordering note in the header). `~VM` invokes `~JSVMClientData`
-// only after `heap.lastChanceToFinalize()`, with `heap` (a `VM` member)
-// outliving the destructor, so tearing the server `IsoSubspace`s down here is
-// safe.
-void JSVMClientData::JSHeapDataDeleter::operator()(JSHeapData* heapData) const
-{
-    if (!JSC::Options::useGlobalGC())
-        delete heapData;
-}
 
 JSVMClientData::~JSVMClientData()
 {
@@ -122,8 +76,6 @@ void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
 
     vm->clientData = clientData; // ~VM deletes this pointer.
     clientData->m_normalWorld = DOMWrapperWorld::create(*vm);
-
-    vm->heap.addMarkingConstraint(makeUnique<WebCore::DOMGCOutputConstraint>(*vm, clientData->heapData()));
 
     // Root the StrongRootBlock list from the VM instead of any one global.
     //
@@ -182,39 +134,16 @@ void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
     clientData->builtinFunctions().exportNames();
 }
 
-JSC::GCClient::IsoSubspace* subspaceForImplSlow(JSC::VM& vm, const SubspaceForInit& init, SubspaceSlots slots, const JSC::HeapCellType& (*getCustomHeapCellType)())
+JSC::GCClient::IsoSubspace* subspaceForImplSlow(JSC::VM& vm, SubspaceSlots slots, size_t cellSize, void (*destroy)(JSC::JSCell*), bool hasOutputConstraints)
 {
     auto& clientData = *downcast<JSVMClientData>(vm.clientData);
-    auto& clientSlot = *reinterpret_cast<JSC::GCClient::IsoSubspace**>(reinterpret_cast<uint8_t*>(&clientData.clientSubspaces()) + slots.clientOffset);
+    auto& slot = *reinterpret_cast<JSC::GCClient::IsoSubspace**>(reinterpret_cast<uint8_t*>(&clientData.clientSubspaces()) + slots.clientOffset);
+    return slot = &vm.heap.createIsoSubspace(cellSize, destroy, hasOutputConstraints);
+}
 
-    auto& heapData = clientData.heapData();
-    Locker locker { heapData.lock() };
-
-    auto& serverSlot = *reinterpret_cast<JSC::IsoSubspace**>(reinterpret_cast<uint8_t*>(&heapData.subspaces()) + slots.serverOffset);
-    JSC::IsoSubspace* space = serverSlot;
-    if (!space) {
-        JSC::Heap& heap = vm.heap;
-        const JSC::HeapCellType* cellType;
-        switch (init.cellType) {
-        case SubspaceForInit::CellType::Custom:
-            cellType = &getCustomHeapCellType();
-            break;
-        case SubspaceForInit::CellType::Destructible:
-            cellType = &heap.destructibleObjectHeapCellType;
-            break;
-        case SubspaceForInit::CellType::Cell:
-            cellType = &heap.cellHeapCellType;
-            break;
-        }
-        // What `ISO_SUBSPACE_INIT(heap, ..., T)` stringified to inside the old template: the token `T`.
-        space = serverSlot = makeUnique<JSC::IsoSubspace>("T"_s, heap, *cellType, init.cellSize, init.numberOfLowerTierPreciseCells).release();
-
-        if (init.hasOutputConstraints)
-            heapData.outputConstraintSpaces().append(space);
-    }
-
-    clientSlot = makeUnique<JSC::GCClient::IsoSubspace>(*space).release();
-    return clientSlot;
+void destroyWithClassInCell(JSC::JSCell* cell)
+{
+    static_cast<JSC::JSDestructibleObject*>(cell)->classInfo()->methodTable.destroy(cell);
 }
 
 } // namespace WebCore
@@ -250,25 +179,6 @@ void* allocatePlainObjectCell(JSC::VM& vm, size_t size)
 } // namespace Bun
 
 namespace WebCore {
-
-template<typename Subspace, typename Table>
-static void deleteSubspaceTable(Table* table)
-{
-    static_assert(sizeof(Table) % sizeof(Subspace*) == 0);
-    auto** slots = reinterpret_cast<Subspace**>(table);
-    for (size_t i = 0; i < sizeof(Table) / sizeof(Subspace*); ++i)
-        std::unique_ptr<Subspace> { slots[i] };
-}
-
-DOMIsoSubspaces::~DOMIsoSubspaces()
-{
-    deleteSubspaceTable<JSC::IsoSubspace>(this);
-}
-
-DOMClientIsoSubspaces::~DOMClientIsoSubspaces()
-{
-    deleteSubspaceTable<JSC::GCClient::IsoSubspace>(this);
-}
 
 void JSVMClientData::reconcileWeakReferencesAtGCEnd(JSC::VM& vm, JSC::CollectionScope)
 {

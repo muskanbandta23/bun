@@ -11,7 +11,7 @@ use crate::heap::Survivors;
 use crate::{
     Attributes, CellType, CodeBlock, CustomGetter, Cx, Field, Gc, GetterSetter, GlobalProxy,
     InternalMethod, Intrinsic, JsFunction, JsObject, JsResult, JsTypedArray, PropertySlot,
-    ShapeFlags, ShapeId, Value, Visitor, Vm,
+    ProxyObject, ShapeFlags, ShapeId, Value, Visitor, Vm,
 };
 
 /// One case inline, and the others in a list.
@@ -274,6 +274,12 @@ fn plan_or_reason(
     slot: &PropertySlot,
     reach: Reach,
 ) -> Result<AccessCase, Plan> {
+    if let Some(proxy) = base.downcast::<ProxyObject>()
+        && reach == Reach::Chain
+        && !name.is_private()
+    {
+        return Ok(AccessCase::new(AccessKind::ProxyGet, proxy.shape_id()));
+    }
     if name.as_index().is_some() || slot.is_tainted_by_opaque_object() {
         return Err(Plan::Fail);
     }
@@ -453,6 +459,10 @@ fn execute(
                 let cx = cx.in_realm_of(&holder);
                 let result = getter(cx, this, name);
                 Some(cx.check_exception().map(|()| result.unwrap_or_default()))
+            }
+            AccessKind::ProxyGet => {
+                let proxy = object.cast_unchecked::<ProxyObject>();
+                Some(proxy.get_through(cx, name, receiver))
             }
             AccessKind::LoadModuleBinding if case.pointer == object.address() => {
                 load(case.second_pointer).get().map(Ok)

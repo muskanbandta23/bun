@@ -51,6 +51,7 @@ LOG10E
 LOG2E
 LinkError
 ListFormat
+Loader
 Locale
 MAX_SAFE_INTEGER
 MAX_VALUE
@@ -232,6 +233,7 @@ deleteProperty
 deref
 description
 detached
+detail
 difference
 direction
 disambiguation
@@ -255,6 +257,7 @@ epochNanoseconds
 equals
 era
 eraYear
+errno
 error
 errors
 escape
@@ -513,6 +516,7 @@ offsetNanoseconds
 ok
 omitPadding
 or
+origin
 originalColumn
 originalLine
 overflow
@@ -1086,6 +1090,11 @@ useStrict = use strict
 @promiseReturnUndefinedOnFulfilled
 @proxyFieldHandler
 @proxyFieldTarget
+@proxyGet
+@proxyHandler
+@proxyHas
+@proxySet
+@throwFalsyProxySetTrapResult
 @push
 @putArrayIteratorInternalField
 @putAsyncDisposableStackInternalField

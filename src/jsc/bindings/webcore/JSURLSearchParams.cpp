@@ -49,7 +49,6 @@
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 #include <variant>
-#include "GCDefferalContext.h"
 #include "wtf/StdLibExtras.h"
 
 namespace WebCore {

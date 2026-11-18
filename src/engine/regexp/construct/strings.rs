@@ -44,12 +44,6 @@ impl StringPool {
     }
 
     #[inline]
-    pub(super) fn clear(&mut self) {
-        self.characters.clear();
-        self.string_start = 0;
-    }
-
-    #[inline]
     fn get(&self, span: StringSpan) -> &[u32] {
         &self.characters[span.start as usize..span.end as usize]
     }
@@ -131,6 +125,10 @@ pub(super) struct Strings {
 impl Strings {
     pub(super) fn new(pool: StringPool, list: StringList) -> Strings {
         Strings { pool, list }
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.list.spans.is_empty()
     }
 
     /// Ascending, each once, and read from the end if `reversed`.

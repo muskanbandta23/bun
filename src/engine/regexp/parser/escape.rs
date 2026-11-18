@@ -1,15 +1,9 @@
 use bun_engine_text::CodeUnit;
 use bun_engine_unicode::{MAX_CODE_POINT, Property};
 
+use super::ClassEscape;
 use super::cursor::{Cursor, ascii, is_lead_surrogate, is_trail_surrogate, join_surrogates};
-use super::{ClassEscape, ClassKind};
 use crate::Error;
-
-#[derive(Clone, Copy)]
-pub(super) enum ClassAtom {
-    Character(u32),
-    Class(ClassEscape),
-}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Context {
@@ -18,37 +12,71 @@ pub(super) enum Context {
     ClassSet,
 }
 
+/// For what follows a backslash, the character that the two stand for wherever they are. Zero if there is none.
+static PLAIN_ESCAPES: [u8; 256] = {
+    let mut values = [0; 256];
+    let mut rest: &[u8] = b"^$\\.*+?()[]{}|/";
+    while let [c, tail @ ..] = rest {
+        values[*c as usize] = *c;
+        rest = tail;
+    }
+    values[b't' as usize] = 0x09;
+    values[b'n' as usize] = 0x0a;
+    values[b'v' as usize] = 0x0b;
+    values[b'f' as usize] = 0x0c;
+    values[b'r' as usize] = 0x0d;
+    values
+};
+
 impl<C: CodeUnit> Cursor<'_, C> {
-    /// After the backslash.
+    /// After the backslash. Moves only if there is one.
     #[inline(always)]
-    pub(super) fn escape(&mut self, context: Context) -> Result<ClassAtom, Error> {
-        let letter = self.peek();
-        let kind = match letter {
-            b'd' | b'D' => ClassKind::Digit,
-            b's' | b'S' => ClassKind::Space,
-            b'w' | b'W' => ClassKind::Word,
-            b'p' | b'P' if self.is_unicode => {
-                return self.apart(Self::property).map(ClassAtom::Class);
+    pub(super) fn class_escape(&mut self) -> Result<Option<ClassEscape>, Error> {
+        let escape = match self.peek() {
+            b'd' => ClassEscape::Digit,
+            b'D' => ClassEscape::NotDigit,
+            b's' => ClassEscape::Space,
+            b'S' => ClassEscape::NotSpace,
+            b'w' => ClassEscape::Word,
+            b'W' => ClassEscape::NotWord,
+            letter @ (b'p' | b'P') if self.is_unicode => {
+                let property = self.apart(Self::property).ok_or(Error::InvalidProperty)?;
+                return match letter {
+                    b'p' => Ok(Some(ClassEscape::Property(property))),
+                    _ if property.has_strings() => Err(Error::NegatedStrings),
+                    _ => Ok(Some(ClassEscape::NotProperty(property))),
+                };
             }
-            _ => return self.character_escape(context).map(ClassAtom::Character),
+            _ => return Ok(None),
         };
         self.at += 1;
-        let negated = letter < b'a';
-        Ok(ClassAtom::Class(ClassEscape { kind, negated }))
+        Ok(Some(escape))
     }
 
     /// After the backslash.
     #[inline(always)]
     pub(super) fn character_escape(&mut self, context: Context) -> Result<u32, Error> {
+        match self.plain_escape() {
+            Some(c) => Ok(c),
+            None => self.other_escape(context),
+        }
+    }
+
+    /// After the backslash. Moves only if there is one.
+    #[inline(always)]
+    pub(super) fn plain_escape(&mut self) -> Option<u32> {
+        let c = PLAIN_ESCAPES[usize::from(self.peek())];
+        (c != 0).then(|| {
+            self.at += 1;
+            c.into()
+        })
+    }
+
+    /// After the backslash, if it is neither a plain one nor a class.
+    #[inline(always)]
+    pub(super) fn other_escape(&mut self, context: Context) -> Result<u32, Error> {
         let unit = self.next_unit().ok_or(Error::EscapeAtEnd)?;
         let value = match ascii(unit) {
-            b'^' | b'$' | b'\\' | b'.' | b'*' | b'+' | b'?' | b'(' | b')' | b'[' | b']' | b'{'
-            | b'}' | b'|' | b'/' => Some(unit),
-            b't' => Some(0x09),
-            b'n' => Some(0x0a),
-            b'v' => Some(0x0b),
-            b'f' => Some(0x0c),
-            b'r' => Some(0x0d),
             b'x' => self.hexadecimal::<2>(),
             b'u' if self.is_unicode => return self.apart(Self::strict_unicode_escape),
             b'u' => self.hexadecimal::<4>(),
@@ -151,18 +179,8 @@ impl<C: CodeUnit> Cursor<'_, C> {
 
     /// At the letter.
     #[inline(never)]
-    fn property(&mut self) -> Result<ClassEscape, Error> {
-        let negated = self.peek() == b'P';
+    fn property(&mut self) -> Option<Property> {
         self.at += 1;
-        let property = self.property_expression().ok_or(Error::InvalidProperty)?;
-        if negated && property.has_strings() {
-            return Err(Error::NegatedStrings);
-        }
-        let kind = ClassKind::Property(property);
-        Ok(ClassEscape { kind, negated })
-    }
-
-    fn property_expression(&mut self) -> Option<Property> {
         let mut word_after = |before: u8| {
             self.eat(before).then(|| {
                 let start = self.at;

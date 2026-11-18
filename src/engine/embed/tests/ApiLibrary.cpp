@@ -142,7 +142,7 @@ TEST(Proxy)
     EXPECT(proxy->get(global, Identifier::fromString(vm, "b"_s)) == jsNumber(2));
     EXPECT(ProxyObject::getHandlerTrap(global, handler, vm.propertyNames->get));
     EXPECT(!ProxyObject::getHandlerTrap(global, handler, vm.propertyNames->set) && realm.takeException() == "nothing"_s);
-    EXPECT(!ProxyObject::getHandlerTrap(global, handler, vm.propertyNames->has));
+    EXPECT(!ProxyObject::getHandlerTrap(global, handler, Identifier::fromString(vm, "has"_s)));
     EXPECT(realm.takeException() == "TypeError: 'has' property of a Proxy's handler should be callable"_s);
     ProxyObject::validateGetTrapResult(global, jsNumber(1), target, Identifier::fromString(vm, "a"_s));
     EXPECT(realm.takeException() == "nothing"_s);
@@ -228,7 +228,7 @@ TEST(Json)
     MarkedArgumentBuffer values;
     auto result = streamingJSONParse(global, "1\n[2]\n{\"a"_s, values);
     EXPECT(result.status == NeedMoreData && result.charactersConsumed == 5 && values.size() == 2);
-    result = streamingJSONParse(global, std::span(u8"\"é\"\n]", 6), values);
+    result = streamingJSONParse(global, std::span(u8"\"é\"\n]\n", 7), values);
     EXPECT(result.status == Error && result.charactersConsumed == 4 && values.size() == 3);
     EXPECT(streamingJSONParse(global, " \n"_s, values).status == Complete);
 }
@@ -256,7 +256,7 @@ TEST(TemporalObjects)
 }
 
 class Console final : public ConsoleClient {
-    static void log(ASCIILiteral name, const String& text) { Realm::log().append(makeString(name, ' ', text.isNull() ? "null"_s : text)); }
+    static void log(ASCIILiteral name, const String& text) { Realm::log(makeString(name, ' ', text.isNull() ? "null"_s : text)); }
 
     void messageWithTypeAndLevel(MessageType type, MessageLevel level, JSGlobalObject* global, const ArgList& arguments) final
     {
@@ -285,7 +285,7 @@ TEST(ConsoleClient)
                                 "console.time(); console.timeLog('b', 1, 2); console.timeEnd('b'); console.timeStamp(); try { console.table(1) } catch (e) { e.message }"_s);
     EXPECT(realm.text(message) == "from the client"_s);
     console.logWithLevel(realm.global, {}, MessageLevel::Info);
-    EXPECT(makeStringByJoining(Realm::log().span(), ", "_s) == "message 012, count default, countReset a, profile null, profileEnd 1, takeHeapSnapshot null, time default, timeLog b2, timeEnd b, message 301, message 040"_s);
+    EXPECT(Realm::takeLog() == "message 012, count default, countReset a, profile null, profileEnd 1, takeHeapSnapshot null, time default, timeLog b2, timeEnd b, message 301, message 040"_s);
 }
 
 TEST(Reflection)

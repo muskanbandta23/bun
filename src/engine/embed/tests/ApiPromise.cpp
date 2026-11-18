@@ -3,11 +3,6 @@
 using namespace JSC;
 using Test::Realm;
 
-static String joinedLog()
-{
-    return makeStringByJoining(std::exchange(Realm::log(), {}).span(), ", "_s);
-}
-
 static JSFunction* logger(Realm& realm, ASCIILiteral name)
 {
     return realm.function([&realm, name](JSGlobalObject*, CallFrame* frame) {
@@ -15,7 +10,7 @@ static JSFunction* logger(Realm& realm, ASCIILiteral name)
         entry.append(name);
         for (size_t i = 0; i < frame->argumentCount(); ++i)
             entry.append(' ', realm.text(frame->argument(i)));
-        Realm::log().append(entry.toString());
+        Realm::log(entry.toString());
         return JSValue::encode(jsNumber(7));
     });
 }
@@ -39,7 +34,7 @@ TEST(PromiseState)
     EXPECT(rejected->isHandled());
     JSPromise::create(vm, realm.global->promiseStructure())->rejectAsHandled(vm, jsNumber(5));
     vm.drainMicrotasks();
-    EXPECT(joinedLog() == "reject, handle, caught 4"_s);
+    EXPECT(Realm::takeLog() == "reject, handle, caught 4"_s);
 
     auto* settledByHand = JSPromise::create(vm, realm.global->promiseStructure());
     settledByHand->setFlags(static_cast<uint16_t>(JSPromise::Status::Fulfilled));
@@ -81,6 +76,7 @@ TEST(PromiseTakesException)
     }
     {
         auto scope = DECLARE_THROW_SCOPE(vm);
+        vm.setHasTerminationRequest();
         vm.throwTerminationException();
         EXPECT(!JSPromise::rejectedPromiseWithCaughtException(realm.global, scope));
         EXPECT(vm.hasPendingTerminationException());
@@ -104,7 +100,7 @@ TEST(PromiseReactions)
     realm.collect();
     realm.run("resolve(1); resolve(2)"_s);
     vm.drainMicrotasks();
-    EXPECT(joinedLog() == "with 1 9, null 1, without 1"_s);
+    EXPECT(Realm::takeLog() == "with 1 9, null 1, without 1"_s);
     EXPECT(result->result() == jsNumber(7) && piped->result() == jsNumber(1));
 
     EXPECT(source->isThenFastAndNonObservable());
@@ -130,12 +126,12 @@ TEST(Microtasks)
     vm.queueMicrotask({ nullptr, InternalMicrotask::BunInvokeJobWithArguments, 0, global, logger(realm, "c"_s), jsNumber(1), jsNumber(2), jsNumber(3) });
     vm.queueMicrotask({ nullptr, InternalMicrotask::BunInvokeJobWithArguments, 0, global, thrower });
     vm.setOnEachMicrotaskTick([](VM& vm) {
-        Realm::log().append("tick"_s);
+        Realm::log("tick"_s);
         vm.setOnEachMicrotaskTick(nullptr);
     });
     realm.collect();
     vm.drainMicrotasks();
-    EXPECT(joinedLog() == "a, tick, b 1 2, error of microtask it, c 1 2 3, uncaught it"_s);
+    EXPECT(Realm::takeLog() == "a, tick, b 1 2, error of microtask it, c 1 2 3, uncaught it"_s);
 
     vm.queueMicrotask({ nullptr, InternalMicrotask::BunInvokeJobWithArguments, 0, global, logger(realm, "cleared"_s) });
     vm.defaultMicrotaskQueue().clear();
@@ -143,7 +139,7 @@ TEST(Microtasks)
     global->setMicrotaskRunnability(QueuedTaskResult::Discard);
     EXPECT(global->microtaskRunnability() == QueuedTaskResult::Discard);
     vm.drainMicrotasks();
-    EXPECT(joinedLog().isEmpty());
+    EXPECT(Realm::takeLog().isEmpty());
 }
 
 TEST(MicrotasksOfRealm)
@@ -156,9 +152,9 @@ TEST(MicrotasksOfRealm)
     JSPromise::resolvedPromise(other, jsNumber(1))->performPromiseThen(vm, other, logger(realm, "other"_s), jsUndefined(), jsUndefined());
     realm.collect();
     vm.drainMicrotasks();
-    EXPECT(joinedLog().isEmpty());
+    EXPECT(Realm::takeLog().isEmpty());
     other->microtaskQueue().performMicrotaskCheckpoint(vm);
-    EXPECT(joinedLog() == "other 1"_s);
+    EXPECT(Realm::takeLog() == "other 1"_s);
 
     EXPECT(!vm.synchronousModuleQueue());
     {
@@ -175,7 +171,7 @@ TEST(AsyncContext)
     auto* global = realm.global;
     auto* holder = global->m_asyncContextData.get();
     auto* report = realm.function([&](JSGlobalObject*, CallFrame* frame) {
-        Realm::log().append(makeString(realm.text(holder->getInternalField(0)), ' ', realm.text(frame->argument(1))));
+        Realm::log(makeString(realm.text(holder->getInternalField(0)), ' ', realm.text(frame->argument(1))));
         return JSValue::encode(jsUndefined());
     });
     EXPECT(!global->isAsyncContextTrackingEnabled());
@@ -189,7 +185,7 @@ TEST(AsyncContext)
     promise->fulfill(vm, jsUndefined());
     vm.queueMicrotask({ nullptr, InternalMicrotask::BunPerformMicrotaskJob, 0, global, report, jsNumber(3), jsUndefined(), jsNumber(30) });
     vm.drainMicrotasks();
-    EXPECT(joinedLog() == "1 10, 2 20, 3 30"_s);
+    EXPECT(Realm::takeLog() == "1 10, 2 20, 3 30"_s);
     EXPECT(holder->getInternalField(0).isUndefined());
 }
 

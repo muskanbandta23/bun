@@ -21,7 +21,9 @@ public:
     String takeException();
     void collect() { vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full); }
 
-    static Vector<String>& log();
+    static void log(const String&);
+    // What has been logged since the last call, with commas in between.
+    static String takeLog();
 
     JSC::VM& vm;
     JSC::JSGlobalObject* global;

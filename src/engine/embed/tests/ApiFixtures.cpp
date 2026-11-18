@@ -1,5 +1,7 @@
 #include "ApiFixtures.h"
 
+#include <mutex>
+
 namespace Test {
 
 using namespace JSC;
@@ -24,8 +26,8 @@ private:
     {
     }
 
-    static void trackRejection(JSGlobalObject*, JSPromise*, JSPromiseRejectionOperation operation) { Realm::log().append(operation == JSPromiseRejectionOperation::Reject ? "reject"_s : "handle"_s); }
-    static void reportException(JSGlobalObject* global, Exception* exception) { Realm::log().append(makeString("uncaught "_s, exception->value().toWTFString(global))); }
+    static void trackRejection(JSGlobalObject*, JSPromise*, JSPromiseRejectionOperation operation) { Realm::log(operation == JSPromiseRejectionOperation::Reject ? "reject"_s : "handle"_s); }
+    static void reportException(JSGlobalObject* global, Exception* exception) { Realm::log(makeString("uncaught "_s, exception->value().toWTFString(global))); }
 
     static constexpr GlobalObjectMethodTable methods {
         .promiseRejectionTracker = trackRejection,
@@ -43,7 +45,7 @@ struct ClientData final : VM::ClientData {
     {
     }
 
-    void reportErrorOfMicrotask(JSGlobalObject* global, Exception* exception) final { Realm::log().append(makeString("error of microtask "_s, exception->value().toWTFString(global))); }
+    void reportErrorOfMicrotask(JSGlobalObject* global, Exception* exception) final { Realm::log(makeString("error of microtask "_s, exception->value().toWTFString(global))); }
 
     IsoSubspace& globalObjects;
 };
@@ -51,7 +53,7 @@ struct ClientData final : VM::ClientData {
 static VM& createVM()
 {
     static std::once_flag once;
-    std::call_once(once, [] { initialize([] {}); });
+    std::call_once(once, [] { initialize([] { EXPECT(Options::setOption("slowPathAllocsBetweenGCs=1")); }); });
     VM& vm = *VM::tryCreate().leakRef();
     vm.clientData = new ClientData(vm);
     return vm;
@@ -62,7 +64,7 @@ Realm::Realm()
     , global(createGlobalObject())
 {
     gcProtect(global);
-    log().clear();
+    takeLog();
 }
 
 Realm::~Realm()
@@ -82,7 +84,7 @@ JSValue Realm::run(ASCIILiteral source)
     NakedPtr<Exception> exception;
     JSValue result = evaluate(global, makeSource(source, {}, SourceTaintedOrigin::Untainted), {}, exception);
     if (exception)
-        fail(__FILE__, __LINE__, makeString(source, " not to throw "_s, text(exception->value())).utf8().data());
+        fail(__FILE__, __LINE__, makeString(source, " not to throw "_s, text(exception->value())).utf8().legacyCStringPointer());
     return result;
 }
 
@@ -104,10 +106,27 @@ String Realm::takeException()
     return text(exception->value());
 }
 
-Vector<String>& Realm::log()
+static StringBuilder& entries()
 {
-    static NeverDestroyed<Vector<String>> log;
-    return log;
+    static NeverDestroyed<StringBuilder> entries;
+    return entries;
 }
 
+void Realm::log(const String& entry)
+{
+    entries().append(entries().isEmpty() ? ""_s : ", "_s, entry);
+}
+
+String Realm::takeLog()
+{
+    String result = entries().toString();
+    entries().clear();
+    return result;
+}
+
+}
+
+extern "C" JSC::EncodedJSValue Bun__analyzeTranspiledModule(JSC::JSGlobalObject*, JSC::JSModuleLoader*, const JSC::Identifier&, const JSC::SourceCode&, JSC::JSPromise*)
+{
+    RELEASE_ASSERT_NOT_REACHED();
 }

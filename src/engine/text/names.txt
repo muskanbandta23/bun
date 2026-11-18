@@ -807,6 +807,7 @@ objectArguments = [object Arguments]
 objectArray = [object Array]
 objectBoolean = [object Boolean]
 objectDate = [object Date]
+mapIterator = Map Iterator
 objectError = [object Error]
 objectFunction = [object Function]
 objectNull = [object Null]
@@ -816,6 +817,7 @@ objectRegExp = [object RegExp]
 objectString = [object String]
 objectUndefined = [object Undefined]
 segmenterStringIterator = Segmenter String Iterator
+setIterator = Set Iterator
 starDefaultText = *default*
 stopBeforePartial = stop-before-partial
 timedOut = timed-out
@@ -908,6 +910,7 @@ useStrict = use strict
 @charCodeAt
 @clear
 @cloneObject
+@collectForSpread
 @constructor
 @copyDataProperties
 @create
@@ -982,6 +985,7 @@ useStrict = use strict
 @isDisposableStack
 @isFinite
 @isGenerator
+@isIterationPristine
 @isIteratorHelper
 @isJSArray
 @isMap
@@ -1038,7 +1042,6 @@ useStrict = use strict
 @newRejectedPromise
 @newResolvedPromise
 @newTargetLocal
-@orderedHashTableSentinel
 @ownKeys
 @performPromiseThen
 @pop
@@ -1134,3 +1137,71 @@ useStrict = use strict
 @forEach
 @get
 @has
+plainTime
+relativeTo
+direction
+buddhist
+chinese
+coptic
+dangi
+ethioaa
+ethiopic
+gregory
+hebrew
+indian
+iso8601
+japanese
+persian
+roc
+islamicCivil = islamic-civil
+islamicTbla = islamic-tbla
+islamicUmalqura = islamic-umalqura
+aa
+ah
+am
+ap
+bce
+be
+bh
+broc
+ce
+heisei
+meiji
+reiwa
+shaka
+showa
+taisho
+M01
+M02
+M03
+M04
+M05
+M06
+M07
+M08
+M09
+M10
+M11
+M12
+M13
+M01L
+M02L
+M03L
+M04L
+M05L
+M06L
+M07L
+M08L
+M09L
+M10L
+M11L
+M12L
+temporalDuration = Temporal.Duration
+temporalInstant = Temporal.Instant
+temporalNow = Temporal.Now
+temporalPlainDate = Temporal.PlainDate
+temporalPlainDateTime = Temporal.PlainDateTime
+temporalPlainMonthDay = Temporal.PlainMonthDay
+temporalPlainTime = Temporal.PlainTime
+temporalPlainYearMonth = Temporal.PlainYearMonth
+temporalZonedDateTime = Temporal.ZonedDateTime

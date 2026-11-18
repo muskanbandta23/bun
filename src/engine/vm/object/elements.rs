@@ -1,16 +1,18 @@
 //! Properties whose names are array indices.
 
 use core::cell::Cell;
+use core::ops::Range;
 
 use bun_alloc::AllocError;
 use bun_engine_text::Identifier;
+use bun_highway::elements::{index_of_nan, index_of_u64};
 
 use crate::heap::Owned;
 use crate::{
     Attributes, CellType, Cx, DeferredFire, DontEnumMode, ElementKind, Field, Gc, GetterSetter,
-    GlobalObject, IndexingMode, JsArrayBufferView, JsObject, JsResult, NoGc, PropertyDescriptor,
-    PropertyNameList, PropertySlot, ProxyObject, ShapeFlags, SparseElements, SparseEntry, Storage,
-    TransitionKind, Value, Vm, errors,
+    GlobalObject, HoleMode, ImmutableArray, IndexingMode, JsArrayBufferView, JsObject, JsResult,
+    NoGc, PropertyDescriptor, PropertyNameList, PropertySlot, ProxyObject, PutPropertySlot,
+    ShapeFlags, SparseElements, SparseEntry, Storage, TransitionKind, TypeFlags, Value, Vm, errors,
 };
 
 pub(super) const MIN_SPARSE_INDEX: u32 = 100_000;
@@ -72,23 +74,88 @@ impl Int32Elements<'_> {
     }
 }
 
-impl Elements<'_> {
+impl<'a> Elements<'a> {
+    #[inline(always)]
     pub fn len(self) -> usize {
-        match self {
-            Elements::Int32(values) | Elements::Contiguous(values) => values.len(),
-            Elements::Double(values) => values.len(),
-        }
+        self.words().len()
     }
 
+    #[inline(always)]
     pub fn is_empty(self) -> bool {
         self.len() == 0
     }
 
-    pub fn has_holes(self) -> bool {
+    #[inline(always)]
+    pub fn kind(self) -> ElementKind {
         match self {
-            Elements::Int32(values) | Elements::Contiguous(values) => values.contains(&None),
-            Elements::Double(values) => values.iter().any(|value| value.is_nan()),
+            Elements::Int32(_) => ElementKind::Int32,
+            Elements::Double(_) => ElementKind::Double,
+            Elements::Contiguous(_) => ElementKind::Contiguous,
         }
+    }
+
+    /// That of a copy.
+    #[inline]
+    pub fn kind_with(self, holes: HoleMode) -> ElementKind {
+        let kind = self.kind();
+        if holes == HoleMode::Keep || kind == ElementKind::Contiguous || !self.has_holes() {
+            kind
+        } else {
+            ElementKind::Contiguous
+        }
+    }
+
+    /// As they are stored.
+    #[inline(always)]
+    pub fn words(self) -> &'a [u64] {
+        let (first, length) = match self {
+            Elements::Int32(values) | Elements::Contiguous(values) => {
+                (values.as_ptr().cast(), values.len())
+            }
+            Elements::Double(numbers) => (numbers.as_ptr().cast(), numbers.len()),
+        };
+        // SAFETY: each is eight bytes without padding.
+        unsafe { core::slice::from_raw_parts(first, length) }
+    }
+
+    /// Panics if the range is not inside.
+    #[inline(always)]
+    pub fn slice(self, range: Range<usize>) -> Elements<'a> {
+        match self {
+            Elements::Int32(values) => Elements::Int32(&values[range]),
+            Elements::Double(numbers) => Elements::Double(&numbers[range]),
+            Elements::Contiguous(values) => Elements::Contiguous(&values[range]),
+        }
+    }
+
+    /// Panics past the end.
+    #[inline(always)]
+    pub fn at(self, index: usize) -> Option<Value> {
+        match self {
+            Elements::Int32(values) | Elements::Contiguous(values) => values[index],
+            Elements::Double(numbers) => {
+                let number = numbers[index];
+                (!number.is_nan()).then(|| Value::double(number))
+            }
+        }
+    }
+
+    #[inline]
+    pub fn iter(self) -> impl DoubleEndedIterator<Item = Option<Value>> + ExactSizeIterator + 'a {
+        (0..self.len()).map(move |index| self.at(index))
+    }
+
+    #[inline]
+    pub fn first_hole(self) -> Option<usize> {
+        match self {
+            Elements::Double(numbers) => index_of_nan(numbers),
+            _ => index_of_u64(self.words(), 0),
+        }
+    }
+
+    #[inline]
+    pub fn has_holes(self) -> bool {
+        self.first_hole().is_some()
     }
 }
 
@@ -139,6 +206,20 @@ impl JsObject {
     pub fn elements<'a>(&'a self, _: &'a NoGc<'_>) -> Option<Elements<'a>> {
         // SAFETY: changing them takes the token exclusively, or the `Vm` that it keeps borrowed.
         unsafe { self.elements_unchecked() }
+    }
+
+    /// Panics if they are sparse.
+    #[inline(always)]
+    pub fn dense_elements<'a>(&'a self, no_gc: &'a NoGc<'_>) -> Elements<'a> {
+        self.elements(no_gc).expect("dense elements")
+    }
+
+    /// What the object shares until it is written to.
+    #[inline(always)]
+    pub fn shared_elements(&self) -> Option<Gc<ImmutableArray>> {
+        // SAFETY: of that mode.
+        (self.indexing_mode().is_copy_on_write())
+            .then(|| unsafe { ImmutableArray::from_storage(self.storage()) })
     }
 
     /// # Safety
@@ -240,17 +321,41 @@ impl JsObject {
     #[inline]
     pub fn holes_must_forward_to_prototype(&self) -> bool {
         let shape = self.shape();
-        if let Some(global) = shape.global()
-            && global.is_original_array_shape(&shape)
+        if self.cell_type() == CellType::Array
+            && let Some(global) = shape.global()
+            && shape.prototype() == global.array_prototype().into()
             && global.array_prototype_chain_is_sane()
         {
             return false;
         }
-        shape.may_intercept_indexed_access()
+        self.holes_must_forward_to_prototype_slow()
+    }
+
+    #[inline(never)]
+    fn holes_must_forward_to_prototype_slow(&self) -> bool {
+        let flags = self.shape().type_flags();
+        flags.intersects(TypeFlags::INTERCEPTS_INDEXED_ACCESS | TypeFlags::OVERRIDES_GET_PROTOTYPE)
             || self.chain_direct().skip(1).any(|prototype| {
                 prototype.indexing_mode().has_elements()
+                    || prototype.overrides_get_prototype()
                     || prototype.shape().may_intercept_indexed_access()
             })
+    }
+
+    /// The elements in the range, if they are dense and below the public length, and a hole among them means that
+    /// there is no such property along the prototype chain either.
+    #[inline(always)]
+    pub fn plain_elements<'a>(
+        &'a self,
+        no_gc: &'a NoGc<'_>,
+        range: Range<u64>,
+    ) -> Option<Elements<'a>> {
+        let elements = self.elements(no_gc)?;
+        if range.start > range.end || range.end > elements.len() as u64 {
+            return None;
+        }
+        let elements = elements.slice(range.start as usize..range.end as usize);
+        (!self.holes_must_forward_to_prototype() || !elements.has_holes()).then_some(elements)
     }
 
     fn dense_attributes(&self) -> Attributes {
@@ -350,6 +455,7 @@ impl JsObject {
             fill(storage);
             self.set_shape_and_storage(&shape, storage, false);
         }
+        self.did_change_as_prototype(vm, &shape);
         Ok(())
     }
 
@@ -644,6 +750,11 @@ impl JsObject {
                 return proxy
                     .put_index_with_receiver(cx, this, index, value, should_throw)
                     .map(Some);
+            }
+            if prototype.cell_type() == CellType::ModuleNamespaceObject {
+                let mut slot = PutPropertySlot::new(this, should_throw);
+                let name = Identifier::from_index(index);
+                return prototype.put(cx, name.name(), value, &mut slot).map(Some);
             }
             if CellType::TYPED_ARRAYS.contains(prototype.cell_type()) {
                 let length = prototype.cast::<JsArrayBufferView>().length();

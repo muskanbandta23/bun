@@ -1,6 +1,7 @@
 //! Regular expressions, dates and JSON.
 
 mod date;
+pub mod json;
 mod regexp;
 
 pub use date::DateInstance;

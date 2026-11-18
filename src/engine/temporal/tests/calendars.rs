@@ -9,10 +9,10 @@ use support::*;
 fn describe(date: PlainDate) -> String {
     let fields = date.calendar().date(date.iso_date()).unwrap();
     let era = (fields.era).map_or(String::new(), |it| {
-        format!(" {} {}", it.era.code(), it.year)
+        format!(" {} {}", it.era.code().text(), it.year)
     });
     let (year, month, day) = (fields.year, fields.month, fields.day);
-    format!("{year} {month} {} {day}{era}", fields.month_code())
+    format!("{year} {month} {} {day}{era}", fields.month_code().text())
 }
 
 #[test]
@@ -179,7 +179,7 @@ fn each_day_follows_the_one_before() {
                 let source = format!(
                     "year={} monthCode={} day={}",
                     now.year,
-                    now.month_code(),
+                    now.month_code().text(),
                     now.day
                 );
                 let given = fields(FieldSet::Date, calendar, &source);

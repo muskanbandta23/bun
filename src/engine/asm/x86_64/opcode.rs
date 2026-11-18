@@ -534,6 +534,12 @@ impl Encoding {
         (self.0 >> 12 & 1) as u8
     }
 
+    /// Nothing but REX comes before the opcode, and the operands have 32 or 64 bits.
+    #[inline(always)]
+    pub(super) fn is_plain(self) -> bool {
+        self.0 & !(Self::WIDE | 0xff) == 0
+    }
+
     #[inline(always)]
     pub(super) fn has(self, flag: u16) -> bool {
         self.0 & flag != 0

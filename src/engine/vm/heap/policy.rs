@@ -251,6 +251,12 @@ impl Heap {
         }
     }
 
+    pub(super) fn did_find_extra_memory(&self, bytes: usize) {
+        self.policy
+            .extra_memory
+            .update(|total| total.saturating_add(bytes));
+    }
+
     /// Memory that no visit will report. May collect.
     pub fn report_untracked_extra_memory(&self, bytes: usize) {
         self.policy

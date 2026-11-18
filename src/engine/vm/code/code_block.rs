@@ -123,6 +123,7 @@ pub struct CodeBlock {
     execution_counter: Cell<i32>,
     tier: Cell<Tier>,
     is_jettisoned: Cell<bool>,
+    saved_words: u32,
     alternative: Option<Gc<CodeBlock>>,
     code: Rc<Code>,
     words: Words,
@@ -169,6 +170,7 @@ impl CodeBlock {
             execution_counter: Cell::new(-crate::options().threshold_for_baseline),
             tier: Cell::new(Tier::Interpreter),
             is_jettisoned: Cell::new(false),
+            saved_words: code.body.saved_words(),
             alternative: None,
             code,
             words,
@@ -202,6 +204,7 @@ impl CodeBlock {
             execution_counter: Cell::new(0),
             tier: Cell::new(tier),
             is_jettisoned: Cell::new(false),
+            saved_words: self.saved_words,
             alternative: Some(self.baseline()),
             code: Rc::clone(&self.code),
             words: Words::zeroed(0).unwrap_or_else(|| bun_alloc::out_of_memory()),
@@ -229,8 +232,7 @@ impl CodeBlock {
                     _ => LiteralRadix::Decimal,
                 };
                 let digits = literal.digits.text();
-                let value = bun_engine_bigint::from_literal(digits, radix, literal.is_negative);
-                JsBigInt::from_new(cx, value)?.into()
+                JsBigInt::from_literal(cx, digits, radix, literal.is_negative)?.into()
             }
             Constant::RegExp(literal) => {
                 RegExp::for_literal(cx, literal.pattern.string(), literal.flags.text()).into()
@@ -344,6 +346,12 @@ impl CodeBlock {
         self.locals
     }
 
+    /// The most registers that it saves when it suspends.
+    #[inline(always)]
+    pub fn saved_words(&self) -> u32 {
+        self.saved_words
+    }
+
     /// With `this`.
     #[inline(always)]
     pub fn parameters(&self) -> u32 {
@@ -416,6 +424,22 @@ impl CodeBlock {
 
     pub fn constant(&self, index: u32) -> Option<Value> {
         self.baseline().fields()[..self.code.constants.len()][index as usize].get()
+    }
+
+    /// # Safety
+    /// There is such a function.
+    #[inline(always)]
+    pub unsafe fn function_if_created(&self, index: FunctionIndex) -> Option<Gc<FunctionExecutable>> {
+        // SAFETY: the caller's, and only executables are stored there.
+        unsafe { (*self.functions.add(index.index()).cast::<Field<Option<_>>>()).get() }
+    }
+
+    /// # Safety
+    /// There is such a scope.
+    #[inline(always)]
+    pub unsafe fn scope_template_if_created(&self, index: ScopeIndex) -> Option<Gc<ScopeTemplate>> {
+        // SAFETY: the caller's, and only templates are stored there.
+        unsafe { (*self.scopes.add(index.index()).cast::<Field<Option<_>>>()).get() }
     }
 
     #[inline(always)]

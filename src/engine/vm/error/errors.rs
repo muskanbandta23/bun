@@ -4,6 +4,7 @@ use bun_engine_text::{PropertyName, StringBuilder};
 
 use crate::{Class, Cx, ErrorInstance, ErrorType, Message, SourceAppender, Thrown, Value};
 
+pub const TYPE_ERROR: &str = "Type error";
 pub const NON_EXTENSIBLE_DEFINE: &str =
     "Attempting to define property on object that is not extensible.";
 pub const READ_ONLY_PROPERTY_WRITE: &str = "Attempted to assign to readonly property.";
@@ -25,6 +26,7 @@ pub const PROTOTYPE_NOT_OBJECT_OR_NULL: &str = "Prototype value can only be an o
 pub const DEFINE_BEYOND_READ_ONLY_LENGTH: &str =
     "Attempting to define numeric property on array with non-writable length property.";
 pub const INVALID_ARRAY_LENGTH: &str = "Invalid array length";
+pub const INVALID_ARRAY_SIZE: &str = "Array length must be a positive integer of safe magnitude.";
 pub const LENGTH_EXCEEDS_MAXIMUM: &str = "Length exceeded the maximum array length";
 pub const SYMBOL_TO_STRING: &str = "Cannot convert a symbol to a string";
 pub const ITERATOR_RESULT_NOT_OBJECT: &str = "Iterator result interface is not an object.";
@@ -150,4 +152,11 @@ pub fn throw_getter_type_error(cx: &Cx, class: &Class, name: PropertyName<'_>) -
     let error = ErrorInstance::new(cx, ErrorType::TypeError, Some(message.into_string()));
     error.set_native_getter_type_error();
     cx.throw(error.into())
+}
+
+#[cold]
+pub fn throw_called_without_new(cx: &Cx, constructor: &str) -> Thrown {
+    cx.throw_type_error(format_args!(
+        "calling {constructor} constructor without new is invalid"
+    ))
 }

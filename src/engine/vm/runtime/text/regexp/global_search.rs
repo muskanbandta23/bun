@@ -1,8 +1,6 @@
 //! One match after the other, as with the flag `g`.
 
 use core::ops::ControlFlow;
-use core::sync::atomic::Ordering;
-
 use bun_engine_regexp::Mode;
 use bun_engine_text::Text;
 use smallvec::SmallVec;
@@ -13,7 +11,7 @@ pub(super) type Matches = SmallVec<[Match; 32]>;
 
 #[inline(always)]
 pub(super) fn check_termination(cx: &Cx) -> JsResult<()> {
-    if cx.traps().termination_flag().load(Ordering::Relaxed) && !cx.is_termination_deferred() {
+    if cx.is_termination_requested() {
         return Err(cx.throw_termination());
     }
     Ok(())

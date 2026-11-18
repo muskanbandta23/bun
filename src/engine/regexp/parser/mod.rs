@@ -248,12 +248,14 @@ impl<'a, S: Sink> Parser<'a, S> {
     }
 }
 
-#[inline]
+#[inline(always)]
 pub(crate) fn try_push<A: smallvec::Array>(
     stack: &mut SmallVec<A>,
     item: A::Item,
 ) -> Result<(), Error> {
-    stack.try_reserve(1).map_err(|_| Error::OutOfMemory)?;
+    if stack.len() == stack.capacity() {
+        stack.try_reserve(1).map_err(|_| Error::OutOfMemory)?;
+    }
     stack.push(item);
     Ok(())
 }

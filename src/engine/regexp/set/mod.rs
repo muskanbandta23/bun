@@ -219,6 +219,7 @@ impl Set {
     }
 
     /// The only member.
+    #[inline]
     pub fn single(&self) -> Option<u32> {
         match (self.latin1.len(), self.above()) {
             (1, []) => self.latin1.iter().next().map(u32::from),
@@ -255,7 +256,7 @@ impl Set {
         } else if self.above().is_empty() {
             other.above.try_clone()?
         } else {
-            Above::from_slice(ranges::union(self.above(), other.above())?.as_slice())?
+            Above::from_slice(&ranges::union(self.above(), other.above())?)?
         };
         Ok(Set {
             latin1: self.latin1 | other.latin1,
@@ -269,7 +270,7 @@ impl Set {
         } else if self.has_all_above() {
             other.above.try_clone()?
         } else {
-            Above::from_slice(ranges::intersection(self.above(), other.above())?.as_slice())?
+            Above::from_slice(&ranges::intersection(self.above(), other.above())?)?
         };
         Ok(Set {
             latin1: self.latin1 & other.latin1,
@@ -281,7 +282,7 @@ impl Set {
         let above = if other.above().is_empty() {
             self.above.try_clone()?
         } else {
-            Above::from_slice(ranges::difference(self.above(), other.above())?.as_slice())?
+            Above::from_slice(&ranges::difference(self.above(), other.above())?)?
         };
         Ok(Set {
             latin1: self.latin1 - other.latin1,
@@ -289,16 +290,23 @@ impl Set {
         })
     }
 
+    #[inline]
     pub fn complement(&self) -> Result<Set, AllocError> {
         let above = match self.above {
             Above::Inline(0, _) => Above::ALL,
-            Above::Shared(shared) => Above::from_shared(shared.complement()),
-            _ => Above::from_slice(ranges::complement(self.above())?.as_slice())?,
+            _ => self.complement_above()?,
         };
         Ok(Set {
             latin1: !self.latin1,
             above,
         })
+    }
+
+    fn complement_above(&self) -> Result<Above, AllocError> {
+        match self.above {
+            Above::Shared(shared) => Ok(Above::from_shared(shared.complement())),
+            _ => Above::from_slice(&ranges::complement(self.above())?),
+        }
     }
 
     /// A table of its own, for the characters up to `max`. That of [`Set::shared`] costs nothing.

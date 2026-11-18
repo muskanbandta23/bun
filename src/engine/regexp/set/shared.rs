@@ -77,10 +77,15 @@ impl SharedSet {
                 let above = ranges::complement(&self.above).expect(FIXED_SIZE);
                 Box::new(SharedSet {
                     complement: Complement::Origin(self),
-                    ..SharedSet::new(!self.latin1, above.as_slice().to_vec().into())
+                    ..SharedSet::new(!self.latin1, above.to_vec().into())
                 })
             }),
         }
+    }
+
+    pub(super) fn is_complement_of(&self, other: &SharedSet) -> bool {
+        let is_origin_of = |a: &SharedSet, b: &SharedSet| matches!(b.complement, Complement::Origin(origin) if core::ptr::eq(origin, a));
+        is_origin_of(self, other) || is_origin_of(other, self)
     }
 
     /// With all that simple case folding makes equal to a member.

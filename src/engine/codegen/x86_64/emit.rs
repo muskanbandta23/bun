@@ -6,13 +6,13 @@ use bun_engine_asm::x64::{
 };
 use bun_engine_asm::{
     Address, AtomicOp, Bank, FloatAssembly, FloatWidth, Fpr, Gpr, MacroAssembly, RegisterSet,
-    Scale, Scratch, ScratchNeeds, Sign, Size, Width, X64Features,
+    Scale, Scratch, ScratchNeeds, Sign, Size, VectorAssembly, Width, X64Features,
 };
 use smallvec::SmallVec;
 
 use super::instruction::{Amode, Inst, Source, Stored, Test};
 use crate::client::Client;
-use crate::ir::{Checked, Function, Location, Op, Type, Unary, Wide};
+use crate::ir::{Checked, Function, Load, Location, Op, Type, Unary, Wide};
 use crate::machine::{Class, Emitter, Isa, Operands, Registers, Shared, SharesInstructions};
 
 const SCRATCH: Fpr = XMM15;
@@ -52,6 +52,9 @@ fn fpr_or_memory(asm: &mut Assembler, operands: &mut Operands<'_>) -> FprMem {
     match operands.location() {
         Location::Frame(offset) => Rm::Mem(frame(offset)),
         Location::Constant(bits) => Rm::Mem(asm.constant(bits.get().into(), size)),
+        Location::VectorConstant(constant) => {
+            Rm::Mem(asm.constant(operands.function().vector_constant(constant), 16))
+        }
         location => Rm::Reg(location.fpr()),
     }
 }
@@ -484,10 +487,7 @@ impl Isa for Inst {
                 masm.move_float_constant(width, dst, bits.get());
             }
             (Location::VectorConstant(constant), Location::Fpr(dst)) => {
-                let src = masm
-                    .assembler()
-                    .constant(function.vector_constant(constant), 16);
-                load_float(masm.assembler(), 16, dst, src);
+                masm.move_vector_constant(dst, function.vector_constant(constant));
             }
             _ => unreachable!("no such move"),
         }
@@ -539,6 +539,7 @@ impl Isa for Inst {
                 load_float(asm, ty.bytes(), o.fpr(), Address::new(RSP, offset))
             }
             Self::Shared(shared) => shared.emit::<Self>(emitter.masm, operands),
+            Self::Vector(instruction) => instruction.emit::<Self>(emitter.masm, operands),
 
             Self::Alu(op, width, rhs) => {
                 let (dst, lhs) = (o.gpr(), gpr_or_memory(o));
@@ -654,6 +655,28 @@ impl Isa for Inst {
             }
 
             Self::LoadFloat(ty, amode) => load_float(asm, ty.bytes(), o.fpr(), address(amode, o)),
+            Self::LoadVector(kind, amode) => {
+                let (dst, src) = (o.fpr(), address(amode, o));
+                match kind {
+                    Load::VectorExtend(from, sign) => {
+                        emitter.masm.load_vector_extend(from, sign, dst, src)
+                    }
+                    Load::VectorSplat(lanes) => emitter.masm.load_vector_splat(lanes, dst, src),
+                    Load::VectorZero(size) => load_float(asm, size.bytes().into(), dst, src),
+                    Load::Narrow(..) | Load::Full => unreachable!("has an instruction of its own"),
+                }
+            }
+            Self::LoadLane(lanes, lane, amode) => {
+                emitter
+                    .masm
+                    .load_vector_lane(lanes, o.fpr(), o.fpr(), lane, address(amode, o));
+            }
+            Self::StoreLane(lanes, lane, amode) => {
+                let vector = o.fpr();
+                emitter
+                    .masm
+                    .store_vector_lane(lanes, address(amode, o), vector, lane);
+            }
             Self::Store(size, src, amode) => {
                 match (stored(src, o), address(amode, o)) {
                     (Ok(src), dst) => asm.mov_store(size, dst, src),

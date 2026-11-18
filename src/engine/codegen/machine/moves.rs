@@ -61,8 +61,16 @@ pub(crate) struct Move {
     pub(crate) from: Spot,
     pub(crate) to: Spot,
     pub(crate) class: Class,
+    pub(crate) kind: MoveKind,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum MoveKind {
+    Copy,
     /// `from` gets what was in `to`.
-    pub(crate) is_swap: bool,
+    Swap,
+    /// A value goes to its own home, which nothing else in the same group of moves touches.
+    Spill,
 }
 
 impl Move {
@@ -72,7 +80,17 @@ impl Move {
             from,
             to,
             class,
-            is_swap: false,
+            kind: MoveKind::Copy,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn spill(from: Spot, vreg: VReg, class: Class) -> Self {
+        Self {
+            from,
+            to: Spot::home(vreg),
+            class,
+            kind: MoveKind::Spill,
         }
     }
 }
@@ -129,6 +147,12 @@ impl Sequencer {
         swaps_gprs: bool,
         mut emit: impl FnMut(Move),
     ) {
+        moves.retain(|&step| {
+            if step.kind == MoveKind::Spill {
+                emit(step);
+            }
+            step.kind != MoveKind::Spill
+        });
         if let [only] = moves[..] {
             moves.clear();
             return emit(only);
@@ -191,25 +215,16 @@ impl Sequencer {
             let mut index = first;
             loop {
                 let step = moves[index];
-                let next = self.traffic(step.from).writer as usize;
-                *self.traffic(step.to) = Traffic {
-                    readers: 0,
-                    writer: if index == first {
-                        first as u32
-                    } else {
-                        NO_MOVE
-                    },
-                };
+                *self.traffic(step.to) = IDLE;
                 if index == last {
                     break;
                 }
                 emit(Move {
-                    is_swap: true,
+                    kind: MoveKind::Swap,
                     ..step
                 });
-                index = next;
+                index = self.traffic(step.from).writer as usize;
             }
-            *self.traffic(moves[first].to) = IDLE;
             return;
         }
         let shelter = if only_registers {

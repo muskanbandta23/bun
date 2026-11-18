@@ -6,7 +6,7 @@ use super::effects::EffectFlags;
 use super::entities::{Block, Entity, Patchpoint, Value};
 use super::function::Function;
 use super::op::{AccessFlags, Binary, Load, Op, Store, Type, Unary};
-use super::patchpoint::{Action, Boundary, Input, Output};
+use super::patchpoint::{Action, Boundary, Input, Output, PatchpointFlags};
 use crate::analysis::{Cfg, Dominators};
 use crate::bitset::BitSet;
 
@@ -368,6 +368,15 @@ fn check_patchpoint(function: &Function, value: Value, patchpoint: Patchpoint) -
     );
     require!(
         ((data.clobbers_early | data.clobbers_late) & function.pinned).is_empty(),
+        value
+    );
+    let jumps_to_successors =
+        data.action == Action::Custom && data.effects.has(EffectFlags::ENDS_BLOCK);
+    let needs_code_after =
+        PatchpointFlags::UNEXTENDED_RESULTS | PatchpointFlags::MOVES_STACK_POINTER;
+    let has_successors = function.successors(function.block_of(value)).len() != 0;
+    require!(
+        !(jumps_to_successors && has_successors && data.flags.intersects(needs_code_after)),
         value
     );
     if data.action == Action::CallIndirect {

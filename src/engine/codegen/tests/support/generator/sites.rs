@@ -494,6 +494,7 @@ impl Generator<'_> {
             data.state = self.state(true, &[]);
         }
         let (inputs, outputs) = self.constrain(&mut data, &operands, &results);
+        data.flags -= PatchpointFlags::UNEXTENDED_RESULTS | PatchpointFlags::MOVES_STACK_POINTER;
         let mut builder = self.builder();
         let site = builder.terminal_patchpoint(&data, &inputs, &outputs, successors);
         (site, behaviour)

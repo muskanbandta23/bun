@@ -17,6 +17,12 @@ impl Register {
         Register(offset)
     }
 
+    /// The inverse of [`Field::word`].
+    #[inline(always)]
+    pub const fn from_word(word: u32) -> Register {
+        Register(word as i32)
+    }
+
     #[inline(always)]
     pub const fn local(index: u32) -> Register {
         Register(-1 - index as i32)
@@ -70,6 +76,12 @@ impl Operand {
     #[inline(always)]
     pub const fn constant(index: u32) -> Operand {
         Operand(Self::FIRST_CONSTANT + index as i32)
+    }
+
+    /// The inverse of [`Field::word`].
+    #[inline(always)]
+    pub const fn from_word(word: u32) -> Operand {
+        Operand(word as i32)
     }
 
     #[inline(always)]

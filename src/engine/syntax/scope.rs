@@ -834,10 +834,7 @@ impl Scopes {
         };
         let exists = match name {
             Name::ARGUMENTS => {
-                let has_arguments = !matches!(
-                    function,
-                    FunctionKind::FieldInitializer | FunctionKind::StaticBlock
-                );
+                let has_arguments = function != FunctionKind::FieldInitializer;
                 return Some(has_arguments.then_some(BindingKind::Arguments));
             }
             Name::THIS_VALUE | Name::NEW_TARGET => true,

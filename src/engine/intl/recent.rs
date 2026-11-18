@@ -39,3 +39,21 @@ impl<K, V: Clone, const N: usize> Recent<K, V, N> {
         Ok(value)
     }
 }
+
+/// For values that tell what they were made from.
+pub(crate) type RecentSet<V, const N: usize> = Recent<V, V, N>;
+
+impl<V: Clone, const N: usize> RecentSet<V, N> {
+    pub(crate) fn find_or_insert(
+        &self,
+        matches: impl Fn(&V) -> bool,
+        make: impl FnOnce() -> crate::Result<V>,
+    ) -> crate::Result<V> {
+        if let Some(found) = self.find(matches) {
+            return Ok(found);
+        }
+        let value = make()?;
+        self.insert(value.clone(), value.clone());
+        Ok(value)
+    }
+}

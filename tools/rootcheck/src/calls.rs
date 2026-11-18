@@ -88,7 +88,7 @@ impl<'a, 'tcx> Calls<'a, 'tcx> {
         has_body.then(|| Frame { cx: self.cx, instance, env, body: tcx.instance_mir(instance.def) })
     }
 
-    fn resolve(&self, frame: Frame<'_, 'tcx>, function: Ty<'tcx>) -> Option<Instance<'tcx>> {
+    pub fn resolve(&self, frame: Frame<'_, 'tcx>, function: Ty<'tcx>) -> Option<Instance<'tcx>> {
         let ty::FnDef(def_id, args) = *function.kind() else {
             return None;
         };
@@ -447,6 +447,13 @@ pub fn check<'a, 'tcx>(calls: &Calls<'a, 'tcx>, cx: &'a Types<'tcx>) -> Instanti
                 });
                 nodes[index].callers.push((next, span));
             }
+        } else if let InstanceKind::Item(def_id) = instance.def
+            && matches!(tcx.def_kind(def_id), DefKind::Fn | DefKind::AssocFn | DefKind::Closure)
+            && !tcx.is_foreign_item(def_id)
+        {
+            let name = tcx.def_path_str(def_id);
+            tcx.dcx()
+                .fatal(format!("rootcheck: no MIR for `{name}`; it takes `-Zalways-encode-mir`"));
         }
         next += 1;
     }

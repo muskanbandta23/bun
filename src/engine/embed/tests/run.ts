@@ -16,12 +16,18 @@ const root = resolve(embed, "../../..");
 const compiler = process.env.CXX ?? "clang++";
 const host = (await $`rustc -vV`.cwd(root).text()).match(/^host: (.+)$/m)![1];
 
-const sources = ["tests/*.cpp", "cpp/Support*.cpp", "cpp/Text*.cpp"].flatMap(pattern =>
+const generated = join(root, "target", "embed-tests-headers");
+mkdirSync(generated, { recursive: true });
+await $`${process.execPath} ${join(root, "src/codegen/generate-engine-headers.ts")} ${generated}`;
+
+const sources = ["tests/*.cpp", "cpp/*.cpp"].flatMap(pattern =>
   [...new Glob(pattern).scanSync({ cwd: embed, absolute: true })].sort(),
 );
 const flags = [
   ..."-std=gnu++23 -g -fno-exceptions -fno-rtti -fno-omit-frame-pointer -fno-c++-static-destructors".split(" "),
   ..."-Wall -Wextra -Werror -Wno-unused-parameter -Wthread-safety".split(" "),
+  ..."-Wno-invalid-offsetof -Wno-unused-private-field -Wno-missing-designated-field-initializers".split(" "),
+  `-I${generated}`,
   ...(process.arch === "x64" ? ["-march=nehalem"] : []),
   ...[join(embed, "include"), join(root, "vendor/mimalloc/include"), join(root, "vendor/simdutf/include")].map(
     directory => `-I${directory}`,

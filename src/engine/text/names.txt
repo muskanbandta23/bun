@@ -1205,3 +1205,4 @@ temporalPlainMonthDay = Temporal.PlainMonthDay
 temporalPlainTime = Temporal.PlainTime
 temporalPlainYearMonth = Temporal.PlainYearMonth
 temporalZonedDateTime = Temporal.ZonedDateTime
+colonAndSpace = : 

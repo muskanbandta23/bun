@@ -1,8 +1,8 @@
 use super::assembler::FprMem;
 use super::integer::MacroAssembler;
 use super::opcode::{
-    AvxUnary, Cc, MoveMask, ShiftOp, Sse, SseImm, SseMerge, SseMergeLoad, SseStore, SseUnary,
-    SseUnaryImm,
+    AvxUnary, BitCount, Cc, MoveMask, ShiftOp, Sse, SseImm, SseMerge, SseMergeLoad, SseStore,
+    SseUnary, SseUnaryImm,
 };
 use super::shuffle::Plan;
 use super::vector_binary::{self, has_fma};
@@ -307,6 +307,35 @@ impl VectorAssembly for MacroAssembler {
         assert!(matches!(cond, TestCond::Zero | TestCond::NonZero));
         self.asm.sse_unary(SseUnary::Ptest, vector, vector);
         self.asm.jcc(cond.into(), target);
+    }
+
+    const BYTE_MASK_SHIFT: u8 = 0;
+
+    fn move_byte_mask(&mut self, dst: Gpr, mask: Fpr) {
+        self.asm.move_mask(MoveMask::Pmovmskb, dst, mask);
+    }
+
+    fn first_in_byte_mask(&mut self, dst: Gpr, mask: Gpr) {
+        let op = if self.asm.has(X64Features::BMI1) {
+            BitCount::Tzcnt
+        } else {
+            BitCount::Bsf
+        };
+        self.asm.bit_count(op, Width::W32, dst, mask);
+    }
+
+    fn narrow_to_bytes(&mut self, sign: Sign, dst: Fpr, lhs: Fpr, rhs: Fpr) {
+        let op = match sign {
+            Sign::Signed => Sse::Packsswb,
+            Sign::Unsigned => Sse::Packuswb,
+        };
+        self.sse_binary(op, dst, lhs, rhs);
+    }
+
+    fn test_bit_in_bytes(&mut self, dst: Fpr, value: Fpr, bit: Fpr) {
+        let common = self.dst_unless(dst, bit);
+        self.sse_binary(Sse::Pand, common, value, bit);
+        self.sse_binary(Sse::Pcmpeqb, dst, common, bit);
     }
 
     fn relaxed(features: X64Features) -> Relaxed {

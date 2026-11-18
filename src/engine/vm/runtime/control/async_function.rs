@@ -64,7 +64,8 @@ impl JsAsyncFunctionGenerator {
         status: PromiseStatus,
         value: Value,
     ) -> JsResult<()> {
-        match self.resume(cx, value, resume_mode_for(status)) {
+        let mode = resume_mode_for(status);
+        match cx.with_entry_context(self.into(), |cx| self.resume(cx, value, mode)) {
             Ok(_) => Ok(()),
             // There was no room for the frame.
             Err(thrown) => self.promise.reject_with_caught(cx, thrown),

@@ -119,6 +119,11 @@ impl<K: Entity, V> Table<K, V> {
     }
 
     #[inline]
+    pub fn get(&self, key: K) -> Option<&V> {
+        self.items.get(key.index())
+    }
+
+    #[inline]
     pub fn push(&mut self, value: V) -> K {
         let key = K::from_index(self.items.len());
         self.items.push(value);

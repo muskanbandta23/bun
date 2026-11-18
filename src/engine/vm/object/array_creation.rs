@@ -231,6 +231,10 @@ impl JsArray {
         let Some(plain) = PlainRange::of(&cx.no_gc(), source, range, holes) else {
             return Ok(None);
         };
+        if holes == HoleMode::Keep && source.element_kind() == ElementKind::Undecided {
+            let length = plain.len() as u32;
+            return (cx.new_array_with_length(ElementKind::Undecided, length)).map(Some);
+        }
         // SAFETY: all that has happened since is allocation.
         let fill = |writer: &mut ElementWriter<'_>, _: &NoGc<'_>| unsafe { plain.write_to(writer) };
         Self::build(cx, plain.kind(), plain.len(), fill).map(Some)

@@ -385,7 +385,7 @@ impl AccessCases {
         let last = self.ensure_last(vm, owner, key);
         last.did_miss.set(true);
         last.failures.update(|count| count.saturating_add(1));
-        if last.failures.get() >= Self::MAX_FAILURES {
+        if last.failures.get() == Self::MAX_FAILURES {
             self.end_with(vm, owner, AccessKind::Generic, key);
         }
     }

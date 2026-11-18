@@ -2,6 +2,7 @@
 
 /// An error is reported at `divot` and quotes the text from `start` to `end`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(C)]
 pub struct Position {
     pub divot: u32,
     pub start: u32,

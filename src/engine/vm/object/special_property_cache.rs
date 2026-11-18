@@ -78,7 +78,8 @@ impl Shape {
     }
 
     fn cache_special_property(&self, vm: &Vm, property: SpecialProperty, slot: &PropertySlot) {
-        let cache = &self.ensure_rare_data().special_properties;
+        let this = crate::anchor!(self);
+        let cache = &this.ensure_rare_data().special_properties;
         let cached = &cache.values[property as usize];
         if cached.get() != NOT_CACHED {
             return;

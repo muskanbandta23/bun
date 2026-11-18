@@ -7,12 +7,22 @@ RefPtr<CachedBytecode> SourceProvider::cachedBytecode() const
     return nullptr;
 }
 
+static void takeBytecode(void* bytecode, const uint8_t* bytes, size_t size)
+{
+    *static_cast<RefPtr<CachedBytecode>*>(bytecode) = CachedBytecode::createByCopying({ bytes, size });
+}
+
 RefPtr<CachedBytecode> generateBytecode(VM& vm, const SourceCode& source, SourceCodeType type, unsigned depth)
 {
     RefPtr<CachedBytecode> bytecode;
-    Engine::bytecode_generate(vm, source, type == SourceCodeType::ModuleType, depth, &bytecode, [](void* bytecode, const uint8_t* bytes, size_t size) {
-        *static_cast<RefPtr<CachedBytecode>*>(bytecode) = CachedBytecode::createByCopying({ bytes, size });
-    });
+    Engine::bytecode_generate(vm, source, type == SourceCodeType::ModuleType, depth, &bytecode, takeBytecode);
+    return bytecode;
+}
+
+RefPtr<CachedBytecode> generateBytecode(VM& vm, UnlinkedFunctionExecutable& function, unsigned sourceStamp, unsigned depth)
+{
+    RefPtr<CachedBytecode> bytecode;
+    Engine::bytecode_generate_for_builtin(vm, function, sourceStamp, depth, &bytecode, takeBytecode);
     return bytecode;
 }
 

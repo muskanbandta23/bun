@@ -18,7 +18,7 @@ use crate::{
     JsResult, JsSourceCode, JsString, ModuleEnvironment, ModuleKey, ModuleKeyRef, ModuleName,
     ModuleRegistryEntry, ModuleRequest, ModuleType, PromiseStatus, RegistryStatus, SourceCode,
     SourceProvider, SourceProviderRef, SourceTextModuleRecord, SourceType, SyntheticExports,
-    SyntheticModuleRecord, TracedMap, TypeFlags, Value, Vm, create_compile_error_in,
+    SyntheticModuleRecord, TracedMap, TypeFlags, Value, Vm, create_compile_error_in, json,
     origin_of_caller,
 };
 
@@ -264,7 +264,7 @@ impl ModuleLoader {
                 (hooks.make_analyzed_module)(cx, this, key, &source, promise)?;
             }
             SourceType::Json => {
-                let value = (cx.hooks().parse_json)(cx, source.text()).inspect_err(|_| {
+                let value = json::parse(cx, source.text().into()).inspect_err(|_| {
                     let error = cx.exception().map_or_default(|it| it.value());
                     let key = ModuleKeyRef::new(key.name(), ModuleType::Json);
                     failure::note(cx, error, key, FailureKind::Evaluation);

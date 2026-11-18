@@ -146,6 +146,7 @@ pub(super) struct Template {
     items: Vec<(PartKind, Item)>,
     /// Unless they are ASCII.
     digits: Option<Names>,
+    time_zone_field: Option<Box<[u16]>>,
     /// No text is longer, the name of the time zone aside.
     capacity: usize,
 }
@@ -217,11 +218,38 @@ impl Template {
             Item::Name(_, names) => longest(names),
             Item::TimeZoneName => 0,
         });
-        Ok(Some(Template {
+        let time_zone_field = pattern::fields(pattern)
+            .find(|field| field.component() == Some(Component::TimeZoneName))
+            .map(|field| pattern[field.range].into());
+        let template = Template {
             capacity: capacity.sum(),
             items,
             digits,
-        }))
+            time_zone_field,
+        };
+        // The library of macOS has rules of its own for some locales.
+        if cfg!(target_os = "macos") && !template.reads_like_icu(pattern, locale)? {
+            return Ok(None);
+        }
+        debug_assert_eq!(template.reads_like_icu(pattern, locale), Ok(true));
+        Ok(Some(template))
+    }
+
+    fn reads_like_icu(&self, pattern: &[u16], locale: &LocaleData) -> Result<bool> {
+        /// 2001-02-03T04:05:06.007Z
+        const TIME: i64 = 981_173_106_007;
+
+        let icu_text =
+            |pattern| (locale.text_in_utc(pattern, TIME as f64)).or_type_error(FORMAT_FAILURE);
+        let zone_name = icu_text(self.time_zone_field().unwrap_or_default())?;
+        let mut text = DateText::new();
+        self.write(TIME, &zone_name, &mut text, |_, _| Ok(()))?;
+        Ok(*text == *icu_text(pattern)?)
+    }
+
+    /// As a pattern of its own.
+    pub(super) fn time_zone_field(&self) -> Option<&[u16]> {
+        self.time_zone_field.as_deref()
     }
 
     /// `local_time` is what a clock shows, in milliseconds since it showed the epoch.

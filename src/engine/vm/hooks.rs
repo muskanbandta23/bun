@@ -1,4 +1,5 @@
-use bun_engine_text::PropertyName;
+use bun_engine_bytecode::{BuiltinFunction, FunctionKind, FunctionRef, Visibility};
+use bun_engine_text::{Identifier, PropertyName};
 
 use crate::heap::{Scope, Survivors};
 use crate::{
@@ -21,7 +22,7 @@ pub struct Hooks {
     pub realm_watchpoint_conditions: fn(&Cx, RealmWatchpoint) -> Option<Vec<PropertyCondition>>,
     pub did_start_having_a_bad_time: fn(&Vm, &GlobalObject),
     pub did_declare_global_lexical: fn(&Vm, &GlobalObject, PropertyName<'_>),
-    pub builtin_source: fn(BuiltinId) -> BuiltinSource,
+    pub builtin_source: fn(BuiltinId) -> &'static BuiltinSource,
     pub find_wasm_handler: fn(&Vm, &CallFrame) -> Option<(usize, u32)>,
     pub debugger_will_unwind: fn(&Vm, &CallFrame),
     pub debugger_did_unwind_frame: fn(&Vm, &CallFrame),
@@ -34,8 +35,37 @@ pub struct Hooks {
 
 /// A function of the standard library that is written in JavaScript.
 pub struct BuiltinSource {
-    pub name: PropertyName<'static>,
-    /// A function expression in parentheses.
+    pub name: &'static str,
+    /// A strict function expression without a name, in parentheses.
     pub text: &'static str,
+    pub parameters_start: u32,
+    pub length: u32,
+    pub is_async: bool,
+    pub is_generator: bool,
+    pub is_constructor: bool,
+    pub is_always_inlined: bool,
+    pub visibility: Visibility,
     pub intrinsic: Intrinsic,
+}
+
+impl BuiltinSource {
+    pub(crate) fn to_function(&self) -> FunctionRef {
+        BuiltinFunction {
+            name: Identifier::from_literal(self.name),
+            range: 1..self.text.len() as u32 - 1,
+            parameters_start: self.parameters_start,
+            length: self.length,
+            kind: if self.is_constructor {
+                FunctionKind::NakedConstructor
+            } else {
+                FunctionKind::Method
+            },
+            is_strict: true,
+            is_async: self.is_async,
+            is_generator: self.is_generator,
+            visibility: self.visibility,
+            has_positions: false,
+        }
+        .into_function()
+    }
 }

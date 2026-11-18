@@ -1159,6 +1159,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   if (icu !== "system" && icu !== "bundled") {
     throw new BuildError(`Unknown icu: ${icu}`, { hint: "Use system or bundled" });
   }
+  assert(icu === "system" || !darwin, "icu=bundled is not for macOS, which links the system's libicucore");
 
   // ─── Validation ───
   assert(!baseline || x64, "baseline=true requires arch=x64 (baseline disables AVX which is x64-only)");

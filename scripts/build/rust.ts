@@ -37,6 +37,7 @@
 import { existsSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { Abi, Arch, Config, OS } from "./config.ts";
+import { bundledIcuMajorVersion } from "./deps/icu.ts";
 import { assert } from "./error.ts";
 import { computeCpuTargetFlags, rustLtoInLink } from "./flags.ts";
 import type { Ninja } from "./ninja.ts";
@@ -595,6 +596,8 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     CXX: cfg.cxx,
     AR: cfg.ar,
   };
+  // For src/icu/build.rs, which reads the version of any other ICU from its headers.
+  if (cfg.icu === "bundled") unitEnv.BUN_ICU_MAJOR_VERSION = bundledIcuMajorVersion(cfg);
   if (cfg.cargoHome !== undefined) unitEnv.CARGO_HOME = cfg.cargoHome;
   if (cfg.rustupHome !== undefined) unitEnv.RUSTUP_HOME = cfg.rustupHome;
   // Pin the toolchain explicitly. `vendor/` is commonly a symlink shared across worktrees; rustup's directory walk

@@ -922,6 +922,10 @@ export const defines: Flag[] = [
     desc: "Standard Windows defines + disable CRT security warnings",
   },
   {
+    flag: ["U_SHOW_CPLUSPLUS_API=0", "U_SHOW_CPLUSPLUS_HEADER_API=0", "U_HIDE_DEPRECATED_API=1"],
+    desc: "Only the C interface of ICU, which is the same in every release",
+  },
+  {
     flag: "U_STATIC_IMPLEMENTATION",
     when: c => c.windows,
     desc: "ICU static linkage (without this: ABI mismatch → STATUS_STACK_BUFFER_OVERRUN)",

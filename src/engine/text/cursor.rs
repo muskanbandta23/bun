@@ -1,5 +1,6 @@
 use core::io::{BorrowedBuf, BorrowedCursor};
 use core::mem::MaybeUninit;
+use core::slice;
 
 use bun_alloc::AllocError;
 
@@ -78,6 +79,18 @@ impl<'a, T: CodeUnit> Cursor<'a, T> {
         self.take(1)[0].write(unit);
     }
 
+    /// `code_point` is at most 0x10FFFF. Of a unit that is too wide, the low byte is kept.
+    #[inline(always)]
+    pub fn push_code_point(&mut self, code_point: u32) {
+        match code_point.checked_sub(0x10000) {
+            None => self.push(T::from_u16_truncating(code_point as u16)),
+            Some(offset) => self.push_array([
+                T::from_u16_truncating(0xd800 | (offset >> 10) as u16),
+                T::from_u16_truncating(0xdc00 | (offset & 0x3ff) as u16),
+            ]),
+        }
+    }
+
     #[inline(always)]
     pub fn push_array<const N: usize>(&mut self, units: [T; N]) {
         self.take(N).write_copy_of_slice(&units);
@@ -106,6 +119,19 @@ impl<'a, T: CodeUnit> Cursor<'a, T> {
     #[inline(always)]
     pub fn push_mapped<S: Copy>(&mut self, source: &[S], map: impl Fn(S) -> T + Copy) {
         copy::map(self.take(source.len()), source, map);
+    }
+
+    /// [`Self::push_prefix`] of what `map` makes of `source`.
+    #[inline(always)]
+    pub(crate) fn push_mapped_prefix<S: Copy, const N: usize>(
+        &mut self,
+        source: &[S; N],
+        count: usize,
+        map: impl Fn(S) -> T + Copy,
+    ) {
+        assert!(count <= N);
+        copy::map(&mut self.rest[..N], source, map);
+        self.take(count);
     }
 
     /// Returns false if a unit passes `stop`. Then nothing is pushed, but the room may be overwritten.
@@ -153,17 +179,14 @@ impl<'a, T: CodeUnit> Cursor<'a, T> {
     }
 }
 
-impl Cursor<'_, u16> {
-    /// `code_point` is at most 0x10FFFF.
+impl Cursor<'_, u8> {
+    /// Two bytes for each of `source`.
     #[inline(always)]
-    pub fn push_code_point(&mut self, code_point: u32) {
-        match code_point.checked_sub(0x10000) {
-            None => self.push(code_point as u16),
-            Some(offset) => self.push_array([
-                0xd800 | (offset >> 10) as u16,
-                0xdc00 | (offset & 0x3ff) as u16,
-            ]),
-        }
+    pub(crate) fn push_mapped_pairs(&mut self, source: &[u8], map: impl Fn(u8) -> [u8; 2] + Copy) {
+        let target = self.take(2 * source.len());
+        // SAFETY: the same memory, and the alignment is one.
+        let pairs = unsafe { slice::from_raw_parts_mut(target.as_mut_ptr().cast(), source.len()) };
+        copy::map(pairs, source, map);
     }
 }
 

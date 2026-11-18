@@ -1135,3 +1135,71 @@ useStrict = use strict
 @forEach
 @get
 @has
+plainTime
+relativeTo
+direction
+buddhist
+chinese
+coptic
+dangi
+ethioaa
+ethiopic
+gregory
+hebrew
+indian
+iso8601
+japanese
+persian
+roc
+islamicCivil = islamic-civil
+islamicTbla = islamic-tbla
+islamicUmalqura = islamic-umalqura
+aa
+ah
+am
+ap
+bce
+be
+bh
+broc
+ce
+heisei
+meiji
+reiwa
+shaka
+showa
+taisho
+M01
+M02
+M03
+M04
+M05
+M06
+M07
+M08
+M09
+M10
+M11
+M12
+M13
+M01L
+M02L
+M03L
+M04L
+M05L
+M06L
+M07L
+M08L
+M09L
+M10L
+M11L
+M12L
+temporalDuration = Temporal.Duration
+temporalInstant = Temporal.Instant
+temporalNow = Temporal.Now
+temporalPlainDate = Temporal.PlainDate
+temporalPlainDateTime = Temporal.PlainDateTime
+temporalPlainMonthDay = Temporal.PlainMonthDay
+temporalPlainTime = Temporal.PlainTime
+temporalPlainYearMonth = Temporal.PlainYearMonth
+temporalZonedDateTime = Temporal.ZonedDateTime

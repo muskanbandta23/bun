@@ -330,6 +330,7 @@ class PropertyNameArrayBuilder {
 
 public:
     PropertyNameArrayBuilder(VM&, PropertyNameMode mode, PrivateSymbolMode privateSymbolMode) { Engine::name_list_construct(this, mode, privateSymbolMode == PrivateSymbolMode::Include); }
+    PropertyNameArrayBuilder(PropertyNameArrayBuilder&& other) { Engine::name_list_take(this, other); }
     ~PropertyNameArrayBuilder() { Engine::name_list_destroy(this); }
 
     void add(PropertyName name) { Engine::name_list_add(*this, name); }

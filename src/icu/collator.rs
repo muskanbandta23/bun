@@ -57,6 +57,9 @@ icu_handle! {
     pub struct Collator(UCollator), ucol_close
 }
 
+// SAFETY: what takes `&self` calls functions that ICU documents as safe on several threads at once.
+unsafe impl Sync for Collator {}
+
 impl Collator {
     pub fn open(locale: &CStr) -> Result<Collator> {
         let locale = locale_id(locale)?;
@@ -144,7 +147,7 @@ fn has_mark_after_pair(text: &[u16]) -> bool {
 
 pub fn available_locales() -> impl Iterator<Item = &'static CStr> {
     // SAFETY: the names belong to an array that ICU builds once and keeps.
-    unsafe { listed(ucol_countAvailable(), ucol_getAvailable) }
+    unsafe { listed(ucol_countAvailable, ucol_getAvailable) }
 }
 
 /// The values of the `collation` keyword that any locale has.

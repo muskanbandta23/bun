@@ -5,7 +5,7 @@
 // A list is a u32 count, a u32 size for each entry, then the entries. The output follows from the input and the
 // pinned zstd alone.
 
-#define _GNU_SOURCE
+#define _GNU_SOURCE // makes cover.c call qsort_r on every host
 #define _CRT_SECURE_NO_WARNINGS
 #include <stdint.h>
 #include <stdio.h>
@@ -32,6 +32,8 @@ static void* allocate(size_t size)
     return block;
 }
 
+static int hasSorted;
+
 // Stable, by the little-endian value of the MATCH_SIZE bytes at each position.
 static void sortPositions(uint32_t* positions, size_t count, const uint8_t* bytes)
 {
@@ -52,12 +54,11 @@ static void sortPositions(uint32_t* positions, size_t count, const uint8_t* byte
     }
     _Static_assert(MATCH_SIZE % 4 == 0, "an even number of passes ends in `positions`");
     free(to);
+    hasSorted = 1;
 }
 
 // zstd's trainer needs a stable sort and takes the C library's, with which the dictionary would differ by host.
-#define qsort(...) sortPositions(ctx->suffix, ctx->suffixSize, ctx->samples)
-#define qsort_r qsort
-#define qsort_s qsort
+#define qsort_r(...) sortPositions(ctx->suffix, ctx->suffixSize, ctx->samples)
 #define ZSTD_STATIC_LINKING_ONLY
 #include "dictBuilder/cover.c"
 
@@ -112,6 +113,8 @@ int main(int argc, char** argv)
     void* dictionary = allocate(DICTIONARY_CAPACITY);
     const ZDICT_cover_params_t parameters = { .k = SEGMENT_SIZE, .d = MATCH_SIZE, .zParams.compressionLevel = COMPRESSION_LEVEL };
     const size_t dictionarySize = checked("training", ZDICT_trainFromBuffer_cover(dictionary, DICTIONARY_CAPACITY, item, sizes, count, parameters));
+    if (!hasSorted)
+        fail("training", "cover.c no longer sorts with qsort_r");
     writeFile(argv[3], dictionary, dictionarySize);
 
     ZSTD_CCtx* context = ZSTD_createCCtx();

@@ -21,6 +21,8 @@ pub struct Allows {
     used: RefCell<FxHashSet<DefId>>,
     /// From a field of an `Init` to that of the cell, which is what has the attribute.
     declared_at: FxHashMap<DefId, DefId>,
+    allow: [Symbol; 2],
+    stays: [Symbol; 2],
 }
 
 pub fn allows_unsafe(tcx: TyCtxt<'_>, hir_id: HirId) -> bool {
@@ -43,16 +45,16 @@ impl Allows {
                 }));
             }
         }
-        Allows { used: RefCell::default(), declared_at }
+        Allows { used: RefCell::default(), declared_at, allow: path("allow"), stays: path("stays") }
     }
 
     pub fn has(&self, tcx: TyCtxt<'_>, def_id: DefId) -> bool {
         let def_id = *self.declared_at.get(&def_id).unwrap_or(&def_id);
-        tcx.tool_attrs(def_id, &path("allow")).next().is_some()
+        tcx.tool_attrs(def_id, &self.allow).next().is_some()
     }
 
     pub fn stays(&self, tcx: TyCtxt<'_>, def_id: DefId) -> bool {
-        tcx.tool_attrs(def_id, &path("stays")).next().is_some()
+        tcx.tool_attrs(def_id, &self.stays).next().is_some()
     }
 
     /// To be asked only when there is something to report.

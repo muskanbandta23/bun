@@ -13,9 +13,61 @@ pub struct SourceCache {
     pub(crate) narrowed: Vec<u8>,
 }
 
+/// An ordinary function in strict code that a tool has looked at: not async, no generator, outside any class, and
+/// without a direct `eval`.
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub struct KnownFunction {
+    pub parameters_start: u32,
+    pub end: u32,
+    pub length: u32,
+}
+
+/// A name in the source.
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub struct KnownCapture {
+    pub start: u32,
+    pub length: u32,
+    pub may_be_assigned: bool,
+}
+
 impl SourceCache {
     pub fn is_empty(&self) -> bool {
         self.functions.entries.is_empty() && self.narrowed.is_empty()
+    }
+
+    /// For the inner functions of a function, which are all in one scope. `captures` has every variable of that scope
+    /// that any of them refers to.
+    pub fn add_known(
+        &mut self,
+        source_length: usize,
+        functions: &[KnownFunction],
+        captures: &[KnownCapture],
+    ) {
+        let cache = &mut self.functions;
+        cache.entries.reserve(functions.len());
+        let mut first_name = cache.names.len();
+        cache.names.extend(captures.iter().map(|capture| {
+            let mut access = Access::empty();
+            access.set(Access::WRITTEN, capture.may_be_assigned);
+            FreeName::new(capture.start, capture.length, NameKind::Ordinary, access)
+        }));
+        for function in functions {
+            let summary = Summary {
+                end: function.end,
+                length: function.length,
+                flags: FunctionFlags::STRICT,
+                traits: Traits::IN_STRICT_CODE,
+            };
+            cache.push_entry(
+                function.parameters_start,
+                summary,
+                first_name,
+                source_length,
+            );
+            first_name = cache.names.len();
+        }
     }
 }
 
@@ -53,6 +105,17 @@ struct FreeName {
     start: u32,
     /// The length, which is zero for a constant, the kind and the access.
     detail: u32,
+}
+
+impl FreeName {
+    #[inline(always)]
+    fn new(start: u32, length: u32, kind: NameKind, access: Access) -> FreeName {
+        let access = u32::from(access.bits());
+        FreeName {
+            start,
+            detail: length << LENGTH_SHIFT | (kind as u32) << KIND_SHIFT | access,
+        }
+    }
 }
 
 const LENGTH_SHIFT: u32 = 5;
@@ -129,14 +192,21 @@ impl Functions {
                 Some(place) if place.1 < u32::MAX >> LENGTH_SHIFT => place,
                 _ => return self.names.truncate(first_name),
             };
-            let access = u32::from(reference.access.bits());
-            self.names.push(FreeName {
-                start,
-                detail: length << LENGTH_SHIFT | (kind as u32) << KIND_SHIFT | access,
-            });
+            (self.names).push(FreeName::new(start, length, kind, reference.access));
         }
+        self.push_entry(parameters_start, summary, first_name, source.text.len());
+    }
+
+    #[inline(always)]
+    fn push_entry(
+        &mut self,
+        parameters_start: u32,
+        summary: Summary,
+        first_name: usize,
+        source_length: usize,
+    ) {
         if self.buckets.is_empty() {
-            self.buckets = vec![0; (source.text.len() >> BUCKET_SHIFT) + 1];
+            self.buckets = vec![0; (source_length >> BUCKET_SHIFT) + 1];
         }
         let link = self.entries.len() as u32 + 1;
         let bucket = &mut self.buckets[(parameters_start >> BUCKET_SHIFT) as usize];

@@ -3,8 +3,8 @@
 use core::cell::RefCell;
 
 use crate::{
-    Cx, ElementType, Gc, GlobalObject, InlineWatchpointSet, JsCell, PropertyCondition, Vm, Watchpoint,
-    WatchpointState, watch_condition,
+    Cx, ElementType, Gc, GlobalObject, InlineWatchpointSet, JsCell, PropertyCondition, Vm,
+    Watchpoint, WatchpointState, watch_condition,
 };
 
 macro_rules! realm_watchpoints {

@@ -184,6 +184,13 @@ impl Machine<'_> {
                 Op::SkipToTail { length } => {
                     position = position.max(subject.len().saturating_sub(length as usize));
                 }
+                Op::Scan { id, fail } => {
+                    check!(subject.scan(&mut position, program.scan(id), program), fail);
+                }
+                Op::SaveStart { slot, fail } => match position {
+                    0 => self.cells[slot.cell as usize] = 0,
+                    _ => next = fail.index(),
+                },
                 Op::Save { slot } => self.cells[slot.cell as usize] = position as u32,
                 Op::Load { from, metered } => {
                     let left = core::mem::replace(&mut position, self.at(from));
@@ -210,6 +217,7 @@ impl Machine<'_> {
                     class,
                     max,
                     reserve,
+                    ..
                 } => {
                     let class = program.class(class);
                     position = match code_points {

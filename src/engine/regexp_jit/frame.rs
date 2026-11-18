@@ -31,9 +31,11 @@ pub(crate) enum Location {
     Memory(Address),
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Use {
     None,
+    /// Never has anything but the start of the subject.
+    Origin,
     Alone,
     /// Is copied together with its neighbours.
     InMemory,
@@ -65,10 +67,16 @@ fn survey(program: &Program) -> Demands {
         match *op {
             Op::Save { slot } | Op::Zero { slot } | Op::Choose { slot, .. } | Op::Mark { slot } => {
                 let used = &mut demands.uses[slot.cell as usize];
-                if *used == Use::None {
-                    *used = Use::Alone;
-                }
+                *used = Use::Alone.max(*used);
                 demands.has_marks |= matches!(op, Op::Mark { .. });
+            }
+            Op::SaveStart { slot, .. } => {
+                let is_in_frame = |it: &Loop| it.cells().start <= slot.cell;
+                let used = &mut demands.uses[slot.cell as usize];
+                *used = match program.loops().iter().any(is_in_frame) {
+                    true => Use::Alone.max(*used),
+                    false => Use::Origin.max(*used),
+                };
             }
             Op::Cut { .. } => demands.has_marks = true,
             Op::SaveCaptures { slot, pairs } | Op::RestoreCaptures { slot, pairs } => {
@@ -77,9 +85,7 @@ fn survey(program: &Program) -> Demands {
             Op::Enter { id } | Op::Push { id } | Op::Pop { id } | Op::Retreat { id, .. } => {
                 let turns = program.loops()[id.index()].turns_cell();
                 let used = &mut demands.uses[turns as usize];
-                if *used == Use::None {
-                    *used = Use::Alone;
-                }
+                *used = Use::Alone.max(*used);
                 demands.has_stack = true;
                 demands.is_metered |= matches!(op, Op::Pop { .. });
             }
@@ -308,7 +314,8 @@ fn assign_registers(program: &Program, uses: &[Use], pool: &mut Pool) -> Vec<(u3
         candidates.truncate(CANDIDATES);
     }
     candidates.sort_by_key(by_weight);
-    let mut assigned = Vec::new();
+    let origins = (0..uses.len() as u32).filter(|&it| uses[it as usize] == Use::Origin);
+    let mut assigned: Vec<_> = origins.map(|it| (it, ORIGIN)).collect();
     for cell in candidates {
         let is_heavy = weights[cell as usize] >= WEIGHT_FOR_SAVED_REGISTER;
         match pool

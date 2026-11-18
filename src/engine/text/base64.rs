@@ -290,14 +290,22 @@ impl Text<'_> {
         last: LastChunkHandling,
         target: &mut [u8],
     ) -> Result<Progress, BinarySyntaxError> {
-        let mut result = Err(Invalid);
+        let mut result = Ok(0);
         let written = Cursor::fill(target, |to| {
-            result = decode(self, alphabet, last, Target::Existing, to);
+            result = self.decode_base64_that_fits(alphabet, last, to);
         });
-        match result {
-            Ok(read) => Ok(Progress { read, written }),
-            Err(Invalid) => Err(BinarySyntaxError::InvalidForSetFromBase64),
-        }
+        result.map(|read| Progress { read, written })
+    }
+
+    /// The same, for a caller that wants to know what is written before an error. Returns how many units it has read.
+    pub fn decode_base64_that_fits(
+        self,
+        alphabet: Base64Alphabet,
+        last: LastChunkHandling,
+        to: &mut Cursor<'_, u8>,
+    ) -> Result<usize, BinarySyntaxError> {
+        decode(self, alphabet, last, Target::Existing, to)
+            .map_err(|Invalid| BinarySyntaxError::InvalidForSetFromBase64)
     }
 }
 

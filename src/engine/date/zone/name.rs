@@ -19,7 +19,9 @@ impl TimeZoneId {
             return Some(name);
         }
         let calendar = Calendar::open(&id, c"").ok()?;
-        calendar.zone_name(kind, language).ok()
+        (calendar.zone_name(kind, language))
+            .or_else(|_| calendar.zone_name(kind, c"en-US"))
+            .ok()
     }
 }
 

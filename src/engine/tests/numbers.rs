@@ -171,8 +171,9 @@ fn math_functions() {
             ("sqrt", &[], "NaN"),
         ];
         for (name, arguments, expected) in cases {
-            let arguments: Vec<Value> = arguments.iter().map(|&it| it.into()).collect();
-            assert_eq!(invoke(cx, math, name, &arguments), expected);
+            let mut values = root_vec();
+            values.extend(arguments.iter().map(|&it| Value::from(it)));
+            assert_eq!(invoke(cx, math, name, &values), expected);
         }
         let text = JsString::from_literal(cx, "1").into();
         let lists: [(&[Value], &str); 4] = [

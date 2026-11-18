@@ -7,7 +7,8 @@ use bun_engine_text::{StringBuilder, StringRef, Text};
 
 use crate::heap::stack::stack_pointer;
 use crate::{
-    ElementKind, Gc, GlobalObject, JsArray, JsFinalObject, JsObject, JsString, Storage, Value, Vm,
+    ElementKind, Gc, GcFree, GlobalObject, JsArray, JsFinalObject, JsObject, JsString, Storage,
+    Value, Vm,
 };
 
 /// The current realm, and the right to use the heap. With `&Cx`, or the `&Vm` that it gives, code may allocate, which
@@ -19,6 +20,8 @@ pub struct Cx {
     _not_shared: PhantomData<*mut ()>,
     _not_unique: PhantomPinned,
 }
+
+impl !GcFree for Cx {}
 
 /// An exception is pending in the `Vm`.
 #[must_use]

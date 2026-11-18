@@ -4,27 +4,26 @@
 use bun_engine_macros::cell;
 use bun_engine_text::{names, symbols};
 
+use super::async_context::AsyncContextScope;
+use super::microtask_queue::queue_tracked;
 use crate::{
-    Coroutine, CoroutineState, Cx, Field, Gc, InternalMicrotask, InternalReaction,
-    JsAsyncFunctionGenerator, JsAsyncGenerator, JsObject, JsObjectInit, JsPromise, JsResult,
-    PromiseStatus, PropertyOffset, QueuedTask, RealmWatchpoint, Sentinel, Value, Vm, errors,
+    Coroutine, CoroutineState, Cx, Field, Gc, ITERATOR_RESULT_DONE_OFFSET,
+    ITERATOR_RESULT_VALUE_OFFSET, InternalMicrotask, InternalReaction, IterationMode,
+    IteratorRecord, JsAsyncFunctionGenerator, JsAsyncGenerator, JsObject, JsObjectInit, JsPromise,
+    JsResult, PromiseStatus, QueuedTask, RealmWatchpoint, Value, Vm, errors, iterator_complete,
+    iterator_value,
 };
 
 /// In the payload of an `AsyncIteratorAnswer`.
 const IS_DONE: u8 = 1 << 2;
 
-impl Vm {
-    /// In place of `next`, and of the promise that it would return.
-    #[inline(always)]
-    pub fn async_iteration_sentinel(&self) -> Gc<Sentinel> {
-        // SAFETY: set when the `Vm` is made.
-        unsafe { (self.services.control.async_iteration_sentinel.get()).unwrap_unchecked() }
-    }
-}
+/// In place of the promise that `next` would return.
+pub(super) const REQUESTED_STEP: Value = IterationMode::AsyncGenerator.marker();
 
 pub struct AsyncIteratorRecord {
     pub iterator: Gc<JsObject>,
-    pub next: Value,
+    /// Its marker stands in for `next`.
+    pub mode: IterationMode,
 }
 
 /// `method` is `iterable[Symbol.asyncIterator]`. `None` if it has to be called.
@@ -33,30 +32,28 @@ pub fn open_async_iterator(
     iterable: Value,
     method: Value,
 ) -> JsResult<Option<AsyncIteratorRecord>> {
-    let sentinel = cx.async_iteration_sentinel().into();
     if method.is_undefined_or_null() {
-        let iterator = JsAsyncFromSyncIterator::for_iterable(cx, iterable)?.upcast();
-        let next = if cx.holds(RealmWatchpoint::PromiseSpecies) {
-            sentinel
-        } else {
-            cx.async_from_sync_iterator_prototype_next().into()
-        };
-        return Ok(Some(AsyncIteratorRecord { iterator, next }));
+        let mode = IterationMode::AsyncFromSync;
+        return Ok(Some(AsyncIteratorRecord {
+            iterator: JsAsyncFromSyncIterator::for_iterable(cx, iterable)?.upcast(),
+            mode,
+        }));
     }
     if let Some(generator) = iterable.downcast::<JsAsyncGenerator>()
         && method == cx.async_iterator_prototype_async_iterator().into()
-        && cx.holds(RealmWatchpoint::PromiseSpecies)
         && generator.get_pure(cx, names::next) == Some(cx.async_generator_prototype_next().into())
     {
+        let mode = IterationMode::AsyncGenerator;
         return Ok(Some(AsyncIteratorRecord {
             iterator: generator.upcast(),
-            next: sentinel,
+            mode,
         }));
     }
     Ok(None)
 }
 
 /// What `asker` has to await. Fails only if execution is terminated.
+#[inline]
 pub fn request_async_step(
     cx: &mut Cx,
     iterator: Value,
@@ -65,7 +62,7 @@ pub fn request_async_step(
 ) -> JsResult<Value> {
     // Awaiting a promise reads its `constructor`.
     let (target, awaited) = if cx.holds(RealmWatchpoint::PromiseSpecies) {
-        (asker.upcast(), cx.async_iteration_sentinel().into())
+        (asker.upcast(), REQUESTED_STEP)
     } else {
         let promise = JsPromise::new(cx);
         (promise.upcast(), promise.into())
@@ -116,11 +113,11 @@ pub(super) fn run_answer(cx: &mut Cx, payload: u8, arguments: [Value; 4]) -> JsR
         keep_early_answer(cx, payload, arguments);
         return Ok(());
     }
-    let _scope = super::async_context::AsyncContextScope::enter(cx, async_context);
+    let _scope = AsyncContextScope::enter(cx, async_context);
     if let Some(result) = result.as_object() {
         let done = Value::from(payload & IS_DONE != 0);
-        result.put_direct_at(cx, PropertyOffset::new(0), value);
-        result.put_direct_at(cx, PropertyOffset::new(1), done);
+        result.put_direct_at(cx, ITERATOR_RESULT_VALUE_OFFSET, value);
+        result.put_direct_at(cx, ITERATOR_RESULT_DONE_OFFSET, done);
         value = result.into();
     }
     let status = PromiseStatus::from_payload(payload);
@@ -154,7 +151,7 @@ fn requeue_early_answer_slow(vm: &Vm, asker: &Coroutine) {
     let answers = &vm.services.control.early_answers;
     for task in (0..answers.len()).map_while(|_| answers.dequeue()) {
         if task.arguments[2] == Some(asker.into()) {
-            super::microtask_queue::queue_tracked(vm, &task);
+            queue_tracked(vm, &task);
         } else {
             answers.enqueue(task);
         }
@@ -167,6 +164,7 @@ fn requeue_early_answer_slow(vm: &Vm, asker: &Coroutine) {
 pub struct JsAsyncFromSyncIterator {
     base: JsObject,
     sync_iterator: Gc<JsObject>,
+    /// Or the marker of an `IterationMode`.
     next_method: Value,
     pub(self) reusable_result: Field<Option<Gc<JsObject>>>,
 }
@@ -177,7 +175,13 @@ struct Step {
 }
 
 impl JsAsyncFromSyncIterator {
+    /// `next_method` has been read from the iterator.
     pub fn create(cx: &Cx, sync_iterator: Gc<JsObject>, next_method: Value) -> Gc<Self> {
+        assert!(!IterationMode::is_marker(next_method));
+        Self::allocate(cx, sync_iterator, next_method)
+    }
+
+    fn allocate(cx: &Cx, sync_iterator: Gc<JsObject>, next_method: Value) -> Gc<Self> {
         cx.allocate::<JsAsyncFromSyncIterator>(JsAsyncFromSyncIteratorInit {
             base: JsObjectInit::new(cx, cx.async_from_sync_iterator_shape()),
             sync_iterator,
@@ -188,8 +192,8 @@ impl JsAsyncFromSyncIterator {
 
     /// CreateAsyncFromSyncIterator(GetIteratorDirect(iterator))
     pub fn for_iterator(cx: &mut Cx, iterator: Gc<JsObject>) -> JsResult<Gc<Self>> {
-        let next_method = iterator.get(cx, names::next)?;
-        Ok(Self::create(cx, iterator, next_method))
+        let [_, next_method, _] = IteratorRecord::direct(cx, iterator.into())?.parts();
+        Ok(Self::allocate(cx, iterator, next_method))
     }
 
     /// CreateAsyncFromSyncIterator(GetIterator(iterable, sync))
@@ -198,7 +202,11 @@ impl JsAsyncFromSyncIterator {
         if !method.is_callable() {
             return Err(cx.throw_type_error("iterable should have an iterator symbol"));
         }
-        match cx.call(method, iterable, &[])?.as_object() {
+        let iterator = match IteratorRecord::open(cx, iterable, method)? {
+            Some(record) => record.iterator(cx),
+            None => cx.call(method, iterable, &[])?,
+        };
+        match iterator.as_object() {
             Some(iterator) => Self::for_iterator(cx, iterator),
             None => Err(cx.throw_type_error("iterator method should return an object")),
         }
@@ -221,8 +229,25 @@ impl JsAsyncFromSyncIterator {
             return Err(cx.throw_type_error(errors::ITERATOR_RESULT_NOT_OBJECT));
         };
         Ok(Step {
-            done: result.get(cx, names::done)?.to_boolean(cx),
-            value: result.get(cx, names::value)?,
+            done: iterator_complete(cx, &result)?,
+            value: iterator_value(cx, &result)?,
+        })
+    }
+
+    #[inline]
+    fn step(&self, cx: &mut Cx, argument: Option<Value>) -> JsResult<Step> {
+        if !IterationMode::is_marker(self.next_method) {
+            return self.call_method(cx, self.next_method, argument);
+        }
+        let iterator = self.sync_iterator.into();
+        // SAFETY: those of the record in `for_iterator`, in a mode in which the iterator has the position.
+        let mut record = unsafe {
+            IteratorRecord::from_parts([IteratorRecord::START, self.next_method, iterator])
+        };
+        let value = record.step_builtin(cx)?;
+        Ok(Step {
+            done: value.is_none(),
+            value: value.unwrap_or_default(),
         })
     }
 
@@ -305,7 +330,7 @@ impl JsAsyncFromSyncIterator {
 
     /// `next`, for a promise or a `Coroutine`.
     fn request(&self, cx: &mut Cx, target: Gc<JsObject>, value: Option<Value>) -> JsResult<()> {
-        let step = self.call_method(cx, self.next_method, value);
+        let step = self.step(cx, value);
         let task = InternalMicrotask::AsyncFromSyncIteratorContinueOrClose;
         self.await_step(cx, target, step, task)
     }

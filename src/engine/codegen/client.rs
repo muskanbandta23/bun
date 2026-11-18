@@ -71,6 +71,9 @@ pub trait Client<Masm> {
 
     fn patchpoint(&mut self, masm: &mut Masm, site: &PatchpointSite<'_>);
 
+    /// Precedes the call instruction. What it emits keeps the operands.
+    fn before_call(&mut self, _masm: &mut Masm, _token: Token, _origin: Origin) {}
+
     /// Follows the call instruction. What it emits keeps the results.
     fn after_call(&mut self, masm: &mut Masm, site: &CallSite<'_>);
 

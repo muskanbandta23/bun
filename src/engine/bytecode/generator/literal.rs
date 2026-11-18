@@ -50,6 +50,7 @@ impl Generator<'_> {
         }
     }
 
+    #[inline(never)]
     pub(super) fn literal(&mut self, node: &Expr, dst: Dest) -> Operand {
         let value = match node.kind {
             _ if dst == Dest::Ignore => return Register::SCOPE.into(),
@@ -70,6 +71,7 @@ impl Generator<'_> {
     }
 
     /// `method` is what is about to be called on it.
+    #[inline(never)]
     pub(super) fn regexp(
         &mut self,
         pattern: Name,
@@ -97,6 +99,7 @@ impl Generator<'_> {
         dst.into()
     }
 
+    #[inline(never)]
     pub(super) fn template(&mut self, template: TemplateId, dst: Dest) -> Operand {
         let ast = self.ast;
         let template = &ast[template];
@@ -175,6 +178,7 @@ impl Generator<'_> {
         }
     }
 
+    #[inline(never)]
     pub(super) fn array(&mut self, elements: List<Option<ExprId>>, dst: Dest) -> Operand {
         let ast = self.ast;
         if elements.is_empty() {
@@ -297,6 +301,7 @@ impl Generator<'_> {
         NameListIndex(self.b.name_lists.len() as u32 - 1)
     }
 
+    #[inline(never)]
     pub(super) fn object(
         &mut self,
         start: u32,

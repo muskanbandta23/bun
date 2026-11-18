@@ -331,6 +331,9 @@ fn check_types(function: &Function, value: Value) -> Checked {
                     .all(|(&result, &boundary)| fits_boundary(function, of(result), boundary))
         }
         Op::Fence { .. } | Op::Jump | Op::Unreachable => ty == Void,
+        Op::Node { kind, .. } | Op::WideNode { kind, .. } => {
+            (ty == Tuple) == !function.node_info(kind).elements.is_empty()
+        }
         Op::Const32(_)
         | Op::Const64(_)
         | Op::ConstF32(_)

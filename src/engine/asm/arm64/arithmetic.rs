@@ -38,6 +38,20 @@ fn sf_and_n(width: Width) -> u32 {
     sf(width) | (width as u32) << 22
 }
 
+/// Without the destination.
+#[inline(always)]
+pub(super) fn move_wide_word(op: MoveWide, width: Width, imm: u16, shift: u8) -> u32 {
+    assert!(shift.is_multiple_of(16));
+    0x1280_0000 | sf(width) | op as u32 | bit_number(width, shift) >> 4 << 21 | u32::from(imm) << 5
+}
+
+/// Without the destination.
+#[inline(always)]
+pub(super) fn logical_imm_word(op: Logical, lhs: Gpr, rhs: BitmaskImm) -> u32 {
+    debug_assert!(op.has_immediate_form());
+    0x1200_0000 | op as u32 | rhs.0 | gpr(lhs) << 5
+}
+
 impl Assembler {
     /// `lhs` may be `sp`, and so may `dst` unless the flags are set.
     #[inline]
@@ -119,10 +133,7 @@ impl Assembler {
     /// The width is that of `rhs`. `dst` may be `sp` unless the flags are set.
     #[inline]
     pub fn logical_imm(&mut self, op: Logical, dst: Gpr, lhs: Gpr, rhs: BitmaskImm) {
-        debug_assert!(op.has_immediate_form());
-        self.emit(
-            0x1200_0000 | op as u32 | rhs.0 | gpr(lhs) << 5 | destination(op == Logical::Ands, dst),
-        );
+        self.emit(logical_imm_word(op, lhs, rhs) | destination(op == Logical::Ands, dst));
     }
 
     #[inline]
@@ -153,15 +164,7 @@ impl Assembler {
     /// `shift` is a multiple of 16.
     #[inline]
     pub fn move_wide(&mut self, op: MoveWide, width: Width, dst: Gpr, imm: u16, shift: u8) {
-        assert!(shift.is_multiple_of(16));
-        self.emit(
-            0x1280_0000
-                | sf(width)
-                | op as u32
-                | bit_number(width, shift) >> 4 << 21
-                | u32::from(imm) << 5
-                | gpr(dst),
-        );
+        self.emit(move_wide_word(op, width, imm, shift) | gpr(dst));
     }
 
     #[inline]

@@ -1,6 +1,6 @@
 //! Limits on the values of integers.
 
-use bun_engine_asm::{Sign, Size, Width};
+use bun_engine_asm::{Cond, Sign, Size, Width};
 
 use crate::ir::{Binary, Checked, Function, Load, Op, Unary, Value};
 
@@ -78,6 +78,10 @@ impl Bounds {
         }
     }
 
+    pub(super) fn is_empty(&self) -> bool {
+        self.least > self.greatest || self.least_unsigned > self.greatest_unsigned
+    }
+
     /// With its sign extended.
     pub(super) fn only_value(&self) -> Option<i64> {
         (self.least == self.greatest).then_some(self.least)
@@ -87,6 +91,10 @@ impl Bounds {
         (self.least..=self.greatest).contains(&value)
             && (self.least_unsigned..=self.greatest_unsigned)
                 .contains(&(value as u64 & all_ones(self.width)))
+    }
+
+    pub(super) fn is_boolean(&self) -> bool {
+        self.greatest_unsigned <= 1
     }
 
     /// The values that are not negative and those that are have the same order with and without sign.
@@ -125,6 +133,17 @@ impl Bounds {
         }
     }
 
+    pub(super) fn intersection(&self, other: &Self) -> Self {
+        Self {
+            least: self.least.max(other.least),
+            greatest: self.greatest.min(other.greatest),
+            least_unsigned: self.least_unsigned.max(other.least_unsigned),
+            greatest_unsigned: self.greatest_unsigned.min(other.greatest_unsigned),
+            width: self.width,
+        }
+        .tightened()
+    }
+
     pub(super) fn hull(&self, other: &Self) -> Self {
         Self {
             least: self.least.min(other.least),
@@ -135,8 +154,49 @@ impl Bounds {
         }
     }
 
+    /// Those of the values for which `cond` holds with some value in `other` on the right.
+    pub(super) fn where_holds(&self, cond: Cond, other: &Self) -> Self {
+        debug_assert!(!self.is_empty() && !other.is_empty());
+        let mut result = *self;
+        match cond {
+            Cond::Eq => return self.intersection(other),
+            Cond::Ne => {
+                let Some(value) = other.only_value() else {
+                    return result;
+                };
+                if self.only_value() == Some(value) {
+                    (result.least, result.greatest) = (0, -1);
+                    return result;
+                }
+                result.least += i64::from(self.least == value);
+                result.greatest -= i64::from(self.greatest == value);
+                result.least_unsigned += u64::from(self.least_unsigned == other.least_unsigned);
+                result.greatest_unsigned -=
+                    u64::from(self.greatest_unsigned == other.least_unsigned);
+            }
+            Cond::Le => result.greatest = self.greatest.min(other.greatest),
+            Cond::Ge => result.least = self.least.max(other.least),
+            Cond::BelowEq => {
+                result.greatest_unsigned = self.greatest_unsigned.min(other.greatest_unsigned);
+            }
+            Cond::AboveEq => result.least_unsigned = self.least_unsigned.max(other.least_unsigned),
+            // A limit that saturates belongs to a condition that never holds, from which anything follows.
+            Cond::Lt => result.greatest = self.greatest.min(other.greatest.saturating_sub(1)),
+            Cond::Gt => result.least = self.least.max(other.least.saturating_add(1)),
+            Cond::Below => {
+                let limit = other.greatest_unsigned.saturating_sub(1);
+                result.greatest_unsigned = self.greatest_unsigned.min(limit);
+            }
+            Cond::Above => {
+                let limit = other.least_unsigned.saturating_add(1);
+                result.least_unsigned = self.least_unsigned.max(limit);
+            }
+        }
+        result.tightened()
+    }
+
     /// The exact result of the operation lies between these.
-    pub(super) fn exact(op: Checked, a: &Self, b: &Self) -> (i128, i128) {
+    fn exact(op: Checked, a: &Self, b: &Self) -> (i128, i128) {
         let [a0, a1, b0, b1] = [a.least, a.greatest, b.least, b.greatest].map(i128::from);
         match op {
             Checked::Add => (a0 + b0, a1 + b1),
@@ -147,6 +207,17 @@ impl Bounds {
                 (*least.unwrap(), *greatest.unwrap())
             }
         }
+    }
+
+    pub(super) fn wrapping(op: Checked, a: &Self, b: &Self) -> Self {
+        let (least, greatest) = Self::exact(op, a, b);
+        Self::signed_if_fits(a.width, least, greatest)
+    }
+
+    pub(super) fn always_fits(op: Checked, a: &Self, b: &Self) -> bool {
+        let (least, greatest) = Self::exact(op, a, b);
+        let any = Self::any(a.width);
+        least >= any.least.into() && greatest <= any.greatest.into()
     }
 
     /// Of an integer, given those of its operands.
@@ -227,8 +298,7 @@ impl Bounds {
             _ => return Self::any(width),
         };
         let (a, b) = operands();
-        let (least, greatest) = Self::exact(wrapping, &a, &b);
-        Self::signed_if_fits(width, least, greatest)
+        Self::wrapping(wrapping, &a, &b)
     }
 
     fn of_other_binary(op: Binary, width: Width, (a, b): (Self, Self)) -> Self {

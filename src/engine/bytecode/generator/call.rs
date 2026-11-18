@@ -7,6 +7,7 @@ use bun_engine_syntax::{EvalContext, Name, NameKind};
 
 use super::intrinsic::Builtin;
 use super::{Dest, Generator, Tail, This};
+use crate::assembler::{Assembler, Label};
 use crate::code::CodeFlags;
 use crate::constant::{Constant, LinkTimeConstant, TemplateSite};
 use crate::function::Origin;
@@ -205,8 +206,11 @@ impl Generator<'_> {
                 (self.asm()).call(dst, callee, this, frame.arguments + 1, frame.offset);
             }
             (Arguments::InFrame(frame), Tail::Yes) => {
+                let kept = self.before_tail_call();
                 (self.asm()).tail_call(dst, callee, this, frame.arguments + 1, frame.offset);
-                self.after_tail_call(dst);
+                self.after_tail_call(dst, kept, |asm| {
+                    asm.call(dst, callee, this, frame.arguments + 1, frame.offset);
+                });
             }
             (Arguments::Spread { first, count, mask }, Tail::No) => {
                 (self.asm()).call_with_spread(dst, callee, this, first, count, mask);
@@ -230,13 +234,36 @@ impl Generator<'_> {
         if tail == Tail::No {
             return self.asm().call_varargs(dst, callee, this, list, skip);
         }
+        let kept = self.before_tail_call();
         self.asm().tail_call_varargs(dst, callee, this, list, skip);
-        self.after_tail_call(dst);
+        self.after_tail_call(dst, kept, |asm| {
+            asm.call_varargs(dst, callee, this, list, skip);
+        });
     }
 
-    fn after_tail_call(&mut self, dst: Register) {
+    /// Where the call is made if the frame stays for a debugger to see.
+    fn before_tail_call(&mut self) -> Option<Label> {
+        self.debugs.then(|| {
+            let kept = self.asm().label();
+            self.asm().jump_if_frame_is_kept(kept);
+            kept
+        })
+    }
+
+    fn after_tail_call(
+        &mut self,
+        dst: Register,
+        kept: Option<Label>,
+        call: impl FnOnce(&mut Assembler),
+    ) {
         self.flags |= CodeFlags::HAS_TAIL_CALLS;
         self.asm().ret(dst);
+        if let Some(kept) = kept {
+            self.asm().bind(kept);
+            call(self.asm());
+            self.asm().debug(DebugHook::DidReturnFromTailCall);
+            self.asm().ret(dst);
+        }
     }
 
     /// A call that is not in the source.

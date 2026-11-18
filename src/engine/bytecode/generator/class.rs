@@ -111,7 +111,7 @@ impl<'a> Generator<'a> {
             None => generator.empty(),
         };
         let (heritage, mut key_slot);
-        if class.heritage_sees_private_names {
+        if class.heritage_sees_private_names || self.debugs {
             self.enter_class_scope(start, class.head_scope, None, 0);
             heritage = evaluate_heritage(self);
             key_slot = self.enter_class_scope(start, None, class.body_scope, computed_keys);

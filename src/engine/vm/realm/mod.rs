@@ -12,7 +12,7 @@ mod watchpoints;
 
 pub use bindings::{GlobalBinding, GlobalBindings};
 pub use console::{ConsoleHooks, MessageLevel, MessageType};
-pub use global_object::{GlobalObject, GlobalObjectInit, InspectorState};
+pub use global_object::{GlobalObject, GlobalObjectInit};
 pub use global_proxy::GlobalProxy;
 pub(crate) use global_scope::Declarer;
 pub use global_scope::GlobalPlace;

@@ -607,6 +607,7 @@ impl Assembler {
             && self.spread_masks.is_empty()
             && self.encoder.suspend_points.is_empty()
             && self.coverage_blocks.is_empty()
+            && self.scope_registers.is_empty()
         {
             return None;
         }
@@ -646,6 +647,9 @@ impl Assembler {
             spread_masks: self.spread_masks.drain(..).collect(),
             saved_registers: Box::default(),
             coverage_blocks: self.coverage_blocks.as_slice().into(),
+            scope_registers: (self.scope_registers.iter())
+                .map(|&(site, register)| (self.offset_of(site), register))
+                .collect(),
         }))
     }
 }

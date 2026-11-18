@@ -40,8 +40,8 @@ impl JsCell {
     pub const OFFSET_OF_FLAGS: usize = offset_of!(JsCell, flags);
     pub const OFFSET_OF_STATE: usize = offset_of!(JsCell, state);
 
-    const IS_LOCKED: u8 = 0x40;
-    const LOCK_BITS: u8 = 0xc0;
+    pub const IS_LOCKED: u8 = 0x40;
+    pub const LOCK_BITS: u8 = 0xc0;
 
     #[inline(always)]
     pub fn as_cell(&self) -> &JsCell {

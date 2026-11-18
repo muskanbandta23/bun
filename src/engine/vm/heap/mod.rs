@@ -37,7 +37,7 @@ use bun_threading::Guarded;
 
 pub use allocator::Allocator;
 pub use analyzer::{HeapAnalyzer, HeapGraphSink, HeapObserver, MarkingConstraint, RootReason};
-pub use block::{ATOM_SIZE, BLOCK_SIZE, Block};
+pub use block::{ATOM_SIZE, BLOCK_SIZE, Block, PAYLOAD_SIZE};
 pub use block_memory::shape_base;
 pub use cell::{CellState, JsCell};
 pub use field::{
@@ -53,7 +53,7 @@ pub use root_alloc::{
     RootAlloc, RootBox, RootDeque, RootMap, RootSet, RootVec, root_box, root_vec,
 };
 pub use space::{
-    IsoSpace, LARGE_CUTOFF, SIZE_CLASS_COUNT, SIZE_CLASS_OF_STEP, Space, optimal_size, size_class,
+    EXACT_CUTOFF, IsoSpace, LARGE_CUTOFF, SIZE_CLASS_CHECKSUM, SIZE_CLASS_COUNT, SIZE_CLASS_OF_STEP, Space, optimal_size, size_class,
 };
 pub use strong::{Strong, free_strong_slot};
 pub use trace::{Trace, destroy, select_trace, visit_children_of};

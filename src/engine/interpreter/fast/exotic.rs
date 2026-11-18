@@ -1,8 +1,10 @@
 use bun_engine_bytecode::{Register, Width, op};
 use bun_engine_vm::code::metadata::{self, Flags, ForInGet, GetPrivateName, PutPrivateName};
+use bun_engine_vm::heap::Allocator;
 use bun_engine_vm::ic::{self, AccessCases, AccessKind};
 use bun_engine_vm::{
-    EnumerationMode, ForIn, JsObject, JsSymbol, MappedArguments, Value, ValueProfile,
+    CallFrame, EnumerationMode, ForIn, JsObject, JsSymbol, MappedArguments, RealmSlot, Value,
+    ValueProfile,
 };
 
 use super::barrier_and_next;
@@ -57,7 +59,45 @@ handler! {
         if m.for_in(op.state).is_at_last_name() {
             jump!(m, op.done)
         }
+        go!(m, for_in_next_index::<W>)
+    }
+
+    #[inline(never)]
+    fn for_in_next_index(m, op: op::ForInNext) {
+        let (mut for_in, entry) = (m.for_in(op.state), m.entry::<metadata::ForIn>(op.metadata));
+        if let Some(object) = m.as_object(m.reg(op.base))
+            && let Some(name) = for_in.try_next_index(m.vm, &object)
+            && has_seen(&entry.modes, EnumerationMode::Indexed)
+        {
+            entry.array.record_shape(&object);
+            m.set(op.state.nth(2), m.box_int32(for_in.index as i32));
+            m.set(op.name, name.address() as u64);
+            next!(m, op)
+        }
         slow!(m, op::ForInNext)
+    }
+
+    fn create_direct_arguments(m, op: op::CreateDirectArguments) {
+        let (frame, code_block) = (m.frame(), m.code_block());
+        let (length, parameters) = (frame.argument_count() as u32, code_block.parameters() - 1);
+        let slot_count = length.max(parameters);
+        let size = MappedArguments::offset_of_slot(slot_count);
+        let Some(shape) = code_block.global().slot_if_initialized(RealmSlot::direct_arguments_shape) else {
+            slow!(m, op::CreateDirectArguments)
+        };
+        let Some(address) = m.vm.heap.cells.allocator_for(size).and_then(Allocator::try_bump) else {
+            slow!(m, op::CreateDirectArguments)
+        };
+        MappedArguments::initialize_direct(address, shape.cast_unchecked(), frame.callee(), length, parameters);
+        let slots = core::ptr::with_exposed_provenance_mut::<u64>(address + MappedArguments::OFFSET_OF_SLOTS);
+        let arguments = m.fp.byte_add(CallFrame::OFFSET_OF_ARGUMENTS);
+        // The frame has been padded. Not to be made a call of `memcpy`.
+        for index in 0..slot_count as usize {
+            slots.add(index).write_volatile(*arguments.add(index));
+        }
+        m.publish();
+        m.set(op.dst, address as u64);
+        next!(m, op)
     }
 
     fn for_in_get(m, op: op::ForInGet) {

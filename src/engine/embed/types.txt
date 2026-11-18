@@ -119,6 +119,10 @@ value   SourceType JSC::SourceProviderSourceType
 cell    JsPromise class JSC::JSPromise
 
 # Errors, stack and code
+mirror  ErrorFlags vm/error/error_instance.rs
+opaque  StackFrame class JSC::StackFrame
+opaque  StackTrace WTF::Vector<JSC::StackFrame>
+opaque  TerminationDeadline class JSC::TerminationDeadline
 
 # Buffers, WebAssembly and FFI
 
@@ -152,3 +156,4 @@ value   RegistryStatus uint8_t
 value   ImportKind uint8_t
 
 # Inspector, profilers and options
+opaque  Options struct Engine::Options

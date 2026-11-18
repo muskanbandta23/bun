@@ -19,42 +19,56 @@ pub(crate) fn map_unless<S: Copy, T>(
     map: impl Fn(S) -> T + Copy,
     stop: impl Fn(S) -> bool + Copy,
 ) -> bool {
-    #[inline(always)]
-    fn step<S: Copy, T, const SIZE: usize, const PARTS: usize>(
-        target: &mut [MaybeUninit<T>],
-        source: &[S],
-        starts: [usize; PARTS],
-        map: impl Fn(S) -> T,
-        stop: impl Fn(S) -> bool + Copy,
-    ) -> bool {
-        let stops = Units(source, stop).gather::<SIZE, PARTS>(starts);
-        for at in starts {
-            let (to, from) = (
-                block_mut::<_, SIZE>(target, at),
-                block::<S, SIZE>(source, at),
-            );
-            for lane in 0..SIZE {
-                to[lane].write(map(from[lane]));
-            }
-        }
-        stops != 0
-    }
-
     let length = source.len();
     assert!(target.len() == length);
-    if let Some(last) = length.checked_sub(BLOCK) {
+    let stopping = Units(source, stop);
+    macro_rules! blocks {
+        ($($at:expr),*) => {{
+            let starts = [$($at),*];
+            let stops = stopping.any_in(starts);
+            map_parts::<S, T, BLOCK, _>(target, source, starts, map);
+            stops
+        }};
+    }
+    if length < QUARTER {
+        length > 0 && {
+            let stops = stopping.any_gathered::<1, _>(singles(length));
+            map_parts::<S, T, 1, _>(target, source, singles(length), map);
+            stops
+        }
+    } else if length <= BLOCK {
+        let stops = stopping.any_gathered::<QUARTER, _>(quarters(length));
+        map_parts::<S, T, QUARTER, _>(target, source, quarters(length), map);
+        stops
+    } else if length <= 2 * BLOCK {
+        blocks!(0, length - BLOCK)
+    } else {
+        let last = length - 2 * BLOCK;
         let mut at = 0;
-        while at < last {
-            if step::<S, T, BLOCK, 1>(target, source, [at], map, stop) {
+        while at + 2 * BLOCK < last {
+            if stopping.window::<{ 2 * BLOCK }>(at).any_in([0, BLOCK]) {
                 return true;
             }
-            at += BLOCK;
+            let target = block_mut::<_, { 2 * BLOCK }>(target, at);
+            map_parts::<S, T, BLOCK, _>(target, block::<_, { 2 * BLOCK }>(source, at), [0, BLOCK], map);
+            at += 2 * BLOCK;
         }
-        step::<S, T, BLOCK, 1>(target, source, [last], map, stop)
-    } else if length >= QUARTER {
-        step::<S, T, QUARTER, 4>(target, source, quarters(length), map, stop)
-    } else {
-        length > 0 && step::<S, T, 1, 3>(target, source, singles(length), map, stop)
+        blocks!(at, at + BLOCK, last, last + BLOCK)
+    }
+}
+
+#[inline(always)]
+fn map_parts<S: Copy, T, const SIZE: usize, const PARTS: usize>(
+    target: &mut [MaybeUninit<T>],
+    source: &[S],
+    starts: [usize; PARTS],
+    map: impl Fn(S) -> T,
+) {
+    for at in starts {
+        let (to, from) = (block_mut::<_, SIZE>(target, at), block::<_, SIZE>(source, at));
+        for lane in 0..SIZE {
+            to[lane].write(map(from[lane]));
+        }
     }
 }
 

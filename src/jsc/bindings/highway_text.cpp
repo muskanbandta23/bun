@@ -266,7 +266,21 @@ static HWY_INLINE hn::Vec<D> LettersOfControls(D d, hn::Vec<D> units)
     return hn::BitCast(d, hn::TableLookupBytes(hn::LoadDup128(bytes, letters), indices));
 }
 
-// The lanes that take more than a backslash and one unit, or that may. `next` has the unit after each lane.
+// The lanes that may not stand for themselves.
+template<typename Out, class D>
+static HWY_INLINE hn::Mask<D> NeedsALook(D d, hn::Vec<D> units)
+{
+    const auto special = hn::Or(IsQuoteOrBackslash(d, units), IsControl(d, units));
+    if constexpr (sizeof(hn::TFromD<D>) == 1) {
+        return special;
+    } else if constexpr (sizeof(Out) == 1) {
+        return hn::Or(special, hn::Gt(units, hn::Set(d, 0xff)));
+    } else {
+        return hn::Or(special, hn::Eq(hn::And(units, hn::Set(d, 0xf800)), hn::Set(d, 0xd800)));
+    }
+}
+
+// The lanes that take more than a backslash and one unit, or whose next does. `next` has the unit after each lane.
 template<typename Out, class D>
 static HWY_INLINE hn::Mask<D> IsLeftToCaller(D d, hn::Vec<D> units, hn::Vec<D> next)
 {
@@ -319,50 +333,146 @@ static HWY_INLINE Out* StoreWithBackslashes(hn::Vec<Block<T>> units, size_t coun
     return out + count + hwy::PopCount(escaped);
 }
 
-// Copies units with the escapes of JSON until they end, the room gets short, or a block has a unit that it leaves to
+// Copies a stride. Returns whether each unit stands for itself.
+template<typename In, typename Out>
+static HWY_INLINE bool CopyPlainStride(const In* HWY_RESTRICT in, Out* HWY_RESTRICT out)
+{
+    const Wide<In> d;
+    auto suspects = hn::MaskFalse(d);
+    for (size_t i = 0; i < kJsonStride; i += hn::MaxLanes(d)) {
+        const auto units = hn::LoadU(d, in + i);
+        StoreAs(d, units, out + i);
+        suspects = hn::Or(suspects, NeedsALook<Out>(d, units));
+    }
+    return hn::AllFalse(d, suspects);
+}
+
+static constexpr size_t kJsonStep = 16;
+
+// Sixteen units, and the one after each.
+template<typename T>
+struct JsonStep;
+
+template<>
+struct JsonStep<uint8_t> {
+    hn::Vec<Block<uint8_t>> units;
+
+    static HWY_INLINE JsonStep Load(const uint8_t* in) { return { hn::LoadU(Block<uint8_t>(), in) }; }
+    static HWY_INLINE JsonStep LoadLast(const uint8_t* in, size_t count)
+    {
+        const Block<uint8_t> d;
+        return { hn::LoadNOr(hn::Set(d, ' '), d, in, count) };
+    }
+
+    template<typename Out>
+    HWY_INLINE bool IsLeft() const
+    {
+        const Block<uint8_t> d;
+        return !hn::AllFalse(d, IsLeftToCaller<Out>(d, units, units));
+    }
+
+    template<typename Out>
+    HWY_INLINE Out* Store(size_t count, Out* out, bool) const { return StoreWithBackslashes<uint8_t>(units, count, out); }
+};
+
+template<>
+struct JsonStep<uint16_t> {
+    static constexpr size_t half = kJsonStep / 2;
+    hn::Vec<Block<uint16_t>> lower, upper, after_lower, after_upper;
+
+    static HWY_INLINE JsonStep Load(const uint16_t* in)
+    {
+        const Block<uint16_t> d;
+        return { hn::LoadU(d, in), hn::LoadU(d, in + half), hn::LoadU(d, in + 1), hn::LoadU(d, in + half + 1) };
+    }
+    static HWY_INLINE JsonStep LoadLast(const uint16_t* in, size_t count)
+    {
+        const Block<uint16_t> d;
+        const auto spaces = hn::Set(d, ' ');
+        const size_t in_lower = HWY_MIN(count, half);
+        const auto lower = hn::LoadNOr(spaces, d, in, in_lower);
+        const auto upper = hn::LoadNOr(spaces, d, in + in_lower, count - in_lower);
+        return { lower, upper, hn::CombineShiftRightLanes<1>(d, upper, lower), hn::CombineShiftRightLanes<1>(d, spaces, upper) };
+    }
+
+    template<typename Out>
+    HWY_INLINE bool IsLeft() const
+    {
+        const Block<uint16_t> d;
+        return !hn::AllFalse(d, hn::Or(IsLeftToCaller<Out>(d, lower, after_lower), IsLeftToCaller<Out>(d, upper, after_upper)));
+    }
+
+    HWY_INLINE bool FitsBytes() const
+    {
+        const Block<uint16_t> d;
+        return hn::AllTrue(d, hn::Eq(hn::ShiftRight<8>(hn::Or(lower, upper)), hn::Zero(d)));
+    }
+
+    template<typename Out>
+    HWY_INLINE Out* Store(size_t count, Out* out, bool fits_bytes) const
+    {
+        if (sizeof(Out) == 1 || fits_bytes)
+            return StoreWithBackslashes<uint8_t>(hn::OrderedTruncate2To(Block<uint8_t>(), lower, upper), count, out);
+        if constexpr (sizeof(Out) == 2) {
+            const size_t in_lower = HWY_MIN(count, half);
+            return StoreWithBackslashes<uint16_t>(upper, count - in_lower, StoreWithBackslashes<uint16_t>(lower, in_lower, out));
+        }
+        return out;
+    }
+};
+
+// Copies units with the escapes of JSON until they end, the room gets short, or a step has a unit that it leaves to
 // the caller. Returns how many it read. The first unit is no trail surrogate.
 template<typename In, typename Out>
 static HWY_INLINE size_t EscapeJson(const In* HWY_RESTRICT in, size_t len, Out* HWY_RESTRICT out, size_t room, size_t* written)
 {
     const Wide<In> wide;
-    const Block<In> block;
-    constexpr size_t W = hn::MaxLanes(wide), B = hn::MaxLanes(block);
+    constexpr size_t lookahead = sizeof(In) - 1;
     Out* const start = out;
     Out* const limit = out + room;
     size_t at = 0;
+    bool was_plain = false;
 
     // Whether a vector has something to escape is hard to predict, whether one of a stride has is easier.
-    for (; at + kJsonStride + sizeof(In) - 1 <= len && static_cast<size_t>(limit - out) >= 2 * kJsonStride; at += kJsonStride) {
-        auto special = hn::MaskFalse(wide), left = hn::MaskFalse(wide);
-        for (size_t i = 0; i < kJsonStride; i += W) {
-            const auto units = hn::LoadU(wide, in + at + i);
-            StoreAs(wide, units, out + i);
-            special = hn::Or(special, hn::Or(IsQuoteOrBackslash(wide, units), IsControl(wide, units)));
-            if constexpr (sizeof(In) == 2)
-                left = hn::Or(left, IsLeftToCaller<Out>(wide, units, hn::LoadU(wide, in + at + i + 1)));
-        }
-        if (hn::AllFalse(wide, hn::Or(special, left))) {
+    for (; at + kJsonStride + lookahead <= len && static_cast<size_t>(limit - out) >= 2 * kJsonStride; at += kJsonStride) {
+        was_plain = CopyPlainStride(in + at, out);
+        if (was_plain) {
             out += kJsonStride;
             continue;
         }
-        if constexpr (sizeof(In) == 1) {
-            for (size_t i = 0; i < kJsonStride; i += W) {
-                const auto units = hn::LoadU(wide, in + at + i);
-                left = hn::Or(left, IsLeftToCaller<Out>(wide, units, units));
-            }
+        auto special = hn::MaskFalse(wide), left = hn::MaskFalse(wide);
+        auto all = hn::Zero(wide);
+        for (size_t i = at; i < at + kJsonStride; i += hn::MaxLanes(wide)) {
+            const auto units = hn::LoadU(wide, in + i);
+            all = hn::Or(all, units);
+            special = hn::Or(special, hn::Or(IsQuoteOrBackslash(wide, units), IsControl(wide, units)));
+            left = hn::Or(left, IsLeftToCaller<Out>(wide, units, hn::LoadU(wide, in + i + lookahead)));
         }
         if (!hn::AllFalse(wide, left)) break;
-        for (size_t i = 0; i < kJsonStride; i += B)
-            out = StoreWithBackslashes<In>(hn::LoadU(block, in + at + i), B, out);
+        if (sizeof(In) == 2 && hn::AllFalse(wide, special)) {
+            out += kJsonStride;
+            continue;
+        }
+        const bool fits_bytes = hn::AllFalse(wide, hn::Gt(all, hn::Set(wide, 0xff)));
+        for (size_t i = at; i < at + kJsonStride; i += kJsonStep)
+            out = JsonStep<In>::Load(in + i).Store(kJsonStep, out, fits_bytes);
     }
 
-    while (at < len && static_cast<size_t>(limit - out) >= 2 * B) {
-        const size_t count = HWY_MIN(len - at, B);
-        const auto spaces = hn::Set(block, ' ');
-        const auto units = hn::LoadNOr(spaces, block, in + at, count);
-        const auto next = sizeof(In) == 1 ? units : hn::LoadNOr(spaces, block, in + at + 1, HWY_MIN(len - at - 1, B));
-        if (!hn::AllFalse(block, IsLeftToCaller<Out>(block, units, next))) break;
-        out = StoreWithBackslashes<In>(units, count, out);
+    // The last stride overlaps the one before it, if that is there as it was.
+    if (const size_t rest = len - at; was_plain && rest <= kJsonStride && static_cast<size_t>(limit - out) >= rest && CopyPlainStride(in + len - kJsonStride, out + rest - kJsonStride)) {
+        *written = static_cast<size_t>(out - start) + rest;
+        return len;
+    }
+
+    while (at < len && static_cast<size_t>(limit - out) >= 2 * kJsonStep) {
+        const size_t count = HWY_MIN(len - at, kJsonStep);
+        const auto step = at + kJsonStep + lookahead <= len ? JsonStep<In>::Load(in + at) : JsonStep<In>::LoadLast(in + at, count);
+        if (step.template IsLeft<Out>()) break;
+        if constexpr (sizeof(In) == 2) {
+            out = step.Store(count, out, step.FitsBytes());
+        } else {
+            out = step.Store(count, out, true);
+        }
         at += count;
     }
 

@@ -130,7 +130,9 @@ impl<'a, T: CodeUnit> Cursor<'a, T> {
         map: impl Fn(S) -> T + Copy,
     ) {
         assert!(count <= N);
-        copy::map(&mut self.rest[..N], source, map);
+        for (to, &from) in self.rest[..N].iter_mut().zip(source) {
+            to.write(map(from));
+        }
         self.take(count);
     }
 
@@ -146,6 +148,25 @@ impl<'a, T: CodeUnit> Cursor<'a, T> {
             return false;
         }
         self.take(source.len());
+        true
+    }
+
+    /// [`Self::push_mapped_unless`] of the units themselves, between quotation marks.
+    #[inline(always)]
+    pub(crate) fn push_quoted_unless<S: CodeUnit>(
+        &mut self,
+        source: &[S],
+        stop: impl Fn(S) -> bool + Copy,
+    ) -> bool {
+        let [first, middle @ .., last] = &mut self.rest[..source.len() + 2] else {
+            unreachable!()
+        };
+        first.write(T::from(b'"'));
+        last.write(T::from(b'"'));
+        if copy::map_unless(middle, source, |it| T::from_u16_truncating(it.to_u16()), stop) {
+            return false;
+        }
+        self.take(source.len() + 2);
         true
     }
 

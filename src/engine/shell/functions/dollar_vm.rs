@@ -2,7 +2,7 @@
 
 use bun_engine_vm::options;
 
-use super::{coverage, define_functions, heap, io, object_with, scripts, tiers};
+use super::{coverage, define_functions, heap, io, object_with, scripts, tiers, values};
 use crate::prelude::*;
 
 const FUNCTIONS: Functions = &[
@@ -13,6 +13,10 @@ const FUNCTIONS: Functions = &[
     ("noInline", tiers::no_inline, 1),
     ("print", io::print_err, 1),
     ("createGlobalObject", scripts::create_global_object, 0),
+    ("ensureArrayStorage", values::ensure_sparse_elements, 1),
+    ("indexingMode", values::indexing_mode, 1),
+    ("haveABadTime", values::have_a_bad_time, 1),
+    ("isHavingABadTime", values::is_having_a_bad_time, 1),
     ("useJIT", uses_jit, 0),
     ("useDFGJIT", uses_quick_optimizer, 0),
     ("useFTLJIT", uses_full_optimizer, 0),

@@ -2,7 +2,7 @@
 
 use bun_engine_macros::cell;
 use bun_engine_vm::{
-    InternalFunction, JsArrayBuffer, RealmWatchpoint, Shape, ShapeSpec, TypeFlags, call,
+    ElementKind, GlobalObject, InternalFunction, JsArrayBuffer, PropertyDescriptor, RealmWatchpoint, Shape, ShapeSpec, TypeFlags, call,
 };
 
 use super::{return_false, return_undefined, string};
@@ -11,6 +11,7 @@ use crate::prelude::*;
 pub(super) const FUNCTIONS: Functions = &[
     ("describe", describe, 1),
     ("describeArray", describe_array, 1),
+    ("ensureArrayStorage", ensure_sparse_elements, 1),
     ("addressOf", address_of, 1),
     ("version", return_undefined, 1),
     ("isInt32", is_int32, 0),
@@ -167,4 +168,60 @@ pub(super) fn transfer_array_buffer(cx: &mut Cx, frame: &CallFrame) -> JsResult<
         buffer.buffer().detach(cx);
     }
     Ok(Value::UNDEFINED)
+}
+
+#[native_abi]
+pub(super) fn ensure_sparse_elements(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    for object in frame.arguments().iter().filter_map(|it| it.as_object()) {
+        if object.class().has_ordinary_define_own_property() || object.indexing_mode().is_array() {
+            cx.or_out_of_memory(object.convert_to_sparse(cx))?;
+        }
+    }
+    Ok(Value::UNDEFINED)
+}
+
+#[native_abi]
+pub(super) fn indexing_mode(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let Some(mode) = frame.argument(0).as_object().map(|it| it.indexing_mode()) else {
+        return Ok(Value::UNDEFINED);
+    };
+    let shared = if mode.is_copy_on_write() { "CopyOnWrite" } else { "" };
+    let class = if mode.is_array() { "Array" } else { "NonArray" };
+    let kind = match mode.kind() {
+        ElementKind::None if mode.is_array() => "Class",
+        ElementKind::None => "",
+        _ if mode.is_slow_put() => "WithSlowPutArrayStorage",
+        ElementKind::Undecided => "WithUndecided",
+        ElementKind::Int32 => "WithInt32",
+        ElementKind::Double => "WithDouble",
+        ElementKind::Contiguous => "WithContiguous",
+        ElementKind::Sparse => "WithArrayStorage",
+    };
+    Ok(string(cx, &format!("{shared}{class}{kind}")))
+}
+
+fn realm_of_argument(cx: &Cx, frame: &CallFrame, function: &str) -> JsResult<Gc<GlobalObject>> {
+    match frame.argument(0) {
+        Value::UNDEFINED => Ok(cx.global()),
+        value => (value.as_object().and_then(|it| it.realm())).ok_or_else(|| {
+            cx.throw_type_error(format_args!(
+                "{function} expects first argument to be an object if provided"
+            ))
+        }),
+    }
+}
+
+#[native_abi]
+pub(super) fn have_a_bad_time(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let prototype = realm_of_argument(cx, frame, "haveABadTime")?.object_prototype();
+    let name = Identifier::from_index(u32::MAX - 1);
+    let accessor = PropertyDescriptor::accessor(None, None, Attributes::DONT_ENUM);
+    prototype.define_property_or_throw(cx, name.name(), &accessor)?;
+    prototype.delete(cx, name.name()).map(Into::into)
+}
+
+#[native_abi]
+pub(super) fn is_having_a_bad_time(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let realm = realm_of_argument(cx, frame, "isHavingABadTime")?;
+    Ok(realm.is_having_a_bad_time().into())
 }

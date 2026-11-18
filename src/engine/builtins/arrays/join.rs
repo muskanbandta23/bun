@@ -1,6 +1,6 @@
 use bun_engine_number::NumberText;
 use bun_engine_text::{StringBuilder, Text};
-use bun_engine_vm::{JsArray, RealmWatchpoint};
+use bun_engine_vm::{JsArray, RealmWatchpoint, is_array};
 
 use crate::prelude::*;
 
@@ -86,11 +86,13 @@ pub(super) fn to_string(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
             |cx: &mut Cx| join_with(cx, &array, array.length().into(), COMMA, push_as_string);
         return array.unless_being_joined(cx, join).map(Into::into);
     }
-    let mut method = object.get(cx, names::join)?;
-    if !method.is_callable() {
-        method = cx.object_prototype_to_string().into();
+    let method = object.get(cx, names::join)?;
+    if method.is_callable() {
+        return cx.call(method, object.into(), &[]);
     }
-    cx.call(method, object.into(), &[])
+    // For the message about a revoked proxy.
+    is_array(cx, object.into())?;
+    object.to_tagged_string(cx).map(Into::into)
 }
 
 #[native_abi]

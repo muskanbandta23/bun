@@ -6,6 +6,7 @@ use bun_engine_text::CodeUnit;
 use super::Parsed;
 use super::cursor::Cursor;
 use crate::civil::days_from_civil;
+use crate::time_value::DAY;
 
 pub(super) enum Attempt {
     Complete(Parsed),
@@ -51,7 +52,7 @@ pub(super) fn parse<T: CodeUnit>(cursor: &mut Cursor<'_, T>) -> Attempt {
         count += 1;
     }
 
-    let midnight = days_from_civil(year, numbers[1] as u8, numbers[2] as u8) * 86_400_000;
+    let midnight = days_from_civil(year, numbers[1] as u8, numbers[2] as u8) * DAY;
     if cursor.is_at_end() {
         return Attempt::Complete(Parsed::Utc(midnight));
     }
@@ -89,7 +90,7 @@ fn usual_date_and_time<T: CodeUnit>(units: &[T; USUAL_LENGTH]) -> Option<i64> {
     };
     let days = days_from_civil(i32::from(century) * 100 + i32::from(year), month, day);
     let seconds = (i64::from(hour) * 60 + i64::from(minute)) * 60 + i64::from(second);
-    Some((days * 86_400 + seconds) * 1000)
+    Some(days * DAY + seconds * 1000)
 }
 
 /// In milliseconds.

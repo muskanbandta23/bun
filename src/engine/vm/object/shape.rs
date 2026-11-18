@@ -141,7 +141,7 @@ impl Default for ShapeRareData {
 }
 
 /// What objects with the same class, prototype and properties share.
-#[cell(name = "Structure", cell_type = Shape, flags = TypeFlags::SHAPE_IS_IMMORTAL,
+#[cell(name = "Structure", cell_type = Shape, export = "engine_class_Shape", flags = TypeFlags::SHAPE_IS_IMMORTAL,
     visit_children, reconcile_weak_references, estimated_size)]
 pub struct Shape {
     base: JsCell,

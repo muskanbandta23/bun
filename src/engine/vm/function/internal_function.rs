@@ -28,7 +28,7 @@ const _: () = {
     assert!(offset_of!(InternalFunction, executable) == JsFunction::OFFSET_OF_EXECUTABLE);
 };
 
-#[object_ops]
+#[object_ops(export = "engine_InternalFunction")]
 impl InternalFunction {
     fn call_data(&self) -> CallData {
         CallData::native(self.function)

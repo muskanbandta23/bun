@@ -108,8 +108,13 @@ pub struct GlobalObject {
     vm: *const Vm,
     hooks: &'static RealmHooks,
     embedder_methods: *const c_void,
+    overridden_date_now: Cell<f64>,
+    console_client: Cell<*mut c_void>,
+    /// Looked in after the global object.
+    pub scope_extension: Field<Option<Gc<Environment>>>,
     pub(self) original_array_shapes: FieldArray<Option<Gc<Shape>>, ARRAY_SHAPE_COUNT>,
     pub(self) array_shapes_for_allocation: FieldArray<Option<Gc<Shape>>, ARRAY_SHAPE_COUNT>,
+    /// The last field whose offset C++ knows.
     pub(super) slots: FieldArray<Option<Gc<JsCell>>, { RealmSlot::COUNT }>,
     watchpoints: RealmWatchpoints,
     variables: GlobalBindings,
@@ -117,24 +122,20 @@ pub struct GlobalObject {
     /// Changes when a lexical binding is declared, which may hide a property.
     lexical_epoch: Cell<u32>,
     is_initialized: Cell<bool>,
-    /// Looked in after the global object.
-    pub scope_extension: Field<Option<Gc<Environment>>>,
     /// What other crates keep for the realm. See `extension_cell`.
     pub(self) extension_cells: TracedVec<Option<Gc<JsCell>>>,
     microtask_queue: RefCell<MicrotaskQueueRef>,
     regexp_state: RegExpGlobalState,
     random: Cell<[u64; 2]>,
     stack_trace_limit: Cell<Option<u32>>,
-    overridden_date_now: Cell<f64>,
     eval_disabled_message: RefCell<Option<StringRef>>,
     webassembly_disabled_message: RefCell<Option<StringRef>>,
-    console_client: Cell<*mut c_void>,
     inspector: OnceCell<Box<dyn InspectorState>>,
 }
 
 pub trait InspectorState: Any + GcFree {}
 
-#[object_ops]
+#[object_ops(export = "engine_GlobalObject")]
 impl GlobalObject {
     fn get_own_property_slot(
         &self,

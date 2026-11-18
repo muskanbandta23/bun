@@ -1103,6 +1103,16 @@ impl Shape {
         target
     }
 
+    /// The same, but without a history of transitions, for one object.
+    pub(super) fn clone_for_watching(&self, vm: &Vm, deferred: &mut DeferredFire<'_>) -> Gc<Shape> {
+        debug_assert!(!self.is_dictionary());
+        let mode = self.instance_indexing_mode();
+        let target = self.derive(vm, TransitionKind::None, mode, deferred);
+        target.table.set(Some(self.share_table()));
+        target.pin();
+        target
+    }
+
     pub(super) fn flatten_cacheable_dictionary(&self) {
         debug_assert!(self.has(ShapeFlags::CACHEABLE_DICTIONARY));
         let mut flags = self.flags() - ShapeFlags::DICTIONARY;

@@ -3,6 +3,7 @@
 use bun_engine_text::Text;
 
 use super::function::Method;
+use super::pattern::ABBREVIATED_KEYWORD;
 use super::{Class, Expression, Facts, Failed, Parsed, Session, nothing};
 use crate::ast::{
     Element, ExprId, ExprKind, Property, PropertyKey, PropertyKind, ResultType, Template,
@@ -360,14 +361,14 @@ impl Session<'_> {
     }
 
     #[cold]
-    fn check_unusual_shorthand(&mut self, mut token: Token) -> Parsed<()> {
+    fn check_unusual_shorthand(&mut self, token: Token) -> Parsed<()> {
         if token.kind == TokenKind::Identifier {
             self.facts |= Facts::USES_ARGUMENTS;
             return self.refuse_arguments();
         }
         self.facts |= Facts::AWAIT_OR_YIELD_AS_NAME;
-        if token.kind == TokenKind::EscapedKeyword {
-            token.kind = TokenKind::of_name(token.name(), Name::STATIC.index() as u32);
+        if token.kind == TokenKind::EscapedKeyword && !self.is_unreserved(token) {
+            return Err(self.reject_naming(ABBREVIATED_KEYWORD, token.name()));
         }
         self.refuse_keyword(token, "shorthand property name", "")
     }

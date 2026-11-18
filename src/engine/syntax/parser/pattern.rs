@@ -45,6 +45,9 @@ impl Binder {
 pub(super) const LET_IN_LEXICAL_DECLARATION: &str =
     "Cannot use 'let' as an identifier name for a LexicalDeclaration";
 
+pub(super) const ABBREVIATED_KEYWORD: &str =
+    "Cannot use abbreviated destructuring syntax for keyword '%'";
+
 impl Session<'_> {
     /// For an assignment it may fail without a complaint.
     #[inline(never)]
@@ -417,9 +420,7 @@ impl Session<'_> {
             TokenKind::ReservedInStrictCode => {
                 "Cannot use abbreviated destructuring syntax for reserved name '%' in strict mode"
             }
-            kind if kind.is_keyword() => {
-                "Cannot use abbreviated destructuring syntax for keyword '%'"
-            }
+            kind if kind.is_keyword() => ABBREVIATED_KEYWORD,
             _ => return self.fail("Expected a ':' prior to a named destructuring property"),
         };
         self.reject_naming(sentence, key.name())
@@ -439,8 +440,7 @@ impl Session<'_> {
             if token.kind == TokenKind::EscapedKeyword
                 && (!self.is_unreserved(token) || (binder.is_lexical() && name == Name::LET))
             {
-                let sentence = "Cannot use abbreviated destructuring syntax for keyword '%'";
-                return Err(self.reject_naming(sentence, name));
+                return Err(self.reject_naming(ABBREVIATED_KEYWORD, name));
             }
             self.refuse_await(token, binder.role())?;
         } else if binder == Binder::Assignment && is_eval_or_arguments(name) {

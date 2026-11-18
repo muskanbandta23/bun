@@ -164,6 +164,7 @@ fn roots_rounding_and_changes_of_width() {
 #[test]
 fn moves() {
     let mut h = Harness::new();
+    h.use_first_scratch_for_operands();
     for _ in 0..40 {
         for [dst, src] in h.fprs() {
             let case = Case::new(op!(move_float(dst, src)), move |m| {
@@ -192,6 +193,7 @@ fn moves() {
 #[test]
 fn constants() {
     let mut h = Harness::new();
+    h.use_first_scratch_for_operands();
     let boundaries = Boundaries::new();
     for width in FLOAT_WIDTHS {
         let short = (-600..600).map(|n| machine::values::float_bits(width, f64::from(n) / 16.0));
@@ -217,6 +219,7 @@ fn constants() {
 #[test]
 fn pairs() {
     let mut h = Harness::new();
+    h.use_first_scratch_for_operands();
     for ([], address) in h.addresses(&[], OFFSETS.len()) {
         for [low, high] in h.fprs() {
             let case = Case::new(op!(store_pair_f64(address, low, high)), move |m| {
@@ -279,15 +282,13 @@ fn double_to_half(value: f64) -> u16 {
 
 /// Where there are no instructions for them, the case branches.
 fn if_supported(operation: Operation) -> Operation {
-    let Operation { describe, emit } = operation;
-    let emit = Box::new(move |masm: &mut MacroAssembler, target| {
+    operation.wrapped(RegisterSet::EMPTY, |masm, target, emit| {
         if masm.supports_f16() {
-            emit(masm, target);
+            emit(masm);
         } else {
             masm.jump(target);
         }
-    });
-    Operation { describe, emit }
+    })
 }
 
 #[test]
@@ -323,13 +324,13 @@ fn half_precision() {
             }));
         }
 
-        let Operation { describe, emit } = op!(convert_f16_bits_to_f64(fpr, gpr));
-        let emit = Box::new(move |masm: &mut MacroAssembler, target| {
-            emit(masm, target);
+        let operation = op!(convert_f16_bits_to_f64(fpr, gpr));
+        let operation = operation.wrapped(keeper, move |masm, _, emit| {
+            emit(masm);
             masm.canonicalize_nan(fpr);
             masm.move_f64_to_bits(keeper, fpr);
         });
-        let case = Case::new(if_supported(Operation { describe, emit }), move |m| {
+        let case = Case::new(if_supported(operation), move |m| {
             let value = half_to_double(m.get64(gpr) as u16);
             m.set64(
                 keeper,
@@ -412,10 +413,13 @@ fn floats_to_integers() {
                     let mut add = |case: Case| {
                         h.add(case.reads_float(from, src).with_all_boundaries(round < 4));
                     };
-                    let case = Case::new(op!(truncate_float(from, sign, to, dst, src)), move |m| {
-                        m.set(to, dst, truncated(m.float(from, src), sign, to).unwrap());
-                    });
-                    add(case.given(move |m, _| truncated(m.float(from, src), sign, to).is_some()));
+                    let operation = op!(truncate_float(from, sign, to, dst, src));
+                    add(Case::new(operation, move |m| {
+                        match truncated(m.float(from, src), sign, to) {
+                            Some(integer) => m.set(to, dst, integer),
+                            None => m.unspecified.push(Unspecified::WithinWidth(dst, to)),
+                        }
+                    }));
 
                     let operation = op!(truncate_float_saturating(from, sign, to, dst, src));
                     add(Case::new(operation, move |m| {

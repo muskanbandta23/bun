@@ -11,6 +11,7 @@ use crate::scope::{VariableScope, static_scope_of};
 use crate::{
     CodeBlock, Cx, ErrorType, EvalExecutable, Gc, JsCell, JsResult, SourceCode, SourceProvider,
     SourceProviderRef, SourceType, StackVisitor, Value, Vm, create_compile_error, errors, json,
+    options,
 };
 
 #[derive(Clone)]
@@ -81,6 +82,19 @@ impl Cx {
             Some(message) => Err(self.throw_error(ErrorType::EvalError, message)),
             None => Ok(()),
         }
+    }
+
+    /// Before anything is done on behalf of code from that text.
+    #[inline]
+    pub(crate) fn ensure_can_run(&self, provider: &SourceProvider) -> JsResult<()> {
+        if !options().runs_only_static_code || provider.is_static() {
+            return Ok(());
+        }
+        let message = self.global().eval_disabled_message().borrow().clone();
+        let message = message.filter(|it| !it.is_empty()).unwrap_or_else(|| {
+            StringRef::from_literal("Code generation from strings disallowed for this context")
+        });
+        Err(self.throw_error(ErrorType::EvalError, message))
     }
 }
 
@@ -170,6 +184,7 @@ pub fn execute_indirect_eval(cx: &mut Cx, executable: Gc<EvalExecutable>) -> JsR
 
 fn execute(cx: &mut Cx, executable: Gc<EvalExecutable>, scope: Gc<JsCell>) -> JsResult<Value> {
     cx.check_stack()?;
+    cx.ensure_can_run(executable.provider())?;
     declare(cx, &executable.unit().declarations, scope)?;
     cx.execute(executable.upcast(), scope, cx.global_this().into())
 }

@@ -52,7 +52,7 @@ impl MacroAssembler {
                 self.broadcast(lanes, vector, vector);
             }
             Size::S8 | Size::S16 => {
-                let indices = Pattern::duplicate(lanes, 0).indices();
+                let indices = Pattern::duplicate(lanes, 0).bits();
                 self.sse_with_constant(Sse::Pshufb, vector, vector, indices);
             }
             Size::S32 => self

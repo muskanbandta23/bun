@@ -51,9 +51,7 @@ execute! {
     }
     CheckThis(op, cx, f) {
         if f.reg_or_empty(op.this).is_none() {
-            return Err(cx.throw_reference_error(
-                "'super()' must be called in derived constructor before accessing |this| or returning non-object.",
-            ));
+            return Err(errors::throw_this_is_not_bound(cx));
         }
     }
     BindThis(op, cx, f) {

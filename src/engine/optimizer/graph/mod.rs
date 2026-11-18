@@ -6,6 +6,7 @@ mod frames;
 pub(crate) mod heaps;
 mod knowledge;
 mod node;
+mod validate;
 
 use bun_engine_asm::{RegisterSet, abi};
 use bun_engine_bytecode::Register;
@@ -17,6 +18,7 @@ pub(crate) use facts::*;
 pub(crate) use frames::*;
 pub(crate) use knowledge::{Knowledge, Known, SavedKnowledge, implied_type};
 pub(crate) use node::{Gives, Kind};
+pub(crate) use validate::validate;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Entry {

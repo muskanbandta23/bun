@@ -6,8 +6,8 @@ use bun_engine_text::{Base64Alphabet, LastChunkHandling, Text};
 use bun_engine_vm::ValueVec;
 use bun_engine_vm::json::{self, LinesEnd};
 use bun_engine_vm::{
-    ElementKind, InternalFunction, JsArrayBuffer, JsArrayBufferView, JsFunctionWithFields,
-    RealmWatchpoint, Shape, ShapeSpec, TypeFlags, call,
+    InternalFunction, JsArrayBuffer, JsArrayBufferView, JsFunctionWithFields, RealmWatchpoint,
+    Shape, ShapeSpec, TypeFlags, call,
 };
 
 use super::{put, return_false, return_undefined, string};
@@ -46,61 +46,14 @@ pub(super) const FUNCTIONS: Functions = &[
 
 #[native_abi]
 pub(super) fn describe(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
-    let Some(&value) = frame.arguments().first() else {
-        return Ok(Value::UNDEFINED);
-    };
-    let text = if let Some(integer) = value.as_int32() {
-        format!("Int32: {integer}")
-    } else if let Some(number) = value.as_double() {
-        format!("Double: {}, {number:.6}", number.to_bits() as i64)
-    } else if let Some(object) = value.as_object() {
-        let (address, storage) = (object.address(), object.storage().address());
-        let (shape, class) = (object.shape().address(), object.class().name());
-        let mode = indexing_mode_name(&object);
-        format!(
-            "Object: {address:#x} with butterfly {storage:#x} (Structure {shape:#x}:[{class}, {mode}])"
-        )
-    } else if let Some(text) = value.as_string() {
-        let kind = match (text.is_rope(), text.is_atom()) {
-            (true, _) => " (rope)",
-            (_, true) => " (atomic)",
-            _ => "",
-        };
-        let (is_latin1, length) = (u8::from(text.is_latin1()), text.len());
-        let text = text.to_string_without_resolving();
-        format!("String{kind},8Bit:({is_latin1}),length:({length}): {text}")
-    } else {
-        match value {
-            Value::UNDEFINED => "Undefined".to_owned(),
-            Value::NULL => "Null".to_owned(),
-            Value::TRUE => "True".to_owned(),
-            Value::FALSE => "False".to_owned(),
-            _ => format!("{value:?}"),
-        }
-    };
-    Ok(string(cx, &text))
+    let value = frame.arguments().first();
+    Ok(value.map_or_default(|it| JsString::new(cx, it.describe()).into()))
 }
 
 pub(super) fn indexing_mode_name(object: &JsObject) -> String {
-    let mode = object.indexing_mode();
-    let elements = match mode.kind() {
-        ElementKind::None if mode.is_array() => "Class",
-        ElementKind::None => "",
-        _ if mode.is_slow_put() => "WithSlowPutArrayStorage",
-        ElementKind::Undecided => "WithUndecided",
-        ElementKind::Int32 => "WithInt32",
-        ElementKind::Double => "WithDouble",
-        ElementKind::Contiguous => "WithContiguous",
-        ElementKind::Sparse => "WithArrayStorage",
-    };
-    let prefix = if !mode.is_array() {
-        "Non"
-    } else if mode.is_copy_on_write() && !mode.is_slow_put() {
-        "CopyOnWrite"
-    } else {
-        ""
-    };
-    format!("{prefix}Array{elements}")
+    let mut name = String::new();
+    let _ = object.indexing_mode().describe(&mut name);
+    name
 }
 
 #[native_abi]

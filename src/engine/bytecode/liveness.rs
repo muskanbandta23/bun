@@ -413,7 +413,9 @@ impl SavedRegisters {
         saved.clear();
         solver.solve(body, graph, Resumption::Direct, |word, _, transfers| {
             for (point, state) in (0..).zip(body.suspend_points()) {
-                let bits = transfers[graph.block_at(state.resume).index()].live_in;
+                let live = transfers[graph.block_at(state.resume).index()].live_in;
+                // `enter` loads the scope of the callee on a resumption too.
+                let bits = if word == 0 { live & !1 } else { live };
                 if bits != 0 {
                     saved.push(Saved { point, word, bits });
                 }

@@ -6,7 +6,7 @@ use super::{Decoder, Mode, Purpose, SIGNS};
 use crate::error::Error;
 use crate::visitor::Visitor;
 
-impl<M: Mode> Decoder<'_, M> {
+impl<M: Mode> Decoder<'_, '_, M> {
     #[inline(never)]
     pub(super) fn misc<V: Visitor<Error = M::Error>>(&mut self, v: &mut V) -> Result<(), M::Error> {
         let kind = if self.is_dead() {
@@ -34,7 +34,7 @@ impl<M: Mode> Decoder<'_, M> {
             11 => {
                 ensure!(
                     self,
-                    !self.header.memories.is_empty() || self.is_dead(),
+                    !self.cx.header.memories.is_empty() || self.is_dead(),
                     validation,
                     "memory must be present"
                 );

@@ -1,11 +1,11 @@
 //! Operations that every architecture leaves to its macro assembler.
 
-use bun_engine_asm::{Bank, FloatAssembly, FloatCond, FloatWidth, Scratch, ScratchNeeds};
+use bun_engine_asm::{Bank, FloatAssembly, FloatCond, FloatWidth, ScratchNeeds};
 
 use super::code::{Place, Role};
 use super::emit::Operands;
 use super::lower::{Instruction, Lowering};
-use crate::ir::{Binary, Op, Type, Unary, Value, evaluate};
+use crate::ir::{Binary, Location, Op, Type, Unary, Value, evaluate};
 
 /// The operands are the result, the temporaries of each bank, and the sources.
 #[derive(Clone, Copy, Debug)]
@@ -57,18 +57,63 @@ impl<I: SharesInstructions> Lowering<'_, I> {
         needs: ScratchNeeds,
         operands: &[Value],
     ) {
+        let temps = self.use_with_temps(value, needs, [Some(0), None], operands);
+        self.finish(I::shared(Shared { operation, temps }));
+    }
+
+    /// `reused` are the positions of the operands whose register suits the result. Returns the number of temporaries.
+    pub(super) fn use_with_temps(
+        &mut self,
+        value: Value,
+        needs: ScratchNeeds,
+        reused: [Option<u8>; 2],
+        operands: &[Value],
+    ) -> ScratchNeeds {
         let temps = ScratchNeeds {
             gprs: needs.gprs.saturating_sub(I::RESERVED.gprs),
             fprs: needs.fprs.saturating_sub(I::RESERVED.fprs),
         };
-        self.def_tied(value, 1 + temps.gprs + temps.fprs, None);
+        match reused.map(|position| Some(1 + temps.gprs + temps.fprs + position?)) {
+            [Some(first), second] => self.def_tied(value, first, second),
+            [None, _] => self.def(value),
+        }
         (0..temps.gprs).for_each(|_| self.temp(Bank::Gpr));
         (0..temps.fprs).for_each(|_| self.temp(Bank::Fpr));
         operands
             .iter()
             .for_each(|&operand| self.use_value(operand, Role::Use, Place::Register));
-        self.finish(I::shared(Shared { operation, temps }));
+        temps
     }
+}
+
+/// Lends the macro assembler the temporaries, which come next among the operands.
+pub(super) fn with_temps<'a, I: SharesInstructions, M: FloatAssembly>(
+    masm: &mut M,
+    temps: ScratchNeeds,
+    operands: &mut Operands<'a>,
+    emit: impl FnOnce(&mut M, &mut Operands<'a>),
+) {
+    let reserved = masm.scratch();
+    let mut scratch = reserved;
+    for slot in scratch
+        .gprs
+        .iter_mut()
+        .skip(I::RESERVED.gprs.into())
+        .take(temps.gprs.into())
+    {
+        *slot = Some(operands.gpr());
+    }
+    for slot in scratch
+        .fprs
+        .iter_mut()
+        .skip(I::RESERVED.fprs.into())
+        .take(temps.fprs.into())
+    {
+        *slot = Some(operands.fpr());
+    }
+    masm.set_scratch(scratch);
+    emit(masm, operands);
+    masm.set_scratch(reserved);
 }
 
 impl Shared {
@@ -78,40 +123,25 @@ impl Shared {
         mut operands: Operands<'_>,
     ) {
         let dst = operands.location();
-        let reserved = masm.scratch();
-        let mut scratch = reserved;
-        for slot in scratch
-            .gprs
-            .iter_mut()
-            .skip(I::RESERVED.gprs.into())
-            .take(self.temps.gprs.into())
-        {
-            *slot = Some(operands.gpr());
-        }
-        for slot in scratch
-            .fprs
-            .iter_mut()
-            .skip(I::RESERVED.fprs.into())
-            .take(self.temps.fprs.into())
-        {
-            *slot = Some(operands.fpr());
-        }
-        masm.set_scratch(scratch);
-        match self.operation {
-            Operation::Unary { op, from, to } => {
-                emit_unary(masm, op, from, to, dst, operands.location())
-            }
-            Operation::FloatBinary(op, width) => {
-                let (dst, lhs, rhs) = (dst.fpr(), operands.fpr(), operands.fpr());
-                match op {
-                    Binary::Min => masm.min_float(width, dst, lhs, rhs),
-                    Binary::Max => masm.max_float(width, dst, lhs, rhs),
-                    Binary::CopySign => masm.copysign_float(width, dst, lhs, rhs),
-                    _ => unreachable!("has an instruction of its own"),
+        with_temps::<I, _>(
+            masm,
+            self.temps,
+            &mut operands,
+            |masm, operands| match self.operation {
+                Operation::Unary { op, from, to } => {
+                    emit_unary(masm, op, from, to, dst, operands.location())
                 }
-            }
-        }
-        let _: Scratch = masm.set_scratch(reserved);
+                Operation::FloatBinary(op, width) => {
+                    let (dst, lhs, rhs) = (dst.fpr(), operands.fpr(), operands.fpr());
+                    match op {
+                        Binary::Min => masm.min_float(width, dst, lhs, rhs),
+                        Binary::Max => masm.max_float(width, dst, lhs, rhs),
+                        Binary::CopySign => masm.copysign_float(width, dst, lhs, rhs),
+                        _ => unreachable!("has an instruction of its own"),
+                    }
+                }
+            },
+        );
     }
 }
 
@@ -120,8 +150,8 @@ fn emit_unary(
     op: Unary,
     from: Type,
     to: Type,
-    dst: crate::ir::Location,
-    src: crate::ir::Location,
+    dst: Location,
+    src: Location,
 ) {
     match op {
         Unary::Neg => masm.neg_float(to.float_width(), dst.fpr(), src.fpr()),

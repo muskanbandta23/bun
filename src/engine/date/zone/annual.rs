@@ -21,6 +21,7 @@ pub(super) struct YearlyMoment {
 
 impl YearlyMoment {
     /// In a year as long as `year` that begins on `first_week_day`.
+    #[inline(never)]
     fn seconds_into_year(self, year: i32, first_week_day: u8) -> i32 {
         let date = CivilDate {
             year,

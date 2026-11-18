@@ -93,7 +93,11 @@ impl Formats {
         purpose: Purpose,
     ) -> Result<Formats> {
         let (locale, keywords, clock) = resolve_locale(cache, requested, options)?;
-        let data = (cache.dates).locale_data(keywords.icu_locale(&locale, None)?, keywords);
+        let icu_locale = keywords.icu_locale(&locale, None)?;
+        let data = cache.dates.locale_data(icu_locale, |icu_locale| {
+            cache.note_allocation(LocaleData::ESTIMATED_SIZE);
+            LocaleData::new(icu_locale, keywords)
+        });
         let patterns = Patterns {
             cache: &cache.dates,
             locale: data.icu_locale(),
@@ -169,8 +173,15 @@ impl Formats {
         }
     }
 
-    pub(super) fn range_format<'a>(&self, layout: &'a Layout) -> Result<&'a DateIntervalFormat> {
+    pub(super) fn range_format<'a>(
+        &self,
+        cache: &Cache,
+        layout: &'a Layout,
+    ) -> Result<&'a DateIntervalFormat> {
+        const ESTIMATED_SIZE: usize = 56 * 1024;
+
         layout.range_format.get_or_try_init(|| {
+            cache.note_allocation(ESTIMATED_SIZE);
             // ICU takes from the skeleton only whether the clock has twelve hours.
             let hour_cycle = pattern::hour_cycle(&layout.pattern);
             let locale = self.keywords.icu_locale(&self.locale, hour_cycle)?;

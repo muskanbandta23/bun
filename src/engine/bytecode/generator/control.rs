@@ -341,10 +341,6 @@ impl Generator<'_> {
         Some(finally)
     }
 
-    pub(super) fn completion_register(finally: &Finally) -> Register {
-        finally.completion
-    }
-
     /// Goes on with what was under way when the code was entered.
     pub(super) fn leave_finally(&mut self, finally: &Finally) {
         if finally.exits.is_empty() {

@@ -45,6 +45,9 @@ impl Binder {
 pub(super) const LET_IN_LEXICAL_DECLARATION: &str =
     "Cannot use 'let' as an identifier name for a LexicalDeclaration";
 
+pub(super) const ABBREVIATED_KEYWORD: &str =
+    "Cannot use abbreviated destructuring syntax for keyword '%'";
+
 impl Session<'_> {
     /// For an assignment it may fail without a complaint.
     #[inline(never)]
@@ -74,7 +77,7 @@ impl Session<'_> {
     #[inline(always)]
     pub(super) fn binding_name<const BUILD: bool>(&mut self, binder: Binder) -> Parsed<Pattern> {
         let token = self.token();
-        if token.kind != TokenKind::Identifier {
+        if token.kind() != TokenKind::Identifier {
             if binder.is_lexical() && token.spells(TokenKind::Let) {
                 return Err(self.fail(LET_IN_LEXICAL_DECLARATION));
             }
@@ -88,13 +91,13 @@ impl Session<'_> {
     #[inline(always)]
     fn bind<const BUILD: bool>(&mut self, binder: Binder, token: Token) -> Parsed<Pattern> {
         let name = token.name();
-        self.declare_bound_name(binder, name, token.start)?;
-        if BUILD && self.context.contains(Context::EXPORTING) {
+        self.declare_bound_name(binder, name, token.start())?;
+        if BUILD && binder != Binder::Assignment && self.context.contains(Context::EXPORTING) {
             self.export_declaration(name, "Cannot export a duplicate name '%'")?;
         }
         let declaration = binder.declaration();
         let kind = PatternKind::Binding { name, declaration };
-        Ok(self.pattern_node::<BUILD>(token.start, token.end, kind))
+        Ok(self.pattern_node::<BUILD>(token.start(), token.end(), kind))
     }
 
     fn declare_bound_name(&mut self, binder: Binder, name: Name, start: u32) -> Parsed<()> {
@@ -374,7 +377,7 @@ impl Session<'_> {
         binder: Binder,
     ) -> Parsed<(PropertyKey, Pattern)> {
         let token = self.token();
-        if token.kind == TokenKind::EscapedKeyword || self.is_name(token) {
+        if token.kind() == TokenKind::EscapedKeyword || self.is_name(token) {
             self.next();
             let pattern = if self.eat(TokenKind::Colon) {
                 self.element::<BUILD>(binder)?
@@ -383,7 +386,7 @@ impl Session<'_> {
             };
             return Ok((PropertyKey::Named(token.name()), pattern));
         }
-        let key = match token.kind {
+        let key = match token.kind() {
             TokenKind::Number | TokenKind::BigInt => {
                 PropertyKey::Named(self.numeric_key::<BUILD>()?)
             }
@@ -411,15 +414,13 @@ impl Session<'_> {
 
     #[cold]
     fn fail_for_colon(&mut self, binder: Binder, key: Token) -> Failed {
-        let sentence = match key.kind {
+        let sentence = match key.kind() {
             _ if binder == Binder::Assignment => return Failed,
             TokenKind::Enum => "Cannot use abbreviated destructuring syntax for reserved name '%'",
             TokenKind::ReservedInStrictCode => {
                 "Cannot use abbreviated destructuring syntax for reserved name '%' in strict mode"
             }
-            kind if kind.is_keyword() => {
-                "Cannot use abbreviated destructuring syntax for keyword '%'"
-            }
+            kind if kind.is_keyword() => ABBREVIATED_KEYWORD,
             _ => return self.fail("Expected a ':' prior to a named destructuring property"),
         };
         self.reject_naming(sentence, key.name())
@@ -432,15 +433,14 @@ impl Session<'_> {
         token: Token,
     ) -> Parsed<Pattern> {
         let name = token.name();
-        if token.kind != TokenKind::Identifier {
-            if binder.is_lexical() && token.kind == TokenKind::Let {
+        if token.kind() != TokenKind::Identifier {
+            if binder.is_lexical() && token.kind() == TokenKind::Let {
                 return Err(self.reject("Cannot use the keyword 'let' as a lexical variable name"));
             }
-            if token.kind == TokenKind::EscapedKeyword
+            if token.kind() == TokenKind::EscapedKeyword
                 && (!self.is_unreserved(token) || (binder.is_lexical() && name == Name::LET))
             {
-                let sentence = "Cannot use abbreviated destructuring syntax for keyword '%'";
-                return Err(self.reject_naming(sentence, name));
+                return Err(self.reject_naming(ABBREVIATED_KEYWORD, name));
             }
             self.refuse_await(token, binder.role())?;
         } else if binder == Binder::Assignment && is_eval_or_arguments(name) {

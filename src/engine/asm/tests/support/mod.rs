@@ -78,7 +78,10 @@ pub(crate) fn assert_disassembly(arguments: &[&str], bytes: &[u8], expected: &[S
     assert_eq!(actual.len(), expected.len());
 }
 
-pub(crate) const ARM64: [&str; 2] = ["-triple=aarch64", "-mattr=+lse,+jsconv,+fptoint"];
+pub(crate) const ARM64: [&str; 2] = [
+    "-triple=aarch64",
+    "-mattr=+lse,+jsconv,+fptoint,+dotprod,+sha3",
+];
 
 /// Each line is one AArch64 instruction, and `bytes` are what LLVM makes of them.
 pub(crate) fn assert_arm64_assembly(bytes: &[u8], lines: &[String]) {

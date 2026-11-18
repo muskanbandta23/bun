@@ -11,8 +11,24 @@ use crate::visitor::VisitVector;
 const V128: ValType = ValType::V128;
 
 impl Validator<'_> {
+    pub(super) fn pop_stored_vector(&mut self) -> Checked {
+        let value = self.pop_early("val")?;
+        ensure!(is(value, V128), validation, "store vector must be v128");
+        Ok(())
+    }
+
+    pub(super) fn pop_lane_vector(&mut self, name: &'static str) -> Checked {
+        let vector = self.pop_early("vector")?;
+        ensure!(
+            is(vector, V128),
+            validation,
+            "{name} input must be a vector"
+        );
+        Ok(())
+    }
+
     #[inline]
-    fn pop_vector_address(&mut self, arg: MemArg) -> Checked {
+    pub(super) fn pop_vector_address(&mut self, arg: MemArg) -> Checked {
         let pointer = self.pop("simd memory op pointer")?;
         ensure!(
             is(pointer, self.address_type(arg.memory)),
@@ -92,29 +108,18 @@ impl VisitVector for Validator<'_> {
     }
 
     fn vector_store(&mut self, arg: MemArg) -> Checked {
-        let value = self.pop_early("val")?;
-        ensure!(is(value, V128), validation, "store vector must be v128");
+        self.pop_stored_vector()?;
         self.pop_vector_address(arg)
     }
 
     fn vector_load_lane(&mut self, _: Size, _: u8, arg: MemArg) -> Checked {
-        let vector = self.pop_early("vector")?;
-        ensure!(
-            is(vector, V128),
-            validation,
-            "load_lane input must be a vector"
-        );
+        self.pop_lane_vector("load_lane")?;
         self.pop_lane_address(arg)?;
         self.push(V128)
     }
 
     fn vector_store_lane(&mut self, _: Size, _: u8, arg: MemArg) -> Checked {
-        let vector = self.pop_early("vector")?;
-        ensure!(
-            is(vector, V128),
-            validation,
-            "store_lane input must be a vector"
-        );
+        self.pop_lane_vector("store_lane")?;
         self.pop_lane_address(arg)
     }
 

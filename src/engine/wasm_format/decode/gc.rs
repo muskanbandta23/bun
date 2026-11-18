@@ -8,10 +8,12 @@ use crate::index::{DataIndex, ElemIndex, TypeIndex};
 use crate::types::{RefType, TypeKind};
 use crate::visitor::Visitor;
 
+pub(crate) const STRUCT_SET: u32 = 5;
+
 const FROM_IS_NULLABLE: u8 = 1;
 const TO_IS_NULLABLE: u8 = 2;
 
-impl<M: Mode> Decoder<'_, M> {
+impl<M: Mode> Decoder<'_, '_, M> {
     #[inline(never)]
     pub(super) fn gc<V: Visitor<Error = M::Error>>(&mut self, v: &mut V) -> Result<(), M::Error> {
         const SIGNED: Option<Sign> = Some(Sign::Signed);
@@ -31,7 +33,7 @@ impl<M: Mode> Decoder<'_, M> {
                 let (ty, field) = self.field(name)?;
                 v.struct_get(ty, field, sign)
             }
-            5 => {
+            STRUCT_SET => {
                 let (ty, field) = self.field("struct.set")?;
                 v.struct_set(ty, field)
             }
@@ -103,7 +105,7 @@ impl<M: Mode> Decoder<'_, M> {
     #[inline]
     fn struct_type(&mut self, name: &'static str) -> Result<TypeIndex, M::Error> {
         let index = read!(self, self.reader.u32(), "can't get type index for {name}");
-        let types = &self.header.types;
+        let types = &self.cx.header.types;
         ensure!(
             self,
             index < types.len(),
@@ -125,7 +127,7 @@ impl<M: Mode> Decoder<'_, M> {
         let field = read!(self, self.reader.u32(), "can't get type index for {name}");
         ensure!(
             self,
-            (field as usize) < self.header.types.struct_type(ty).fields.len(),
+            (field as usize) < self.cx.header.types.struct_type(ty).fields.len(),
             parse,
             "{name} field immediate {field} is out of bounds"
         );
@@ -147,7 +149,7 @@ impl<M: Mode> Decoder<'_, M> {
             ),
             None => fail!(self, parse, "can't get type index for {name}"),
         };
-        let types = &self.header.types;
+        let types = &self.cx.header.types;
         ensure!(
             self,
             index < types.len(),
@@ -177,7 +179,14 @@ impl<M: Mode> Decoder<'_, M> {
     }
 
     fn data_for_new_array(&mut self, ty: TypeIndex) -> Result<DataIndex, M::Error> {
-        let element = self.header.types.array_type(ty).element.storage.unpacked();
+        let element = self
+            .cx
+            .header
+            .types
+            .array_type(ty)
+            .element
+            .storage
+            .unpacked();
         ensure!(
             self,
             !element.is_ref(),
@@ -190,7 +199,7 @@ impl<M: Mode> Decoder<'_, M> {
             self.reader.u32(),
             "can't get data segment index for array.new_data{context}"
         );
-        let count = self.header.data_count.unwrap_or(0);
+        let count = self.cx.header.data_count.unwrap_or(0);
         ensure!(
             self,
             count != 0,
@@ -214,7 +223,7 @@ impl<M: Mode> Decoder<'_, M> {
             self.reader.u32(),
             "can't get elements segment index for array.new_elem{context}"
         );
-        let count = self.header.elems.len();
+        let count = self.cx.header.elems.len();
         ensure!(
             self,
             count != 0,

@@ -1,7 +1,6 @@
 //! The instruction set, the bytecode generator and the serialized form of code.
 
 #![forbid(unsafe_code)]
-#![allow(dead_code, unused_imports)]
 
 mod assembler;
 mod code;

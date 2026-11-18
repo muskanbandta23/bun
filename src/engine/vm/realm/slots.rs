@@ -312,6 +312,7 @@ realm_slots! {
 
         // Only for built-ins
         private_is_array: JsFunction = @isArray,
+        private_flat_into_array: JsFunction = @flatIntoArray,
         private_is_typed_array_view: JsFunction = @isTypedArrayView,
         private_make_type_error: JsFunction = @makeTypeError,
         private_min: JsFunction = @min,

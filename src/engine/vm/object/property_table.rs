@@ -1,7 +1,7 @@
 use bun_engine_macros::FieldOffsets;
 use bun_engine_text::{Identifier, PropertyName};
 
-use crate::{Attributes, PropertyOffset};
+use crate::{Attributes, DontEnumMode, PropertyNameMode, PropertyOffset};
 
 #[derive(Clone, FieldOffsets)]
 #[repr(C)]
@@ -176,6 +176,18 @@ impl PropertyTable {
         &self.entries
     }
 
+    /// In the order of OrdinaryOwnPropertyKeys, without private names.
+    pub(super) fn keys(&self, kinds: PropertyNameMode, mode: DontEnumMode) -> Keys<'_> {
+        Keys {
+            all: &self.entries,
+            rest: self.entries.iter(),
+            mode,
+            is_at_symbols: kinds == PropertyNameMode::Symbols,
+            wants_second_pass: kinds == PropertyNameMode::StringsAndSymbols,
+            has_skipped_symbols: false,
+        }
+    }
+
     /// Of all properties but private elements.
     pub(crate) fn update_attributes(&mut self, update: impl Fn(Attributes) -> Attributes) {
         for entry in &mut self.entries {
@@ -211,5 +223,45 @@ impl PropertyTable {
                 core::mem::replace(&mut entry.offset, offset)
             })
             .collect()
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct Keys<'a> {
+    all: &'a [PropertyEntry],
+    rest: core::slice::Iter<'a, PropertyEntry>,
+    mode: DontEnumMode,
+    is_at_symbols: bool,
+    wants_second_pass: bool,
+    has_skipped_symbols: bool,
+}
+
+impl<'a> Iterator for Keys<'a> {
+    type Item = PropertyName<'a>;
+
+    #[inline]
+    fn next(&mut self) -> Option<PropertyName<'a>> {
+        loop {
+            for entry in &mut self.rest {
+                if let Some(key) = &entry.key
+                    && self.mode.includes(entry.attributes)
+                {
+                    match key.name().symbol_flags() {
+                        None if !self.is_at_symbols => return Some(key.name()),
+                        Some(flags) if !flags.is_private() => {
+                            if self.is_at_symbols {
+                                return Some(key.name());
+                            }
+                            self.has_skipped_symbols = true;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            if !(self.has_skipped_symbols && core::mem::take(&mut self.wants_second_pass)) {
+                return None;
+            }
+            (self.rest, self.is_at_symbols) = (self.all.iter(), true);
+        }
     }
 }

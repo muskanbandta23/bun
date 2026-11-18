@@ -6,15 +6,15 @@ use std::rc::Rc;
 use bun_engine_macros::{Trace, cell};
 use bun_engine_text::{Identifier, PropertyName, names};
 
-use super::property_table::{PropertyEntry, PropertyTable};
+use super::property_table::{Keys, PropertyEntry, PropertyTable};
 use super::static_table::StaticProperty;
 use super::transition_table::{TransitionKey, TransitionKind, TransitionTable};
 use crate::heap::{CellState, OnceBox, Scope, Survivors, shape_base};
 use crate::{
     Attributes, CellKind, CellType, Class, DeferredFire, DontEnumMode, ElementKind, FastHashMap,
     Field, Gc, GlobalObject, ImmutableArray, IndexingMode, InlineWatchpointSet, JsCell, JsObject,
-    JsString, PropertyNameEnumerator, PropertyNameList, PropertyOffset, PutContext, StaticTable,
-    TypeFlags, Value, Visitor, Vm, WatchpointSet, WatchpointState,
+    JsString, PropertyNameEnumerator, PropertyNameList, PropertyNameMode, PropertyOffset,
+    PutContext, StaticTable, TypeFlags, Value, Visitor, Vm, WatchpointSet, WatchpointState,
 };
 
 /// The address of a shape in 32 bits. It does not keep the shape alive, except in the header of a cell.
@@ -197,6 +197,10 @@ pub struct Properties(Option<Rc<PropertyTable>>);
 
 impl Properties {
     pub(super) const NONE: Properties = Properties(None);
+
+    pub(super) fn keys(&self, kinds: PropertyNameMode, mode: DontEnumMode) -> Option<Keys<'_>> {
+        Some(self.0.as_ref()?.keys(kinds, mode))
+    }
 
     /// With those that have been removed.
     pub fn entries(&self) -> &[PropertyEntry] {
@@ -877,24 +881,19 @@ impl Shape {
     pub(crate) fn collect_property_names(&self, list: &mut PropertyNameList, mode: DontEnumMode) {
         let properties = self.properties();
         let is_known_unique = list.has_only_indices();
-        for wants_symbols in [false, true] {
-            if !(if wants_symbols {
-                list.includes_symbols()
-            } else {
-                list.includes_strings()
-            }) {
-                continue;
-            }
-            for (name, _, attributes) in properties.iter() {
-                if name.is_symbol() == wants_symbols && mode.includes(attributes) {
-                    if is_known_unique {
-                        list.add_known_unique(name);
-                    } else {
-                        list.add(name);
-                    }
+        let has_private_names = self.has(ShapeFlags::HAS_PRIVATE_NAMES);
+        let private_names = (properties.iter())
+            .take_while(|_| has_private_names)
+            .filter(|&(name, _, attributes)| name.is_private() && mode.includes(attributes));
+        (properties.keys(list.mode(), mode).into_iter().flatten())
+            .chain(private_names.map(|it| it.0))
+            .for_each(|name| {
+                if is_known_unique {
+                    list.add_known_unique(name);
+                } else {
+                    list.add(name);
                 }
-            }
-        }
+            });
     }
 
     pub fn find_static_property(

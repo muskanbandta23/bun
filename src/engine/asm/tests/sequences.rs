@@ -82,6 +82,7 @@ fn arithmetic() {
         sub32(X1, X2, 0xd800) => "movn w1, #0xd7ff; add w1, w2, w1",
         add64(X1, X2, 1i64 << 32) => "movz x1, #1, lsl #32; add x1, x2, x1",
         add64(X1, X1, 1i64 << 32) => "movz x17, #1, lsl #32; add x1, x1, x17",
+        add_constant(Width::W64, X17, X17, 0x1010) => "add x17, x17, #1, lsl #12; add x17, x17, #0x10",
         add64(X1, X2, SP) => "add x1, sp, x2",
         sub64(SP, FP, X2) => "sub sp, x29, x2",
         add64(X1, X2, Address::new(X3, 8)) => "ldr x16, [x3, #8]; add x1, x2, x16",

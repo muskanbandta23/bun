@@ -151,8 +151,13 @@ impl MacroAssembler {
     fn add_long_constant(&mut self, width: Width, dst: Gpr, lhs: Gpr, value: i64) {
         let value = signed(width, value);
         let (constant, magnitude) = (ConstantMove::new(width, value as u64), value.unsigned_abs());
+        let temp = if dst == lhs || dst == SP {
+            self.scratch.gprs[1].filter(|&temp| temp != lhs)
+        } else {
+            Some(dst)
+        };
         // A move does not wait for `lhs`.
-        if (constant.instructions() > 1 || lhs == SP)
+        if (constant.instructions() > 1 || lhs == SP || temp.is_none())
             && let Some(high) = ArithmeticImm::new(magnitude & !0xfff)
             && let Some(low) = ArithmeticImm::new(magnitude & 0xfff)
         {
@@ -167,11 +172,7 @@ impl MacroAssembler {
             self.asm.add_sub_imm(op, width, dst, partial, low);
             return;
         }
-        let temp = if dst == lhs || dst == SP {
-            self.address_scratch()
-        } else {
-            dst
-        };
+        let temp = temp.expect("the operation needs a scratch register");
         self.asm.move_constant(temp, constant);
         self.add_sub_registers(AddSub::Add, width, dst, lhs, temp);
     }

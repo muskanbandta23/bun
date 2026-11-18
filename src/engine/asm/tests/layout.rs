@@ -477,6 +477,29 @@ fn large_random_programs_for_arm64() {
     random_programs::<arm64::MacroAssembler>(12, 200, &[48, 256 << 10, 512 << 10, 1 << 20]);
 }
 
+fn ending_with_a_replaceable_point<M: Architecture>() {
+    for has_data in [false, true] {
+        let mut program = Program::<M>::new(has_data);
+        let outside = program.external(Target::Symbol(0));
+        program.add(Item::Transfer(Transfer::OnFlags, outside));
+        if has_data {
+            program.add(Item::Constant(1, 8));
+        }
+        program.add(Item::Replaceable);
+        let point = program.items.last().unwrap().1;
+        let code = program.masm.finish().unwrap();
+        let (point, size) = (code.offset_of(point), M::REPLACEMENT_JUMP_SIZE);
+        assert!(code.instructions_end() >= point + size);
+        assert!(code.relocations()[0].offset.abs_diff(point) >= 4);
+    }
+}
+
+#[test]
+fn a_jump_fits_at_the_end_of_the_code() {
+    ending_with_a_replaceable_point::<x64::MacroAssembler>();
+    ending_with_a_replaceable_point::<arm64::MacroAssembler>();
+}
+
 #[test]
 fn x64_jumps_are_short_exactly_when_they_reach() {
     for transfer in [Transfer::Jump, Transfer::OnFlags] {

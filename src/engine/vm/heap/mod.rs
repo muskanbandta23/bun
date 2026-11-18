@@ -545,6 +545,21 @@ impl Heap {
         }
     }
 
+    /// Of a type that needs no destruction. `visit` does not allocate.
+    pub fn for_each_live<T: CellKind>(&self, mut visit: impl FnMut(Gc<T>)) {
+        const { assert!(!core::mem::needs_drop::<T>() && size_of::<T>() <= space::LARGE_CUTOFF) };
+        let Some(allocator) = self.cells.allocator_for(size_of::<T>()) else {
+            return;
+        };
+        allocator.stop_allocating(self);
+        let _state = self.enter_state(MutatorState::Collecting);
+        if let Some(directory) = allocator.directory() {
+            Self::live_cells_of(directory, &mut |cell| {
+                cell.downcast().into_iter().for_each(&mut visit)
+            });
+        }
+    }
+
     fn live_cells_of(directory: &directory::Directory, visit: &mut impl FnMut(Gc<JsCell>)) {
         if directory.attributes().kind != AllocationKind::Cell {
             return;

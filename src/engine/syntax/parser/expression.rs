@@ -72,7 +72,7 @@ impl Session<'_> {
     pub(super) fn assignment_in<const BUILD: bool>(&mut self, r#in: In) -> Parsed<Expression> {
         self.check_stack()?;
         let (first, assignments) = (self.token(), self.assignments);
-        let operand = match first.kind {
+        let operand = match first.kind() {
             TokenKind::Identifier if !(Name::ARGUMENTS..=Name::ASYNC).contains(&first.name()) => {
                 self.next();
                 if self.at(TokenKind::Arrow) {
@@ -82,7 +82,7 @@ impl Session<'_> {
                 if self.kind().ends_expression() {
                     return Ok(identifier);
                 }
-                self.rest_of_operand::<BUILD>(first.start, identifier)
+                self.rest_of_operand::<BUILD>(first.start(), identifier)
             }
             TokenKind::OpenParen => return self.assignment_from_paren::<BUILD>(r#in),
             TokenKind::OpenBrace | TokenKind::OpenBracket => {
@@ -99,17 +99,17 @@ impl Session<'_> {
             Ok(operand) if self.kind().ends_expression() => return Ok(operand),
             Ok(operand) if self.kind().is_assignment() => operand,
             Ok(operand) => {
-                match self.rest_of_conditional::<BUILD>(first.start, operand, assignments, r#in) {
+                match self.rest_of_conditional::<BUILD>(first.start(), operand, assignments, r#in) {
                     Ok(left) => left,
-                    Err(Failed) => return Err(self.failed_after(first.start)),
+                    Err(Failed) => return Err(self.failed_after(first.start())),
                 }
             }
-            Err(Failed) => return Err(self.failed_after(first.start)),
+            Err(Failed) => return Err(self.failed_after(first.start())),
         };
-        if self.at(TokenKind::Arrow) && self.starts_with_word(first.start) {
+        if self.at(TokenKind::Arrow) && self.starts_with_word(first.start()) {
             return Err(self.unexpected());
         }
-        self.rest_of_assignment::<BUILD>(first.start, left, assignments, r#in)
+        self.rest_of_assignment::<BUILD>(first.start(), left, assignments, r#in)
     }
 
     #[cold]
@@ -150,7 +150,7 @@ impl Session<'_> {
         r#in: In,
     ) -> Parsed<Expression> {
         let operator = self.token();
-        if !operator.kind.is_assignment() {
+        if !operator.kind().is_assignment() {
             return Ok(target);
         }
         if target.class != Class::Member {
@@ -167,16 +167,18 @@ impl Session<'_> {
         if self.kind().is_assignment() {
             return Err(self.reject_target(value));
         }
-        if BUILD && (operator.kind == TokenKind::Assign || operator.kind.is_logical_assignment()) {
+        if BUILD
+            && (operator.kind() == TokenKind::Assign || operator.kind().is_logical_assignment())
+        {
             self.name_after_target(value.id(), target.id());
         }
         let kind = ExprKind::Assign {
-            operator: assign_operator(operator.kind),
+            operator: assign_operator(operator.kind()),
             target_assigns,
             value_assigns: self.assignments != assignments,
             target: target.id(),
             value: value.id(),
-            divot: operator.start + 1,
+            divot: operator.start() + 1,
             end: self.previous_end(),
         };
         Ok(self.node::<BUILD>(Class::Operation, start, kind))
@@ -452,7 +454,7 @@ impl Session<'_> {
             ));
         }
         let kind = ExprKind::PrivateName(token.name());
-        Ok(self.node::<BUILD>(Class::Other, token.start, kind))
+        Ok(self.node::<BUILD>(Class::Other, token.start(), kind))
     }
 
     /// `prefix` is a `++` or `--` before the operand.
@@ -479,7 +481,7 @@ impl Session<'_> {
         prefix: Option<TokenKind>,
     ) -> Parsed<Expression> {
         let operator = self.token();
-        let is_increment = operator.kind == TokenKind::Increment;
+        let is_increment = operator.kind() == TokenKind::Increment;
         if !self.is_assignable(operand) {
             return Err(self.reject_operand(
                 operand,
@@ -507,11 +509,11 @@ impl Session<'_> {
         self.note_write::<BUILD>(operand_start, operand);
         self.count_assignment::<BUILD>();
         let kind = ExprKind::Postfix {
-            operator: update_operator(operator.kind),
+            operator: update_operator(operator.kind()),
             operand: operand.id(),
             operand_start,
             divot: self.previous_end(),
-            end: operator.end,
+            end: operator.end(),
         };
         self.next();
         Ok(self.node::<BUILD>(Class::Operation, start, kind))

@@ -3,7 +3,7 @@ use core::sync::atomic::Ordering;
 use bun_engine_text::Text;
 use bun_icu::{Buffer, time_zone};
 
-use super::rules::ZoneRules;
+use super::rules::{Side, ZoneRules};
 use super::table::{Entry, Table};
 
 /// An available named time zone identifier (ECMA-402, 6.5), primary or not.
@@ -35,12 +35,13 @@ impl TimeZoneId {
 
     /// AvailablePrimaryTimeZoneIdentifiers, in the order of their code units.
     pub fn primaries() -> Vec<TimeZoneId> {
-        let mut primaries: Vec<TimeZoneId> = (0..Table::get().len())
-            .filter(|&index| primary_at(index) == Some(TimeZoneId(index)))
-            .map(TimeZoneId)
-            .collect();
-        primaries.sort_unstable_by_key(|id| id.identifier());
-        primaries
+        let table = Table::get();
+        (Table::UTC + 1..table.len())
+            .filter_map(|index| match table.name(index) {
+                "UTC" => Some(TimeZoneId::UTC),
+                _ => primary_at(index).filter(|primary| primary.0 == index),
+            })
+            .collect()
     }
 
     /// For what a system or ICU calls `name`, which need not be available.
@@ -74,6 +75,13 @@ impl TimeZoneId {
             let loaded = table.load_rules(self.in_icu().0);
             rules.get_or_init(|| loaded)
         })
+    }
+
+    /// UTC(`local_time`) of ECMA-262 as if this were the zone of the system, for `time_clip`.
+    pub fn utc(self, local_time: f64) -> f64 {
+        let seconds = (local_time as i64).div_euclid(1000);
+        let span = self.rules().span_at_local(seconds, Side::Before);
+        local_time - f64::from(span.offset.seconds * 1000)
     }
 
     /// The zone to ask ICU about.

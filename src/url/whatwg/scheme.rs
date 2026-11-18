@@ -1,6 +1,6 @@
 use bun_engine_text::{CodeUnit, Text, with_text};
 
-use crate::class;
+use crate::class::{self, UPPERCASE};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
@@ -83,14 +83,18 @@ impl Scheme {
     }
 }
 
-/// The index of the colon, if `input` starts with a scheme.
+/// How many bytes `input` starts with that make a scheme if a colon follows, and whether one is uppercase.
 #[inline]
-pub(crate) fn scheme_end(input: &[u8]) -> Option<usize> {
-    if !input.first()?.is_ascii_alphabetic() {
-        return None;
+pub(crate) fn scan_scheme(input: &[u8]) -> (usize, bool) {
+    if !input.first().is_some_and(u8::is_ascii_alphabetic) {
+        return (0, false);
     }
-    let end = input.iter().position(|&byte| !class::is_in_scheme(byte))?;
-    (input[end] == b':').then_some(end)
+    let (mut length, mut traits) = (0, 0);
+    for &byte in input.iter().take_while(|&&byte| class::is_in_scheme(byte)) {
+        traits |= class::host_traits(byte);
+        length += 1;
+    }
+    (length, traits & UPPERCASE != 0)
 }
 
 /// Whether the parser would find `scheme`, which is lowercase letters, at the start of `input`.

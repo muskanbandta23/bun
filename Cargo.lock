@@ -2502,7 +2502,6 @@ dependencies = [
  "bun_highway",
  "bun_icu",
  "bun_simdutf_sys",
- "smallvec",
 ]
 
 [[package]]

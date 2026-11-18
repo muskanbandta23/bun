@@ -5,8 +5,8 @@ use std::rc::Rc;
 
 use bun_engine_syntax::ast::{Ast, Features};
 use bun_engine_syntax::{
-    Error, ErrorKind, EvalContext, FunctionFlags, FunctionKind, FunctionSource, Goal, Options,
-    Parser, Recovery, SourceCache,
+    Error, EvalContext, FunctionFlags, FunctionKind, FunctionSource, Goal, Options, Parser,
+    SourceCache,
 };
 use bun_engine_text::{Identifier, StringRef, Text};
 

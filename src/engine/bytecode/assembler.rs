@@ -19,6 +19,7 @@ impl Label {
         self.0
     }
 
+    #[cfg(test)]
     pub(crate) fn from_word(word: u32) -> Label {
         Label(word)
     }
@@ -389,15 +390,6 @@ impl Assembler {
     }
 
     /// The last that was set, recorded by now or not.
-    pub(crate) fn pending_position(&self) -> Option<Position> {
-        self.pending_position
-    }
-
-    pub(crate) fn restore_position(&mut self, position: Option<Position>) {
-        self.pending_position = position;
-        self.watched = Header::THROWS;
-    }
-
     // Instructions already emitted
 
     #[inline]

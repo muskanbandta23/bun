@@ -318,6 +318,7 @@ impl<'a, M: Mode> Decoder<'a, M> {
         v.at(start as u32);
         let op = read!(self, self.reader.u8(), "{NO_OPCODE}");
         let nth = |first: u8| usize::from(op - first);
+        // No range patterns: they are tested one after the other, outside the jump table.
         match op {
             UNREACHABLE => self.transfer(|| v.unreachable())?,
             NOP => v.nop()?,
@@ -435,12 +436,15 @@ impl<'a, M: Mode> Decoder<'a, M> {
             TABLE_GET => v.table_get(self.table()?)?,
             TABLE_SET => v.table_set(self.table()?)?,
 
-            I32_LOAD..=I64_LOAD32_U => {
+            I32_LOAD | I64_LOAD | F32_LOAD | F64_LOAD | I32_LOAD8_S | I32_LOAD8_U
+            | I32_LOAD16_S | I32_LOAD16_U | I64_LOAD8_S | I64_LOAD8_U | I64_LOAD16_S
+            | I64_LOAD16_U | I64_LOAD32_S | I64_LOAD32_U => {
                 let load = LoadOp::ALL[nth(I32_LOAD)];
                 let arg = self.mem_arg(Access::Load(op), load.size().log2_bytes())?;
                 v.load(load, arg)?;
             }
-            I32_STORE..=I64_STORE32 => {
+            I32_STORE | I64_STORE | F32_STORE | F64_STORE | I32_STORE8 | I32_STORE16
+            | I64_STORE8 | I64_STORE16 | I64_STORE32 => {
                 let store = StoreOp::ALL[nth(I32_STORE)];
                 let arg = self.mem_arg(Access::Store(op), store.size().log2_bytes())?;
                 v.store(store, arg)?;
@@ -454,63 +458,81 @@ impl<'a, M: Mode> Decoder<'a, M> {
             F64_CONST => v.f64_const(u64::from_le_bytes(self.float_immediate()?))?,
 
             I32_EQZ => v.int_eqz(W32)?,
-            I32_EQ..=I32_GE_U => v.int_compare(W32, INT_CONDS[nth(I32_EQ)])?,
+            I32_EQ | I32_NE | I32_LT_S | I32_LT_U | I32_GT_S | I32_GT_U | I32_LE_S | I32_LE_U
+            | I32_GE_S | I32_GE_U => v.int_compare(W32, INT_CONDS[nth(I32_EQ)])?,
             I64_EQZ => v.int_eqz(W64)?,
-            I64_EQ..=I64_GE_U => v.int_compare(W64, INT_CONDS[nth(I64_EQ)])?,
-            F32_EQ..=F32_GE => v.float_compare(F32, FLOAT_CONDS[nth(F32_EQ)])?,
-            F64_EQ..=F64_GE => v.float_compare(F64, FLOAT_CONDS[nth(F64_EQ)])?,
+            I64_EQ | I64_NE | I64_LT_S | I64_LT_U | I64_GT_S | I64_GT_U | I64_LE_S | I64_LE_U
+            | I64_GE_S | I64_GE_U => v.int_compare(W64, INT_CONDS[nth(I64_EQ)])?,
+            F32_EQ | F32_NE | F32_LT | F32_GT | F32_LE | F32_GE => {
+                v.float_compare(F32, FLOAT_CONDS[nth(F32_EQ)])?
+            }
+            F64_EQ | F64_NE | F64_LT | F64_GT | F64_LE | F64_GE => {
+                v.float_compare(F64, FLOAT_CONDS[nth(F64_EQ)])?
+            }
 
-            I32_CLZ..=I32_POPCNT => v.int_unary(W32, INT_UNARY[nth(I32_CLZ)])?,
-            I32_ADD..=I32_MUL => v.int_binary(W32, ARITHMETIC[nth(I32_ADD)])?,
-            I32_DIV_S..=I32_DIV_U => v.int_div(W32, SIGNS[nth(I32_DIV_S)])?,
-            I32_REM_S..=I32_REM_U => v.int_rem(W32, SIGNS[nth(I32_REM_S)])?,
-            I32_AND..=I32_XOR => v.int_binary(W32, BITWISE[nth(I32_AND)])?,
-            I32_SHL..=I32_ROTR => v.int_shift(W32, SHIFTS[nth(I32_SHL)])?,
-            I64_CLZ..=I64_POPCNT => v.int_unary(W64, INT_UNARY[nth(I64_CLZ)])?,
-            I64_ADD..=I64_MUL => v.int_binary(W64, ARITHMETIC[nth(I64_ADD)])?,
-            I64_DIV_S..=I64_DIV_U => v.int_div(W64, SIGNS[nth(I64_DIV_S)])?,
-            I64_REM_S..=I64_REM_U => v.int_rem(W64, SIGNS[nth(I64_REM_S)])?,
-            I64_AND..=I64_XOR => v.int_binary(W64, BITWISE[nth(I64_AND)])?,
-            I64_SHL..=I64_ROTR => v.int_shift(W64, SHIFTS[nth(I64_SHL)])?,
+            I32_CLZ | I32_CTZ | I32_POPCNT => v.int_unary(W32, INT_UNARY[nth(I32_CLZ)])?,
+            I32_ADD | I32_SUB | I32_MUL => v.int_binary(W32, ARITHMETIC[nth(I32_ADD)])?,
+            I32_DIV_S | I32_DIV_U => v.int_div(W32, SIGNS[nth(I32_DIV_S)])?,
+            I32_REM_S | I32_REM_U => v.int_rem(W32, SIGNS[nth(I32_REM_S)])?,
+            I32_AND | I32_OR | I32_XOR => v.int_binary(W32, BITWISE[nth(I32_AND)])?,
+            I32_SHL | I32_SHR_S | I32_SHR_U | I32_ROTL | I32_ROTR => {
+                v.int_shift(W32, SHIFTS[nth(I32_SHL)])?
+            }
+            I64_CLZ | I64_CTZ | I64_POPCNT => v.int_unary(W64, INT_UNARY[nth(I64_CLZ)])?,
+            I64_ADD | I64_SUB | I64_MUL => v.int_binary(W64, ARITHMETIC[nth(I64_ADD)])?,
+            I64_DIV_S | I64_DIV_U => v.int_div(W64, SIGNS[nth(I64_DIV_S)])?,
+            I64_REM_S | I64_REM_U => v.int_rem(W64, SIGNS[nth(I64_REM_S)])?,
+            I64_AND | I64_OR | I64_XOR => v.int_binary(W64, BITWISE[nth(I64_AND)])?,
+            I64_SHL | I64_SHR_S | I64_SHR_U | I64_ROTL | I64_ROTR => {
+                v.int_shift(W64, SHIFTS[nth(I64_SHL)])?
+            }
 
             F32_ABS => v.float_unary(F32, FloatUnaryOp::Abs)?,
             F32_NEG => v.float_unary(F32, FloatUnaryOp::Neg)?,
-            F32_CEIL..=F32_NEAREST => v.float_round(F32, ROUNDINGS[nth(F32_CEIL)])?,
+            F32_CEIL | F32_FLOOR | F32_TRUNC | F32_NEAREST => {
+                v.float_round(F32, ROUNDINGS[nth(F32_CEIL)])?
+            }
             F32_SQRT => v.float_unary(F32, FloatUnaryOp::Sqrt)?,
-            F32_ADD..=F32_COPYSIGN => v.float_binary(F32, FLOAT_BINARY[nth(F32_ADD)])?,
+            F32_ADD | F32_SUB | F32_MUL | F32_DIV | F32_MIN | F32_MAX | F32_COPYSIGN => {
+                v.float_binary(F32, FLOAT_BINARY[nth(F32_ADD)])?
+            }
             F64_ABS => v.float_unary(F64, FloatUnaryOp::Abs)?,
             F64_NEG => v.float_unary(F64, FloatUnaryOp::Neg)?,
-            F64_CEIL..=F64_NEAREST => v.float_round(F64, ROUNDINGS[nth(F64_CEIL)])?,
+            F64_CEIL | F64_FLOOR | F64_TRUNC | F64_NEAREST => {
+                v.float_round(F64, ROUNDINGS[nth(F64_CEIL)])?
+            }
             F64_SQRT => v.float_unary(F64, FloatUnaryOp::Sqrt)?,
-            F64_ADD..=F64_COPYSIGN => v.float_binary(F64, FLOAT_BINARY[nth(F64_ADD)])?,
+            F64_ADD | F64_SUB | F64_MUL | F64_DIV | F64_MIN | F64_MAX | F64_COPYSIGN => {
+                v.float_binary(F64, FLOAT_BINARY[nth(F64_ADD)])?
+            }
 
             I32_WRAP_I64 => v.i32_wrap_i64()?,
-            I32_TRUNC_F32_S..=I32_TRUNC_F32_U => {
+            I32_TRUNC_F32_S | I32_TRUNC_F32_U => {
                 v.truncate_float(F32, SIGNS[nth(I32_TRUNC_F32_S)], W32)?;
             }
-            I32_TRUNC_F64_S..=I32_TRUNC_F64_U => {
+            I32_TRUNC_F64_S | I32_TRUNC_F64_U => {
                 v.truncate_float(F64, SIGNS[nth(I32_TRUNC_F64_S)], W32)?;
             }
-            I64_EXTEND_I32_S..=I64_EXTEND_I32_U => {
+            I64_EXTEND_I32_S | I64_EXTEND_I32_U => {
                 v.i64_extend_i32(SIGNS[nth(I64_EXTEND_I32_S)])?;
             }
-            I64_TRUNC_F32_S..=I64_TRUNC_F32_U => {
+            I64_TRUNC_F32_S | I64_TRUNC_F32_U => {
                 v.truncate_float(F32, SIGNS[nth(I64_TRUNC_F32_S)], W64)?;
             }
-            I64_TRUNC_F64_S..=I64_TRUNC_F64_U => {
+            I64_TRUNC_F64_S | I64_TRUNC_F64_U => {
                 v.truncate_float(F64, SIGNS[nth(I64_TRUNC_F64_S)], W64)?;
             }
-            F32_CONVERT_I32_S..=F32_CONVERT_I32_U => {
+            F32_CONVERT_I32_S | F32_CONVERT_I32_U => {
                 v.convert_int_to_float(SIGNS[nth(F32_CONVERT_I32_S)], W32, F32)?;
             }
-            F32_CONVERT_I64_S..=F32_CONVERT_I64_U => {
+            F32_CONVERT_I64_S | F32_CONVERT_I64_U => {
                 v.convert_int_to_float(SIGNS[nth(F32_CONVERT_I64_S)], W64, F32)?;
             }
             F32_DEMOTE_F64 => v.f32_demote_f64()?,
-            F64_CONVERT_I32_S..=F64_CONVERT_I32_U => {
+            F64_CONVERT_I32_S | F64_CONVERT_I32_U => {
                 v.convert_int_to_float(SIGNS[nth(F64_CONVERT_I32_S)], W32, F64)?;
             }
-            F64_CONVERT_I64_S..=F64_CONVERT_I64_U => {
+            F64_CONVERT_I64_S | F64_CONVERT_I64_U => {
                 v.convert_int_to_float(SIGNS[nth(F64_CONVERT_I64_S)], W64, F64)?;
             }
             F64_PROMOTE_F32 => v.f64_promote_f32()?,
@@ -518,8 +540,10 @@ impl<'a, M: Mode> Decoder<'a, M> {
             I64_REINTERPRET_F64 => v.reinterpret_float_as_int(F64)?,
             F32_REINTERPRET_I32 => v.reinterpret_int_as_float(F32)?,
             F64_REINTERPRET_I64 => v.reinterpret_int_as_float(F64)?,
-            I32_EXTEND8_S..=I32_EXTEND16_S => v.int_sign_extend(W32, SIZES[nth(I32_EXTEND8_S)])?,
-            I64_EXTEND8_S..=I64_EXTEND32_S => v.int_sign_extend(W64, SIZES[nth(I64_EXTEND8_S)])?,
+            I32_EXTEND8_S | I32_EXTEND16_S => v.int_sign_extend(W32, SIZES[nth(I32_EXTEND8_S)])?,
+            I64_EXTEND8_S | I64_EXTEND16_S | I64_EXTEND32_S => {
+                v.int_sign_extend(W64, SIZES[nth(I64_EXTEND8_S)])?
+            }
 
             REF_NULL => v.ref_null(self.apart(Self::null_type)?)?,
             REF_IS_NULL => v.ref_is_null()?,

@@ -1,7 +1,7 @@
 use bun_engine_number::{Radix, integer_to_radix, parse_int, with_radix_text};
-use bun_engine_text::{CodeUnit, Text, with_text};
+use bun_engine_text::Text;
 
-use crate::{Cx, Gc, JsResult, JsString, NoGc, Vm};
+use crate::{Cx, Gc, JsResult, JsString, Vm};
 
 impl JsString {
     /// Number::toString
@@ -29,30 +29,7 @@ impl JsString {
 
     /// What `parseInt` makes of it. `radix` is the result of ToInt32.
     #[inline]
-    pub fn parse_int(&self, cx: &mut Cx, radix: i32) -> JsResult<f64> {
-        if let Some(view) = self.try_view() {
-            return Ok(parse_int(view.text(), radix));
-        }
-        if self.len() as usize > MAX_COPIED_LENGTH {
-            return Ok(parse_int(self.view(cx)?.text(), radix));
-        }
-        Ok(self.parse_int_of_short_rope(&cx.no_gc(), radix))
-    }
-
-    /// The pieces of a number are rarely used again, so they are not put together for good.
-    fn parse_int_of_short_rope(&self, no_gc: &NoGc<'_>, radix: i32) -> f64 {
-        let mut buffer = [0u16; MAX_COPIED_LENGTH];
-        let mut start = MAX_COPIED_LENGTH;
-        self.for_each_piece_reversed(no_gc, |piece| {
-            start -= piece.len();
-            with_text!(piece, |units| {
-                for (target, unit) in buffer[start..].iter_mut().zip(units) {
-                    *target = unit.to_u16();
-                }
-            });
-        });
-        parse_int(Text::Utf16(&buffer[start..]), radix)
+    pub fn parse_int(&self, cx: &Cx, radix: i32) -> JsResult<f64> {
+        self.with_text(cx, |text| parse_int(text, radix))
     }
 }
-
-const MAX_COPIED_LENGTH: usize = 64;

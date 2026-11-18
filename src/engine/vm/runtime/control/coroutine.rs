@@ -2,8 +2,8 @@
 //! and is entered again.
 //!
 //! The registers that the code still needs are saved at the end of the `Coroutine`, which is made with room for
-//! `CodeBlock::saved_words` of them. Each is a value, a cell or empty. Code that suspends is never replaced, so they
-//! mean the same when it goes on.
+//! `CodeBlock::saved_words` of them. Each is a value, a cell or empty. It goes on through `executable`, which has the
+//! code that saved them even if that of `callee` has been generated anew.
 //!
 //! | instruction              | what a tier does                                                                      |
 //! | ------------------------ | ------------------------------------------------------------------------------------- |
@@ -12,7 +12,7 @@
 //! | `suspend`                | `save`, returns the value                                                             |
 //! | `await`                  | `JsAsyncFunctionGenerator::ensure`, `await_value`, `save`, returns `promise`          |
 //! | `debug_await`            | `Coroutine::ensure`                                                                   |
-//! | `resume_generator`       | `mark_executing`, calls `callee` with a count of zero                                 |
+//! | `resume_generator`       | `mark_executing`, calls `callee` through `executable` with a count of zero            |
 //! | `resume_dispatch`        | if the count is zero, jumps to the `resume` of `point` of `Coroutine::of_frame`       |
 //! | `resume`                 | `restore`                                                                             |
 //! | `generator_return`       | `complete`, returns the value                                                         |
@@ -37,8 +37,9 @@ use bun_engine_macros::cell;
 use super::initialize_at;
 use crate::heap::barrier;
 use crate::{
-    CallFrame, CellKind, CellType, CodeBlock, Cx, Extends, Gc, JsAsyncFunctionGenerator, JsAsyncGenerator,
-    JsFunction, JsGenerator, JsObject, JsObjectInit, JsResult, OFFSET_OF_INTERNAL_FIELDS, Shape, Storage, Value, Visitor,
+    CallFrame, CellKind, CellType, CodeBlock, Cx, Extends, Field, Gc, JsAsyncFunctionGenerator,
+    JsAsyncGenerator, JsFunction, JsGenerator, JsObject, JsObjectInit, JsResult,
+    OFFSET_OF_INTERNAL_FIELDS, ScriptExecutable, Shape, Storage, Value, Visitor,
 };
 
 /// The first four are those of `SuspendKind`.
@@ -76,6 +77,7 @@ pub struct Coroutine {
     saved_count: AtomicU32,
     /// A `JsFunction`, or the `JsCallee` of a module.
     callee: Gc<JsObject>,
+    pub(self) code_owner: Field<Gc<ScriptExecutable>>,
 }
 
 impl Coroutine {
@@ -84,6 +86,7 @@ impl Coroutine {
     pub const OFFSET_OF_POINT: usize = offset_of!(Coroutine, point);
     pub const OFFSET_OF_SAVED_COUNT: usize = offset_of!(Coroutine, saved_count);
     pub const OFFSET_OF_CALLEE: usize = offset_of!(Coroutine, callee);
+    pub const OFFSET_OF_EXECUTABLE: usize = offset_of!(Coroutine, code_owner);
 
     /// Of one of the three types.
     #[inline(always)]
@@ -109,6 +112,7 @@ impl Coroutine {
             point: Cell::new(0),
             saved_count: AtomicU32::new(0),
             callee: frame.callee(),
+            code_owner: (frame.code_block().expect("a frame of bytecode")).executable(),
         }
     }
 
@@ -196,6 +200,16 @@ impl Coroutine {
     }
 
     #[inline(always)]
+    pub fn executable(&self) -> Gc<ScriptExecutable> {
+        self.code_owner()
+    }
+
+    /// One that has the same code.
+    pub(crate) fn set_executable(&self, executable: Gc<ScriptExecutable>) {
+        self.set_code_owner(executable);
+    }
+
+    #[inline(always)]
     fn registers(&self) -> *mut u64 {
         let address = self.address() + Self::offset_of_registers(self.cell_type());
         core::ptr::with_exposed_provenance_mut(address)
@@ -277,7 +291,7 @@ impl Coroutine {
         self.mark_executing();
         let mode = Value::int32(mode as i32);
         // SAFETY: as it asks.
-        let result = unsafe { cx.resume(self.callee, self.into(), value, mode) };
+        let result = unsafe { cx.resume(self, value, mode) };
         if result.is_err() {
             self.complete();
         }

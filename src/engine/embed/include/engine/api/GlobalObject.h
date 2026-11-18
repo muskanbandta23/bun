@@ -16,16 +16,11 @@ class WebAssemblyCompileOptions;
 enum class ArrayBufferSharingMode : bool;
 enum class CodeGenerationMode : uint8_t;
 enum class QueuedTaskResult : uint8_t;
-enum class ScriptFetchParametersType : uint8_t;
 enum TypedArrayType : uint8_t;
 class ScriptFetchParameters;
 
 namespace AOT {
 struct ModuleHost;
-}
-
-namespace FFI {
-class FFIContext;
 }
 
 class RuntimeFlags {};
@@ -121,6 +116,7 @@ public:
     };
 
     static void destroy(JSCell* cell) { static_cast<JSGlobalObject*>(cell)->~JSGlobalObject(); }
+    static void analyzeHeap(JSCell*, HeapAnalyzer&) ENGINE_SYMBOL(engine_GlobalObject_analyze_heap);
     static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&) ENGINE_SYMBOL(engine_GlobalObject_put);
     static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&) ENGINE_SYMBOL(engine_GlobalObject_delete_property);
     using JSObject::deleteProperty;
@@ -202,8 +198,6 @@ public:
     ENGINE_LAZY_SLOT(Structure, setIteratorStructure, set_iterator_shape)
     ENGINE_LAZY_SLOT(Structure, weakMapStructure, weak_map_shape)
     ENGINE_LAZY_SLOT(Structure, weakSetStructure, weak_set_shape)
-    ENGINE_LAZY_SLOT(Structure, moduleRecordStructure, module_record_shape)
-    ENGINE_LAZY_SLOT(Structure, syntheticModuleRecordStructure, synthetic_module_record_shape)
     ENGINE_LAZY_SLOT(Structure, promiseStructure, promise_shape)
     ENGINE_LAZY_SLOT(Structure, regExpStructure, regexp_shape)
 #undef ENGINE_EAGER_SLOT
@@ -220,10 +214,6 @@ public:
     Structure* typedArrayStructure(TypedArrayType, bool isResizableOrGrowableShared) const;
     template<TypedArrayType type> Structure* typedArrayStructureWithTypedArrayType() const { return typedArrayStructure(type, false); }
     template<TypedArrayType type> Structure* resizableOrGrowableSharedTypedArrayStructureWithTypedArrayType() const { return typedArrayStructure(type, true); }
-    Structure* webAssemblyMemoryStructure() const;
-    Structure* webAssemblyModuleStructure() const;
-    Structure* ffiFunctionStructure() const;
-    FFI::FFIContext& ffiContext();
 
     InlineWatchpointSet promiseSpeciesWatchpointSet() { return { this, Engine::RealmWatchpoint::PromiseSpecies }; }
     InlineWatchpointSet promiseThenWatchpointSet() { return { this, Engine::RealmWatchpoint::PromiseThen }; }
@@ -234,7 +224,6 @@ public:
     void setMicrotaskRunnability(QueuedTaskResult);
     bool isAsyncContextTrackingEnabled() const;
     void setAsyncContextTrackingEnabled(bool);
-    void clearWeakTickets();
 
     void setEvalEnabled(bool enabled, const String& errorMessage = {}) { Engine::global_set_eval_enabled(this, enabled, errorMessage); }
     void setWebAssemblyEnabled(bool enabled, const String& errorMessage = {}) { Engine::global_set_webassembly_enabled(this, enabled, errorMessage); }
@@ -303,6 +292,8 @@ private:
 
 public:
     // From here on, what only C++ has.
+    // For a class that wants another than the default.
+    LazyProperty<JSGlobalObject, Structure> m_moduleNamespaceObjectStructure;
     std::unique_ptr<Inspector::JSGlobalObjectInspectorController> m_inspectorController;
     RefPtr<JSGlobalObjectDebuggable> m_inspectorDebuggable;
 };

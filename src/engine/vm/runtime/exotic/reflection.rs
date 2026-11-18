@@ -4,8 +4,8 @@ use bun_engine_text::{PropertyName, Text, names};
 
 use crate::{
     CachedNames, CellType, Cx, DontEnumMode, ElementKind, Gc, ImmutableArray, JsArray,
-    JsArrayBufferView, JsObject, JsResult, JsString, PropertyNameList, PropertyNameMode,
-    PropertyOffset, ProxyObject, SpecialProperty, TypeFlags, Value, is_array_for,
+    JsArrayBufferView, JsObject, JsResult, JsString, PropertyNameMode, PropertyOffset, ProxyObject,
+    SpecialProperty, TypeFlags, Value, is_array_for,
 };
 
 fn cached_kind(kinds: PropertyNameMode, mode: DontEnumMode) -> Option<CachedNames> {
@@ -61,24 +61,18 @@ impl JsObject {
             return proxy.target().own_key_values(cx, kinds, mode);
         }
         let shape = self.shape();
-        let mut list = PropertyNameList::new(kinds);
-        let (index_count, has_holes) = match self.count_plain_indices() {
-            Some(found) if list.includes_strings() => {
-                self.own_non_index_property_names(cx, &mut list, mode)?;
-                found
-            }
-            _ => {
-                self.own_property_names(cx, &mut list, mode)?;
-                (0, false)
-            }
+        let plain = (self.count_plain_indices()).filter(|_| kinds != PropertyNameMode::Symbols);
+        let names = match plain {
+            Some(_) => self.snapshot_own_non_index_keys(cx, kinds, mode)?,
+            None => self.snapshot_own_keys(cx, kinds, mode)?,
         };
-        let mut indices = (0..).filter(|&index| !has_holes || self.try_get_dense(index).is_some());
-        let keys = ImmutableArray::try_from_fn(cx, index_count + list.len(), |position| {
-            match position.checked_sub(index_count) {
-                Some(position) => Value::from_name(cx, list[position].name()),
-                None => JsString::from_int32(cx, indices.next().unwrap_or_default() as i32).into(),
-            }
-        });
+        let (index_count, has_holes) = plain.unwrap_or_default();
+        let indices = (0..)
+            .filter(|&index| !has_holes || self.try_get_dense(index).is_some())
+            .take(index_count)
+            .map(|index| JsString::from_number(cx, index.into()).into());
+        let all = indices.chain(names.iter().map(|name| Value::from_name(cx, name)));
+        let keys = ImmutableArray::try_from_iter(cx, index_count + names.count(), all);
         let keys = cx.or_out_of_memory(keys)?;
         if let Some(kind) = cached_kind(kinds, mode)
             && self.shape() == shape
@@ -134,11 +128,11 @@ impl JsObject {
         cx: &mut Cx,
         make: impl Fn(&Cx, PropertyName<'_>, Value) -> JsResult<Value>,
     ) -> JsResult<Gc<JsArray>> {
-        let keys = self.own_keys(cx, PropertyNameMode::Strings, DontEnumMode::Include)?;
+        let keys = self.snapshot_own_keys(cx, PropertyNameMode::Strings, DontEnumMode::Include)?;
         let result = cx.new_array();
         for key in keys.iter() {
-            if let Some(value) = self.get_if_own_and_enumerable(cx, key.name())? {
-                let element = make(cx, key.name(), value)?;
+            if let Some(value) = self.get_if_own_and_enumerable(cx, key)? {
+                let element = make(cx, key, value)?;
                 result.append(cx, element)?;
             }
         }

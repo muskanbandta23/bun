@@ -15,6 +15,8 @@ mod hooks;
 mod inspector;
 mod iteration;
 mod json;
+mod missing;
+mod module_hooks;
 mod modules;
 mod object;
 mod options;
@@ -31,3 +33,5 @@ mod temporal;
 mod value;
 mod vm;
 mod wasm;
+
+pub(crate) use code::ParserError;

@@ -143,6 +143,10 @@ impl<T: Element> TypedArray<T> {
         source: &JsObject,
         length: usize,
     ) -> JsResult<(Gc<TypedArray<T>>, usize)> {
+        if length > source.public_length() as usize {
+            // Memory that comes zeroed stays untouched until it is used.
+            return Ok((Self::create(cx, shape, length)?, 0));
+        }
         let mut count = 0;
         let array = Self::create_filled(cx, shape, length, |no_gc, filler| {
             if let Some(elements) = plain_elements(source, &(0..length), no_gc) {

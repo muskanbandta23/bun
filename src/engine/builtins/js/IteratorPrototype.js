@@ -114,16 +114,6 @@ function flatMap(mapper) {
   return @iteratorHelperCreate(@flatMappedValues(this, this.next, mapper), this);
 }
 
-function forEach(callback) {
-  if (!@isObject(this)) @throwTypeError("Iterator.prototype.forEach requires that |this| be an Object.");
-  if (!@isCallable(callback)) {
-    @closeIteratorQuietly(this);
-    @throwTypeError("Iterator.prototype.forEach requires the callback argument to be callable.");
-  }
-  var counter = 0;
-  for (var value of @iterableWithMethod(this, @iteratorPrototypeSymbolIterator)) callback(value, counter++);
-}
-
 function some(predicate) {
   if (!@isObject(this)) @throwTypeError("Iterator.prototype.some requires that |this| be an Object.");
   if (!@isCallable(predicate)) {

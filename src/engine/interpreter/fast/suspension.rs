@@ -3,8 +3,8 @@ use bun_engine_vm::code::metadata;
 use bun_engine_vm::heap::barrier;
 use bun_engine_vm::ic::CallProfile;
 use bun_engine_vm::{
-    CellType, Coroutine, Gc, JsAsyncFunctionGenerator, JsFunction, JsPromise, RealmSlot, Value,
-    ValueProfile, try_async_return_quickly,
+    CellType, Coroutine, Gc, JsAsyncFunctionGenerator, JsPromise, RealmSlot, Value, ValueProfile,
+    try_async_return_quickly,
 };
 
 use crate::machine::{EMPTY, cell, dispatch, go, handler, jump, next, slow};
@@ -149,7 +149,7 @@ handler! {
         }
         let coroutine = cell::<Coroutine>(generator);
         let callee = coroutine.callee();
-        let executable = JsFunction::executable_of(callee.cell());
+        let executable = coroutine.executable();
         let profile = &m.entry::<metadata::Call>(op.metadata).profile;
         let seen = profile.executable().bits();
         if profile.callee().bits() != callee.address()

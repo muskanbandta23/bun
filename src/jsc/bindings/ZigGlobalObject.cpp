@@ -29,7 +29,6 @@
 #include "JavaScriptCore/GetterSetter.h"
 #include "JavaScriptCore/GlobalObjectMethodTable.h"
 #include "JavaScriptCore/Heap.h"
-#include "JavaScriptCore/MarkedBlockCage.h"
 #include "JavaScriptCore/DeferGCInlines.h"
 #include "JavaScriptCore/Identifier.h"
 #include "JavaScriptCore/InitializeThreading.h"
@@ -287,28 +286,13 @@ namespace Bun {
 JSC::JSObject* createLintHost(JSC::VM&, JSC::JSGlobalObject*);
 }
 
-// BunAOTRuntime.cpp
-namespace Bun {
-void initializeCellCage();
-void requireCellCage();
-void saveBackEndOptionDefaults();
-void discardBackEndOptionsOfEnvironment();
-}
-
-extern "C" [[noreturn]] void Bun__outOfMemory();
-#if OS(LINUX)
-// Declared in mimalloc's internal headers, and compiled as C++ here. mimalloc reads vm.overcommit_memory when it starts.
-bool _mi_os_has_overcommit(void);
-#endif
 extern "C" void* Bun__getVM();
-extern "C" void WebWorker__endForExhaustedHeap(void* bunVM);
 
 static bool locksBuiltinsWithoutImage;
 
 extern "C" void Bun__VirtualMachine__setSamplingProfilerDirectory(void* bunVM, const BunString* directory);
 
-// The value of BUN_JSC_samplingProfilerPath. It isn't passed to JSC::Options, so VM::VM doesn't register JSC's atexit
-// reporter, which crashes if fopen fails. VirtualMachine::write_profiles writes the report instead.
+// The value of BUN_JSC_samplingProfilerPath. VirtualMachine::write_profiles writes the report.
 static const char8_t* s_samplingProfilerDirectory = nullptr;
 
 #if defined(BUN_LOCKED_ENVIRONMENT)
@@ -345,83 +329,27 @@ extern "C" bool Bun__isOptionThatCompiledCodeDoesNotTake(const char* entry)
 }
 #endif
 
-extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals, bool runsCompiledCode, bool locksBuiltins, bool isCompiler)
+extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals, bool runsCompiledCode, bool locksBuiltins)
 {
     static std::once_flag jsc_init_flag;
     // NOLINTBEGIN
-    std::call_once(jsc_init_flag, [evalMode, oneShotStartup, shortLivedGlobals, runsCompiledCode, locksBuiltins, isCompiler, envp, envc, onCrash]() {
+    std::call_once(jsc_init_flag, [evalMode, oneShotStartup, shortLivedGlobals, runsCompiledCode, locksBuiltins, envp, envc, onCrash]() {
         locksBuiltinsWithoutImage = locksBuiltins;
         if (locksBuiltins)
             JSC::AOT::lockBuiltinsWithoutImage();
         Bun__ensureICUDefaultLocale();
-        JSC::Config::enableRestrictedOptions();
-        // JSC options come from BUN_JSC_* (applied in the callback below), not JSC_*.
-        JSC::Config::disableEnvironmentOptions();
 
         std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
         WTF::initializeMainThread();
 
-        // Use JSC::initialize with a callback to set Options during initialization.
-        // The callback runs BEFORE IPInt::initialize() so we can configure WASM options early.
-        // Under ASAN+Linux, JSC's notifyOptionsChanged() already disables
-        // useWasmFaultSignalHandler/FastMemory when ASAN_OPTIONS lacks
-        // allow_user_segv_handler=1, so we don't force it off here.
-#if OS(DARWIN)
-        if (runsCompiledCode)
-            JSC::Options::machExceptionHandlerSandboxPolicy = JSC::Options::SandboxPolicy::Allow;
-#endif
-        JSC::MarkedBlockCage::setExhaustionHandler(Bun__outOfMemory);
-#if OS(LINUX)
-        JSC::MarkedBlockCage::setCommitsOnDemand(!_mi_os_has_overcommit());
-#endif
-        JSC::MarkedBlockCage::setLastReserveHandler([](JSC::VM&) { WebWorker__endForExhaustedHeap(Bun__getVM()); });
         JSC::initialize([&] {
-#if defined(BUN_DISABLE_WEBASSEMBLY)
-            JSC::Options::useWasm() = false;
-#else
-            JSC::Options::useWasm() = true;
-#endif
-            JSC::Options::useJIT() = true;
-            JSC::Options::useBBQJIT() = true;
-            JSC::Options::useConcurrentJIT() = true;
-            // JSC::Options::useSigillCrashAnalyzer() = true;
-            JSC::Options::useSourceProviderCache() = true;
-            // JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
-            // JSModuleLoader is now a JSCell (not a JSObject) so exposing it as
-            // the global `Loader` would let user code dereference a non-object
-            // and trip JSValue::synthesizePrototype's isSymbol() debug assert.
-            JSC::Options::exposeInternalModuleLoader() = false;
-            JSC::Options::alwaysUseSharedArrayBuffer() = true;
-            JSC::Options::useJITCage() = false;
-#if defined(BUN_DISABLE_SHADOW_REALM)
-            JSC::Options::useShadowRealm() = false;
-#else
-            JSC::Options::useShadowRealm() = true;
-#endif
-            JSC::Options::useV8DateParser() = true;
             JSC::Options::evalMode() = evalMode;
             JSC::Options::heapGrowthSteepnessFactor() = 1.0;
             JSC::Options::heapGrowthMaxIncrease() = 2.0;
             // JSC's allocation-budgeted pacing is now the primary eden driver; engage it sooner (GarbageCollectionController.rs).
             JSC::Options::largeHeapSize() = 8 * 1024 * 1024;
-            JSC::Options::useAsyncStackTrace() = true;
-            JSC::Options::useExplicitResourceManagement() = true;
-            JSC::Options::useImportDefer() = true;
-            JSC::Options::useTemporal() = true;
-            JSC::Options::useAOT() = runsCompiledCode;
-            // Upstream enabled Wasm Memory64 by default (0d0080ea539d); keep
-            // it off in Bun while upstream stabilises it.
-            // BUN_JSC_useWasmMemory64=1 re-enables it for opt-in testing.
-            JSC::Options::useWasmMemory64() = false;
             // Node.js defaults Error.stackTraceLimit to 10.
             JSC::Options::defaultErrorStackTraceLimit() = DEFAULT_ERROR_STACK_TRACE_LIMIT;
-#if OS(WINDOWS)
-            // oven-sh/WebKit#553 starts the MarkedBlock warm-up helper thread from
-            // the allocation slow path once the heap has ramped; on Windows that
-            // hangs the sampling profiler (@datadog/pprof, test/integration/datadog-pprof).
-            // BUN_JSC_useWarmUpMarkedBlocks=1 re-enables it.
-            JSC::Options::useWarmUpMarkedBlocks() = false;
-#endif
             JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getBytecodeCacheVersion());
 
 #ifdef BUN_DEBUG
@@ -448,55 +376,31 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
                 JSC::Options::thresholdForFTLOptimizeAfterWarmUp() = 1000000;
             }
 
-            // The front end and the engine are Bun's own, so a build does not verify the program between them. Bun's tests do.
-            JSC::Options::verifyAOTProgram() = false;
-            Bun::saveBackEndOptionDefaults();
             if (envc > 0) [[likely]] {
                 auto envc_copy = envc;
                 while (envc_copy--) {
                     const char* env = (const char*)envp[envc_copy];
                     // need to check for \0 so we might as well make this single pass
                     // strlen would check the end of the string
-                    if (!(env[0] == 'B' && env[1] == 'U' && env[2] == 'N' && env[3] == '_' && env[4] == 'J' && env[5] == 'S' && env[6] == 'C' && env[7] == '_')) [[likely]] {
-                        if (env[0] == 'B' && env[1] == 'U' && env[2] == 'N' && env[3] == '_' && env[4] == 'F' && !strncmp(env + 5, "EATURE_FLAG_INTERNAL_FOR_TESTING=", 33)) [[unlikely]] {
-#if defined(BUN_LOCKED_ENVIRONMENT)
-                            if (runsCompiledCode)
-                                continue;
-#endif
-                            JSC::Options::verifyAOTProgram() = true;
-                        }
+                    if (!(env[0] == 'B' && env[1] == 'U' && env[2] == 'N' && env[3] == '_' && env[4] == 'J' && env[5] == 'S' && env[6] == 'C' && env[7] == '_')) [[likely]]
                         continue;
-                    }
 
 #if defined(BUN_LOCKED_ENVIRONMENT)
                     if (runsCompiledCode && !isOptionThatCompiledCodeTakesFromEnvironment(env + 8)) [[unlikely]]
                         onCrash(env, strcspn(env, "="));
 #endif
+                    if (constexpr auto prefix = "BUN_JSC_samplingProfilerPath="_s; WTF::StringView::fromLatin1(env).startsWithIgnoringASCIICase(prefix)) [[unlikely]] {
+                        s_samplingProfilerDirectory = byteCast<char8_t>(strdup(env + prefix.length()));
+                        continue;
+                    }
                     if (!JSC::Options::setOption(env + 8)) [[unlikely]] {
                         onCrash(env, strlen(env));
                     }
                 }
             }
-            if (const char8_t* directory = JSC::Options::samplingProfilerPath()) {
-                s_samplingProfilerDirectory = directory;
-                JSC::Options::samplingProfilerPath() = nullptr;
-            }
-            // After the loop: the environment does not change the code a release build of Bun compiles ahead of time.
-            if (isCompiler)
-                Bun::discardBackEndOptionsOfEnvironment();
-            // $vm, which an engine built with assertions has, evaluates strings and makes global objects
-            // that are not Bun's, where eval is on. After the loop: BUN_JSC_useDollarVM does not bring it back.
-            if (Bun::codeGenerationFromStrings() != Bun::CodeGenerationFromStrings::Allowed) [[unlikely]]
-                JSC::Options::useDollarVM() = false;
             // The boundary of "=strict": see JSC::SourceProvenance.
-            if (Bun::isCodeGenerationFromStringsStrict()) [[unlikely]]
+            if (Bun::isCodeGenerationFromStringsStrict() && !Bun::isCodeGenerationStrictOnlyBesideCompiledProgram()) [[unlikely]]
                 JSC::Options::disallowNonStaticCode() = true;
-            if (Bun::isCodeGenerationStrictOnlyBesideCompiledProgram()) [[unlikely]]
-                JSC::Options::disallowNonStaticCodeOnlyWithCompiledCode() = true;
-            if (JSC::isFeatureRemoved(Bun::Feature::Interpreter)) [[unlikely]] {
-                JSC::Options::functionOverrides() = nullptr;
-                JSC::Options::validateBytecode() = false;
-            }
 #if defined(BUN_DISABLE_WEBASSEMBLY)
             // After the loop: BUN_JSC_useWasm=1 does not bring it back, and BUN_JSC_useWasm=0 stays a valid name.
             JSC::Options::useWasm() = false;
@@ -507,15 +411,12 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 #endif
             if (runsCompiledCode || locksBuiltins)
                 JSC::Options::useShadowRealm() = false;
-            // This is the only assertOptionsAreCoherent() rule that BUN_JSC_* can break, and that assertion aborts.
+            // Nothing would be left to run WebAssembly.
             if (JSC::Options::useWasm() && !JSC::Options::useWasmIPInt() && !(JSC::Options::useBBQJIT() && JSC::Options::useJIT())) [[unlikely]] {
                 constexpr auto message = "BUN_JSC_useWasmIPInt=0 (needs useJIT and useBBQJIT, or BUN_JSC_useWasm=0)"_s;
                 onCrash(message.characters(), message.length());
             }
-            JSC::Options::assertOptionsAreCoherent();
         }); // end JSC::initialize lambda
-        if (runsCompiledCode)
-            Bun::initializeCellCage();
 
 #if OS(WINDOWS) && (CPU(X86_64) || CPU(ARM64))
         // JSC::initialize() registered unwind info + a language-specific SEH
@@ -535,12 +436,12 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 // After JSCInitialize and before the first VM: nothing reads the option before it, and its constructor freezes the options.
 extern "C" void JSC__useOptionsForVMPerThread(const char* envp[], size_t envc)
 {
-    RELEASE_ASSERT(!g_jscConfig.isPermanentlyFrozen());
+    RELEASE_ASSERT(!JSC::Options::areFrozen());
     JSC::Options::useConcurrentJIT() = false;
     // BUN_JSC_useConcurrentJIT wins, as in JSCInitialize.
     for (size_t i = 0; i < envc; i++) {
         if (WTF::StringView::fromLatin1(envp[i]).startsWithIgnoringASCIICase("BUN_JSC_useConcurrentJIT="_s))
-            JSC::Options::setOption(envp[i] + 8, false);
+            JSC::Options::setOption(envp[i] + 8);
     }
 }
 
@@ -712,9 +613,6 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(int32_t executionConte
         Bun__reported_memory_size = WTF::ramSize();
     }
 
-    // Every JS VM's RunLoop should use Bun's RunLoop implementation
-    ASSERT(vmPtr->runLoop().kind() == WTF::RunLoop::Kind::Bun);
-
     WebCore::JSVMClientData::create(&vm, Bun__getVM(), static_cast<WebCore::WorkerMessagingProxy*>(worker_ptr));
 
     const auto createGlobalObject = [&]() -> Zig::GlobalObject* {
@@ -747,7 +645,6 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(int32_t executionConte
         }
     };
 
-    Bun::requireCellCage();
     auto* globalObject = createGlobalObject();
     if (!globalObject) [[unlikely]] {
         BUN_PANIC("Failed to allocate JavaScript global object. Did your computer run out of memory?");
@@ -5099,8 +4996,7 @@ static NEVER_INLINE void handleResponseOnStreamingAction(JSGlobalObject* lexical
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSLockHolder locker(vm);
 
-    auto sourceCode = makeSource("[wasm code]"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
-    auto compiler = JSC::Wasm::StreamingCompiler::create(vm, mode, globalObject, promise, importObject, WTF::move(compileOptions), sourceCode);
+    auto compiler = JSC::Wasm::StreamingCompiler::create(mode, globalObject, promise, importObject, WTF::move(compileOptions));
 
     // The streaming hook used to return a freshly created promise; the caller
     // (webAssemblyCompileStreamingFunc) was a host function that propagated
@@ -5393,7 +5289,6 @@ extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObjec
     ASSERT(globalObject->scriptExecutionContext()->activeDOMObjectsAreStopped());
     vm.entryScope = nullptr;
     Ref context = *globalObject->scriptExecutionContext();
-    Ref<WTF::RunLoop> runLoop = vm.runLoop();
 
     Bun__InspectorConnection__disconnectAllOnExit(globalObject);
     // Deferred promises / callbacks (DOMGuardedObject) hold JSC::Weak handles and observe the
@@ -5404,7 +5299,6 @@ extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObjec
     globalObject = nullptr;
 
     destroyVM(vm);
-    runLoop->threadWillExit();
     // `context` is released here, after ~VM: contextDestroyed() reaches observers at a defined
     // point on this thread instead of from inside a GC destructor.
     BUN_END_REMOVABLE_ENTRY_POINT

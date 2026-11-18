@@ -116,3 +116,21 @@ impl fmt::Display for Error {
         }
     }
 }
+
+/// A name in a message.
+#[derive(Clone, Copy)]
+pub(crate) struct Quoted<'a>(pub(crate) &'a str);
+
+impl fmt::Display for Quoted<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        const MAX_LENGTH: usize = 4096;
+        if self.0.len() <= MAX_LENGTH {
+            return f.write_str(self.0);
+        }
+        write!(
+            f,
+            "{}...",
+            &self.0[..self.0.floor_char_boundary(MAX_LENGTH)]
+        )
+    }
+}

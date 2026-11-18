@@ -6,7 +6,7 @@ use bun_engine_bytecode::{Op, Operand, Register, Specialization, op};
 use bun_engine_macros::native_abi;
 use bun_engine_vm::call::{CallTarget, MAX_ARGUMENTS};
 use bun_engine_vm::code::metadata;
-use bun_engine_vm::{CallFrame, Cx, JsResult, Value, Vm, errors, options};
+use bun_engine_vm::{CallFrame, Cx, JsResult, ProxyObject, Value, Vm, errors, options};
 
 use super::{Frame, decode};
 
@@ -203,7 +203,7 @@ pub(crate) unsafe fn write_header(
 }
 
 #[inline(always)]
-fn find_target<O: AnyCall>(op: O, cx: &mut Cx, f: Frame<'_>) -> JsResult<CallTarget> {
+fn find_target<O: AnyCall>(op: O, cx: &mut Cx, f: Frame<'_>) -> JsResult<(Value, CallTarget)> {
     let (callee, profile) = (
         f.get(op.callee()),
         &f.entry::<metadata::Call>(op.metadata()).profile,
@@ -227,7 +227,14 @@ fn find_target<O: AnyCall>(op: O, cx: &mut Cx, f: Frame<'_>) -> JsResult<CallTar
         let entry = f.entry::<metadata::SuperConstruct>(op.metadata());
         entry.new_target.record(f.code_block, &new_target);
     }
-    Ok(target)
+    if O::SPECIALIZATION == Specialization::Call
+        && let Some(proxy) = callee.downcast::<ProxyObject>()
+        && let Some(callee) = proxy.transparent_call_target(cx).map(Value::from)
+        && let Some(target) = CallTarget::find(callee, Specialization::Call)
+    {
+        return Ok((callee, target));
+    }
+    Ok((callee, target))
 }
 
 /// Fills the frame that the instruction names.
@@ -244,10 +251,10 @@ pub(crate) unsafe fn prepare_fixed_call<O: FixedCall>(
     // SAFETY: the caller's, and the new frame is among the locals.
     unsafe {
         let (op, (cx, f)) = (decode::<O>(start), Frame::enter(vm, frame, start));
-        let Ok(target) = find_target(op, cx, f) else {
+        let Ok((callee, target)) = find_target(op, cx, f) else {
             return PreparedCall::THREW;
         };
-        let (callee, this) = (f.get(op.callee()).to_bits(), f.get(op.this()).to_bits());
+        let (callee, this) = (callee.to_bits(), f.get(op.this()).to_bits());
         let arguments = op.arguments().map(|it| it.map(|it| f.get(it)));
         for (index, argument) in (0..).zip(arguments.into_iter().flatten()) {
             f.set(Register::outgoing_argument(op.frame(), index), argument);
@@ -306,13 +313,13 @@ pub(crate) unsafe fn fill_varargs_frame<O: VarargsCall>(
     // SAFETY: the caller's. Nothing has run since the frame was sized.
     unsafe {
         let (op, (cx, f)) = (decode::<O>(start), Frame::enter(vm, frame, start));
-        let Ok(target) = find_target(op, cx, f) else {
+        let Ok((callee, target)) = find_target(op, cx, f) else {
             return PreparedCall::THREW;
         };
         let count = op.argument_count(f);
         let arguments = new_frame.byte_add(CallFrame::OFFSET_OF_ARGUMENTS).cast();
         op.load_arguments(cx, f, core::slice::from_raw_parts_mut(arguments, count));
-        let (callee, this) = (f.get(op.callee()).to_bits(), f.get(op.this()).to_bits());
+        let (callee, this) = (callee.to_bits(), f.get(op.this()).to_bits());
         write_header(new_frame, target.code_block, callee, count as u64 + 1, this);
         PreparedCall {
             entry: target.entry,

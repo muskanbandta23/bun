@@ -262,7 +262,11 @@ impl Reducer<'_> {
         for value in instructions(self.function()) {
             if !matches!(
                 self.function().op(value),
-                Op::Return(_) | Op::Patchpoint(_) | Op::Store { .. }
+                Op::Return(_)
+                    | Op::Patchpoint(_)
+                    | Op::Store { .. }
+                    | Op::Node { .. }
+                    | Op::WideNode { .. }
             ) {
                 continue;
             }

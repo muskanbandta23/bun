@@ -3,11 +3,13 @@
 use core::mem::offset_of;
 
 use bun_engine_macros::cell;
+use bun_engine_text::Identifier;
 
 use crate::{
-    CellType, Cx, DontEnumMode, Gc, ImmutableArray, JsArrayBufferView, JsCell, JsObject, JsResult,
-    JsString, MappedArguments, PropertyNameList, PropertyNameMode, PropertyOffset, Shape,
-    ShapeFlags, ShapeId, StringObject, TypeFlags, Value, Visitor, Vm, caches, errors, root_vec,
+    CellType, Cx, DontEnumMode, FastHashSet, Gc, ImmutableArray, JsArrayBufferView, JsCell,
+    JsObject, JsResult, JsString, MappedArguments, PropertyNameList, PropertyNameMode,
+    PropertyOffset, Shape, ShapeFlags, ShapeId, StringObject, TypeFlags, Value, Visitor, Vm,
+    caches, errors, root_vec,
 };
 
 /// What the index of a loop is. Each is a bit, so that a profile can collect them.
@@ -139,24 +141,31 @@ impl PropertyNameEnumerator {
         indexed_length: Option<u32>,
     ) -> JsResult<Gc<PropertyNameEnumerator>> {
         let shape = object.shape();
-        let mut list = PropertyNameList::new(PropertyNameMode::Strings);
-        let mut own_shape_count = 0;
-        if indexed_length.is_some() {
-            object.own_non_index_property_names(cx, &mut list, DontEnumMode::Exclude)?;
-            if names_are_in_slot_order(object) && list.len() == shape.slot_count() {
-                own_shape_count = list.len() as u32;
-            }
+        let (kinds, mode) = (PropertyNameMode::Strings, mode_for(object));
+        let own = match indexed_length {
+            Some(_) => object.snapshot_own_non_index_keys(cx, kinds, mode)?,
+            None => object.snapshot_own_keys(cx, kinds, mode)?,
+        };
+        let own_count = own.count();
+        let own_shape_count = if indexed_length.is_some()
+            && names_are_in_slot_order(object)
+            && own_count == shape.slot_count()
+        {
+            own_count as u32
         } else {
-            add_own_names(cx, object, &mut list)?;
+            0
+        };
+        let mut inherited = inherited_names(cx, object)?.into_vec();
+        if !inherited.is_empty() {
+            let (own, length): (FastHashSet<_>, _) =
+                (own.iter().collect(), indexed_length.unwrap_or(0));
+            inherited.retain(|name| {
+                !own.contains(&name.name()) && name.name().as_index().is_none_or(|it| it >= length)
+            });
         }
-        add_inherited_names(cx, object, &mut list)?;
-        let mut names = list.into_vec();
-        if let Some(length @ 1..) = indexed_length {
-            names.retain(|name| name.name().as_index().is_none_or(|index| index >= length));
-        }
-        let names = ImmutableArray::try_from_fn(cx, names.len(), |index| {
-            JsString::from_name(cx, names[index].name()).into()
-        });
+        let all = (own.iter().chain(inherited.iter().map(Identifier::name)))
+            .map(|name| JsString::from_name(cx, name).into());
+        let names = ImmutableArray::try_from_iter(cx, own_count + inherited.len(), all);
         let names = cx.or_out_of_memory(names)?;
         let is_same = object.shape() == shape;
         let chain = (is_same && indexed_length.is_some())
@@ -243,28 +252,24 @@ fn names_are_in_slot_order(object: &JsObject) -> bool {
         && (!object.overrides_get_own_property_slot() || object.cell_type() == CellType::Array)
 }
 
-fn add_own_names(cx: &mut Cx, object: &JsObject, list: &mut PropertyNameList) -> JsResult<()> {
-    // A proxy is asked about each name when the loop gets there, and only then.
-    let mode = if object.cell_type() == CellType::Proxy {
+/// A proxy is asked about each name when the loop gets there, and only then.
+fn mode_for(object: &JsObject) -> DontEnumMode {
+    if object.cell_type() == CellType::Proxy {
         DontEnumMode::Include
     } else {
         DontEnumMode::Exclude
-    };
-    object.own_property_names(cx, list, mode)
+    }
 }
 
-fn add_inherited_names(
-    cx: &mut Cx,
-    object: &JsObject,
-    list: &mut PropertyNameList,
-) -> JsResult<()> {
+fn inherited_names(cx: &mut Cx, object: &JsObject) -> JsResult<PropertyNameList> {
+    let mut list = PropertyNameList::new(PropertyNameMode::Strings);
     let mut object = object.as_object();
     for _ in 0..=JsObject::MAX_PROTOTYPE_CHAIN_DEPTH {
         match object.get_prototype_of(cx)?.as_object() {
             Some(prototype) => object = prototype,
-            None => return Ok(()),
+            None => return Ok(list),
         }
-        add_own_names(cx, &object, list)?;
+        object.own_property_names(cx, &mut list, mode_for(&object))?;
     }
     Err(cx.throw_stack_overflow())
 }
@@ -400,6 +405,19 @@ impl ForIn {
         Some(unsafe { self.enumerator.name_unchecked(next.index) })
     }
 
+    /// The same, for the indices of dense elements.
+    #[inline(always)]
+    pub fn try_next_index(&mut self, vm: &Vm, base: &JsObject) -> Option<Gc<JsString>> {
+        let index = self.index.wrapping_add(1);
+        if self.mode != EnumerationMode::Indexed || index >= self.enumerator.indexed_length {
+            return None;
+        }
+        base.try_get_dense(index)?;
+        let name = JsString::existing_for_int32(vm, index as i32)?;
+        self.index = index;
+        Some(name)
+    }
+
     #[inline(always)]
     pub fn is_at_last_name(self) -> bool {
         self.mode != EnumerationMode::Indexed
@@ -436,7 +454,7 @@ impl ForIn {
             let name = unsafe { enumerator.name_unchecked(index) };
             let is_own = index < enumerator.own_shape_count;
             if (is_own && object.shape_id() == enumerator.subject_shape)
-                || object.has_enumerable_property(cx, name.to_property_key(cx)?.name())?
+                || caches::has_enumerable_megamorphic(cx, object, name.to_property_key(cx)?.name())?
             {
                 self.index = index;
                 self.mode = if is_own {

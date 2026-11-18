@@ -5,6 +5,12 @@
 
 /// Builds an error away from the code that runs. What it names is copied.
 macro_rules! fail {
+    ($decoder:ident, parse, live: $live:literal, dead: $dead:literal) => {{
+        if $decoder.is_dead() {
+            fail!($decoder, parse, concat!($dead, " in unreachable context"));
+        }
+        fail!($decoder, parse, $live)
+    }};
     ($decoder:ident, parse, $($reason:tt)*) => {{
         let offset = $decoder.reader.position();
         return Err(M::error(move || Error::parse(offset, format_args!($($reason)*))));

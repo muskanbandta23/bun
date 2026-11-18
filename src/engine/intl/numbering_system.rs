@@ -1,3 +1,4 @@
+use core::cell::OnceCell;
 use core::ffi::CStr;
 use std::sync::OnceLock;
 
@@ -68,10 +69,17 @@ impl NumberingSystem {
 }
 
 /// The locale of a constructor whose only relevant extension key is `nu`.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub(crate) struct NumericLocale {
     locale: ResolvedLocale,
     numbering_system: Option<NumberingSystem>,
+    default: OnceCell<NumberingSystem>,
+}
+
+impl PartialEq for NumericLocale {
+    fn eq(&self, other: &NumericLocale) -> bool {
+        self.numbering_system == other.numbering_system && self.locale == other.locale
+    }
 }
 
 impl NumericLocale {
@@ -86,6 +94,7 @@ impl NumericLocale {
         Ok(NumericLocale {
             locale: resolver.finish()?,
             numbering_system,
+            default: OnceCell::new(),
         })
     }
 
@@ -102,7 +111,9 @@ impl NumericLocale {
     pub(crate) fn numbering_system(&self) -> Result<NumberingSystem> {
         match self.numbering_system {
             Some(system) => Ok(system),
-            None => NumberingSystem::default_for(&self.locale.icu_locale(&[])?),
+            None => (self.default)
+                .get_or_try_init(|| NumberingSystem::default_for(&self.locale.icu_locale(&[])?))
+                .copied(),
         }
     }
 }

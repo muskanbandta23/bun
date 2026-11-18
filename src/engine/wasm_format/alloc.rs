@@ -32,6 +32,15 @@ fn grow<T>(vec: &mut Vec<T>) -> Result<(), OutOfMemory> {
     Ok(vec.try_reserve(1)?)
 }
 
+/// Leaves it as it is if there is no memory for the move.
+pub(crate) fn shrink<T>(vec: &mut Vec<T>) {
+    let mut exact = Vec::new();
+    if vec.capacity() - vec.len() > vec.len() / 8 && exact.try_reserve_exact(vec.len()).is_ok() {
+        exact.append(vec);
+        *vec = exact;
+    }
+}
+
 pub(crate) fn try_boxed<T>(
     items: impl ExactSizeIterator<Item = T>,
 ) -> Result<Box<[T]>, OutOfMemory> {

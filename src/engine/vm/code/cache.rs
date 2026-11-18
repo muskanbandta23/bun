@@ -5,7 +5,7 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use bun_engine_bytecode::{
-    Directives, Eval, FunctionRef, Instrumentation, Module, Script, StaticScope,
+    Directives, Eval, FunctionInfo, FunctionRef, Instrumentation, Module, Script, StaticScope,
 };
 use bun_engine_text::StringRef;
 use hashbrown::HashTable;
@@ -126,14 +126,6 @@ impl CodeCache {
         (self.entries).insert_unique(spread(entry.hash), entry, |entry| spread(entry.hash));
     }
 
-    pub(super) fn remove_module(&mut self, provider: &SourceProvider, module: &Rc<Module>) {
-        let holds =
-            |entry: &Entry| matches!(&entry.unit, Unit::Module(it) if Rc::ptr_eq(it, module));
-        if let Ok(entry) = self.entries.find_entry(spread(provider.hash()), holds) {
-            self.size -= entry.remove().0.source.len();
-        }
-    }
-
     pub(super) fn clear(&mut self) {
         self.entries = HashTable::new();
         self.size = 0;
@@ -147,7 +139,17 @@ impl CodeCache {
         self.max_entries = count.max(Self::DEFAULT_MAX_ENTRIES);
     }
 
-    fn prune(&mut self) {
+    pub(super) fn function_tables(&self) -> Vec<Rc<[FunctionInfo]>> {
+        let table = |entry: &Entry| match &entry.unit {
+            Unit::Script(script) => Rc::clone(&script.code.functions),
+            Unit::Module(module) => Rc::clone(&module.code.functions),
+            Unit::Eval(eval) => Rc::clone(&eval.code.functions),
+            Unit::Function(function, _) => Rc::clone(function.table()),
+        };
+        self.entries.iter().map(table).collect()
+    }
+
+    pub(super) fn prune(&mut self) {
         if self.period_start.elapsed() >= Self::PERIOD {
             self.remove_unused_since(self.uses_at_period_start);
             self.period_start = Instant::now();

@@ -213,6 +213,11 @@ impl NativeExecutable {
         Ok(text)
     }
 
+    pub(crate) fn leave_name_out_of_source_text(&self, vm: &Vm) {
+        let text = JsString::from_literal(vm, "function () { [native code] }");
+        self.set_cached_source_text(Some(text));
+    }
+
     /// Whether scripts see `bound ` in front of the name.
     pub fn is_named_as_bound(&self) -> &Cell<bool> {
         &self.is_named_as_bound

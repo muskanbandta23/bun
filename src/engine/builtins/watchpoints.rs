@@ -42,6 +42,36 @@ impl Conditions<'_> {
             PropertyCondition::equivalence(object, name).filter(|_| is_pristine)
         });
     }
+
+    pub(crate) fn absent(&mut self, object: &JsObject, name: PropertyName<'_>, prototype: Value) {
+        self.add(object, || {
+            PropertyCondition::absence(object, name)
+                .filter(|_| object.prototype_direct() == prototype)
+        });
+    }
+
+    /// An object that inherits from `prototype` has the original `next`, is its own iterator and has no `return`.
+    pub(crate) fn pristine_iterator(&mut self, prototype: &JsObject) {
+        let (iterator, object) = (self.cx.iterator_prototype(), self.cx.object_prototype());
+        self.pristine(prototype, names::next);
+        self.pristine(&iterator, symbols::iterator);
+        self.absent(prototype, symbols::iterator, iterator.into());
+        self.absent(prototype, names::r#return, iterator.into());
+        self.absent(&iterator, names::r#return, object.into());
+        self.absent(&object, names::r#return, Value::NULL);
+    }
+
+    /// The object gets them all before its shape is watched.
+    pub(crate) fn all_pristine<'a>(
+        &mut self,
+        object: &JsObject,
+        names: impl Iterator<Item = PropertyName<'a>> + Clone,
+    ) {
+        for name in names.clone() {
+            object.reify_if_pristine(self.cx, name);
+        }
+        names.for_each(|name| self.pristine(object, name));
+    }
 }
 
 pub fn watchpoint_conditions(cx: &Cx, which: RealmWatchpoint) -> Option<Vec<PropertyCondition>> {

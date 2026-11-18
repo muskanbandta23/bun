@@ -79,6 +79,20 @@ impl Allocator {
         self.allocate_slow(heap)
     }
 
+    /// The address of a new cell, if that takes no call. The caller initializes it before the next allocation.
+    #[inline(always)]
+    pub fn try_bump(&self) -> Option<usize> {
+        #[cfg(debug_assertions)]
+        if crate::options().collect_every_n_allocations != 0 {
+            return None;
+        }
+        let cell = self.start.get();
+        (cell < self.end.get()).then(|| {
+            self.start.set(cell + self.cell_size());
+            cell
+        })
+    }
+
     #[inline(never)]
     pub fn allocate_slow(&self, heap: &Heap) -> usize {
         if self.next_interval.get() == 0 && !self.refill(heap) {

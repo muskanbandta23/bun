@@ -191,6 +191,12 @@ impl<K: TableKind> OrderedCollection<K> {
         Ok(())
     }
 
+    /// Whether another entry takes a new table.
+    #[inline(always)]
+    pub fn is_full(&self) -> bool {
+        self.table().is_full()
+    }
+
     /// Makes room for that many more entries, if there is memory.
     pub fn reserve(&self, vm: &Vm, additional: usize) {
         let table = self.table();

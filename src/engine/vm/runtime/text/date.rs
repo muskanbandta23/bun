@@ -3,9 +3,11 @@ use core::mem::offset_of;
 
 use bun_engine_date::{DateCache, DateFields, current_time, set_time_zone_override, time_clip};
 use bun_engine_macros::cell;
-use bun_engine_text::Text;
+use bun_engine_text::{Text, names};
 
-use crate::{Gc, GlobalObject, JsObject, JsObjectInit, Shape, Vm};
+use crate::{
+    Cx, Gc, GlobalObject, JsObject, JsObjectInit, JsString, RealmSlot, RealmWatchpoint, Shape, Vm,
+};
 
 #[cell(name = "Date", cell_type = Date, export = "engine_class_DateInstance")]
 pub struct DateInstance {
@@ -61,6 +63,21 @@ impl DateInstance {
             self.utc_fields.set(vm.date_cache().utc_fields(self.time()));
             self.utc_fields.get()
         })
+    }
+
+    /// ToDateString
+    pub fn to_date_string(&self, vm: &Vm) -> Gc<JsString> {
+        match self.local_fields(vm) {
+            Some(fields) => JsString::new(vm, vm.date_cache().date_time_string(fields)),
+            None => JsString::from_name(vm, names::invalidDate),
+        }
+    }
+
+    /// Whether ToPrimitive and `JSON.stringify` would call nothing but the functions that the library started with.
+    #[inline]
+    pub fn has_pristine_conversions(&self, cx: &Cx) -> bool {
+        let original_shape = cx.global().slot_if_initialized(RealmSlot::date_shape);
+        original_shape == Some(self.shape().cell()) && cx.holds(RealmWatchpoint::DateConversions)
     }
 }
 

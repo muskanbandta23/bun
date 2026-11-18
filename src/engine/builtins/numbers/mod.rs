@@ -1,5 +1,6 @@
 //! `Number`, `BigInt`, `Math` and `Date`.
 
+mod bigint;
 mod date_constructor;
 mod date_prototype;
 mod math;
@@ -15,6 +16,7 @@ use crate::watchpoints::Conditions;
 pub(crate) fn initialize_slot(cx: &Cx, slot: RealmSlot) -> bool {
     use RealmSlot::*;
     match slot {
+        bigint_prototype | bigint_constructor | bigint_object_shape => bigint::initialize(cx),
         date_prototype | date_constructor | date_shape => self::date_constructor::initialize(cx),
         number_prototype | number_constructor | number_object_shape => {
             self::number_constructor::initialize(cx);
@@ -31,6 +33,17 @@ pub(crate) fn add_conditions(
     conditions: &mut Conditions<'_>,
 ) -> bool {
     match which {
+        RealmWatchpoint::DateConversions => {
+            for name in [
+                symbols::toPrimitive,
+                names::valueOf,
+                names::toString,
+                names::toJSON,
+                names::toISOString,
+            ] {
+                conditions.pristine(&cx.date_prototype(), name);
+            }
+        }
         RealmWatchpoint::NumberToString => {
             conditions.pristine(&cx.number_prototype(), names::toString);
         }

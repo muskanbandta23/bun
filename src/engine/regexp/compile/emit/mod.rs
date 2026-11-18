@@ -18,8 +18,10 @@ mod tests;
 use super::graph::{Graph, Id, Kind, Span, Traits};
 use super::memory::{StackLimit, push};
 use crate::Error;
-use crate::program::{Direction, Op, Pairs, Place, ScopeKind, Slot};
+use crate::analysis::Frequencies;
+use crate::program::{Direction, Op, Pairs, Place, Probe, ScopeKind, Slot, UNBOUNDED};
 use output::Output;
+use search::FirstRun;
 pub(super) use search::emit;
 use state::{Action, Alternative, Fail, Spot, State, Undo};
 use tests::Test;
@@ -44,8 +46,16 @@ struct Emitter<'a> {
     held: Vec<Spot>,
     /// How often the code at hand is expected to run.
     weight: u32,
-    /// Whether the code at hand can run more than once.
+    /// Whether the code at hand can run more than once on the same part of the subject.
     repeats: bool,
+    /// The most units that can be passed after the node at hand.
+    following: u32,
+    frequencies: Frequencies,
+    first_run: Option<FirstRun>,
+    /// In which the position is the start of the subject.
+    epoch_at_start: Option<u32>,
+    /// A test that the search has done, and the epoch in which that holds.
+    scanned: Option<(Probe, u32)>,
     stack: StackLimit,
 }
 
@@ -96,7 +106,7 @@ impl Emitter<'_> {
             Kind::Run { .. } => self.run(id, rest, fail)?,
             _ => return self.leaf(id, rest, fail).map(|()| fail),
         };
-        if traits.contains(Traits::REENTERED) {
+        if traits.contains(Traits::REENTERED) || self.first_run.is_some_and(|it| it.node == id) {
             return Ok(back);
         }
         if let Some(slot) = mark
@@ -120,9 +130,25 @@ impl Emitter<'_> {
         let captures = core::mem::replace(&mut self.captures, Captures::Written);
         let mins = self.graph.children_of(children).iter();
         let mut needed = mins.fold(rest, |sum, &child| sum + self.graph[child].min);
+        let following = self.following;
+        let (mut bounded, mut unbounded) = (u64::from(following), 0);
+        for &child in self.graph.children_of(children) {
+            match self.graph[child].max {
+                UNBOUNDED => unbounded += 1,
+                max => bounded += u64::from(max),
+            }
+        }
         for index in children.range() {
             let child = self.graph.children[index];
             needed -= self.graph[child].min;
+            match self.graph[child].max {
+                UNBOUNDED => unbounded -= 1,
+                max => bounded -= u64::from(max),
+            }
+            self.following = match unbounded {
+                0 => u32::try_from(bounded).unwrap_or(UNBOUNDED),
+                _ => UNBOUNDED,
+            };
             if !is_rigid {
                 self.keep_offsets_short()?;
             }
@@ -133,6 +159,7 @@ impl Emitter<'_> {
                 _ => fail = self.node(child, needed, fail)?,
             }
         }
+        self.following = following;
         Ok(fail)
     }
 

@@ -13,8 +13,8 @@ use crate::heap::{CellState, OnceBox, Scope, Survivors, shape_base};
 use crate::{
     Attributes, CellKind, CellType, Class, DeferredFire, DontEnumMode, ElementKind, FastHashMap,
     Field, Gc, GlobalObject, ImmutableArray, IndexingMode, InlineWatchpointSet, JsCell, JsObject,
-    PropertyNameEnumerator, PropertyNameList, PropertyOffset, PutContext, StaticTable, TypeFlags,
-    Value, Visitor, Vm, Watchpoint, WatchpointSet, WatchpointState,
+    JsString, PropertyNameEnumerator, PropertyNameList, PropertyOffset, PutContext, StaticTable,
+    TypeFlags, Value, Visitor, Vm, WatchpointSet, WatchpointState,
 };
 
 /// The address of a shape in 32 bits. It does not keep the shape alive, except in the header of a cell.
@@ -98,14 +98,23 @@ bitflags::bitflags! {
         /// Of dense elements.
         const ELEMENTS_ARE_FROZEN = 1 << 21;
         const LENGTH_IS_READ_ONLY = 1 << 22;
-        /// Of a dictionary: the one object exists.
+        /// Belongs to one object, which exists.
         const IS_CLAIMED = 1 << 23;
         /// Has or has had a property of that name, so a function no longer makes it on demand.
         const HAS_REIFIED_LENGTH = 1 << 24;
         const HAS_REIFIED_NAME = 1 << 25;
+        const HAS_PRIVATE_NAMES = 1 << 26;
+        /// The own keys of an instance have been listed before.
+        const DID_LIST_NAMES = 1 << 27;
 
         const DICTIONARY = Self::CACHEABLE_DICTIONARY.bits() | Self::UNCACHEABLE_DICTIONARY.bits();
-        const NOT_INHERITED = Self::IS_PINNED.bits() | Self::IS_WATCHING_REPLACEMENT.bits();
+        const NOT_INHERITED = Self::IS_PINNED.bits() | Self::IS_WATCHING_REPLACEMENT.bits()
+            | Self::DID_LIST_NAMES.bits();
+        const MAY_HAVE_ANY_ATTRIBUTES = Self::HAS_NON_ENUMERABLE.bits() | Self::HAS_NON_CONFIGURABLE.bits()
+            | Self::HAS_NON_CONFIGURABLE_READ_ONLY_OR_ACCESSOR.bits();
+        /// Without these, an object as the target of a proxy leaves the traps free to answer anything.
+        const BINDS_GET_AND_SET_TRAPS = Self::HAS_NON_CONFIGURABLE_READ_ONLY_OR_ACCESSOR.bits();
+        const BINDS_OTHER_TRAPS = Self::DID_PREVENT_EXTENSIONS.bits() | Self::HAS_NON_CONFIGURABLE.bits();
     }
 }
 
@@ -118,13 +127,26 @@ pub enum CachedNames {
 }
 
 #[derive(Trace)]
-pub(crate) struct ShapeRareData {
+#[repr(C)]
+pub struct ShapeRareData {
+    pub(crate) enumerator: Field<Option<Gc<PropertyNameEnumerator>>>,
+    /// The `Vm::full_prototype_chain_epoch` in which the enumerator was found to be right for any instance.
+    pub(crate) enumerator_epoch: Cell<u64>,
+    cached_names: [Field<Option<Gc<ImmutableArray>>>; 4],
+    /// What `Object.prototype.toString` makes of the cached `Symbol.toStringTag`.
+    pub(super) tagged_string: Field<Option<Gc<JsString>>>,
+    pub(crate) special_properties: super::special_property_cache::SpecialPropertyCache,
     replacement_sets: RefCell<FastHashMap<PropertyOffset, Rc<WatchpointSet>>>,
     active_replacement_sets: Cell<u32>,
-    cached_names: [Field<Option<Gc<ImmutableArray>>>; 4],
-    pub(crate) enumerator: Field<Option<Gc<PropertyNameEnumerator>>>,
-    pub(crate) enumerator_watchpoints: RefCell<Vec<Watchpoint>>,
-    pub(crate) special_properties: super::special_property_cache::SpecialPropertyCache,
+}
+
+impl ShapeRareData {
+    pub const OFFSET_OF_ENUMERATOR: usize = offset_of!(ShapeRareData, enumerator);
+    pub const OFFSET_OF_ENUMERATOR_EPOCH: usize = offset_of!(ShapeRareData, enumerator_epoch);
+
+    pub const fn offset_of_cached_names(kind: CachedNames) -> usize {
+        offset_of!(ShapeRareData, cached_names) + kind as usize * size_of::<u64>()
+    }
 }
 
 impl Default for ShapeRareData {
@@ -134,7 +156,8 @@ impl Default for ShapeRareData {
             active_replacement_sets: Cell::new(0),
             cached_names: core::array::from_fn(|_| Field::new(None)),
             enumerator: Field::new(None),
-            enumerator_watchpoints: RefCell::default(),
+            enumerator_epoch: Cell::new(0),
+            tagged_string: Field::new(None),
             special_properties: Default::default(),
         }
     }
@@ -263,6 +286,12 @@ impl ShapeSpec {
                 flags |= ShapeFlags::HAS_NON_CONFIGURABLE_READ_ONLY_OR_ACCESSOR;
             }
         }
+        if self.indexing_mode.kind() == ElementKind::Sparse {
+            flags |= ShapeFlags::MAY_HAVE_ANY_ATTRIBUTES;
+        }
+        if self.flags.contains(TypeFlags::OVERRIDES_IS_EXTENSIBLE) {
+            flags |= ShapeFlags::DID_PREVENT_EXTENSIONS;
+        }
         if self.flags.contains(TypeFlags::HAS_STATIC_PROPERTY_TABLE) {
             for table in self.class.ancestry().filter_map(Class::static_table) {
                 flags |= flags_for_attributes(table.seen_attributes());
@@ -317,7 +346,7 @@ impl Shape {
     pub const OFFSET_OF_CLASS: usize = offset_of!(Shape, instance_class);
     pub const OFFSET_OF_RARE_DATA: usize = offset_of!(Shape, rare_data);
 
-    const MAX_TRANSITIONS: usize = 128;
+    pub(crate) const MAX_TRANSITIONS: usize = 128;
     pub const MAX_TRANSITIONS_BY_PUT_BY_ID: usize = 512;
     const MAX_SLOTS_FOR_REMOVAL: usize = 4096;
 
@@ -572,30 +601,39 @@ impl Shape {
                 .contains(TypeFlags::GET_OWN_PROPERTY_SLOT_IS_IMPURE_FOR_ABSENCE)
     }
 
-    /// Every own property with a name is in the table, is enumerable, has a string for a key and a plain value.
-    pub fn can_access_properties_quickly_for_enumeration(&self) -> bool {
+    /// Each property in the table is enumerable, has a string for a key, and a plain value in the slot whose number is
+    /// its position.
+    #[inline]
+    pub fn has_properties_in_slot_order(&self) -> bool {
         !self.has(
             ShapeFlags::PREVENTS_QUICK_ENUMERATION
                 | ShapeFlags::HAS_ANY_ACCESSOR
                 | ShapeFlags::UNCACHEABLE_DICTIONARY,
-        ) && !self
-            .type_flags()
-            .contains(TypeFlags::OVERRIDES_OWN_PROPERTY_NAMES)
+        )
     }
 
-    /// The table has all own properties, and reading them runs no code.
-    pub fn can_perform_fast_property_enumeration(&self) -> bool {
+    pub fn can_access_properties_quickly_for_enumeration(&self) -> bool {
+        self.has_properties_in_slot_order()
+            && !(self.type_flags()).contains(TypeFlags::OVERRIDES_OWN_PROPERTY_NAMES)
+    }
+
+    /// The table and the elements have all own properties, and reading those of the table runs no code.
+    #[inline]
+    pub fn has_only_stored_properties(&self) -> bool {
         !self.type_flags().intersects(
             TypeFlags::OVERRIDES_GET_OWN_PROPERTY_SLOT
                 | TypeFlags::OVERRIDES_OWN_PROPERTY_NAMES
                 | TypeFlags::OVERRIDES_OWN_SPECIAL_PROPERTY_NAMES,
-        ) && !self.has(
-            ShapeFlags::HAS_ANY_ACCESSOR
-                | ShapeFlags::HAS_READ_ONLY_OR_ACCESSOR_EXCLUDING_PROTO
-                | ShapeFlags::HAS_UNDERSCORE_PROTO
-                | ShapeFlags::UNCACHEABLE_DICTIONARY,
-        ) && !self.instance_indexing_mode().has_elements()
+        ) && !self.has(ShapeFlags::HAS_ANY_ACCESSOR)
             && !self.has_non_reified_static_properties()
+    }
+
+    /// The table has all own properties, reading them runs no code, and none is named `__proto__`.
+    #[inline]
+    pub fn can_perform_fast_property_enumeration(&self) -> bool {
+        self.has_only_stored_properties()
+            && !self.has(ShapeFlags::HAS_UNDERSCORE_PROTO | ShapeFlags::UNCACHEABLE_DICTIONARY)
+            && !self.instance_indexing_mode().has_elements()
     }
 
     #[inline(always)]
@@ -819,7 +857,7 @@ impl Shape {
 
     pub(crate) fn collect_property_names(&self, list: &mut PropertyNameList, mode: DontEnumMode) {
         let properties = self.properties();
-        let is_known_unique = list.is_empty();
+        let is_known_unique = list.has_only_indices();
         for wants_symbols in [false, true] {
             if !(if wants_symbols {
                 list.includes_symbols()
@@ -859,6 +897,9 @@ impl Shape {
         }
         if name.is_symbol() {
             flags |= ShapeFlags::PREVENTS_QUICK_ENUMERATION;
+            if name.is_private() {
+                flags |= ShapeFlags::HAS_PRIVATE_NAMES;
+            }
         } else if name == names::__proto__ {
             if attributes.intersects(Attributes::ANY_ACCESSOR) {
                 flags -= ShapeFlags::HAS_READ_ONLY_OR_ACCESSOR_EXCLUDING_PROTO;
@@ -904,6 +945,17 @@ impl Shape {
         }
         self.transition_kind.set(TransitionKind::None);
         self.add(name, attributes)
+    }
+
+    /// They go on enumerating first, in the order of `names`.
+    pub(super) fn did_reify_static_properties(&self, names: impl Iterator<Item = Identifier>) {
+        assert!(self.has(ShapeFlags::IS_CLAIMED));
+        self.pin();
+        self.transition_kind.set(TransitionKind::None);
+        self.change_table(|table| table.move_to_front(names));
+        self.set_flags(
+            ShapeFlags::STATIC_PROPERTIES_REIFIED | ShapeFlags::PREVENTS_QUICK_ENUMERATION,
+        );
     }
 
     pub(super) fn remove_property_in_place(&self, name: PropertyName<'_>) -> PropertyOffset {
@@ -958,7 +1010,7 @@ impl Shape {
     }
 
     /// The shape is no dictionary, does not have the property and has no such transition yet.
-    pub(super) fn add_new_property_transition(
+    pub(crate) fn add_new_property_transition(
         &self,
         vm: &Vm,
         name: PropertyName<'_>,
@@ -1180,11 +1232,10 @@ impl Shape {
             return target;
         }
         let target = self.derive(vm, kind, mode, deferred);
-        let restricted = ShapeFlags::HAS_NON_ENUMERABLE
-            | ShapeFlags::HAS_NON_CONFIGURABLE
+        let restricted = ShapeFlags::HAS_NON_CONFIGURABLE
             | ShapeFlags::HAS_NON_CONFIGURABLE_READ_ONLY_OR_ACCESSOR;
         target.set_flags(match kind {
-            TransitionKind::AllocateSparse => restricted,
+            TransitionKind::AllocateSparse => ShapeFlags::MAY_HAVE_ANY_ATTRIBUTES,
             TransitionKind::AddIndexedAccessors => ShapeFlags::MAY_HAVE_INDEXED_ACCESSORS,
             TransitionKind::PreventExtensions => ShapeFlags::DID_PREVENT_EXTENSIONS,
             TransitionKind::Seal => {
@@ -1197,7 +1248,7 @@ impl Shape {
                     | ShapeFlags::ELEMENTS_ARE_FROZEN
                     | ShapeFlags::LENGTH_IS_READ_ONLY
             }
-            TransitionKind::MakeLengthReadOnly => ShapeFlags::LENGTH_IS_READ_ONLY,
+            TransitionKind::MakeLengthReadOnly => restricted | ShapeFlags::LENGTH_IS_READ_ONLY,
             TransitionKind::BecomePrototype => ShapeFlags::MAY_BE_PROTOTYPE,
             _ => ShapeFlags::empty(),
         });
@@ -1225,9 +1276,11 @@ impl Shape {
         } else if self.max_offset().is_valid() {
             target.table.set(Some(self.take_table_or_clone_if_pinned()));
         }
-        if self.is_dictionary() {
+        // Elements can change their kind back and forth for ever.
+        if self.is_dictionary() || self.transition_count.get() == u8::MAX {
             target.pin();
-        } else {
+        }
+        if !self.is_dictionary() {
             self.add_transition(&target);
         }
         target
@@ -1315,11 +1368,17 @@ impl Shape {
     pub fn can_cache_names(&self) -> bool {
         !self.is_dictionary()
             && !self.instance_indexing_mode().has_elements()
-            && !self.has_non_reified_static_properties()
             && !self.type_flags().intersects(
                 TypeFlags::OVERRIDES_OWN_PROPERTY_NAMES
                     | TypeFlags::OVERRIDES_OWN_SPECIAL_PROPERTY_NAMES,
             )
+    }
+
+    /// Not the first time: many a shape is asked only once.
+    pub fn should_cache_names(&self) -> bool {
+        let did_list_names = self.has(ShapeFlags::DID_LIST_NAMES);
+        self.set_flags(ShapeFlags::DID_LIST_NAMES);
+        did_list_names && self.can_cache_names()
     }
 
     pub fn set_cached_names(&self, kind: CachedNames, names: Gc<ImmutableArray>) {

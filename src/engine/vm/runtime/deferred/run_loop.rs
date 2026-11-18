@@ -118,5 +118,5 @@ fn run_task(cx: &mut Cx, ticket: &Ticket, task: DeferredTask) -> JsResult<()> {
         let exception = cx.catch(thrown)?;
         (realm.hooks().report_uncaught_exception)(cx, exception);
     }
-    Ok(())
+    cx.drain_microtasks()
 }

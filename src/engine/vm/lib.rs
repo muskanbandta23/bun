@@ -4,13 +4,15 @@
     adt_const_params,
     allocator_ext,
     auto_traits,
+    core_intrinsics,
     macro_metavar_expr_concat,
     marker_trait_attr,
     maybe_uninit_fill,
     negative_impls,
+    offset_of_enum,
     thread_local
 )]
-#![allow(dead_code)]
+#![allow(dead_code, internal_features)]
 // References to cells are plain pointers, and a `JsResult<Value>` is one word.
 #![allow(improper_ctypes_definitions)]
 
@@ -63,9 +65,9 @@ pub use primitive::*;
 pub use realm::*;
 pub use runtime::*;
 pub use scope::{Environment, ModuleEnvironment, ScopeTemplate};
-pub use traps::{Trap, Traps};
+pub use traps::{DeferTraps, Trap, Traps, WakeOnTermination};
 pub use value::Value;
-pub use vm::{DeferTermination, Embedder, Vm, VmRef, VmShapes};
+pub use vm::{Embedder, SuspendException, Vm, VmRef, VmShapes};
 pub use watchpoint::{
     DeferredFire, InlineWatchpointSet, Watcher, Watchpoint, WatchpointSet, WatchpointState,
 };

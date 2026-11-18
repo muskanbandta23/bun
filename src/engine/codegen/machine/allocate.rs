@@ -419,7 +419,8 @@ impl Allocator<'_> {
     pub(super) fn try_to_store_at_definition(&mut self, vreg: VReg, frequency: f32) -> bool {
         self.out.slots.note_use(vreg);
         let data = &self.code.vregs[vreg];
-        let ends_block = data.start == self.code.blocks[data.block].exit();
+        let last = self.code.blocks[data.block].end - 1;
+        let ends_block = data.start / 2 == last && !self.code.heads[last as usize].site.is_none();
         let is_cheaper = !ends_block && self.frequencies.of_block(data.block) <= frequency;
         if is_cheaper {
             self.out.statuses[vreg].stored = Stored::AtDefinition;

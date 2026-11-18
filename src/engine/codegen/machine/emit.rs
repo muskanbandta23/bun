@@ -667,7 +667,7 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
             self.client.before_call(self.masm, data.token, origin);
         }
         match data.action {
-            Action::Custom => self.client.patchpoint(
+            Action::Custom | Action::CustomCall => self.client.patchpoint(
                 self.masm,
                 &PatchpointSite {
                     function,

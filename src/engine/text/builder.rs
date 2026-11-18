@@ -8,6 +8,10 @@ use crate::{CodeUnit, Cursor, MAX_LENGTH, StringImpl, StringRef, Text, ascii, co
 
 /// A string that grows in the allocation it ends up in. It is Latin-1 until a wider character arrives. Once it has
 /// run out of memory or of length it takes nothing more, and `finish` fails.
+///
+/// C++ pushes in place (`embed/include/engine/text/StringBuilder.h`). It also points `units` at a string that it
+/// holds, with no room to spare.
+#[repr(C)]
 pub struct StringBuilder {
     /// Aligned for `u16`.
     units: NonNull<u8>,
@@ -20,7 +24,8 @@ pub struct StringBuilder {
     /// `units` are the tail of a string to which the builder holds the only reference.
     is_allocated: bool,
     /// What `on_stack` lent, whether or not `units` are there.
-    scratch: *mut [MaybeUninit<u8>],
+    scratch: NonNull<u8>,
+    scratch_size: usize,
 }
 
 #[repr(align(2))]
@@ -45,22 +50,21 @@ impl StringBuilder {
 
     #[inline]
     pub const fn new() -> StringBuilder {
-        let nothing = NonNull::<u16>::dangling().cast();
-        Self::in_scratch(NonNull::slice_from_raw_parts(nothing, 0).as_ptr())
+        Self::in_scratch(NonNull::<u16>::dangling().cast(), 0)
     }
 
     #[inline(always)]
-    const fn in_scratch(scratch: *mut [MaybeUninit<u8>]) -> StringBuilder {
+    const fn in_scratch(scratch: NonNull<u8>, scratch_size: usize) -> StringBuilder {
         StringBuilder {
-            // SAFETY: from a reference or a `NonNull`.
-            units: unsafe { NonNull::new_unchecked(scratch.cast()) },
+            units: scratch,
             length: 0,
-            latin1_capacity: scratch.len(),
+            latin1_capacity: scratch_size,
             utf16_capacity: 0,
             is_latin1: true,
             has_overflowed: false,
             is_allocated: false,
             scratch,
+            scratch_size,
         }
     }
 
@@ -76,21 +80,21 @@ impl StringBuilder {
     pub fn on_stack<const BYTES: usize, R>(build: impl FnOnce(&mut StringBuilder) -> R) -> R {
         struct Lent {
             builder: StringBuilder,
-            scratch: *mut [MaybeUninit<u8>],
+            scratch: NonNull<u8>,
         }
         impl Drop for Lent {
             #[inline(always)]
             fn drop(&mut self) {
-                if !core::ptr::eq(self.builder.scratch, self.scratch) {
+                if self.builder.scratch != self.scratch {
                     std::process::abort();
                 }
             }
         }
         const { assert!(BYTES > 0 && BYTES <= MAX_LENGTH) };
         let mut scratch = Scratch([MaybeUninit::uninit(); BYTES]);
-        let scratch = &raw mut scratch.0 as *mut [MaybeUninit<u8>];
+        let scratch = NonNull::from_mut(&mut scratch.0).cast();
         let mut lent = Lent {
-            builder: Self::in_scratch(scratch),
+            builder: Self::in_scratch(scratch, BYTES),
             scratch,
         };
         build(&mut lent.builder)
@@ -129,7 +133,7 @@ impl StringBuilder {
     }
 
     pub fn clear(&mut self) {
-        *self = Self::in_scratch(self.scratch);
+        *self = Self::in_scratch(self.scratch, self.scratch_size);
     }
 
     pub fn truncate(&mut self, length: usize) {
@@ -248,8 +252,9 @@ impl StringBuilder {
         self.write_in_room(count, write);
     }
 
+    /// Drops the text and takes nothing more.
     #[cold]
-    fn overflow(&mut self) {
+    pub fn overflow(&mut self) {
         self.clear();
         self.latin1_capacity = 0;
         self.has_overflowed = true;
@@ -336,7 +341,7 @@ impl StringBuilder {
 
     /// Room for so many more units of the present width.
     #[inline]
-    pub(crate) fn grow(&mut self, additional: usize) {
+    pub fn grow(&mut self, additional: usize) {
         if additional > self.capacity() - self.length {
             self.resize(if self.is_latin1 {
                 self.grown_capacity::<u8>(additional)
@@ -348,7 +353,7 @@ impl StringBuilder {
 
     /// Room for so many more wide units.
     #[inline(never)]
-    pub(crate) fn widen(&mut self, additional: usize) {
+    pub fn widen(&mut self, additional: usize) {
         if !self.is_latin1 || self.has_overflowed {
             return self.grow(additional);
         }
@@ -544,7 +549,7 @@ const fn longest(is_latin1: bool) -> usize {
     if is_latin1 {
         MAX_LENGTH
     } else {
-        (u32::MAX as usize - StringImpl::TAIL) / 2
+        (u32::MAX as usize - size_of::<StringImpl>()) / 2
     }
 }
 

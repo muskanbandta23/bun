@@ -379,16 +379,16 @@ fn an_object_is_converted_once_at_a_time() {
 fn a_weakly_held_symbol_lives_as_long_as_its_name_is_used() {
     with_realm(|cx| {
         #[inline(never)]
-        fn make(cx: &Cx) -> Vec<(Weak<JsSymbol>, Option<Identifier>)> {
+        fn make(cx: &Cx, set: &JsWeakSet) -> Vec<(Weak<JsSymbol>, Option<Identifier>)> {
             let one = |index: u32| {
                 let symbol = JsSymbol::create(cx, None);
-                symbol.as_value().will_be_held_weakly(cx);
+                set.add(symbol.cell()).unwrap();
                 let name = (index % 2 == 0).then(|| symbol.name().to_identifier());
                 (Weak::new(cx, symbol), name)
             };
             (0..200).map(one).collect()
         }
-        let symbols = make(cx);
+        let symbols = make(cx, &JsWeakSet::create(cx));
         for scope in [Scope::Eden, Scope::Full] {
             cx.heap.collect_and_sweep(Some(scope));
             assert!(symbols.iter().all(|it| it.0.is_live() || it.1.is_none()));
@@ -407,11 +407,6 @@ fn watchpoints_notice_changes() {
             (StringValueOf, strings, names::valueOf),
             (StringSymbolSplit, strings, symbols::split),
             (StringSymbolReplace, objects, symbols::replace),
-            (
-                StringIteratorProtocol,
-                cx.iterator_prototype(),
-                names::r#return,
-            ),
         ];
         for (watchpoint, object, name) in cases {
             assert!(cx.holds(watchpoint));

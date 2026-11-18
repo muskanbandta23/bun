@@ -143,21 +143,22 @@ impl Value {
             None => self.to_string(cx),
         }
     }
+}
 
-    /// CanBeHeldWeakly
-    #[inline]
-    pub fn can_be_held_weakly(self) -> bool {
-        self.is_object() || (self.as_symbol()).is_some_and(|it| !it.symbol.flags().is_registered())
+impl JsCell {
+    /// Before a reference that a script can follow, and that does not keep the cell alive, is stored.
+    #[inline(always)]
+    pub(crate) fn will_be_held_weakly(&self) {
+        if self.is_symbol() && !self.per_cell_bit() {
+            self.add_to_weakly_held_symbols();
+        }
     }
 
-    /// Before a weak reference to the value is stored.
-    #[inline]
-    pub fn will_be_held_weakly(self, vm: &Vm) {
-        if let Some(symbol) = self.as_symbol()
-            && !symbol.per_cell_bit()
-        {
-            symbol.set_per_cell_bit(true);
-            (vm.weakly_held_symbols.cells.borrow_mut()).push(symbol.address());
-        }
+    #[cold]
+    #[inline(never)]
+    fn add_to_weakly_held_symbols(&self) {
+        self.set_per_cell_bit(true);
+        let symbols = &self.heap().vm().weakly_held_symbols;
+        symbols.cells.borrow_mut().push(self.address());
     }
 }

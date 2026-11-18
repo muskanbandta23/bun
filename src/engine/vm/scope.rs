@@ -64,10 +64,16 @@ impl ScopeTemplate {
         self.slot_count
     }
 
+    #[inline(always)]
+    pub fn undefined_slots(&self) -> u32 {
+        self.undefined_slots
+    }
+
     pub fn singleton(&self) -> Option<Gc<Environment>> {
         self.first_instance()
     }
 
+    #[inline(always)]
     pub fn singleton_watchpoints(&self) -> &InlineWatchpointSet {
         &self.singleton_watchpoints
     }

@@ -71,7 +71,7 @@ fn list() {
     assert_eq!(list.pairs(), [pair("a", "5"), pair("c", "6")]);
 
     let mut unsorted = params("ﬃ&z=2&🌈&z=1&é");
-    unsorted.sort();
+    unsorted.sort().unwrap();
     assert_eq!(unsorted, params("z=2&z=1&é&🌈&ﬃ"));
 
     let mut owner = url("http://h/#f");

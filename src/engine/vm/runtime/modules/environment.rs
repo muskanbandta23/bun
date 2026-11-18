@@ -6,6 +6,11 @@ impl ModuleEnvironment {
         Ok(None)
     }
 
+    /// Where the value of an import is, once that is known.
+    pub fn resolved_import(&self, _slot: u32) -> Option<(crate::Gc<crate::Environment>, u32)> {
+        None
+    }
+
     /// The instruction `get_import`.
     pub fn get_import(&self, cx: &mut Cx, slot: u32) -> JsResult<Value> {
         self.get_checked(cx, slot)

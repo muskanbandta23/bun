@@ -1,9 +1,9 @@
 use bun_engine_text::{StringRef, names};
 
 use crate::{
-    CallData, CellKind, CellType, Cx, Gc, JsBigInt, JsCell, JsObject, JsResult, JsString, JsSymbol,
-    JsWrapperObject, PropertyKey, SpecialProperty, StringObject, StringView, TypeFlags, Value,
-    errors,
+    CallData, CellKind, CellType, Cx, DateInstance, Gc, JsBigInt, JsCell, JsObject, JsResult,
+    JsString, JsSymbol, JsWrapperObject, PropertyKey, SpecialProperty, StringObject, StringView,
+    TypeFlags, Value, errors,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -186,7 +186,7 @@ impl Value {
         if let Some(integer) = self.as_int32() {
             return Ok(integer.max(0) as u64);
         }
-        Ok(self.to_number(cx)?.min(MAX_SAFE_INTEGER) as u64).map(|length| length.min((1 << 53) - 1))
+        Ok((self.to_number(cx)? as u64).min(MAX_SAFE_INTEGER as u64))
     }
 
     /// ToIndex. `name` is what the error calls the value.
@@ -423,6 +423,14 @@ impl JsObject {
         let exotic = self.get_special_property(cx, SpecialProperty::ToPrimitive)?;
         if exotic.is_undefined_or_null() {
             return self.ordinary_to_primitive(cx, preferred);
+        }
+        if let Some(date) = self.as_value().downcast::<DateInstance>()
+            && date.has_pristine_conversions(cx)
+        {
+            return Ok(match preferred {
+                PreferredType::Number => date.time().into(),
+                _ => date.to_date_string(cx).into(),
+            });
         }
         if !exotic.is_callable() {
             let message = "Symbol.toPrimitive is not a function, undefined, or null";

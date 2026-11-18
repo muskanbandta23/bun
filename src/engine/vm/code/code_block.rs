@@ -426,6 +426,22 @@ impl CodeBlock {
         self.baseline().fields()[..self.code.constants.len()][index as usize].get()
     }
 
+    /// # Safety
+    /// There is such a function.
+    #[inline(always)]
+    pub unsafe fn function_if_created(&self, index: FunctionIndex) -> Option<Gc<FunctionExecutable>> {
+        // SAFETY: the caller's, and only executables are stored there.
+        unsafe { (*self.functions.add(index.index()).cast::<Field<Option<_>>>()).get() }
+    }
+
+    /// # Safety
+    /// There is such a scope.
+    #[inline(always)]
+    pub unsafe fn scope_template_if_created(&self, index: ScopeIndex) -> Option<Gc<ScopeTemplate>> {
+        // SAFETY: the caller's, and only templates are stored there.
+        unsafe { (*self.scopes.add(index.index()).cast::<Field<Option<_>>>()).get() }
+    }
+
     #[inline(always)]
     pub fn function(&self, vm: &Vm, index: FunctionIndex) -> Gc<FunctionExecutable> {
         assert!(index.index() < self.code.functions.len());

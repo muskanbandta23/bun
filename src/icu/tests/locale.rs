@@ -24,6 +24,7 @@ fn syntax_of_identifiers() {
     for id in [
         c"",
         c"root",
+        c"root@numbers=arab",
         c"_US",
         c"en__POSIX",
         c"zh-Hant-TW",
@@ -44,6 +45,7 @@ fn syntax_of_identifiers() {
         c"e",
         c"e1",
         c"Latn",
+        c"root_US",
         c"abcdefghi",
         c"en_123456789",
         c"en-u-ca-roc",

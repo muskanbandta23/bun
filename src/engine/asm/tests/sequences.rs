@@ -11,6 +11,8 @@ use bun_engine_asm::{
     Sign, Size, Src, TestCond, Untrusted, ValueAssembly, Width, X64Features, x64,
 };
 
+const INTEL: [&str; 2] = ["-triple=x86_64", "--output-asm-variant=1"];
+
 fn assembler<M: MacroAssembly>(features: M::Features) -> M {
     M::new(Options {
         features,
@@ -305,7 +307,73 @@ fn stack_pointer_is_written_once<M: MacroAssembly>(
 
 #[test]
 fn the_stack_pointer_gets_no_value_in_between() {
-    let intel = ["-triple=x86_64", "--output-asm-variant=1"];
-    stack_pointer_is_written_once::<x64::MacroAssembler>(X64Features::empty(), &intel, "rsp");
+    stack_pointer_is_written_once::<x64::MacroAssembler>(X64Features::empty(), &INTEL, "rsp");
     stack_pointer_is_written_once::<MacroAssembler>(Arm64Features::empty(), &support::ARM64, "sp");
+}
+
+#[test]
+fn x64_hints_and_fences() {
+    let mut masm: x64::MacroAssembler = assembler(X64Features::empty());
+    masm.prefetch(Address::new(x64::RBX, 64));
+    masm.store_fence();
+    masm.load_fence();
+    masm.memory_fence();
+    masm.atomic_store(Size::S32, Address::new(x64::RBX, 0), x64::RCX);
+    let expected = [
+        "prefetcht0 byte ptr [rbx + 64]",
+        "lock",
+        "or dword ptr [rsp], 0",
+        "mov r11d, ecx",
+        "xchg dword ptr [rbx], r11d",
+    ];
+    let code = masm.finish().unwrap();
+    support::assert_disassembly(&INTEL, code.bytes(), &expected.map(String::from));
+}
+
+#[test]
+fn x64_keeps_some_untrusted_constants_out_of_the_code() {
+    const SEEDS: u64 = 640;
+    let (a, b, m) = (x64::RBX, x64::RCX, Address::new(x64::RSI, 8));
+    let check = |width: Width, value: i64, may_be_kept_out: bool| {
+        let (size, src) = (width.size(), Untrusted(value));
+        let operations: [&dyn Fn(&mut x64::MacroAssembler); 12] = [
+            &|masm| masm.move_int(width, a, src),
+            &|masm| masm.store(size, m, src),
+            &|masm| masm.add_to_memory(size, m, src),
+            &|masm| masm.add(width, a, b, src),
+            &|masm| masm.sub(width, a, a, src),
+            &|masm| masm.mul(width, a, b, src),
+            &|masm| masm.and(width, a, b, src),
+            &|masm| masm.xor(width, a, b, src),
+            &|masm| masm.compare(width, Cond::Lt, a, b, src),
+            &|masm| masm.compare(width, Cond::Lt, a, m, src),
+            &|masm| masm.test(width, TestCond::Zero, a, b, src),
+            &|masm| masm.test(width, TestCond::Zero, a, m, src),
+        ];
+        for (index, emit) in operations.into_iter().enumerate() {
+            let is_kept_out = |&seed: &u64| {
+                let mut masm = x64::MacroAssembler::new(Options {
+                    features: X64Features::empty(),
+                    shorten_jumps: false,
+                    seed,
+                });
+                emit(&mut masm);
+                let code = masm.finish().unwrap();
+                let low_bytes = &value.to_le_bytes()[..3];
+                !code.bytes().windows(3).any(|bytes| bytes == low_bytes)
+            };
+            let count = (0..SEEDS).filter(is_kept_out).count();
+            let expected = if may_be_kept_out { 3..30 } else { 0..1 };
+            assert!(
+                expected.contains(&count),
+                "{index} {width:?} {value:x} {count}"
+            );
+        }
+    };
+    for width in [Width::W32, Width::W64] {
+        check(width, 0x1234_5678, true);
+        check(width, -0x1234_5678, true);
+        check(width, 0x12_3456, false);
+    }
+    check(Width::W64, 0x1234_5678_9abc_def1, true);
 }

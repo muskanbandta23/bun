@@ -186,7 +186,7 @@ impl AccessCase {
     }
 
     #[inline(always)]
-    pub(super) fn matches(&self, shape: ShapeId, key: usize) -> bool {
+    pub fn matches(&self, shape: ShapeId, key: usize) -> bool {
         self.shape() == shape && self.key.as_ref().map_or(0, |it| it.name().address()) == key
     }
 

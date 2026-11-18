@@ -458,6 +458,13 @@ impl Isa for Inst {
             (Location::Constant(bits), Location::Gpr(dst)) if bits.get() == 0 => {
                 masm.move32(dst, 0)
             }
+            (Location::Constant(bits), Location::Gpr(dst))
+                if bits.get() > u32::MAX.into()
+                    && let Some((base, distance)) =
+                        function.pinned_near(bits.get(), i32::MIN.into()..=i32::MAX.into()) =>
+            {
+                masm.compute_address(dst, Address::new(base, distance as i32));
+            }
             (_, Location::Gpr(dst)) => {
                 load_location(
                     masm.assembler(),

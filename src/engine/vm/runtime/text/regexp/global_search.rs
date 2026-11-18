@@ -1,6 +1,7 @@
 //! One match after the other, as with the flag `g`.
 
 use core::ops::ControlFlow;
+
 use bun_engine_regexp::Mode;
 use bun_engine_text::Text;
 use smallvec::SmallVec;

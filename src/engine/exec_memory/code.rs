@@ -13,9 +13,14 @@ use crate::instruction_cache;
 use crate::pages;
 use crate::pool::{self, GRANULE, Pool, State};
 
-/// Says whose code it is, in a form of the owner's choice.
+/// Says whose code it is, in a form of the owner's choice but for the low bits, which tell the owners apart.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Owner(pub NonZeroUsize);
+
+impl Owner {
+    pub const KIND_MASK: usize = 7;
+    pub const WASM_FUNCTION: usize = 1;
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Priority {

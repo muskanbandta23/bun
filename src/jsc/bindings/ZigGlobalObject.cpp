@@ -1940,9 +1940,7 @@ extern "C" JSC::EncodedJSValue Bun__makeArrayBufferWithBytesNoCopy(JSC::JSGlobal
     if (Bun::rejectBytesNoCopyAboveArrayBufferLimit(globalObject, scope, ptr, len, deallocator, deallocatorContext)) [[unlikely]]
         return {};
 
-    auto buffer = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), len }, createSharedTask<void(void*)>([=](void* p) {
-        if (deallocator) deallocator(p, deallocatorContext);
-    }));
+    auto buffer = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), len }, deallocator, deallocatorContext);
 
     JSArrayBuffer* jsBuffer = JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Default), WTF::move(buffer));
     RETURN_IF_EXCEPTION(scope, {});
@@ -1957,14 +1955,7 @@ extern "C" JSC::EncodedJSValue Bun__makeTypedArrayWithBytesNoCopy(JSC::JSGlobalO
     if (Bun::rejectBytesNoCopyAboveArrayBufferLimit(globalObject, scope, ptr, len, deallocator, deallocatorContext)) [[unlikely]]
         return {};
 
-    auto buffer_ = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), len }, createSharedTask<void(void*)>([=](void* p) {
-        if (deallocator) deallocator(p, deallocatorContext);
-    }));
-    RefPtr<ArrayBuffer>&& buffer = WTF::move(buffer_);
-    if (!buffer) {
-        throwOutOfMemoryError(globalObject, scope);
-        return {};
-    }
+    RefPtr<ArrayBuffer> buffer = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), len }, deallocator, deallocatorContext);
 
     unsigned elementByteSize = elementSize(ty);
     size_t offset = 0;

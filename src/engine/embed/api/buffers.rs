@@ -5,8 +5,8 @@ use bun_alloc::AllocError;
 use bun_engine_macros::export;
 use bun_engine_vm::{
     ArrayBuffer, ArrayBufferContents, ArrayBufferRef, BufferAccessor, CopyOrder, Cx, FreeBytes, Gc,
-    JsArrayBuffer, JsArrayBufferView, JsObject, JsResult, JsTypedArray, NativeFunction, Shape, Vm,
-    is_shape_of_resizable_view,
+    JsArrayBuffer, JsArrayBufferView, JsObject, JsResult, JsTypedArray, JsUint8Array,
+    NativeFunction, Shape, Vm, is_shape_of_resizable_view,
 };
 
 use crate::abi::returned_as_pointer;
@@ -237,6 +237,17 @@ unsafe fn typed_array_create_uninitialized(
 ) -> JsResult<Gc<JsTypedArray>> {
     // SAFETY: C++ writes them.
     unsafe { JsTypedArray::create_uninitialized(cx, shape, length) }
+}
+
+#[export]
+unsafe fn uint8_array_adopt(
+    vm: &Vm,
+    shape: Gc<Shape>,
+    data: *const u8,
+    length: usize,
+) -> Gc<JsTypedArray> {
+    // SAFETY: C++ gives the allocation up.
+    unsafe { JsUint8Array::adopt(vm, shape, data.cast_mut(), length) }.upcast()
 }
 
 #[export]

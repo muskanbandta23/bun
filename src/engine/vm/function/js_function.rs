@@ -619,16 +619,30 @@ pub fn display_name(object: &JsObject) -> StringRef {
     if !CellType::FUNCTIONS.contains(object.cell_type()) {
         return StringRef::empty();
     }
-    if let Some(name) = object
-        .get_direct(names::displayName)
-        .and_then(Value::downcast::<JsString>)
-    {
-        return name.to_string_without_resolving();
+    explicit_name(object).unwrap_or_else(|| implicit_name(object))
+}
+
+/// What messages call the instances of a constructor. `None` if it is anonymous or no function.
+pub(crate) fn name_for_instances(constructor: &JsObject) -> Option<StringRef> {
+    if !CellType::FUNCTIONS.contains(constructor.cell_type()) {
+        return None;
     }
-    if let Some(function) = object.downcast::<InternalFunction>() {
+    let explicit = explicit_name(constructor).filter(|it| !it.is_empty());
+    let name = explicit.unwrap_or_else(|| implicit_name(constructor));
+    let function = constructor.downcast::<JsFunction>();
+    (!name.is_empty() || function.is_none_or(|it| it.is_native())).then_some(name)
+}
+
+fn explicit_name(function: &JsObject) -> Option<StringRef> {
+    let name = function.get_direct(names::displayName)?.as_string()?;
+    Some(name.to_string_without_resolving())
+}
+
+fn implicit_name(function: &JsObject) -> StringRef {
+    if let Some(function) = function.downcast::<InternalFunction>() {
         return function.name();
     }
-    let function = object.as_object().cast::<JsFunction>();
+    let function = function.as_object().cast::<JsFunction>();
     match function.script_executable() {
         Some(executable) if !executable.is_builtin() => executable.name().clone(),
         _ => function.name(),

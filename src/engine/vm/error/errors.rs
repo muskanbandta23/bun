@@ -1,6 +1,6 @@
 //! Errors that several places throw.
 
-use bun_engine_bytecode::{ErrorKind, StaticError};
+use bun_engine_bytecode::{ErrorKind, Specialization, StaticError};
 use bun_engine_text::{PropertyName, StringBuilder, StringRef, Text};
 
 use crate::{
@@ -117,13 +117,27 @@ errors_about_values! {
     create_invalid_prototype, throw_invalid_prototype, "is not an object or null", InvalidPrototype;
 }
 
+/// For an instruction whose callee cannot be called in that way.
+#[cold]
+#[inline(never)]
+pub fn throw_failed_call(cx: &Cx, callee: Value, specialization: Specialization) -> Thrown {
+    let (message, appender) = match specialization {
+        Specialization::Call => ("is not a function", SourceAppender::FailedCall),
+        Specialization::Construct => ("is not a constructor", SourceAppender::FailedConstruct),
+    };
+    cx.throw(create_about(cx, callee, message, appender).into())
+}
+
 /// From a frame that `new` has made for a function which is no constructor.
 #[cold]
 pub(crate) fn throw_entered_as_constructor(cx: &Cx, callee: Gc<JsObject>) -> Thrown {
-    let has_frame = callee
-        .downcast::<JsFunction>()
-        .is_none_or(|it| it.is_native());
-    throw_not_a_constructor(cx.in_realm_of_caller(has_frame.into()), callee.into())
+    match callee.downcast::<JsFunction>() {
+        Some(function) if !function.is_native() => {
+            let cx = cx.in_realm_of_caller(0);
+            throw_failed_call(cx, callee.into(), Specialization::Construct)
+        }
+        _ => throw_not_a_constructor(cx.in_realm_of_caller(1), callee.into()),
+    }
 }
 
 /// `check_this`

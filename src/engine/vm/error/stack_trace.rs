@@ -28,20 +28,16 @@ impl StackTrace {
         length: 0,
     };
 
-    fn from_vec(mut frames: Vec<StackFrame>) -> StackTrace {
-        if u32::try_from(frames.capacity()).is_err() {
-            bun_alloc::out_of_memory();
-        }
-        if frames.capacity() == 0 {
+    fn from_vec(frames: Vec<StackFrame>) -> StackTrace {
+        let Ok(capacity @ 1..) = u32::try_from(frames.capacity()) else {
             return Self::EMPTY;
-        }
-        let trace = StackTrace {
-            frames: frames.as_mut_ptr(),
-            capacity: frames.capacity() as u32,
-            length: frames.len() as u32,
         };
-        core::mem::forget(frames);
-        trace
+        let (frames, length, _) = frames.into_raw_parts();
+        StackTrace {
+            frames,
+            capacity,
+            length: length as u32,
+        }
     }
 
     fn into_vec(self) -> Vec<StackFrame> {

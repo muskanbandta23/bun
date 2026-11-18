@@ -19,6 +19,7 @@ pub use custom_accessor_function::{JsCustomGetterFunction, JsCustomSetterFunctio
 pub use internal_function::{
     InternalFunction, InternalFunctionInit, function_realm, try_function_realm,
 };
+pub(crate) use js_function::name_for_instances;
 pub use js_function::{JsCallee, JsFunction, JsFunctionInit, display_name};
 pub use native_closure::{JsNativeClosure, NativeClosure};
 pub use rare_data::FunctionRareData;

@@ -22,7 +22,8 @@ option_enum! {
     }
 }
 
-const ESTIMATED_ITERATOR_SIZE: usize = 2048;
+const ESTIMATED_RULES_SIZE: usize = 6 << 10;
+const ESTIMATED_ITERATOR_SIZE: usize = 2 << 10;
 
 /// Those with the same locale and granularity are one.
 #[derive(Clone)]
@@ -44,7 +45,7 @@ impl Segmenter {
         cache.segmenters.find_or_insert(
             |it| it.0.granularity == granularity && it.0.locale == locale,
             || {
-                cache.note_allocation(ESTIMATED_ITERATOR_SIZE);
+                cache.note_allocation(ESTIMATED_RULES_SIZE);
                 Ok(Segmenter(Rc::new(Shared {
                     locale: locale.clone(),
                     granularity,
@@ -191,7 +192,7 @@ impl Segments {
     pub fn estimated_size(&self) -> usize {
         match self.input.is_plain() {
             true => 0,
-            false => self.input.string.len() * size_of::<u16>(),
+            false => self.input.string.len() * size_of::<u16>() + ESTIMATED_ITERATOR_SIZE,
         }
     }
 

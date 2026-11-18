@@ -63,11 +63,11 @@ impl PlainYearMonth {
 
     /// For `FieldSet::YearMonth`.
     pub fn from_fields(fields: &Fields, overflow: Overflow) -> Result<PlainYearMonth> {
-        PlainYearMonth::from_date_fields(fields.date, fields.calendar, overflow)
+        PlainYearMonth::from_date_fields(&fields.date, fields.calendar, overflow)
     }
 
     fn from_date_fields(
-        fields: DateFields,
+        fields: &DateFields,
         calendar: CalendarId,
         overflow: Overflow,
     ) -> Result<PlainYearMonth> {
@@ -77,7 +77,7 @@ impl PlainYearMonth {
 
     pub(crate) fn of_date(date: IsoDate, calendar: CalendarId) -> Result<PlainYearMonth> {
         let fields = DateFields::of_year_month(calendar, date)?;
-        PlainYearMonth::from_date_fields(fields, calendar, Overflow::Constrain)
+        PlainYearMonth::from_date_fields(&fields, calendar, Overflow::Constrain)
     }
 
     pub fn parse(text: Text<'_>) -> Result<ParsedPlainYearMonth, InputError<'_>> {
@@ -107,13 +107,13 @@ impl PlainYearMonth {
             day: Some(day),
             ..self.fields()?
         };
-        self.calendar.date_from_fields(fields, Overflow::Constrain)
+        self.calendar.date_from_fields(&fields, Overflow::Constrain)
     }
 
     /// For `FieldSet::YearMonth` in the calendar of `self`.
     pub fn with(self, fields: &Fields, overflow: Overflow) -> Result<PlainYearMonth> {
-        let merged = self.fields()?.merged(fields.date);
-        PlainYearMonth::from_date_fields(merged, self.calendar, overflow)
+        let merged = self.fields()?.merged(&fields.date);
+        PlainYearMonth::from_date_fields(&merged, self.calendar, overflow)
     }
 
     /// AddDurationToYearMonth
@@ -190,6 +190,7 @@ impl PlainYearMonth {
     }
 
     /// TemporalYearMonthToString
+    #[inline(always)]
     pub fn to_text(self, show_calendar: ShowCalendar) -> IsoText {
         let mut text = IsoText::new();
         if show_calendar.needs_full_date(self.calendar) {

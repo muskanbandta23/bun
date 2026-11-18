@@ -154,7 +154,7 @@ JSC_DEFINE_HOST_FUNCTION(functionDescribe, (JSGlobalObject * globalObject, CallF
     VM& vm = globalObject->vm();
     if (callFrame->argumentCount() < 1)
         return JSValue::encode(jsUndefined());
-    return JSValue::encode(jsString(vm, toString(callFrame->argument(0))));
+    return JSValue::encode(jsString(vm, describeRepresentation(callFrame->argument(0))));
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionDescribeArray);

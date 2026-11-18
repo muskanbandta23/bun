@@ -331,6 +331,7 @@ private:
     void (*m_onEachMicrotaskTick)(VM&) { nullptr };
     ExceptionScope* m_topExceptionScope { nullptr };
     ExceptionEventLocation m_simulatedThrowLocation;
+    std::unique_ptr<WTF::StackTrace> m_simulatedThrowStack;
     IsoSubspace* m_nativeStdFunctionSpace { nullptr };
 
 public:

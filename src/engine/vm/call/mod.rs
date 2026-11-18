@@ -171,7 +171,7 @@ impl CallData {
 #[inline(never)]
 #[unsafe(export_name = "engine_native_not_a_constructor")]
 pub fn native_not_a_constructor(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
-    Err(errors::throw_not_a_constructor(cx, frame.callee().into()))
+    Err(errors::throw_entered_as_constructor(cx, frame.callee()))
 }
 
 /// What `stubs::enter` makes a frame of.
@@ -368,7 +368,7 @@ fn link_executable(
     if specialization == Specialization::Construct
         && !(executable.cast::<FunctionExecutable>().info()).is_constructor()
     {
-        return Err(errors::throw_not_a_constructor(cx, callee.into()));
+        return Err(errors::throw_entered_as_constructor(cx, callee));
     }
     let code = executable.unlinked_code(cx, specialization)?;
     install_code(cx, executable, specialization, code)
@@ -380,6 +380,7 @@ pub(crate) fn install_code(
     specialization: Specialization,
     code: Rc<Code>,
 ) -> JsResult<Gc<CodeBlock>> {
+    cx.ensure_can_run(executable.provider())?;
     let code_block = CodeBlock::link(cx, executable, code)?;
     if code_block.has_debug_hooks()
         && let Some(debugger) = cx.global().debugger()

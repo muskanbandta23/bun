@@ -150,6 +150,11 @@ pub struct StaticBuiltin {
     pub visibility: Visibility,
 }
 
+fn static_provider(text: StringRef) -> SourceProviderRef {
+    let provider = SourceProvider::build(text, None, SourceType::Program);
+    provider.is_static(true).finish()
+}
+
 impl Vm {
     /// See `UnlinkedFunction::link`.
     pub fn link_static_builtin(&self, builtin: StaticBuiltin) -> Gc<FunctionExecutable> {
@@ -158,8 +163,7 @@ impl Vm {
         let function = functions.entry(builtin.text.as_ptr().addr());
         let function = function.or_insert_with(|| {
             let text = StringRef::from_static_units(builtin.text);
-            let provider = SourceProvider::build(text, None, SourceType::Program);
-            let source = SourceCode::whole(provider.finish());
+            let source = SourceCode::whole(static_provider(text));
             let (name, kind) = (Identifier::from_literal(builtin.name), builtin.kind);
             UnlinkedFunction {
                 function: describe_builtin(
@@ -190,8 +194,7 @@ impl Vm {
         let function = functions.entry(id.0).or_insert_with(|| {
             let builtin = (self.hooks().builtin_source)(id);
             let text = StringRef::from_literal(builtin.text);
-            let provider = SourceProvider::build(text, None, SourceType::Program);
-            (provider.finish(), builtin.to_function())
+            (static_provider(text), builtin.to_function())
         });
         function.clone()
     }
@@ -201,7 +204,7 @@ impl Vm {
         let provider = &self.services.code.builtins.default_constructors[index];
         let provider = provider.get_or_init(|| {
             let text = StringRef::from_literal(function.default_constructor_source());
-            SourceProvider::build(text, None, SourceType::Program).finish()
+            static_provider(text)
         });
         provider.clone()
     }

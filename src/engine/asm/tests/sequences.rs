@@ -77,9 +77,12 @@ fn arithmetic() {
         sub64(X1, X2, -0x5000) => "add x1, x2, #5, lsl #12",
         add64(X1, X1, 0x12_3456) => "add x1, x1, #0x123, lsl #12; add x1, x1, #0x456",
         add64(SP, SP, 0x1010) => "add sp, sp, #1, lsl #12; add sp, sp, #0x10",
-        sub64(SP, FP, 0x1010) => "sub x17, x29, #1, lsl #12; sub sp, x17, #0x10",
+        sub64(SP, FP, 0x1010) => "movn x17, #0x100f; add sp, x29, x17",
+        sub64(SP, FP, 0x1_1010) => "sub x17, x29, #0x11, lsl #12; sub sp, x17, #0x10",
+        sub32(X1, X2, 0xd800) => "movn w1, #0xd7ff; add w1, w2, w1",
         add64(X1, X2, 1i64 << 32) => "movz x1, #1, lsl #32; add x1, x2, x1",
         add64(X1, X1, 1i64 << 32) => "movz x17, #1, lsl #32; add x1, x1, x17",
+        add_constant(Width::W64, X17, X17, 0x1010) => "add x17, x17, #1, lsl #12; add x17, x17, #0x10",
         add64(X1, X2, SP) => "add x1, sp, x2",
         sub64(SP, FP, X2) => "sub sp, x29, x2",
         add64(X1, X2, Address::new(X3, 8)) => "ldr x16, [x3, #8]; add x1, x2, x16",
@@ -148,8 +151,8 @@ fn addresses() {
             => "ldrb w16, [x2, #1]; and w16, w16, #0x81818181; strb w16, [x2, #1]",
         transfer64(at(8), at(16)) => "ldr x16, [x2, #16]; str x16, [x2, #8]",
         prefetch(at(-8)) => "prfum pldl1keep, [x2, #-8]",
-        store_registers(RegisterSet::of(&[X19, X20, X24], &[V8, V9, V10]), 8, Address::new(SP, 0))
-            => "stp x19, x20, [sp]; str x24, [sp, #16]; stp d8, d9, [sp, #24]; str d10, [sp, #40]",
+        store_registers(RegisterSet::of(&[X19, X20, X24], &[V9, V10, V11]), 8, Address::new(SP, 0))
+            => "stp x19, x20, [sp]; str x24, [sp, #16]; stp d9, d10, [sp, #24]; str d11, [sp, #40]",
         enter_frame() => "stp x29, x30, [sp, #-16]!; mov x29, sp",
         leave_frame() => "mov sp, x29; ldp x29, x30, [sp], #16",
     }
@@ -170,6 +173,10 @@ fn comparisons() {
         branch32(Cond::Above, X1, 0xffff, t) => "cmp w1, #16, lsl #12; b.hs #-4",
         branch32(Cond::Lt, X1, 4097, t) => "cmp w1, #1, lsl #12; b.le #-4",
         branch32(Cond::Eq, X1, 0xffff, t) => "movz w16, #0xffff; cmp w1, w16; b.eq #-8",
+        branch32(Cond::Eq, X1, 0x1_f600, t)
+            => "sub w16, w1, #0x1f, lsl #12; cmp w16, #0x600; b.eq #-8",
+        branch64(Cond::Ne, X1, -0x1_2345, t)
+            => "add x16, x1, #0x13, lsl #12; cmp x16, #0xcbb; b.ne #-8",
         branch32(Cond::Ne, Address::new(X2, 0), 0xffff, t)
             => "ldr w16, [x2]; movz w17, #0xffff; cmp w16, w17; b.ne #-12",
         branch8(Cond::Eq, byte, 0, t) => "ldrb w16, [x2, #5]; cbz w16, #-4",
@@ -209,6 +216,8 @@ fn floats() {
             => "movi v1.2s, #0x80, lsl #24; bsl v1.16b, v3.16b, v2.16b",
         select_float_test(Width::W32, TestCond::Zero, V1, X1, -1, V2, V3)
             => "tst w1, w1; fcsel d1, d2, d3, eq",
+        convert_f64_to_f16_bits(X1, V1) => "fcvt h31, d1; fmov w1, s31",
+        convert_f16_bits_to_f64(V1, X1) => "fmov s1, w1; fcvt d1, h1",
         truncate_f64_to_int32_modular(X1, V1, t)
             => "fcvtzs x1, d1; cmn x1, #1; ccmp x1, #1, #1, vc; b.vs #-12; mov w1, w1",
         truncate_float_or_branch(double, Sign::Unsigned, Width::W32, X1, V1, t)
@@ -224,6 +233,14 @@ fn floats() {
         convert_f64_to_int_exact(Width::W64, X1, V1, accept, t)
             => "fcvtzs x1, d1; frint64z d31, d1; fcmp d1, d31; b.ne #-12",
     }
+}
+
+#[test]
+fn half_precision_is_supported_where_there_are_instructions() {
+    assert!(assembler::<MacroAssembler>(Arm64Features::empty()).supports_f16());
+    let on_x64 = |features| assembler::<x64::MacroAssembler>(features).supports_f16();
+    assert!(on_x64(X64Features::AVX | X64Features::F16C));
+    assert!(!on_x64(X64Features::all() - X64Features::F16C));
 }
 
 #[test]
@@ -265,6 +282,7 @@ fn stack_pointer_is_written_once<M: MacroAssembly>(
         0,
         16,
         -16,
+        0x1_1010,
         0x1010,
         -0x1010,
         0x1234_5670,

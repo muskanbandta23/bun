@@ -1,4 +1,4 @@
-use core::mem::{ManuallyDrop, MaybeUninit};
+use core::mem::MaybeUninit;
 use core::ops::Range;
 use core::ptr::NonNull;
 
@@ -143,7 +143,7 @@ impl StringBuilder {
     /// Room for exactly so many more units of the present width, unless there is more already.
     #[inline]
     pub fn reserve(&mut self, additional: usize) {
-        if additional > self.capacity() - self.length {
+        if additional > self.spare() {
             self.resize(self.length.saturating_add(additional));
         }
     }
@@ -151,6 +151,12 @@ impl StringBuilder {
     #[inline(always)]
     fn capacity(&self) -> usize {
         self.latin1_capacity | self.utf16_capacity
+    }
+
+    /// For how many more units of the present width there is room.
+    #[inline(always)]
+    pub(crate) fn spare(&self) -> usize {
+        self.capacity() - self.length
     }
 
     /// Whether the units are of type `T` and `count` more fit, or else there are and will be none.
@@ -166,7 +172,7 @@ impl StringBuilder {
 
     /// Lends `count` units if they are there and of type `T`.
     #[inline(always)]
-    fn write_in_room<T: CodeUnit>(
+    pub(crate) fn write_in_room<T: CodeUnit>(
         &mut self,
         count: usize,
         write: impl FnOnce(&mut Cursor<'_, T>),
@@ -174,19 +180,32 @@ impl StringBuilder {
         if !self.has_room::<T>(count) {
             return false;
         }
+        let length = self.length;
         // SAFETY: inside the capacity, which is in units of `T`, and only the builder has the memory.
         let room = unsafe {
-            let start = self.units.cast::<MaybeUninit<T>>().add(self.length);
+            let start = self.units.cast::<MaybeUninit<T>>().add(length);
             NonNull::slice_from_raw_parts(start, count).as_mut()
         };
-        self.length += Cursor::fill_uninit(room, write).len();
+        self.length = length + Cursor::fill_uninit(room, write).len();
         true
+    }
+
+    /// Unless `is_done`, runs `slow`, which is not inlined and returns the length. So both ways store it in one
+    /// place, from which the next push gets it in a register.
+    #[inline(always)]
+    pub(crate) fn or_else(&mut self, is_done: bool, slow: impl FnOnce(&mut Self) -> usize) {
+        self.length = if is_done {
+            self.length
+        } else {
+            core::hint::cold_path();
+            slow(self)
+        };
     }
 
     /// Lends all the room that there is, if the units are of type `T`.
     #[inline(always)]
     pub(crate) fn write_in_spare<T: CodeUnit>(&mut self, write: impl FnOnce(&mut Cursor<'_, T>)) {
-        self.write_in_room(self.capacity() - self.length, write);
+        self.write_in_room(self.spare(), write);
     }
 
     /// Appends what `write` writes, `count` characters at most. Does not call it after an overflow.
@@ -199,17 +218,18 @@ impl StringBuilder {
         } else {
             return;
         };
+        let (length, is_latin1) = (self.length, self.is_latin1);
         // SAFETY: inside the capacity, behind what is written, and only the builder has the memory.
         let room = unsafe {
             let start = self.units.cast::<MaybeUninit<u8>>().add(offset);
             NonNull::slice_from_raw_parts(start, count).as_mut()
         };
         let written = Cursor::fill_uninit(room, write).len();
-        if !self.is_latin1 {
+        if !is_latin1 {
             // SAFETY: as `make_room_for_latin1` has arranged it.
             unsafe { self.widen_from(offset, written) };
         }
-        self.length += written;
+        self.length = length + written;
     }
 
     /// The offset in bytes of room for `count` bytes: for wide units, the second half of the room for as many.
@@ -342,7 +362,7 @@ impl StringBuilder {
     /// Room for so many more units of the present width.
     #[inline]
     pub fn grow(&mut self, additional: usize) {
-        if additional > self.capacity() - self.length {
+        if additional > self.spare() {
             self.resize(if self.is_latin1 {
                 self.grown_capacity::<u8>(additional)
             } else {
@@ -358,7 +378,7 @@ impl StringBuilder {
             return self.grow(additional);
         }
         let required = self.length.saturating_add(additional);
-        if !self.is_allocated && required <= self.latin1_capacity / 2 {
+        if self.units == self.scratch && required <= self.latin1_capacity / 2 {
             return self.widen_in_place();
         }
         let capacity = if required <= self.latin1_capacity {
@@ -395,28 +415,26 @@ impl StringBuilder {
 
     #[inline]
     pub fn push_latin1(&mut self, character: u8) {
-        if !self.write_in_room(1, |cursor| cursor.push(character)) {
-            self.push_unit_slow(u16::from(character));
-        }
+        let is_done = self.write_in_room(1, |cursor| cursor.push(character))
+            || self.write_in_room(1, |cursor| cursor.push(u16::from(character)));
+        self.or_else(is_done, |it| it.push_unit_slow(u16::from(character)));
     }
 
     #[inline]
     pub fn push_unit(&mut self, unit: u16) {
-        if unit.is_latin1() && self.write_in_room(1, |cursor| cursor.push(unit as u8)) {
-            return;
-        }
-        if !self.write_in_room(1, |cursor| cursor.push(unit)) {
-            self.push_unit_slow(unit);
-        }
+        let is_done = self.write_in_room(1, |cursor| cursor.push(unit))
+            || (unit.is_latin1() && self.write_in_room(1, |cursor| cursor.push(unit as u8)));
+        self.or_else(is_done, |it| it.push_unit_slow(unit));
     }
 
     #[inline(never)]
-    fn push_unit_slow(&mut self, unit: u16) {
+    fn push_unit_slow(&mut self, unit: u16) -> usize {
         if self.is_latin1 && unit.is_latin1() {
             self.write_latin1(1, |cursor| cursor.push(unit as u8));
         } else {
             self.write_utf16(1, |cursor| cursor.push(unit));
         }
+        self.length
     }
 
     /// `code_point` is at most 0x10FFFF.
@@ -430,17 +448,17 @@ impl StringBuilder {
 
     #[inline]
     pub fn push_latin1_slice(&mut self, characters: &[u8]) {
-        if !self.write_in_room(characters.len(), |cursor| cursor.push_slice(characters)) {
-            self.push_latin1_slice_slow(characters);
-        }
+        let is_done = self.write_in_room(characters.len(), |cursor| cursor.push_slice(characters));
+        self.or_else(is_done, |it| it.push_latin1_slice_slow(characters));
     }
 
     #[inline(never)]
-    fn push_latin1_slice_slow(&mut self, characters: &[u8]) {
+    fn push_latin1_slice_slow(&mut self, characters: &[u8]) -> usize {
         self.grow(characters.len());
         let text = Text::Latin1(characters);
         _ = self.write_in_room::<u16>(text.len(), |cursor| cursor.push_text(text))
             || self.write_in_room::<u8>(text.len(), |cursor| cursor.push_text(text));
+        self.length
     }
 
     #[inline]
@@ -451,18 +469,18 @@ impl StringBuilder {
 
     #[inline]
     pub fn push_utf16(&mut self, units: &[u16]) {
-        if !self.write_in_room(units.len(), |cursor| cursor.push_slice(units)) {
-            self.push_utf16_slow(units);
-        }
+        let is_done = self.write_in_room(units.len(), |cursor| cursor.push_slice(units));
+        self.or_else(is_done, |it| it.push_utf16_slow(units));
     }
 
     #[inline(never)]
-    fn push_utf16_slow(&mut self, units: &[u16]) {
+    fn push_utf16_slow(&mut self, units: &[u16]) -> usize {
         if self.is_latin1 && ascii::fits_latin1(units) {
             self.write_latin1(units.len(), |cursor| cursor.push_text(Text::Utf16(units)));
         } else {
             self.write_utf16(units.len(), |cursor| cursor.push_slice(units));
         }
+        self.length
     }
 
     #[inline]
@@ -510,8 +528,8 @@ impl StringBuilder {
     }
 
     #[inline]
-    pub fn finish(self) -> Result<StringRef, AllocError> {
-        ManuallyDrop::new(self).take_string()
+    pub fn finish(mut self) -> Result<StringRef, AllocError> {
+        self.take_string()
     }
 
     /// `finish` for a builder that is lent or used again. It is empty afterwards.

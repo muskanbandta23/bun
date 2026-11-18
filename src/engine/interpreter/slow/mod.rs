@@ -84,6 +84,7 @@ impl Next {
 #[derive(Clone, Copy)]
 pub(crate) struct Frame<'a> {
     pub(crate) header: &'a CallFrame,
+    #[cfg_attr(rootcheck, rootcheck::stays("the frame holds it"))]
     pub(crate) code_block: &'a CodeBlock,
 }
 

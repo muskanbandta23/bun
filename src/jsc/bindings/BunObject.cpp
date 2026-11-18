@@ -885,8 +885,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
             auto bytes = builder.jsonBytes();
             heapProfiler.clearSnapshots();
             RETURN_IF_EXCEPTION(throwScope, {});
-            auto released = bytes.releaseBuffer();
-            auto span = released.leakSpan();
+            auto span = bytes.leakSpan();
             auto buffer = ArrayBuffer::createFromBytes(std::span<const uint8_t> { span.data(), span.size() }, createSharedTask<void(void*)>([](void* p) {
                 fastFree(p);
             }));

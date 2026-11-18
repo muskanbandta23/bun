@@ -41,7 +41,6 @@
 #include "JSBuffer.h"
 #include "xxhash3.h"
 
-#include <JavaScriptCore/DOMJITAbstractHeap.h>
 #include <JavaScriptCore/DFGAbstractHeap.h>
 #include <JavaScriptCore/Completion.h>
 #include "JavaScriptCore/LazyClassStructureInlines.h"

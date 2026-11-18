@@ -23,10 +23,8 @@ void ConsoleObject::messageWithTypeAndLevel(MessageType type, MessageLevel level
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (globalObject->inspectable()) {
-        if (auto client = globalObject->inspectorController().consoleClient()) {
-            client->messageWithTypeAndLevel(type, level, globalObject, arguments);
-            RETURN_IF_EXCEPTION(scope, );
-        }
+        globalObject->inspectorController().addConsoleMessage(globalObject, type, level, arguments.span());
+        RETURN_IF_EXCEPTION(scope, );
     }
 
     if (type == MessageType::Table && !arguments.at(1).isUndefined() && !isJSArray(arguments.at(1))) [[unlikely]] {
@@ -71,20 +69,14 @@ void ConsoleObject::timeEnd(JSGlobalObject*, const String& label)
 
 void ConsoleObject::profile(JSC::JSGlobalObject* globalObject, const String& title)
 {
-    if (globalObject->inspectable()) {
-        if (auto client = globalObject->inspectorController().consoleClient()) {
-            client->profile(globalObject, title);
-        }
-    }
+    if (globalObject->inspectable())
+        globalObject->inspectorController().startConsoleProfile(globalObject, title);
 }
 
 void ConsoleObject::profileEnd(JSC::JSGlobalObject* globalObject, const String& title)
 {
-    if (globalObject->inspectable()) {
-        if (auto client = globalObject->inspectorController().consoleClient()) {
-            client->profileEnd(globalObject, title);
-        }
-    }
+    if (globalObject->inspectable())
+        globalObject->inspectorController().stopConsoleProfile(globalObject, title);
 }
 
 }

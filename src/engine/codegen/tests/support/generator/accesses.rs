@@ -647,6 +647,33 @@ impl Generator<'_> {
         self.load_from(spot, kind, ty)
     }
 
+    pub(super) fn load_trusting(&mut self, index: Value, count: u32) -> Value {
+        let region = self
+            .random
+            .pick(&[Region::Arrays, Region::Linear, Region::ReadOnly]);
+        let (start, pointer) = self.root(region);
+        let (address, pointer) = self.add_index(start, pointer, index, 8, count, false);
+        let (offset, size) = (self.place_in(pointer, 8, Purpose::Read).unwrap(), 8);
+        let spot = self.remember(Spot {
+            base: address,
+            pointer,
+            offset,
+            size,
+        });
+        let mut flags = AccessFlags::ALWAYS_READABLE;
+        flags.set(AccessFlags::IMMUTABLE, !region.is_writable());
+        let (kind, access) = (Load::Full, Access::new(self.heap_of(spot), flags));
+        self.emit(
+            Op::Load {
+                kind,
+                address,
+                offset,
+                access,
+            },
+            Type::I64,
+        )
+    }
+
     pub(super) fn store_somewhere(&mut self, value: Value) {
         let size = self.store_size(self.type_of(value));
         let spot = self.spot(size, Purpose::Write);

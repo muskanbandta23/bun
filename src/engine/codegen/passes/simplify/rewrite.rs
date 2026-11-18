@@ -2,7 +2,8 @@
 
 use bun_engine_asm::{Cond, FloatCond, Sign};
 
-use super::{Simplifier, ValueInfo, numbering};
+use super::numbering::is_expression;
+use super::{Simplifier, ValueInfo};
 use crate::ir::{Binary, Checked, Exit, Op, State, Type, Unary, Value};
 
 pub(super) enum Step {
@@ -273,12 +274,15 @@ impl Simplifier<'_> {
     }
 
     pub(super) fn make_as_it_is(&mut self, op: Op, ty: Type) -> Value {
-        let (position, end) = (self.position, self.end_of_subtree);
-        match self.tables.numbering.find(self.function, op, ty, position) {
+        match self
+            .tables
+            .numbering
+            .find_expression(self.function, &op, ty)
+        {
             Ok(known) => known,
             Err(vacancy) => {
                 let value = self.insert_before(self.cursor, op, ty);
-                self.tables.numbering.add(&vacancy, value, position, end);
+                self.tables.numbering.add(&vacancy, value, 0);
                 value
             }
         }
@@ -295,10 +299,10 @@ impl Simplifier<'_> {
     }
 
     pub(super) fn find(&self, op: Op, ty: Type) -> Option<Value> {
-        let found =
-            self.tables
-                .numbering
-                .find(self.function, numbering::key(op)?, ty, self.position);
+        let found = self
+            .tables
+            .numbering
+            .find_expression(self.function, &op, ty);
         found.ok()
     }
 
@@ -412,6 +416,7 @@ impl Simplifier<'_> {
     }
 
     pub(super) fn replace(&mut self, value: Value, replacement: Value) {
+        self.set_free(value);
         self.pass_uses_on(value, replacement);
         self.release_uses_by(value);
         self.function.replace(value, replacement);
@@ -420,6 +425,9 @@ impl Simplifier<'_> {
 
     /// `new` has the state of the old operation, or none.
     pub(super) fn change(&mut self, value: Value, new: Op) {
+        if is_expression(&new) {
+            self.set_free(value);
+        }
         self.retain_all(new.inline_operands());
         let old = core::mem::replace(self.function.op_mut(value), new);
         for &operand in old.inline_operands() {

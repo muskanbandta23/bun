@@ -6,15 +6,22 @@ use super::precise::PreciseAllocation;
 use super::stack::load_word;
 use super::{AllocationKind, block_memory};
 
-pub(super) struct ConservativeRoots<'a> {
-    blocks: &'a BlockSet,
-    /// Sorted by address.
-    precise: &'a [&'static PreciseAllocation],
-    code: core::ops::Range<usize>,
+#[derive(Default)]
+pub(super) struct Found {
     pub(super) cells: Vec<usize>,
     pub(super) auxiliary: Vec<usize>,
     pub(super) code_addresses: Vec<usize>,
 }
+
+pub(super) struct ConservativeRoots<'a> {
+    blocks: &'a BlockSet,
+    /// Sorted by address.
+    precise: Vec<&'static PreciseAllocation>,
+    code: core::ops::Range<usize>,
+    pub(super) found: Found,
+}
+
+const ADDRESS_BITS: u32 = 48;
 
 /// How far past the end of a storage the pointer to its elements can be.
 const PAST_THE_END: usize = size_of::<u64>() + 1;
@@ -22,16 +29,16 @@ const PAST_THE_END: usize = size_of::<u64>() + 1;
 impl<'a> ConservativeRoots<'a> {
     pub(super) fn new(
         blocks: &'a BlockSet,
-        precise: &'a [&'static PreciseAllocation],
+        precise: &[&'static PreciseAllocation],
         code: core::ops::Range<usize>,
     ) -> ConservativeRoots<'a> {
+        let mut precise = precise.to_vec();
+        precise.sort_unstable_by_key(|allocation| allocation.cell());
         ConservativeRoots {
             blocks,
             precise,
             code,
-            cells: Vec::new(),
-            auxiliary: Vec::new(),
-            code_addresses: Vec::new(),
+            found: Found::default(),
         }
     }
 
@@ -56,11 +63,17 @@ impl<'a> ConservativeRoots<'a> {
 
     #[inline]
     fn add(&mut self, word: usize) {
-        if word >> 48 != 0 || word < BLOCK_SIZE {
-            return;
+        // A native function may have signed the return address that it saved.
+        let code_address = if cfg!(target_arch = "aarch64") {
+            word & ((1 << ADDRESS_BITS) - 1)
+        } else {
+            word
+        };
+        if self.code.contains(&code_address) {
+            return self.found.code_addresses.push(code_address);
         }
-        if self.code.contains(&word) {
-            return self.code_addresses.push(word);
+        if word >> ADDRESS_BITS != 0 || word < BLOCK_SIZE {
+            return;
         }
         if let (Some(first), Some(last)) = (self.precise.first(), self.precise.last())
             && word >= first.cell()
@@ -70,7 +83,7 @@ impl<'a> ConservativeRoots<'a> {
             let allocation = self.precise[after - 1];
             if allocation.contains(word) {
                 if allocation.is_live() {
-                    self.found(allocation.cell(), allocation.attributes.kind);
+                    self.did_find(allocation.cell(), allocation.attributes.kind);
                 }
                 return;
             }
@@ -101,14 +114,14 @@ impl<'a> ConservativeRoots<'a> {
         if let Some(cell) = block.cell_containing(word)
             && block.is_live(cell)
         {
-            self.found(cell, block.attributes.kind);
+            self.did_find(cell, block.attributes.kind);
         }
     }
 
-    fn found(&mut self, cell: usize, kind: AllocationKind) {
+    fn did_find(&mut self, cell: usize, kind: AllocationKind) {
         match kind {
-            AllocationKind::Cell => self.cells.push(cell),
-            AllocationKind::Auxiliary => self.auxiliary.push(cell),
+            AllocationKind::Cell => self.found.cells.push(cell),
+            AllocationKind::Auxiliary => self.found.auxiliary.push(cell),
         }
     }
 }

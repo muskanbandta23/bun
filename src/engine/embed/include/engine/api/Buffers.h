@@ -457,6 +457,12 @@ public:
 
     static JSGenericTypedArrayView* create(JSGlobalObject* globalObject, Structure* structure, size_t length) { return cast(Engine::typed_array_create(globalObject, structure, length)); }
     static JSGenericTypedArrayView* createUninitialized(JSGlobalObject* globalObject, Structure* structure, size_t length) { return cast(Engine::typed_array_create_uninitialized(globalObject, structure, length)); }
+    // As that of ArrayBuffer, without making one.
+    static JSGenericTypedArrayView* createAdopted(VM& vm, Structure* structure, std::span<const uint8_t> bytes)
+        requires(TypedArrayStorageType == TypeUint8)
+    {
+        return cast(Engine::uint8_array_adopt(vm, structure, bytes.data(), bytes.size()));
+    }
     // Without a length it reaches to the end of the buffer.
     static JSGenericTypedArrayView* create(JSGlobalObject* globalObject, Structure* structure, RefPtr<ArrayBuffer>&& buffer, size_t byteOffset, std::optional<size_t> length) { return cast(JSArrayBufferView::create(globalObject, structure, *buffer, byteOffset, length)); }
 

@@ -7,13 +7,9 @@
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/InspectorFrontendChannel.h>
-#include <JavaScriptCore/JSGlobalObjectDebuggable.h>
-#include <JavaScriptCore/JSGlobalObjectDebugger.h>
-#include <JavaScriptCore/Debugger.h>
 #include <wtf/Condition.h>
 #include <wtf/NeverDestroyed.h>
 #include "ScriptExecutionContext.h"
-#include "debug-helpers.h"
 #include "BunInjectedScriptHost.h"
 #include <JavaScriptCore/JSGlobalObjectInspectorController.h>
 #include <wtf/JSONValues.h>
@@ -52,42 +48,29 @@ static PausedWait& pausedWait()
 }
 
 static bool waitingForConnection = false;
-static bool bunControllerInstalled = false;
-// Tracks whether connectFrontend has ever been called on the Bun-installed
-// inspector controller; once true, the exit path must leak that controller
-// (see Bun__InspectorConnection__disconnectAllOnExit) even if every
-// connection has since disconnected and been removed from inspectorConnections.
-static bool bunControllerHasEverConnected = false;
 extern "C" void Debugger__didConnect();
 
-class BunJSGlobalObjectDebuggable final : public JSC::JSGlobalObjectDebuggable {
+static void stopWaitingForConnection()
+{
+    if (waitingForConnection) {
+        waitingForConnection = false;
+        Debugger__didConnect();
+    }
+}
+
+class BunInspectorClient final : public Inspector::InspectorClient {
 public:
-    using Base = JSC::JSGlobalObjectDebuggable;
-
-    BunJSGlobalObjectDebuggable(JSC::JSGlobalObject& globalObject)
-        : Base(globalObject)
+    static BunInspectorClient& singleton()
     {
+        static NeverDestroyed<BunInspectorClient> client;
+        return client;
     }
 
-    ~BunJSGlobalObjectDebuggable() final
-    {
-    }
-
-    static Ref<BunJSGlobalObjectDebuggable> create(JSGlobalObject& globalObject)
-    {
-        return adoptRef(*new BunJSGlobalObjectDebuggable(globalObject));
-    }
-
-    void pauseWaitingForAutomaticInspection() override
-    {
-    }
-    void unpauseForResolvedAutomaticInspection() override
-    {
-        if (waitingForConnection) {
-            waitingForConnection = false;
-            Debugger__didConnect();
-        }
-    }
+private:
+    JSValue subtype(JSGlobalObject* globalObject, JSValue value) final { return InjectedScriptHost::subtype(globalObject, value); }
+    JSValue getInternalProperties(VM& vm, JSGlobalObject* globalObject, JSValue value) final { return InjectedScriptHost::getInternalProperties(vm, globalObject, value); }
+    void runWhilePaused(JSGlobalObject&, bool& isDoneProcessingEvents) final;
+    void frontendInitialized() final { stopWaitingForConnection(); }
 };
 
 enum class ConnectionStatus : int32_t {
@@ -100,9 +83,8 @@ enum class ConnectionStatus : int32_t {
 class BunInspectorConnection : public ThreadSafeRefCounted<BunInspectorConnection>, public Inspector::FrontendChannel {
 
 public:
-    BunInspectorConnection(ScriptExecutionContext& scriptExecutionContext, JSC::JSGlobalObject* globalObject, bool shouldRefEventLoop)
+    BunInspectorConnection(ScriptExecutionContext& scriptExecutionContext, bool shouldRefEventLoop)
         : Inspector::FrontendChannel()
-        , globalObject(globalObject)
         , scriptExecutionContextIdentifier(scriptExecutionContext.identifier())
         , shouldRefEventLoop(shouldRefEventLoop)
     {
@@ -112,14 +94,9 @@ public:
     {
     }
 
-    static Ref<BunInspectorConnection> create(ScriptExecutionContext& scriptExecutionContext, JSC::JSGlobalObject* globalObject, bool shouldRefEventLoop)
+    static Ref<BunInspectorConnection> create(ScriptExecutionContext& scriptExecutionContext, bool shouldRefEventLoop)
     {
-        return adoptRef(*new BunInspectorConnection(scriptExecutionContext, globalObject, shouldRefEventLoop));
-    }
-
-    ConnectionType connectionType() const override
-    {
-        return ConnectionType::Remote;
+        return adoptRef(*new BunInspectorConnection(scriptExecutionContext, shouldRefEventLoop));
     }
 
     void doConnect(WebCore::ScriptExecutionContext& context)
@@ -128,33 +105,20 @@ public:
         auto* globalObject = context.jsGlobalObject();
         this->keepAlive.setActive(this->shouldRefEventLoop);
         globalObject->setInspectable(true);
-        auto& inspector = globalObject->inspectorDebuggable();
-        inspector.setInspectable(true);
+        auto& inspector = globalObject->inspectorController();
 
         static bool hasConnected = false;
 
         if (!hasConnected) {
             hasConnected = true;
-            globalObject->inspectorController().registerAlternateAgent(
-                WTF::makeUniqueRef<Inspector::InspectorLifecycleAgent>(*globalObject));
-            globalObject->inspectorController().registerAlternateAgent(
-                WTF::makeUniqueRef<Inspector::InspectorTestReporterAgent>(*globalObject));
-            globalObject->inspectorController().registerAlternateAgent(
-                WTF::makeUniqueRef<Inspector::InspectorBunFrontendDevServerAgent>(*globalObject));
-            globalObject->inspectorController().registerAlternateAgent(
-                WTF::makeUniqueRef<Inspector::InspectorHTTPServerAgent>(*globalObject));
+            inspector.registerAgent(WTF::makeUniqueRef<Inspector::InspectorLifecycleAgent>(*globalObject));
+            inspector.registerAgent(WTF::makeUniqueRef<Inspector::InspectorTestReporterAgent>(*globalObject));
+            inspector.registerAgent(WTF::makeUniqueRef<Inspector::InspectorBunFrontendDevServerAgent>(*globalObject));
+            inspector.registerAgent(WTF::makeUniqueRef<Inspector::InspectorHTTPServerAgent>(*globalObject));
         }
 
-        this->hasEverConnected = true;
-        bunControllerHasEverConnected = true;
-        globalObject->inspectorController().connectFrontend(*this, true, false); // waitingForConnection
-
-        Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
-        if (debugger) {
-            debugger->runWhilePausedCallback = [](JSC::JSGlobalObject& globalObject, bool& isDoneProcessingEvents) -> void {
-                BunInspectorConnection::runWhilePaused(globalObject, isDoneProcessingEvents);
-            };
-        }
+        this->inspector = &inspector;
+        inspector.connectFrontend(*this, BunInspectorClient::singleton());
 
         this->receiveMessagesOnInspectorThread(context, static_cast<Zig::GlobalObject*>(globalObject), false);
     }
@@ -205,11 +169,7 @@ public:
 
             connection->status = ConnectionStatus::Disconnected;
 
-            // Do not call .disconnect() if we never actually connected.
-            if (connection->hasEverConnected) {
-                connection->inspector().disconnect(connection.get());
-            }
-
+            connection->disconnectFromInspector();
             connection->keepAlive.setActive(false);
 
             {
@@ -223,9 +183,10 @@ public:
         });
     }
 
-    JSC::JSGlobalObjectDebuggable& inspector()
+    void disconnectFromInspector()
     {
-        return globalObject->inspectorDebuggable();
+        if (auto* inspector = std::exchange(this->inspector, nullptr))
+            inspector->disconnectFrontend(*this);
     }
 
     void sendMessageToFrontend(const String& message) override
@@ -273,8 +234,8 @@ public:
                 break;
 
             if (closedCount == connections.size()) {
-                if (global->debugger() && global->debugger()->isPaused()) {
-                    global->debugger()->continueProgram();
+                if (global->inspectorController().isPaused()) {
+                    global->inspectorController().continueProgram();
                 }
                 break;
             }
@@ -345,44 +306,12 @@ public:
             this->jsThreadMessages.swap(messages);
         }
 
-        auto& dispatcher = globalObject->inspectorDebuggable();
-        Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
-
-        // JSC's frontendInitialized() only calls unpauseForResolvedAutomaticInspection
-        // when m_isAutomaticInspection is true, but disconnectFrontend() on any
-        // connection clears it. A previous connection's disconnect task can land
-        // between this connection's connect and its Inspector.initialized dispatch,
-        // so resolve waitForDebugger directly when we see the command instead of
-        // relying on that JSC path.
-        auto resolveWaitIfInitialized = [](const WTF::String& message) {
-            if (waitingForConnection && message.contains("\"method\":\"Inspector.initialized\""_s)) {
-                waitingForConnection = false;
-                Debugger__didConnect();
-            }
-        };
-
-        if (!debugger) {
-            for (auto message : messages) {
-                resolveWaitIfInitialized(message);
-                dispatcher.dispatchMessageFromRemote(WTF::move(message));
-
-                if (!debugger) {
-                    debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
-                    if (debugger) {
-                        debugger->runWhilePausedCallback = [](JSC::JSGlobalObject& globalObject, bool& isDoneProcessingEvents) -> void {
-                            runWhilePaused(globalObject, isDoneProcessingEvents);
-                        };
-                    }
-                }
-            }
-        } else {
-            for (auto message : messages) {
-                resolveWaitIfInitialized(message);
-                dispatcher.dispatchMessageFromRemote(WTF::move(message));
-            }
+        for (auto& message : messages) {
+            // The frontend may have left before this thread got to connect it.
+            if (waitingForConnection && message.contains("\"method\":\"Inspector.initialized\""_s))
+                stopWaitingForConnection();
+            (inspector ? *inspector : globalObject->inspectorController()).dispatchMessageFromFrontend(message);
         }
-
-        messages.clear();
     }
 
     void receiveMessagesOnDebuggerThread(ScriptExecutionContext& context, Zig::GlobalObject* debuggerGlobalObject)
@@ -466,7 +395,6 @@ public:
     WTF::Lock jsThreadMessagesLock = WTF::Lock();
     std::atomic<uint32_t> jsThreadMessageScheduledCount { 0 };
 
-    JSC::JSGlobalObject* globalObject;
     ScriptExecutionContextIdentifier scriptExecutionContextIdentifier;
     JSC::Strong<JSC::Unknown> jsBunDebuggerOnMessageFunction {};
 
@@ -476,8 +404,14 @@ public:
     // The inspected context's thread only. inspectorConnections holds the connection while it is active.
     EventLoopKeepAlive keepAlive;
 
-    bool hasEverConnected = false;
+    // The same thread only. Set while connected, which keeps its global object alive: the context may have another by now.
+    Inspector::JSGlobalObjectInspectorController* inspector = nullptr;
 };
+
+void BunInspectorClient::runWhilePaused(JSGlobalObject& globalObject, bool& isDoneProcessingEvents)
+{
+    BunInspectorConnection::runWhilePaused(globalObject, isDoneProcessingEvents);
+}
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSend);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionDisconnect);
@@ -591,34 +525,7 @@ extern "C" void Bun__tickWhilePaused(bool*);
 
 extern "C" void Bun__ensureDebugger(ScriptExecutionContextIdentifier scriptId, bool pauseOnStart)
 {
-
-    auto* globalObject = ScriptExecutionContext::getScriptExecutionContext(scriptId)->jsGlobalObject();
-    // JSGlobalObject::init() installs a default controller and debuggable, so
-    // they are always non-null here; Bun must replace them with its own
-    // (BunInjectedScriptHost, and BunJSGlobalObjectDebuggable's
-    // unpauseForResolvedAutomaticInspection hook that resolves
-    // wait-for-debugger). Once installed, never recreate: destroying a
-    // controller that ever had a frontend attached — even a since-disconnected
-    // one — trips the CheckedPtr ordering bug (see the exit-path comment
-    // below). node:inspector re-enters this from waitForDebugger() at runtime.
-    if (!bunControllerInstalled) {
-        bunControllerInstalled = true;
-        globalObject->m_inspectorController = makeUnique<Inspector::JSGlobalObjectInspectorController>(*globalObject, Bun::BunInjectedScriptHost::create());
-        globalObject->m_inspectorDebuggable = BunJSGlobalObjectDebuggable::create(*globalObject);
-        globalObject->m_inspectorDebuggable->init();
-    }
-
-    globalObject->setInspectable(true);
-
-    auto& inspector = globalObject->inspectorDebuggable();
-    inspector.setInspectable(true);
-
-    Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
-    if (debugger) {
-        debugger->runWhilePausedCallback = [](JSC::JSGlobalObject& globalObject, bool& isDoneProcessingEvents) -> void {
-            BunInspectorConnection::runWhilePaused(globalObject, isDoneProcessingEvents);
-        };
-    }
+    ScriptExecutionContext::getScriptExecutionContext(scriptId)->jsGlobalObject()->setInspectable(true);
     if (pauseOnStart) {
         waitingForConnection = true;
     }
@@ -660,9 +567,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObj
     if (!targetContext || !onMessageFn)
         return JSValue::encode(jsUndefined());
 
-    auto connection = BunInspectorConnection::create(
-        *targetContext,
-        targetContext->jsGlobalObject(), shouldRef);
+    auto connection = BunInspectorConnection::create(*targetContext, shouldRef);
 
     {
         Locker<Lock> locker(inspectorConnectionsLock);
@@ -969,19 +874,19 @@ enum class AsyncCallTypeUint8 : uint8_t {
     Microtask = 5,
 };
 
-static Inspector::InspectorDebuggerAgent::AsyncCallType getCallType(AsyncCallTypeUint8 callType)
+static Inspector::AsyncCallType getCallType(AsyncCallTypeUint8 callType)
 {
     switch (callType) {
     case AsyncCallTypeUint8::DOMTimer:
-        return Inspector::InspectorDebuggerAgent::AsyncCallType::DOMTimer;
+        return Inspector::AsyncCallType::DOMTimer;
     case AsyncCallTypeUint8::EventListener:
-        return Inspector::InspectorDebuggerAgent::AsyncCallType::EventListener;
+        return Inspector::AsyncCallType::EventListener;
     case AsyncCallTypeUint8::PostMessage:
-        return Inspector::InspectorDebuggerAgent::AsyncCallType::PostMessage;
+        return Inspector::AsyncCallType::PostMessage;
     case AsyncCallTypeUint8::RequestAnimationFrame:
-        return Inspector::InspectorDebuggerAgent::AsyncCallType::RequestAnimationFrame;
+        return Inspector::AsyncCallType::RequestAnimationFrame;
     case AsyncCallTypeUint8::Microtask:
-        return Inspector::InspectorDebuggerAgent::AsyncCallType::Microtask;
+        return Inspector::AsyncCallType::Microtask;
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -990,44 +895,32 @@ static Inspector::InspectorDebuggerAgent::AsyncCallType getCallType(AsyncCallTyp
 extern "C" NEVER_INLINE void Debugger__didScheduleAsyncCall(JSGlobalObject* globalObject, AsyncCallTypeUint8 callType, uint64_t callbackId, bool singleShot)
 {
     BUN_BEGIN_REMOVABLE_ENTRY_POINT(Inspector, ReturnDefault, void)
-    auto* agent = debuggerAgent(globalObject);
-    if (!agent)
-        return;
-
-    agent->didScheduleAsyncCall(globalObject, getCallType(callType), callbackId, singleShot);
+    if (globalObject->hasDebugger()) [[unlikely]]
+        globalObject->inspectorController().didScheduleAsyncCall(getCallType(callType), callbackId, singleShot);
     BUN_END_REMOVABLE_ENTRY_POINT
 }
 
 extern "C" NEVER_INLINE void Debugger__didCancelAsyncCall(JSGlobalObject* globalObject, AsyncCallTypeUint8 callType, uint64_t callbackId)
 {
     BUN_BEGIN_REMOVABLE_ENTRY_POINT(Inspector, ReturnDefault, void)
-    auto* agent = debuggerAgent(globalObject);
-    if (!agent)
-        return;
-
-    agent->didCancelAsyncCall(getCallType(callType), callbackId);
+    if (globalObject->hasDebugger()) [[unlikely]]
+        globalObject->inspectorController().didCancelAsyncCall(getCallType(callType), callbackId);
     BUN_END_REMOVABLE_ENTRY_POINT
 }
 
 extern "C" NEVER_INLINE void Debugger__didDispatchAsyncCall(JSGlobalObject* globalObject, AsyncCallTypeUint8 callType, uint64_t callbackId)
 {
     BUN_BEGIN_REMOVABLE_ENTRY_POINT(Inspector, ReturnDefault, void)
-    auto* agent = debuggerAgent(globalObject);
-    if (!agent)
-        return;
-
-    agent->didDispatchAsyncCall(getCallType(callType), callbackId);
+    if (globalObject->hasDebugger()) [[unlikely]]
+        globalObject->inspectorController().didDispatchAsyncCall(getCallType(callType), callbackId);
     BUN_END_REMOVABLE_ENTRY_POINT
 }
 
 extern "C" NEVER_INLINE void Debugger__willDispatchAsyncCall(JSGlobalObject* globalObject, AsyncCallTypeUint8 callType, uint64_t callbackId)
 {
     BUN_BEGIN_REMOVABLE_ENTRY_POINT(Inspector, ReturnDefault, void)
-    auto* agent = debuggerAgent(globalObject);
-    if (!agent)
-        return;
-
-    agent->willDispatchAsyncCall(getCallType(callType), callbackId);
+    if (globalObject->hasDebugger()) [[unlikely]]
+        globalObject->inspectorController().willDispatchAsyncCall(getCallType(callType), callbackId);
     BUN_END_REMOVABLE_ENTRY_POINT
 }
 
@@ -1035,7 +928,7 @@ extern "C" NEVER_INLINE void Bun__InspectorConnection__disconnectAllOnExit(Zig::
 {
     BUN_BEGIN_REMOVABLE_ENTRY_POINT(Inspector, ReturnDefault, void)
     // Snapshot under the lock, release before calling into the inspector —
-    // `willDestroyFrontendAndBackend` must not run with `inspectorConnectionsLock` held.
+    // agents must not be disabled with `inspectorConnectionsLock` held.
     Vector<RefPtr<BunInspectorConnection>, 8> toDisconnect;
     {
         Locker<Lock> locker(inspectorConnectionsLock);
@@ -1048,34 +941,18 @@ extern "C" NEVER_INLINE void Bun__InspectorConnection__disconnectAllOnExit(Zig::
                         if (connection->status == ConnectionStatus::Disconnected)
                             continue;
                         connection->status = ConnectionStatus::Disconnected;
-                        // Never call `disconnect()` for a connection that never connected —
-                        // `disconnectFrontend` would underflow the FrontendRouter.
-                        if (connection->hasEverConnected)
-                            toDisconnect.append(connection);
+                        toDisconnect.append(connection);
                     }
                 }
             }
         }
     }
 
-    // A controller that never had a frontend connect has no agents and is safe
-    // to destroy normally. One that did needs the leak workaround below even
-    // if every connection has already disconnected (e.g. inspector.close()
-    // before exit) — its destructor still trips the CheckedPtr ordering bug.
-    if (!bunControllerHasEverConnected)
-        return;
-
     for (auto& connection : toDisconnect)
-        globalObject->inspectorDebuggable().disconnect(*connection);
+        connection->disconnectFromInspector();
 
-    globalObject->m_inspectorController->globalObjectDestroyed();
-
-    // WebKit header bug: `m_inspectorAgent` (CheckedPtr) is declared before
-    // `m_agents`, so `~JSGlobalObjectInspectorController` destroys the agent
-    // while a CheckedPtr still counts it -> `crashDueToCheckedPtrToDeadObject()`.
-    // Leak the connected controller and hand the global a fresh, never-connected one.
-    [[maybe_unused]] auto* leakedController = globalObject->m_inspectorController.release();
-    globalObject->m_inspectorController = makeUnique<Inspector::JSGlobalObjectInspectorController>(*globalObject, Bun::BunInjectedScriptHost::create());
+    if (globalObject->hasInspectorController())
+        globalObject->inspectorController().discardValues();
     BUN_END_REMOVABLE_ENTRY_POINT
 }
 }

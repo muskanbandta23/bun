@@ -1,6 +1,6 @@
 use core::sync::atomic::{AtomicU8, AtomicU64, Ordering, fence};
 
-use super::{CellState, container};
+use super::{CellState, MutatorState, container};
 use crate::JsCell;
 
 pub const BLACK_THRESHOLD: u8 = CellState::PossiblyBlack as u8;
@@ -38,10 +38,12 @@ pub fn slow_path(cell: &JsCell) {
         if cell.state() != BLACK_THRESHOLD {
             return;
         }
-        // Black from an earlier collection and not reached yet by this one, which will see the store.
-        if !container::of(cell.address()).is_marked(cell.address()) {
-            return;
-        }
+    }
+    // Black from an earlier collection, and either dead or not reached yet by this one, which will see the store.
+    if (is_fenced() || heap.mutator_state() != MutatorState::Running)
+        && !container::of(cell.address()).is_marked(cell.address())
+    {
+        return;
     }
     heap.remember(cell);
 }

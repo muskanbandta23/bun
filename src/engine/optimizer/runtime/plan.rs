@@ -26,30 +26,67 @@ pub fn tier_up(
     let code_block: Gc<CodeBlock> = code_block.into();
     // Nothing asks again until a compile arms the counter.
     code_block.execution_counter().set(i32::MIN);
-    if !options().use_jit || !options().use_quick_optimizer {
+    let Some(level) = level_for(code_block) else {
         return 0;
-    }
+    };
     let entry = match loop_offset {
         Some(offset) => Entry::Loop(offset),
         None => Entry::Function,
     };
-    let Some(compiled) = compile(vm, code_block, Level::Quick, entry) else {
+    let Some(compiled) = compile(vm, code_block, level, entry) else {
         return 0;
     };
     match entry {
         Entry::Function => {
-            install(vm, code_block, Tier::QuickOptimized, compiled);
+            install(vm, code_block, tier(level), compiled);
             0
         }
         Entry::Loop(_) => {
             // Code that takes over a frame is entered only by this one, so nothing else is told of it.
-            let replacement = replacement(vm, code_block, Tier::QuickOptimized, compiled);
+            let replacement = replacement(vm, code_block, tier(level), compiled);
             let entry = entry_of(replacement);
             // SAFETY: the frame runs that code from now on, and it has the same shape.
             unsafe { frame.set_code_block(Some(replacement)) };
             arm(code_block, options().threshold_for_quick_optimizer);
             entry
         }
+    }
+}
+
+/// A return from code that may be optimized further. The next call runs what this makes.
+#[bun_engine_macros::native_abi]
+pub(super) fn tier_up_at_return(vm: &Vm, frame: &CallFrame) {
+    let Some(code_block) = frame.code_block() else {
+        return;
+    };
+    code_block.execution_counter().set(i32::MIN);
+    let baseline = code_block.baseline();
+    if let Some(level) = level_for(baseline)
+        && let Some(compiled) = compile(vm, baseline, level, Entry::Function)
+    {
+        install(vm, baseline, tier(level), compiled);
+    }
+}
+
+/// How hard to try next, or `None` if there is nothing left to do for the code block.
+fn level_for(code_block: Gc<CodeBlock>) -> Option<Level> {
+    if !options().use_jit {
+        return None;
+    }
+    let installed = code_block
+        .executable()
+        .code_block(code_block.specialization());
+    match installed.map_or(Tier::Interpreter, |installed| installed.tier()) {
+        Tier::Interpreter | Tier::Baseline => options().use_quick_optimizer.then_some(Level::Quick),
+        Tier::QuickOptimized => options().use_full_optimizer.then_some(Level::Full),
+        Tier::FullyOptimized => None,
+    }
+}
+
+fn tier(level: Level) -> Tier {
+    match level {
+        Level::Quick => Tier::QuickOptimized,
+        Level::Full => Tier::FullyOptimized,
     }
 }
 

@@ -18,3 +18,8 @@ pub use plan::{jettison, tier_up};
 pub(crate) fn exit_thunk() -> usize {
     stubs::exit as *const () as usize
 }
+
+/// What `Kind::TierUpAtReturn` calls once the counter of the code block has run out. It takes the `Vm` and the frame.
+pub(crate) fn tier_up_at_return() -> usize {
+    plan::tier_up_at_return as *const () as usize
+}

@@ -3,8 +3,8 @@ use bun_engine_text::{Identifier, PropertyName};
 
 use crate::heap::{Scope, Survivors};
 use crate::{
-    BuiltinId, CallFrame, CodeBlock, Cx, GlobalObject, Intrinsic, PropertyCondition, RealmSlot,
-    RealmWatchpoint, Visitor, Vm,
+    BuiltinId, CallFrame, CodeBlock, Cx, Gc, GlobalObject, Intrinsic, JsObject, JsResult,
+    PropertyCondition, RealmSlot, RealmWatchpoint, Value, Visitor, Vm,
 };
 
 /// What this crate needs from those above it.
@@ -23,6 +23,8 @@ pub struct Hooks {
     pub did_start_having_a_bad_time: fn(&Vm, &GlobalObject),
     pub did_declare_global_lexical: fn(&Vm, &GlobalObject, PropertyName<'_>),
     pub builtin_source: fn(BuiltinId) -> &'static BuiltinSource,
+    /// `toLocaleString` of an instance of a class of `Temporal`, with the locales and the options.
+    pub temporal_to_locale_string: fn(&mut Cx, Gc<JsObject>, Value, Value) -> JsResult<Value>,
     pub find_wasm_handler: fn(&Vm, &CallFrame) -> Option<(usize, u32)>,
     pub debugger_will_unwind: fn(&Vm, &CallFrame),
     pub debugger_did_unwind_frame: fn(&Vm, &CallFrame),

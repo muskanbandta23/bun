@@ -49,7 +49,7 @@ impl LocalSpan {
     };
 }
 
-/// Local time as one thread sees it. It stays in the zone that the process was in when it first needed one, until `reset`.
+/// Local time as one thread sees it. It stays in the zone that the process was in when it first needed one, until `refresh`.
 pub struct DateCache {
     generation: Cell<u64>,
     zone: Cell<Option<(TimeZoneId, &'static ZoneRules)>>,
@@ -58,7 +58,6 @@ pub struct DateCache {
     utc_span: Cell<UtcSpan>,
     local_span: Cell<LocalSpan>,
     last_parsed: LastParsed,
-    has_made_local_fields: Cell<bool>,
     /// For standard time and for daylight saving time, with what goes around them.
     zone_names: RefCell<[Option<StringRef>; 2]>,
 }
@@ -73,29 +72,31 @@ impl Default for DateCache {
             utc_span: Cell::new(UtcSpan::EMPTY),
             local_span: Cell::new(LocalSpan::EMPTY),
             last_parsed: LastParsed::default(),
-            has_made_local_fields: Cell::new(false),
             zone_names: RefCell::default(),
         }
     }
 }
 
 impl DateCache {
-    /// Whether the zone of the process can have changed since the last `reset`.
+    /// Whether the zone of the process can have changed since the last `refresh`.
     #[inline]
     pub fn is_stale(&self) -> bool {
         self.generation.get() != time_zone_generation()
     }
 
-    /// Returns whether `local_fields` has been called since the last time, whose results are now out of date.
-    pub fn reset(&self) -> bool {
+    /// Follows the process to its zone. Returns whether earlier results of `local_fields` are out of date.
+    pub fn refresh(&self) -> bool {
         self.generation.set(time_zone_generation());
+        if (self.zone.get()).is_none_or(|(id, _)| id == system_time_zone()) {
+            return false;
+        }
         self.zone.set(None);
         self.local_days.clear();
         self.utc_span.set(UtcSpan::EMPTY);
         self.local_span.set(LocalSpan::EMPTY);
         self.last_parsed.clear();
         self.zone_names.take();
-        self.has_made_local_fields.take()
+        true
     }
 
     pub fn time_zone(&self) -> TimeZoneId {
@@ -164,7 +165,6 @@ impl DateCache {
             offset_bits: OffsetBits::new(span.offset),
         };
         self.utc_span.set(span);
-        self.has_made_local_fields.set(true);
         span
     }
 

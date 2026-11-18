@@ -18,7 +18,7 @@ impl Entry {
     pub(super) const NOT_AVAILABLE: u16 = u16::MAX - 1;
 }
 
-/// `UTC`, then every name that ICU has, in its order.
+/// `UTC`, then `data::names`.
 pub(super) struct Table {
     names: String,
     entries: Vec<Entry>,

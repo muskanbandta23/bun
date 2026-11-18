@@ -13,6 +13,7 @@ mod command_line;
 mod files;
 mod functions;
 mod global;
+mod inspector;
 mod modules;
 mod run;
 mod state;

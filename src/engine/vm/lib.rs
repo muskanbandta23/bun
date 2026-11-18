@@ -49,7 +49,7 @@ pub use call::{CallData, NativeFunction};
 pub use cell_type::{CellType, CellTypeRange, TypeFlags};
 pub use code::*;
 pub use cx::{Cx, JsResult, NoGc, Thrown};
-pub use debugger::{Debugger, DebuggerFrame};
+pub use debugger::{CollectionObserver, Debugger, DebuggerFrame};
 pub use error::*;
 pub use frame::{CallFrame, EntryRecord};
 pub use function::*;

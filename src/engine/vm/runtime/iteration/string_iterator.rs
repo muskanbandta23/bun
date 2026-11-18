@@ -21,6 +21,13 @@ impl JsStringIterator {
         })
     }
 
+    /// One that is where this one is.
+    pub fn duplicate(&self, cx: &Cx) -> Gc<JsStringIterator> {
+        let copy = Self::create(cx, self.iterated_string());
+        (copy.fields()).set(Self::INDEX, self.fields().at(Self::INDEX));
+        copy
+    }
+
     #[inline(always)]
     pub fn iterated_string(&self) -> Gc<JsString> {
         self.fields().at(Self::ITERATED_STRING).cast()

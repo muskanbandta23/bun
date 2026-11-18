@@ -4,14 +4,15 @@ mod frame;
 mod native_calls;
 
 use core::any::Any;
-use core::cell::Cell;
-use std::rc::Rc;
+use core::cell::{Cell, RefCell};
+use std::rc::{Rc, Weak};
 
 use bun_engine_bytecode::DebugHook;
 
 pub use frame::DebuggerFrame;
 pub(crate) use native_calls::will_call_native_function;
 
+use crate::heap::Scope;
 use crate::{
     CallFrame, CodeBlock, CompileError, Coroutine, Cx, Exception, Gc, GcFree, GlobalObject,
     InternalMicrotask, MicrotaskEvent, SourceProvider, Vm,
@@ -51,11 +52,21 @@ pub trait Debugger: GcFree + Any {
     fn microtask_event(&self, vm: &Vm, event: MicrotaskEvent, job: InternalMicrotask, id: u64);
 }
 
+/// Is called in the middle of a collection, where nothing can be allocated in the heap.
+pub trait CollectionObserver: GcFree {
+    fn will_collect(&self);
+    fn did_collect(&self, scope: Scope);
+}
+
 #[derive(Default)]
 pub(crate) struct State {
+    collection_observers: RefCell<Vec<Weak<dyn CollectionObserver>>>,
     watches_native_calls: Cell<bool>,
     allows_redeclaration: Cell<bool>,
 }
+
+// SAFETY: a supertrait of what it holds.
+unsafe impl GcFree for State {}
 
 impl crate::services::Service for State {}
 
@@ -73,6 +84,18 @@ impl GlobalObject {
 }
 
 impl Vm {
+    /// For as long as it lives.
+    pub fn add_collection_observer(&self, observer: Weak<dyn CollectionObserver>) {
+        let mut observers = self.services.debugger.collection_observers.borrow_mut();
+        observers.retain(|it| it.strong_count() != 0);
+        observers.push(observer);
+    }
+
+    pub(crate) fn notify_collection_observers(&self, notify: impl Fn(&dyn CollectionObserver)) {
+        let observers = self.services.debugger.collection_observers.borrow().clone();
+        (observers.iter().filter_map(Weak::upgrade)).for_each(|it| notify(&*it));
+    }
+
     /// Whether a script may declare a lexical binding that the global scope has. Returns the old setting.
     pub fn replace_allows_redeclaration(&self, value: bool) -> bool {
         self.services.debugger.allows_redeclaration.replace(value)

@@ -61,6 +61,7 @@ impl Heap {
         self.collection_scope.set(Some(scope));
         self.policy.will_collect(scope);
         self.notify_observers(|observer| observer.will_collect());
+        vm.notify_collection_observers(|observer| observer.will_collect());
         vm.will_collect(scope);
 
         self.begin_marking(scope);
@@ -94,6 +95,7 @@ impl Heap {
             vm.did_collect(scope, &cells_on_stack);
         }
         self.notify_observers(|observer| observer.did_collect(scope));
+        vm.notify_collection_observers(|observer| observer.did_collect(scope));
         if options().sweep_synchronously || options().force_mini_vm_mode {
             self.sweep_synchronously();
         } else if scope == Scope::Full {

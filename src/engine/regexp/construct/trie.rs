@@ -133,7 +133,7 @@ enum Step<'a> {
     Close(Outer),
 }
 
-impl Builder {
+impl Builder<'_> {
     /// As the alternatives of the group that is open.
     pub(super) fn add_strings(
         &mut self,

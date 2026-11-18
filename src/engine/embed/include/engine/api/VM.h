@@ -8,17 +8,14 @@ namespace JSC {
 
 class CodeCache;
 class ControlFlowProfiler;
-class DecoderStringTable;
 class DeferredWorkTimer;
 class EntryFrame;
 class FunctionHasExecutedCache;
 class HeapProfiler;
 class JSONCache;
 class MicrotaskQueue;
-class PersistentBytecodePayloads;
 class QueuedTask;
 class SamplingProfiler;
-class SourceProviderCache;
 class TerminationDeadline;
 class UnlinkedProgramCodeBlock;
 
@@ -133,7 +130,6 @@ public:
     struct ClientData {
         virtual ~ClientData() = default;
         virtual bool isWebCoreJSClientData() const { return false; }
-        virtual DecoderStringTable* decoderStringTable() { return nullptr; }
         virtual void reportErrorOfMicrotask(JSGlobalObject*, Exception*) {}
     };
 
@@ -264,10 +260,7 @@ public:
     bool shrinkFootprintNow(OptionSet<ShrinkFootprint> = {});
     void shrinkFootprintWhenIdle(OptionSet<ShrinkFootprint> = {});
     void setStartupJITDeferralScale(double);
-    CodeCache* codeCache();
-    SourceProviderCache* addSourceProviderCache(SourceProvider*);
-    PersistentBytecodePayloads& persistentBytecodePayloads();
-    PersistentBytecodePayloads* persistentBytecodePayloadsIfExists();
+    CodeCache* codeCache() { return reinterpret_cast<CodeCache*>(this); }
     JSONCache& jsonCache();
 
     bool enableControlFlowProfiler();

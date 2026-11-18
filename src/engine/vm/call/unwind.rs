@@ -1,7 +1,7 @@
 use bun_engine_bytecode::HandlerKind;
 use bun_engine_macros::native_abi;
 
-use crate::{CallFrame, CodeBlock, CodeOrigin, Vm};
+use crate::{CallFrame, CodeBlock, CodeOrigin, Vm, debugger};
 
 /// The address of the handler, and the offset of its bytecode.
 fn find_handler(vm: &Vm, frame: &CallFrame, code_block: &CodeBlock) -> Option<(usize, u32)> {
@@ -40,7 +40,8 @@ pub unsafe fn unwind(vm: &Vm, frame: &CallFrame) {
     vm.set_top_call_frame(frame);
     let is_catchable = !vm.has_pending_termination_exception();
     if vm.has_debugger() {
-        (vm.hooks().debugger_will_unwind)(vm, frame);
+        // SAFETY: generated code runs inside a call that has the `Cx`.
+        unsafe { debugger::will_unwind(vm) };
     }
     let entry_frame = vm.top_entry_frame();
     let mut frame = frame;
@@ -57,7 +58,9 @@ pub unsafe fn unwind(vm: &Vm, frame: &CallFrame) {
             return vm.set_catch_target(frame.address(), address, bytecode_offset);
         }
         if vm.has_debugger() {
-            (vm.hooks().debugger_did_unwind_frame)(vm, frame);
+            vm.set_top_call_frame(frame);
+            // SAFETY: as above.
+            unsafe { debugger::did_unwind_frame(frame) };
         }
         if let Some(coroutine) = crate::Coroutine::of_frame(frame) {
             coroutine.complete();

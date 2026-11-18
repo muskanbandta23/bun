@@ -118,6 +118,9 @@ fn is_concat_spreadable(cx: &mut Cx, value: Value) -> JsResult<bool> {
     }
 }
 
+/// Of an array that has nothing else. More may make the result sparse.
+const MAX_COPIED_HOLES: u64 = 1000;
+
 fn try_concat(cx: &mut Cx, first: Value, rest: &[Value]) -> JsResult<Option<Gc<JsArray>>> {
     let parts = || core::iter::once(&first).chain(rest).copied();
     let (mut kind, mut length) = (ElementKind::Undecided, 0);
@@ -133,7 +136,9 @@ fn try_concat(cx: &mut Cx, first: Value, rest: &[Value]) -> JsResult<Option<Gc<J
         }
         let array = part.cast::<JsArray>();
         let count = u64::from(array.length());
-        if array.plain_elements(&cx.no_gc(), 0..count).is_none() {
+        if array.plain_elements(&cx.no_gc(), 0..count).is_none()
+            || (array.element_kind() == ElementKind::Undecided && count > MAX_COPIED_HOLES)
+        {
             return Ok(None);
         }
         if count != 0 {

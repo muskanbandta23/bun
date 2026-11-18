@@ -137,7 +137,7 @@ impl NativeExecutable {
     ) -> Gc<NativeExecutable> {
         let call = (vm.hooks().native_call_entry)(vm, intrinsic);
         let shape = vm.shapes.native_executable();
-        vm.allocate::<NativeExecutable>(NativeExecutableInit {
+        let executable = vm.allocate::<NativeExecutable>(NativeExecutableInit {
             base: Executable::init(shape, call, call::native_construct_entry()),
             function,
             constructor,
@@ -147,7 +147,11 @@ impl NativeExecutable {
             intrinsic,
             visibility,
             is_named_as_bound: Cell::new(false),
-        })
+        });
+        if vm.watches_native_calls() {
+            executable.watch_calls(vm, true);
+        }
+        executable
     }
 
     /// One for all functions that are alike.
@@ -304,8 +308,8 @@ impl ScriptExecutable {
         &self.never_inline
     }
 
-    /// The next call links the code again.
-    pub fn clear_code(&self, specialization: Specialization) {
+    /// The next call links the code again, which may be generated anew: no coroutine is suspended in a function.
+    pub(crate) fn clear_code(&self, specialization: Specialization) {
         let entry = match specialization {
             Specialization::Call => call::link_call_entry(),
             Specialization::Construct => call::link_construct_entry(),
@@ -399,7 +403,7 @@ impl ModuleExecutable {
         is_shareable: bool,
     ) -> Gc<ModuleExecutable> {
         let shape = cx.shapes.module_executable();
-        cx.allocate::<ModuleExecutable>(ModuleExecutableInit {
+        let executable = cx.allocate::<ModuleExecutable>(ModuleExecutableInit {
             base: ScriptExecutable::init(shape, source.provider.clone(), None),
             global: cx.global(),
             template: ScopeTemplate::create(cx, Rc::clone(&unit.scope)),
@@ -409,7 +413,11 @@ impl ModuleExecutable {
             is_shareable,
             is_shared: Cell::new(false),
             unfinished_records: Cell::new(1),
-        })
+        });
+        if executable.flags.contains(CodeFlags::HAS_DEBUG_HOOKS) {
+            executable.template.set_owner(Some(executable.upcast()));
+        }
+        executable
     }
 
     pub fn global(&self) -> Gc<GlobalObject> {

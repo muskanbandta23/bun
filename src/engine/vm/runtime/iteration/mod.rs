@@ -36,6 +36,11 @@ pub use string_iterator::JsStringIterator;
 #[derive(Default)]
 pub(crate) struct State {
     being_joined: join::InProgress,
+    joined: join::Cache,
 }
 
-impl crate::services::Service for State {}
+impl crate::services::Service for State {
+    fn did_collect(&self, _: &crate::Vm, _: crate::heap::Scope) {
+        self.joined.clear();
+    }
+}

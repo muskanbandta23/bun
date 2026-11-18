@@ -87,6 +87,7 @@ class JSString;
 class JSValue;
 class NativeExecutable;
 class ObjectInitializationScope;
+class ParserError;
 class PrivateName;
 class PropertyDescriptor;
 class PropertyName;
@@ -254,6 +255,16 @@ enum class SourceProviderSourceType : uint8_t {
     JSON = Engine::SourceType::Json,
     Synthetic = Engine::SourceType::Synthetic,
     BunTranspiledModule = Engine::SourceType::AnalyzedModule,
+};
+
+enum class ScriptFetchParametersType : uint8_t {
+    None = Engine::ModuleType::None,
+    JavaScript = Engine::ModuleType::JavaScript,
+    WebAssembly = Engine::ModuleType::WebAssembly,
+    JSON = Engine::ModuleType::Json,
+    Text = Engine::ModuleType::Text,
+    HostDefined = Engine::ModuleType::HostDefined,
+    CSS = Engine::ModuleType::Css,
 };
 
 enum class InternalMicrotask : uint8_t;

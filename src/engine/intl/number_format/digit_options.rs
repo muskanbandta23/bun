@@ -143,6 +143,21 @@ pub struct DigitOptions {
     pub trailing_zero_display: TrailingZeroDisplay,
 }
 
+impl Default for DigitOptions {
+    fn default() -> DigitOptions {
+        DigitOptions {
+            minimum_integer_digits: MinimumIntegerDigits::default(),
+            rounding_type: RoundingType::FractionDigits(DigitRange {
+                minimum: 0,
+                maximum: 3,
+            }),
+            rounding_increment: RoundingIncrement::default(),
+            rounding_mode: RoundingMode::default(),
+            trailing_zero_display: TrailingZeroDisplay::default(),
+        }
+    }
+}
+
 /// What SetNumberFormatDigitOptions reads, in this order. A `V` has not been converted to a number yet.
 pub struct RequestedDigits<V> {
     pub minimum_integer_digits: MinimumIntegerDigits,

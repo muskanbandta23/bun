@@ -82,13 +82,22 @@ impl LocaleResolver {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct ResolvedLocale {
     tag: LanguageTag,
     data_locale_length: usize,
 }
 
 impl ResolvedLocale {
+    /// For a constructor that has no relevant extension keys.
+    pub(crate) fn new(
+        cache: &Cache,
+        available: &AvailableLocales,
+        requested: &[LanguageTag],
+    ) -> Result<ResolvedLocale> {
+        LocaleResolver::new(cache, available, requested).finish()
+    }
+
     pub(crate) fn tag(&self) -> &LanguageTag {
         &self.tag
     }

@@ -814,9 +814,12 @@ dependencies = [
  "bun_engine_date",
  "bun_engine_number",
  "bun_engine_standalone",
+ "bun_engine_temporal",
  "bun_engine_text",
  "bun_engine_unicode",
+ "bun_highway",
  "bun_icu",
+ "bun_pod",
  "hashbrown 0.15.5",
  "smallvec",
 ]
@@ -2537,6 +2540,18 @@ dependencies = [
  "bun_paths",
  "bun_wyhash",
  "thiserror",
+]
+
+[[package]]
+name = "bun_url_whatwg"
+version = "0.0.0"
+dependencies = [
+ "bun_engine_standalone",
+ "bun_engine_text",
+ "bun_highway",
+ "bun_icu",
+ "bun_simdutf_sys",
+ "smallvec",
 ]
 
 [[package]]

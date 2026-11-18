@@ -10,6 +10,7 @@ use bun_engine_text::{CodeUnit, StaticString, StringRef, Text};
 
 pub(crate) use keyword::Key;
 pub use keyword::KeywordValue;
+pub(crate) use language_id::{LanguageId, Variants, join};
 pub(crate) use locale_id::LocaleId;
 use subtag::{Subtags, is_singleton, is_value, lowercase_subtags};
 
@@ -46,6 +47,16 @@ impl LanguageTag {
 
     pub(crate) fn as_bytes(&self) -> &[u8] {
         u8::units(self.0.text()).unwrap_or_default()
+    }
+
+    /// `part` is a slice of `as_bytes`.
+    pub(crate) fn substring(&self, part: &[u8]) -> StringRef {
+        let range = self.as_bytes().subslice_range(part).unwrap_or_default();
+        StringRef::substring(&self.0, range.into())
+    }
+
+    pub(crate) fn language(&self) -> &[u8] {
+        Subtags::new(self.as_bytes()).next().unwrap_or_default()
     }
 
     /// What comes before the extensions.

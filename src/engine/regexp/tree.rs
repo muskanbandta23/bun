@@ -258,6 +258,40 @@ impl Tree {
         Ok(self.root())
     }
 
+    pub(crate) fn set_group_count(&mut self, group_count: Group) {
+        self.group_count = group_count;
+    }
+
+    pub(crate) fn reserve(&mut self, nodes: usize, chars: usize) -> Result<(), Error> {
+        reserve(&mut self.nodes, nodes)?;
+        reserve(&mut self.chars, chars)
+    }
+
+    #[inline]
+    pub(crate) fn truncate(&mut self, node_count: usize) {
+        self.nodes.truncate(node_count);
+    }
+
+    pub(crate) fn replace(&mut self, id: NodeId, node: Node) {
+        self.nodes[id.index()] = node;
+    }
+
+    #[inline]
+    pub(crate) fn char_count(&self) -> usize {
+        self.chars.len()
+    }
+
+    #[inline]
+    pub(crate) fn extend_chars(
+        &mut self,
+        most: usize,
+        chars: impl Iterator<Item = u32>,
+    ) -> Result<(), Error> {
+        reserve(&mut self.chars, most)?;
+        self.chars.extend(chars);
+        Ok(())
+    }
+
     pub fn add_children(&mut self, children: &[NodeId]) -> Result<Span<NodeId>, Error> {
         append(&mut self.children, children)
     }

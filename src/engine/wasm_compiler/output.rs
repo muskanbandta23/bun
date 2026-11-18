@@ -1,7 +1,7 @@
 //! What goes into a compiler and what comes out.
 
 use bun_engine_asm::{Code, Features};
-use bun_engine_wasm_format::{CodeIndex, FuncIndex, Module, ValType};
+use bun_engine_wasm_format::{CodeIndex, FuncIndex, Module};
 
 use crate::abi::{HostLayout, InstanceLayout, MemoryMode, Stubs};
 
@@ -50,14 +50,6 @@ pub struct InlineFrame {
 pub struct DirectCall {
     pub end_offset: u32,
     pub callee: CodeIndex,
-}
-
-/// Where baseline code has its values at the start of a loop.
-pub struct LoopEntry {
-    pub loop_index: u32,
-    /// The locals, then the operand stack from the bottom, then the exceptions that enclosing `catch` blocks hold.
-    /// Offsets are from the frame pointer.
-    pub values: Vec<(ValType, i32)>,
 }
 
 pub struct CompiledFunction {

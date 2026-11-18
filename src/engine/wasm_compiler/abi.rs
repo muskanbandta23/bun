@@ -49,6 +49,8 @@ pub const PAGE_SIZE_LOG2: u8 = 16;
 pub const GUARD_SIZE: u64 = 1 << 31;
 /// A function that calls nothing and has a frame up to this size does not check the stack.
 pub const UNCHECKED_FRAME_SIZE: u32 = 256;
+/// How far the stack pointer may go below an address that was checked.
+pub const UNCHECKED_STACK_EXTENSION: u32 = 1024;
 
 /// How memory 0 is accessed. Other memories are always checked.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -114,6 +116,10 @@ impl Signature {
             results,
             stack_bytes,
         }
+    }
+
+    pub fn has_results_on_stack(&self) -> bool {
+        (self.results.iter()).any(|place| matches!(place, Place::Stack(_)))
     }
 }
 

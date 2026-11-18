@@ -3,8 +3,7 @@
 #![forbid(unsafe_code)]
 
 pub mod abi;
+pub mod baseline;
 mod output;
 
-pub use output::{
-    CallSite, CompiledFunction, Counters, DirectCall, Environment, InlineFrame, LoopEntry,
-};
+pub use output::{CallSite, CompiledFunction, Counters, DirectCall, Environment, InlineFrame};

@@ -1,11 +1,14 @@
 use std::rc::Rc;
 
-use bun_engine_bytecode::{FunctionKind, Opcode, Position, Visibility};
+use bun_engine_bytecode::{
+    Code, Compiler, FunctionInfo, FunctionKind, Instrumentation, KnownCapture, KnownFunction,
+    Opcode, Position, Request, SlotFlags, SourceCache, Specialization, Visibility,
+};
 use bun_engine_macros::{FieldOffsets, export};
 use bun_engine_text::{PropertyName, StringRef};
 use bun_engine_vm::{
     AsciiLiteral, BuiltinOutline, CodeBlock, CompileError, CompileErrorKind, CompileErrorRecovery,
-    Cx, ErrorInstance, Executable, FunctionExecutable, Gc, JsResult, NativeExecutable,
+    Cx, ErrorInstance, Executable, FunctionExecutable, Gc, JsResult, Message, NativeExecutable,
     ScriptExecutable, SourceCode, SourceProvider, StaticBuiltin, UnlinkedFunction, Value, Vm,
     create_compile_error, describe_builtin, options,
 };
@@ -269,6 +272,72 @@ fn unlinked_function_source_provider(function: &UnlinkedFunction) -> &SourceProv
 #[export]
 fn unlinked_function_link(function: &UnlinkedFunction, vm: &Vm) -> Gc<FunctionExecutable> {
     function.link(vm)
+}
+
+#[export]
+fn source_add_known_functions(
+    vm: &Vm,
+    provider: &SourceProvider,
+    functions: &[KnownFunction],
+    captures: &[KnownCapture],
+) {
+    vm.add_known_functions(provider, functions, captures);
+}
+
+/// What is wrong with the description of the inner functions, if anything.
+#[export]
+fn unlinked_function_check_known_functions(
+    outer: &UnlinkedFunction,
+    vm: &Vm,
+    functions: &[KnownFunction],
+    captures: &[KnownCapture],
+) -> Option<StringRef> {
+    let source = outer.provider.source();
+    let compile = |mut cache: SourceCache| {
+        let request = Request {
+            source,
+            cache: Some(&mut cache),
+            host: vm,
+            instrumentation: Instrumentation::empty(),
+            stack_limit: vm.hard_stack_limit(),
+        };
+        Compiler::default().function(request, &outer.function, Specialization::Call)
+    };
+    let mut cache = SourceCache::default();
+    cache.add_known(source.len(), functions, captures);
+    let (Ok(parsed), Ok(told)) = (compile(SourceCache::default()), compile(cache)) else {
+        return Some("it does not parse".into_string());
+    };
+    first_difference(&parsed, &told, functions)
+}
+
+fn first_difference(parsed: &Code, told: &Code, known: &[KnownFunction]) -> Option<StringRef> {
+    let is_missing = |known: &&KnownFunction| {
+        (parsed.functions.iter()).all(|it| it.parameters_start() != known.parameters_start)
+    };
+    if let Some(function) = known.iter().find(is_missing) {
+        let at = function.parameters_start;
+        return Some(format_args!("no function has its parameters at {at}").into_string());
+    }
+    if (parsed.functions.len(), parsed.scopes.len()) != (told.functions.len(), told.scopes.len()) {
+        return Some("the number of functions or scopes differs".into_string());
+    }
+    let summary = |it: &FunctionInfo| (it.kind(), it.flags(), it.range(), it.length());
+    let mut functions = parsed.functions.iter().zip(&*told.functions);
+    if let Some((function, _)) = functions.find(|(a, b)| summary(a) != summary(b)) {
+        let at = function.parameters_start();
+        return Some(format_args!("the function at {at} is described wrongly").into_string());
+    }
+    let promises = SlotFlags::IMMUTABLE | SlotFlags::WRITTEN_ONCE;
+    (parsed.scopes.iter().zip(&told.scopes)).find_map(|(parsed, told)| {
+        let slot = parsed.slots().iter().find(|slot| {
+            let mut same =
+                (told.slots().iter()).filter(|it| told.text_of(it) == parsed.text_of(slot));
+            !same.any(|it| slot.flags.contains(it.flags & promises))
+        })?;
+        let name = parsed.text_of(slot);
+        Some(format_args!("it is not told what becomes of {name}").into_string())
+    })
 }
 
 #[export]

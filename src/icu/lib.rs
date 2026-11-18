@@ -2,6 +2,7 @@
 
 #[macro_use]
 mod ffi;
+mod allocator;
 mod argument;
 pub mod break_iterator;
 mod c_text;
@@ -12,9 +13,11 @@ pub mod currency;
 pub mod date_format;
 pub mod date_interval_format;
 pub mod date_pattern;
+mod default_locale;
 pub mod display_names;
 mod enumeration;
 mod error;
+mod exports;
 pub mod formatted_value;
 mod host_language;
 pub mod idna;
@@ -24,12 +27,12 @@ pub mod normalizer;
 pub mod number_format;
 pub mod numbering_system;
 pub mod plural_rules;
-pub mod process;
 pub mod relative_time_format;
 pub mod resource_bundle;
 pub mod time_zone;
 mod version;
 
+pub use allocator::use_default_allocator;
 pub use c_text::CText;
 pub use enumeration::Enumeration;
 pub use error::{Error, Result};

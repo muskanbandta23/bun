@@ -285,7 +285,8 @@ bitflags::bitflags! {
         const TRAPS = 1 << 0;
         /// For loads: wherever the address is at hand, the bytes are the same.
         const IMMUTABLE = 1 << 1;
-        /// For loads: wherever the address is at hand, it can be read.
+        /// For loads: the address can be read wherever it can be computed, and so can each value that reaches it through
+        /// parameters and variables.
         const ALWAYS_READABLE = 1 << 2;
         /// Sequentially consistent. The address is aligned.
         const ATOMIC = 1 << 3;

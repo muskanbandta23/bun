@@ -271,14 +271,7 @@ interface ClangTimeTrace {
 const PHASE_FLOOR_MS = 10;
 
 /** The rules compiled with `cxxflags`, which is where flags.ts puts `-ftime-trace`. */
-const clangTraced = new Set<string>([
-  "cxx",
-  "cxx_pch",
-  "cxx_pch_chained",
-  "pch",
-  "pch_chained",
-  "pch_msvc",
-] satisfies RuleName[]);
+const clangTraced = new Set<string>(["cxx", "cxx_pch", "pch", "pch_msvc"] satisfies RuleName[]);
 const RUSTC: RuleName = "rust_rustc";
 
 /**
@@ -809,7 +802,6 @@ type Lane = (typeof lanes)[number]["name"];
 const ruleLane: Record<RuleName, Lane> = {
   dep_cargo: "dependencies",
   dep_cargo_cross: "dependencies",
-  dep_check_defined: "dependencies",
   dep_check_undefined: "dependencies",
   dep_codegen: "dependencies",
   dep_fetch: "dependencies",
@@ -829,10 +821,8 @@ const ruleLane: Record<RuleName, Lane> = {
   cc: "C and C++",
   cxx: "C and C++",
   cxx_pch: "C and C++",
-  cxx_pch_chained: "C and C++",
   nasm: "C and C++",
   pch: "C and C++",
-  pch_chained: "C and C++",
   pch_checksum: "C and C++",
   pch_msvc: "C and C++",
   rc: "C and C++",

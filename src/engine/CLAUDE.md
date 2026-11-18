@@ -13,15 +13,17 @@ JavaScript and WebAssembly execution for Bun, in Rust. Each folder here is a cra
 | `bytecode`                                      | instruction set, generator, verifier, liveness, serialized form                                    | forbidden    |
 | `asm`, `codegen`                                | assemblers and macro assembler; SSA IR down to machine code                                        | forbidden    |
 | `exec_memory`                                   | executable pages, linking, patching                                                                | yes          |
-| `macros`, `heap`                                | `Value`, `Gc<T>`, cell declarations, allocator, collector                                          | yes          |
-| `vm`                                            | object model, realms, calls, errors, modules, promises, inline caches, run-time operations         | `raw` module |
+| `macros`                                        | cell declarations                                                                                  | yes          |
+| `vm`                                            | `Value`, `Gc<T>`, allocator, collector                                                             | yes          |
+|                                                 | object model, realms, calls, errors, modules, promises, inline caches, run-time operations         | `raw` module |
 | `interpreter`                                   | bytecode handlers and the stubs that enter, call and leave frames                                  | yes          |
 | `builtins`, `intl`, `temporal`                  | the standard library                                                                               | forbidden    |
 | `baseline`, `optimizer`, `wasm`                 | compilers (safe code that produces bytes) and the code that installs and enters what they produce  | install only |
 | `inspector`                                     | debugger, profilers, heap snapshots, protocol                                                      | sampling     |
+| `embed`                                         | C ABI and C++ headers for Bun's bindings                                                           | yes          |
 | `shell`, `standalone`                           | `engine-shell` and the native libraries it and the crates' tests link. Not part of Bun             |              |
 
-A crate below `heap` knows nothing of the garbage collector: it is plain Rust over slices and owned data. A crate calls upwards only through a table of hooks that `bun_engine` fills in.
+A crate below `vm` knows nothing of the garbage collector: it is plain Rust over slices and owned data. A crate calls upwards only through a table of hooks that `bun_engine` fills in.
 
 ## Build and test
 
@@ -73,4 +75,4 @@ Native functions and run-time operations use the C calling convention (System V 
 
 ## The heap
 
-Cells do not move. The collector is generational mark and sweep, finds roots by scanning the native stack conservatively, and traces cells precisely. So a `Gc<T>`, a `Value` or a `&T` of a cell is safe in a local, an argument or a struct on the stack, and in a field of another cell. It is **never** put in memory of the Rust allocator (`Vec`, `Box`, `Rc`, a hash map, a boxed closure, a static): use the containers of `heap` (`ValueVec`, `Strong`, `Weak`, traced fields).
+Cells do not move. The collector is generational mark and sweep, finds roots by scanning the native stack conservatively, and traces cells precisely. So a `Gc<T>`, a `Value` or a `&T` of a cell is safe in a local, an argument or a struct on the stack, and in a field of another cell. It is **never** put in memory of the Rust allocator (`Vec`, `Box`, `Rc`, a hash map, a boxed closure, a static): use the containers of `vm`'s heap (`ValueVec`, `Strong`, `Weak`, traced fields).

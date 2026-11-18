@@ -1104,3 +1104,9 @@ useStrict = use strict
 @wrapForValidIteratorCreate
 @wrapForValidIteratorFieldIteratedIterator
 @wrapForValidIteratorFieldIteratedNextMethod
+@Promise
+@apply
+@call
+@forEach
+@get
+@has

@@ -1,11 +1,8 @@
 use bun_engine_text::CodeUnit;
 use bun_engine_unicode::{MAX_CODE_POINT, Property};
 
-use super::quantifier::Repeated;
-use super::{
-    Assertion, ClassEscape, ClassKind, Parser, Sink, is_lead_surrogate, is_trail_surrogate,
-    join_surrogates,
-};
+use super::cursor::{Cursor, ascii, is_lead_surrogate, is_trail_surrogate, join_surrogates};
+use super::{ClassEscape, ClassKind};
 use crate::Error;
 
 #[derive(Clone, Copy)]
@@ -21,96 +18,52 @@ pub(super) enum Context {
     ClassSet,
 }
 
-const fn ascii_mask(characters: &[u8]) -> u128 {
-    let (mut mask, mut index) = (0, 0);
-    while index < characters.len() {
-        mask |= 1 << characters[index];
-        index += 1;
-    }
-    mask
-}
-
-#[inline]
-pub(super) const fn is_in(mask: u128, c: u32) -> bool {
-    c < 128 && mask >> c & 1 != 0
-}
-
-const SYNTAX_CHARACTERS_AND_SOLIDUS: u128 = ascii_mask(b"^$\\.*+?()[]{}|/");
-const CLASS_SET_RESERVED_PUNCTUATORS: u128 = ascii_mask(b"&-!#%,:;<=>@`~");
-pub(super) const CLASS_SET_SYNTAX_CHARACTERS: u128 = ascii_mask(b"()[]{}/-\\|");
-pub(super) const CLASS_SET_RESERVED_IF_DOUBLED: u128 = ascii_mask(b"&!#$%*+,.:;<=>?@^`~");
-
-impl<C: CodeUnit, S: Sink> Parser<'_, C, S> {
+impl<C: CodeUnit> Cursor<'_, C> {
     /// After the backslash.
-    #[inline]
-    pub(super) fn atom_escape(&mut self) -> Result<(), Error> {
-        match self.peek() {
-            letter @ (b'b' | b'B') => {
-                self.at += 1;
-                let negated = letter == b'B';
-                return self.sink.assertion(Assertion::WordBoundary { negated });
-            }
-            b'1'..=b'9' if self.back_reference()? => {}
-            b'k' if self.named_reference()? => {}
-            _ => match self.escape(Context::Atom)? {
-                ClassAtom::Character(c) => self.sink.character(c)?,
-                ClassAtom::Class(escape) if escape.has_strings() => {
-                    self.sink.class_member(escape)?;
-                    let quantifier = self.quantifier(Repeated::Atom)?;
-                    return self.sink.close_class(false, quantifier);
-                }
-                ClassAtom::Class(escape) => self.sink.class_escape(escape)?,
-            },
-        }
-        self.quantify()
-    }
-
-    /// After the backslash.
-    #[inline]
+    #[inline(always)]
     pub(super) fn escape(&mut self, context: Context) -> Result<ClassAtom, Error> {
         let letter = self.peek();
-        let kind = match letter | 0x20 {
-            b'd' => ClassKind::Digit,
-            b's' => ClassKind::Space,
-            b'w' => ClassKind::Word,
-            b'p' if self.is_unicode => return self.property().map(ClassAtom::Class),
+        let kind = match letter {
+            b'd' | b'D' => ClassKind::Digit,
+            b's' | b'S' => ClassKind::Space,
+            b'w' | b'W' => ClassKind::Word,
+            b'p' | b'P' if self.is_unicode => {
+                return self.apart(Self::property).map(ClassAtom::Class);
+            }
             _ => return self.character_escape(context).map(ClassAtom::Character),
         };
         self.at += 1;
-        let negated = letter.is_ascii_uppercase();
+        let negated = letter < b'a';
         Ok(ClassAtom::Class(ClassEscape { kind, negated }))
     }
 
     /// After the backslash.
-    #[inline]
+    #[inline(always)]
     pub(super) fn character_escape(&mut self, context: Context) -> Result<u32, Error> {
         let unit = self.next_unit().ok_or(Error::EscapeAtEnd)?;
-        if is_in(SYNTAX_CHARACTERS_AND_SOLIDUS, unit) {
-            return Ok(unit);
-        }
-        let value = match unit.min(0xff) as u8 {
-            b'b' if context != Context::Atom => Some(0x08),
+        let value = match ascii(unit) {
+            b'^' | b'$' | b'\\' | b'.' | b'*' | b'+' | b'?' | b'(' | b')' | b'[' | b']' | b'{'
+            | b'}' | b'|' | b'/' => Some(unit),
             b't' => Some(0x09),
             b'n' => Some(0x0a),
             b'v' => Some(0x0b),
             b'f' => Some(0x0c),
             b'r' => Some(0x0d),
-            b'0' if !self.peek().is_ascii_digit() => Some(0),
-            b'0'..=b'9' if self.is_unicode => return Err(Error::InvalidOctalEscape),
-            b'0'..=b'7' => Some(self.octal(unit - u32::from(b'0'))),
-            b'c' => return self.control_escape(context),
-            b'x' => self.hexadecimal(2),
-            b'u' if self.is_unicode => {
-                self.at -= 1;
-                return self.strict_unicode_escape();
-            }
-            b'u' => self.hexadecimal(4),
+            b'x' => self.hexadecimal::<2>(),
+            b'u' if self.is_unicode => return self.apart(Self::strict_unicode_escape),
+            b'u' => self.hexadecimal::<4>(),
+            b'b' if context != Context::Atom => Some(0x08),
+            digit @ b'0'..=b'9' => return self.apart(|it| it.octal_escape(digit - b'0')),
+            b'c' => return self.apart(|it| it.control_escape(context)),
             b'k' => {
-                self.has_escaped_k = true;
+                self.has_passed_escaped_k = true;
                 None
             }
-            b'-' if context == Context::Class => Some(unit),
-            _ if context == Context::ClassSet && is_in(CLASS_SET_RESERVED_PUNCTUATORS, unit) => {
+            b'-' if context != Context::Atom => Some(unit),
+            b'&' | b'!' | b'#' | b'%' | b',' | b':' | b';' | b'<' | b'=' | b'>' | b'@' | b'`'
+            | b'~'
+                if context == Context::ClassSet =>
+            {
                 Some(unit)
             }
             _ => None,
@@ -123,8 +76,18 @@ impl<C: CodeUnit, S: Sink> Parser<'_, C, S> {
     }
 
     /// After the first digit.
-    fn octal(&mut self, first: u32) -> u32 {
-        let mut value = first;
+    #[inline(never)]
+    fn octal_escape(&mut self, first: u8) -> Result<u32, Error> {
+        if first == 0 && !self.peek().is_ascii_digit() {
+            return Ok(0);
+        }
+        if self.is_unicode {
+            return Err(Error::InvalidOctalEscape);
+        }
+        if first > 7 {
+            return Ok(u32::from(b'0' + first));
+        }
+        let mut value = u32::from(first);
         for _ in 0..if first < 4 { 2 } else { 1 } {
             let digit @ b'0'..=b'7' = self.peek() else {
                 break;
@@ -132,10 +95,11 @@ impl<C: CodeUnit, S: Sink> Parser<'_, C, S> {
             value = value * 8 + u32::from(digit - b'0');
             self.at += 1;
         }
-        value
+        Ok(value)
     }
 
     /// After `\c`.
+    #[inline(never)]
     fn control_escape(&mut self, context: Context) -> Result<u32, Error> {
         let letter = self.peek();
         if !letter.is_ascii_alphabetic() {
@@ -154,30 +118,17 @@ impl<C: CodeUnit, S: Sink> Parser<'_, C, S> {
         Ok(u32::from(letter & 0x1f))
     }
 
-    /// Moves only if there are that many digits.
-    #[inline]
-    fn hexadecimal(&mut self, count: usize) -> Option<u32> {
-        let digits = self.units.get(self.at..self.at + count)?;
-        let value = digits
-            .iter()
-            .try_fold(0, |value, unit| Some(value << 4 | unit.digit_value(16)?))?;
-        self.at += count;
-        Some(value)
-    }
-
-    /// RegExpUnicodeEscapeSequence[+UnicodeMode], after the backslash.
+    /// RegExpUnicodeEscapeSequence[+UnicodeMode], after `\u`.
+    #[inline(never)]
     pub(super) fn strict_unicode_escape(&mut self) -> Result<u32, Error> {
-        if !self.eat(b'u') {
-            return Err(Error::InvalidUnicodeEscape);
-        }
         if self.eat(b'{') {
             return self.code_point().ok_or(Error::InvalidCodePointEscape);
         }
-        let unit = self.hexadecimal(4).ok_or(Error::InvalidUnicodeEscape)?;
+        let unit = self.hexadecimal::<4>().ok_or(Error::InvalidUnicodeEscape)?;
         if is_lead_surrogate(unit) && self.peek() == b'\\' && self.peek_at(1) == b'u' {
             let start = self.at;
             self.at += 2;
-            match self.hexadecimal(4).filter(|&it| is_trail_surrogate(it)) {
+            match self.hexadecimal::<4>().filter(|&it| is_trail_surrogate(it)) {
                 Some(trail) => return Ok(join_surrogates(unit, trail)),
                 None => self.at = start,
             }
@@ -186,21 +137,20 @@ impl<C: CodeUnit, S: Sink> Parser<'_, C, S> {
     }
 
     /// After `\u{`.
+    #[inline(always)]
     fn code_point(&mut self) -> Option<u32> {
-        let mut value = 0;
-        loop {
-            value = value << 4 | self.peek().digit_value(16)?;
+        let mut value = self.hexadecimal::<1>()?;
+        while let Some(digit) = self.hexadecimal::<1>() {
+            value = value << 4 | digit;
             if value > MAX_CODE_POINT {
                 return None;
             }
-            self.at += 1;
-            if self.eat(b'}') {
-                return Some(value);
-            }
         }
+        self.eat(b'}').then_some(value)
     }
 
     /// At the letter.
+    #[inline(never)]
     fn property(&mut self) -> Result<ClassEscape, Error> {
         let negated = self.peek() == b'P';
         self.at += 1;
@@ -219,7 +169,7 @@ impl<C: CodeUnit, S: Sink> Parser<'_, C, S> {
                 while self.peek().is_ascii_alphanumeric() || self.peek() == b'_' {
                     self.at += 1;
                 }
-                C::text(&self.units[start..self.at])
+                C::text(self.units_since(start))
             })
         };
         let name = word_after(b'{')?;

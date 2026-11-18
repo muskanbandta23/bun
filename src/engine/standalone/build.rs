@@ -36,6 +36,9 @@ fn main() {
         }
     }
 
+    let transcoder = repository.join("src/simdutf_sys/bun-simdutf.cpp");
+    println!("cargo:rerun-if-changed={}", transcoder.display());
+
     let mut native = cc::Build::new();
     native
         .cpp(true)
@@ -61,7 +64,7 @@ fn main() {
         .define("MI_DEFAULT_ALLOW_THP", "0")
         .files(HIGHWAY_SOURCES.map(|source| vendor.join("highway").join(source)))
         .file(vendor.join("simdutf/src/simdutf.cpp"))
-        .file(repository.join("src/simdutf_sys/bun-simdutf.cpp"));
+        .file(transcoder);
 
     if env::var("CARGO_CFG_TARGET_ARCH").unwrap() == "x86_64" {
         native.flag("-march=nehalem");

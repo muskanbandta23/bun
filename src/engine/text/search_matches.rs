@@ -7,6 +7,7 @@ use crate::{CodeUnit, Text, equal_units, with_text};
 
 /// The indices of the matches of a needle that do not overlap, from the start. The empty needle is at every index
 /// up to the length.
+#[derive(Clone)]
 pub struct Matches<'a> {
     haystack: Text<'a>,
     needle: Text<'a>,

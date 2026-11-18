@@ -77,20 +77,24 @@ fn write_by_division(
 ) -> Result<usize, Error> {
     let chunk = CHUNKS[radix as usize];
     let radix = u64::from(radix);
-    let mut scratch = Scratch::<u64, 64>::new();
-    let mut rest = scratch.filled(0, value.len())?;
+    let divisor = digits::DigitDivisor::new(chunk.power);
+    let mut scratch = Scratch::<u64, 128>::new();
+    let (mut rest, mut next) = scratch
+        .filled(0, 2 * value.len())?
+        .split_at_mut(value.len());
     rest.copy_from_slice(value);
+    let mut length = value.len();
     let mut start = out.len();
-    while rest.len() > 1 {
-        work.spend(rest.len())?;
-        let mut part = digits::divide_assign_by_digit(rest, chunk.power);
+    while length > 1 {
+        work.spend(4 * length)?;
+        let mut part = divisor.divide(&mut next[..length], &rest[..length]);
         for out in out[start - chunk.characters..start].iter_mut().rev() {
             *out = CHARACTERS[(part % radix) as usize];
             part /= radix;
         }
         start -= chunk.characters;
-        let length = digits::trim(rest).len();
-        rest = &mut rest[..length];
+        length = digits::trim(&next[..length]).len();
+        core::mem::swap(&mut rest, &mut next);
     }
     let mut part = rest[0];
     while part != 0 {

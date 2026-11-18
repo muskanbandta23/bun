@@ -1,6 +1,7 @@
 //! From the parts of a pattern to its tree.
 
 mod class;
+mod length_limit;
 mod names;
 mod strings;
 mod trie;
@@ -10,7 +11,7 @@ use bun_engine_unicode::IgnoreCase;
 use smallvec::SmallVec;
 
 use crate::parser::{
-    self, Assertion, ClassEscape, GroupKind, NameId, Quantifier, SetOperator, Sink, Summary,
+    self, Assertion, ClassEscape, GroupKind, NameId, Quantifier, SetOperator, Sink,
 };
 use crate::set::Set;
 use crate::tree::{Group, Groups, Node, NodeId, Span, Tree};
@@ -19,7 +20,7 @@ use class::Classes;
 pub use names::GroupNames;
 use names::NamedGroups;
 
-pub(crate) fn build(pattern: Text<'_>, flags: Flags) -> Result<(Tree, GroupNames, Summary), Error> {
+pub(crate) fn build(pattern: Text<'_>, flags: Flags) -> Result<(Tree, GroupNames), Error> {
     const MOST_RESERVED: usize = 256;
     let mut builder = Builder {
         tree: Tree::new(flags, 0),
@@ -43,8 +44,11 @@ pub(crate) fn build(pattern: Text<'_>, flags: Flags) -> Result<(Tree, GroupNames
     builder.end_disjunction()?;
     let mut tree = builder.tree;
     tree.set_group_count(summary.group_count);
+    if summary.has_large_counts {
+        length_limit::check(&tree)?;
+    }
     let names = builder.named_groups.resolve(&mut tree)?;
-    Ok((tree, names, summary))
+    Ok((tree, names))
 }
 
 struct Builder {
@@ -82,11 +86,6 @@ pub(crate) struct Outer {
 }
 
 const NO_CAPTURES: Groups = Groups { first: 1, end: 1 };
-
-const PLAIN_GROUP: GroupKind = GroupKind::Plain {
-    set: Flags::empty(),
-    cleared: Flags::empty(),
-};
 
 impl Builder {
     #[inline]
@@ -418,7 +417,7 @@ impl Sink for Builder {
     fn close_class(&mut self, negated: bool, quantifier: Option<Quantifier>) -> Result<(), Error> {
         let (set, strings) = self.classes.close(negated, self.ignore_case())?;
         if let Some(strings) = strings {
-            let outer = self.open(PLAIN_GROUP)?;
+            let outer = self.open(GroupKind::PLAIN)?;
             self.add_strings(&set, strings)?;
             return self.close(outer, NO_CAPTURES, quantifier);
         }

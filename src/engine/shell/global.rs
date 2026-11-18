@@ -3,16 +3,17 @@
 use bun_engine_macros::{cell, object_ops};
 use bun_engine_text::symbols;
 use bun_engine_vm::{
-    DontEnumMode, GlobalObject, Inherited, ModuleHooks, PropertyNameList, RealmHooks,
-    ScriptExecutionStatus, Shape, ShapeSpec, Vm,
+    DontEnumMode, Field, GlobalObject, Inherited, PromiseRejectionOperation, PropertyNameList,
+    RealmHooks, ScriptExecutionStatus, Shape, ShapeSpec, Strong, Vm,
 };
 
 use crate::prelude::*;
-use crate::{functions, run};
+use crate::{functions, modules, run};
 
 #[cell(name = "global", ops)]
-struct ShellGlobal {
+pub(crate) struct ShellGlobal {
     base: GlobalObject,
+    pub(crate) unhandled_rejection_callback: Field<Option<Gc<JsObject>>>,
 }
 
 #[object_ops]
@@ -35,8 +36,14 @@ impl ShellGlobal {
 }
 
 static HOOKS: RealmHooks = RealmHooks {
-    modules: ModuleHooks {},
-    promise_rejection_tracker: |_, _, _| {},
+    modules: modules::HOOKS,
+    promise_rejection_tracker: |cx, promise, operation| {
+        if operation == PromiseRejectionOperation::Reject {
+            let state = State::of(cx);
+            let mut rejected = state.rejected_promises.borrow_mut();
+            rejected.push(Strong::new(cx, promise));
+        }
+    },
     report_uncaught_exception: |cx, exception| {
         run::dump_exception(cx, exception.value());
         run::exit(run::EXIT_EXCEPTION)
@@ -44,15 +51,18 @@ static HOOKS: RealmHooks = RealmHooks {
     current_script_execution_owner: |cx| cx.global().upcast(),
     script_execution_status: |_, _| ScriptExecutionStatus::Running,
     default_language: StringRef::empty,
-    derive_shadow_realm: |cx| Ok(GlobalObject::create(cx, &HOOKS)),
+    derive_shadow_realm: |cx| Ok(GlobalObject::create_for_shadow_realm(cx, &HOOKS)),
     compile_wasm_streaming: None,
     instantiate_wasm_streaming: None,
 };
 
 pub(crate) fn create(vm: &Vm) -> Gc<GlobalObject> {
     let shape = Shape::create(vm, None, Value::NULL, ShapeSpec::of::<ShellGlobal>());
-    let base = GlobalObject::init(vm, shape, &HOOKS, core::ptr::null());
-    let global: Gc<GlobalObject> = (vm.allocate::<ShellGlobal>(ShellGlobalInit { base })).upcast();
+    let global = vm.allocate::<ShellGlobal>(ShellGlobalInit {
+        base: GlobalObject::init(vm, shape, &HOOKS, core::ptr::null()),
+        unhandled_rejection_callback: None,
+    });
+    let global: Gc<GlobalObject> = global.upcast();
     global.finish_creation(vm);
     // SAFETY: a shared borrow, as that of the `Vm` is.
     let cx: &Cx = unsafe { Cx::from_global(global) };

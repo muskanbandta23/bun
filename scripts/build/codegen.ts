@@ -314,6 +314,7 @@ export function emitCodegen(n: Ninja, cfg: CodegenFields, sources: Sources): Cod
   o.rustInputs.push(xmlByteClass.rs);
   o.cppHeaders.push(xmlByteClass.h);
 
+  emitEngineHeaders(ctx);
   emitRemovableFeatures(ctx);
   emitBunError(ctx);
   emitStringMaps(ctx);
@@ -657,6 +658,33 @@ function emitStringMaps({ n, cfg, sources, o, dirStamp }: Ctx): void {
     o.all.push(out);
     o.rustInputs.push(out);
   }
+}
+
+function emitEngineHeaders({ n, cfg, sources, o, dirStamp }: Ctx): void {
+  const script = resolve(cfg.cwd, "src", "codegen", "generate-engine-headers.ts");
+  const engine = resolve(cfg.cwd, "src", "engine");
+  const types = resolve(engine, "embed", "types.txt");
+  const mirrored = [...readFileSync(types, "utf8").matchAll(/^mirror +\w+ +(\S+)/gm)].map(it => resolve(engine, it[1]!));
+  const exports = sources.rust.filter(path => dirname(path) === resolve(engine, "embed", "api"));
+  const outputs = ["EngineConstants.h", "EngineExports.h"].map(name => resolve(cfg.codegenDir, name));
+
+  n.build({
+    outputs,
+    rule: "codegen",
+    inputs: [script],
+    implicitInputs: [
+      ...new Set([types, resolve(engine, "text", "names.txt"), resolve(engine, "vm", "options.rs"), ...mirrored, ...exports]),
+    ],
+    orderOnlyInputs: [dirStamp],
+    vars: {
+      cwd: cfg.cwd,
+      desc: "Engine*.h",
+      args: shJoin(cfg, [script, cfg.codegenDir]),
+    },
+  });
+
+  o.all.push(...outputs);
+  o.cppHeaders.push(...outputs);
 }
 
 function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {

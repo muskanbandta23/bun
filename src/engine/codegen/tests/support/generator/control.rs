@@ -62,6 +62,8 @@ impl Way {
 
 #[derive(Clone, Copy)]
 enum Statement {
+    Theme,
+    Template,
     Integer,
     Float,
     Vector,
@@ -72,6 +74,8 @@ enum Statement {
     Patchpoint,
     Call,
     CallWithHandlers,
+    Node,
+    PinnedIndex,
     Variable,
     Branch,
     Loop,
@@ -116,6 +120,8 @@ impl Generator<'_> {
             }
         };
         let statement = self.random.weighted(&[
+            (weights.themes, Statement::Theme),
+            (weights.templates, Statement::Template),
             (weights.integers, Statement::Integer),
             (weights.floats, Statement::Float),
             (weights.vectors, Statement::Vector),
@@ -125,6 +131,11 @@ impl Generator<'_> {
             (weights.checks, Statement::Check),
             (weights.patchpoints, Statement::Patchpoint),
             (weights.calls, Statement::Call),
+            (weights.nodes, Statement::Node),
+            (
+                if_nests(weights.branches.min(weights.accesses) / 4),
+                Statement::PinnedIndex,
+            ),
             (
                 if_nests(weights.calls.div_ceil(3)),
                 Statement::CallWithHandlers,
@@ -138,6 +149,12 @@ impl Generator<'_> {
             (if_nests(weights.shapes), Statement::Shape),
         ]);
         match statement {
+            Statement::Theme => {
+                let ty = self.data_type();
+                let (value, class) = self.themed(ty);
+                self.keep(value, class);
+            }
+            Statement::Template => self.template_statement(),
             Statement::Integer => {
                 let ty = self.int_type();
                 self.fresh_int(ty);
@@ -155,6 +172,7 @@ impl Generator<'_> {
             Statement::Check => self.check_statement(),
             Statement::Patchpoint => self.patchpoint_statement(),
             Statement::Call => self.call_statement(),
+            Statement::Node => self.node_statement(),
             Statement::Variable => self.variable_statement(budget),
             _ => {
                 let share = self.share_of(budget);
@@ -162,6 +180,7 @@ impl Generator<'_> {
                 match statement {
                     Statement::CallWithHandlers => self.call_with_handlers(share),
                     Statement::Branch => self.branch_statement(share),
+                    Statement::PinnedIndex => self.pinned_index(share),
                     Statement::Loop => self.loop_statement(share),
                     Statement::Switch => self.switch_statement(share),
                     Statement::Graph => self.graph_statement(share),
@@ -392,6 +411,42 @@ impl Generator<'_> {
             self.block = or;
             self.arm(budget, &join, leaving == 1 && kind != 7);
         }
+        self.enter(&join);
+    }
+
+    /// An address can be read wherever it can be computed if that is below the branch only.
+    fn pinned_index(&mut self, budget: u32) {
+        let ty = self.int_type();
+        let (index, divisor) = (self.known_int(ty), self.value_of(Class::Divisor(ty)));
+        let (below, how) = (self.random.pick(&[4, 8, 13]), self.random.below(5));
+        if self.random.flip() {
+            let early = self.pinned(index, how, divisor);
+            self.keep(early, Class::Data(ty));
+        }
+        let (fits, join) = (
+            self.compare_constant(Cond::Below, index, below.into()),
+            self.join(&[]),
+        );
+        let ways = [self.plain_way(), self.way_to(&join, &[], false)];
+        let arm = ways[0].target;
+        self.branch_either_way(fits, ways);
+        self.block = arm;
+        let mark = self.mark();
+        let pinned = self.pinned(index, how, divisor);
+        let is_guarded = false;
+        self.learn(
+            pinned,
+            Class::Index {
+                ty,
+                below,
+                is_guarded,
+            },
+        );
+        let loaded = self.load_trusting(pinned, below);
+        self.keep(loaded, Class::Data(Type::I64));
+        self.use_up(mark);
+        self.arm(budget, &join, false);
+        self.restore(mark);
         self.enter(&join);
     }
 
@@ -634,7 +689,11 @@ impl Generator<'_> {
                 self.use_up(mark);
                 self.seal(&mut ways);
                 let successors: Vec<_> = ways.iter().map(Way::successor).collect();
-                let site = self.terminal_patchpoint(&successors, chooser);
+                let site = if self.shape.weights.nodes != 0 && self.random.flip() {
+                    self.terminal_node(&successors, chooser)
+                } else {
+                    self.terminal_patchpoint(&successors, chooser)
+                };
                 self.pass_on(site.0, &ways);
                 return Some(site);
             }

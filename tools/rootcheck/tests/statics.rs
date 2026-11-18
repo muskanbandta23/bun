@@ -26,7 +26,9 @@ pub fn inside_a_function() {
 const EMPTY: Vec<Value> = Vec::new();
 const IMMEDIATES: [Value; 2] = [Value::NULL, Value::TRUE];
 
-pub fn from_a_constant(value: Value) {
-    let mut list = EMPTY; //~ hidden: borrowed here
+pub fn from_a_constant(vm: &Vm, value: Value) -> Value {
+    let mut list = EMPTY; //~ hidden: held while this may collect
     list.push(value);
+    vm.heap.collect(None);
+    list[0]
 }

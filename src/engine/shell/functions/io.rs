@@ -2,7 +2,9 @@
 
 use std::io::{BufRead, Write};
 
-use bun_engine_vm::{StackVisitor, origin_of_caller};
+use bun_engine_vm::{
+    JsArrayBuffer, JsArrayBufferView, JsUint8Array, StackVisitor, origin_of_caller,
+};
 
 use super::{to_console_text, to_text, to_utf8};
 use crate::prelude::*;
@@ -106,9 +108,11 @@ pub(super) fn url_from_arguments(cx: &mut Cx, frame: &CallFrame) -> JsResult<Str
 
 #[native_abi]
 fn read_file(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let mut is_binary = false;
     if frame.argument_count() > 1 {
         let mode = to_text(cx, frame.argument(1))?;
-        if mode != "binary" && mode != "caller relative" {
+        is_binary = mode == "binary";
+        if !is_binary && mode != "caller relative" {
             let message = "Expected 'binary' or 'caller relative' as second argument.";
             return Err(cx.throw_error(ErrorType::Error, message));
         }
@@ -118,13 +122,25 @@ fn read_file(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
         let message = format_args!("Could not open file: {path}");
         return Err(cx.throw_error(ErrorType::Error, message));
     };
+    if is_binary {
+        return JsUint8Array::from_vec(cx, cx.uint8_array_shape(), bytes).map(Into::into);
+    }
     Ok(JsString::new(cx, files::decode(&bytes)).into())
 }
 
 #[native_abi]
 fn write_file(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let path = to_text(cx, frame.argument(0))?;
-    let bytes = to_utf8(cx, frame.argument(1))?;
+    let data = frame.argument(1);
+    let bytes = if let Some(buffer) = data.downcast::<JsArrayBuffer>() {
+        let bytes = buffer.bytes(&cx.no_gc()).try_to_vec();
+        cx.or_out_of_memory(bytes)?
+    } else if let Some(view) = data.downcast::<JsArrayBufferView>() {
+        let bytes = view.bytes(&cx.no_gc()).try_to_vec();
+        cx.or_out_of_memory(bytes)?
+    } else {
+        to_utf8(cx, data)?
+    };
     match std::fs::write(path, &bytes) {
         Ok(()) => Ok(bytes.len().into()),
         Err(_) => Err(cx.throw_error(ErrorType::Error, "Could not open file.")),

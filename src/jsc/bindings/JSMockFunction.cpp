@@ -9,7 +9,6 @@
 #include <JavaScriptCore/Completion.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "ExtendedDOMClientIsoSubspaces.h"
-#include "ExtendedDOMIsoSubspaces.h"
 #include "BunClientData.h"
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>

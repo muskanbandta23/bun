@@ -9,7 +9,7 @@ use crate::{
 };
 
 /// What SetFunctionName makes of a key and a prefix.
-pub(crate) fn function_name(prefix: &str, name: PropertyName<'_>) -> StringRef {
+pub fn function_name(prefix: &str, name: PropertyName<'_>) -> StringRef {
     if prefix.is_empty() && !name.is_symbol() {
         return StringRef::retain(name.string());
     }
@@ -143,9 +143,13 @@ impl JsObject {
             StaticValue::Callback(callback) => {
                 let _defer = cx.defer_termination();
                 // SAFETY: as above.
+                #[cfg(not(windows))]
                 let result = unsafe { callback(cx, self) };
+                // SAFETY: as above.
+                #[cfg(windows)]
+                let result = *unsafe { callback(&mut None, cx, self) };
                 cx.check_exception()?;
-                let Ok(value) = result else { return Ok(()) };
+                let Some(value) = result else { return Ok(()) };
                 value
             }
             StaticValue::Made(make) => make(cx, self),

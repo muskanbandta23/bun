@@ -122,7 +122,7 @@ fn segment(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 fn resolved_options(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let this: Gc<JsSegmenter> = this!(cx, frame.this_value(), "Segmenter", "resolvedOptions")?;
     let granularity = this.segmenter.granularity();
-    let options = Record::with_locale(cx, this.segmenter.locale());
+    let options = Record::with_locale(cx, this.segmenter.locale().string().clone());
     options.put_named(names::granularity, granularity);
     Ok(options.finish())
 }

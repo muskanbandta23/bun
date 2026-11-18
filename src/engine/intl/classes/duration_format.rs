@@ -95,9 +95,9 @@ fn format_to_parts(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 fn resolved_options(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let this: Gc<JsDurationFormat> =
         this!(cx, frame.this_value(), "DurationFormat", "resolvedOptions")?;
-    let resolved = this.format.resolved_options().or_throw(cx)?;
+    let resolved = this.anchor().format.resolved_options().or_throw(cx)?;
 
-    let options = Record::with_locale(cx, resolved.locale);
+    let options = Record::with_locale(cx, resolved.locale.string().clone());
     let numbering_system = resolved.numbering_system.to_string_ref();
     options.put_string(names::numberingSystem, numbering_system);
     options.put_named(names::style, resolved.units.style());

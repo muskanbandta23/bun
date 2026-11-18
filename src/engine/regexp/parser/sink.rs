@@ -38,6 +38,13 @@ pub(crate) enum GroupKind {
     Look { behind: bool, negated: bool },
 }
 
+impl GroupKind {
+    pub(crate) const PLAIN: GroupKind = GroupKind::Plain {
+        set: Flags::empty(),
+        cleared: Flags::empty(),
+    };
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct Quantifier {
     pub(crate) min: u32,

@@ -300,7 +300,18 @@ pub struct Survivors {
 impl Survivors {
     #[inline]
     pub fn contains<T>(&self, cell: Gc<T>) -> bool {
-        container::of(cell.address()).is_marked(cell.address())
+        self.contains_address(cell.address())
+    }
+
+    /// Of a cell that was alive when the collection began.
+    #[inline]
+    pub(crate) fn contains_address(&self, cell: usize) -> bool {
+        container::of(cell).is_marked(cell)
+    }
+
+    /// Memory outside the heap that a survivor owns, and that its visit has not reported.
+    pub fn report_extra_memory(&self, bytes: usize) {
+        self.vm().heap.did_find_extra_memory(bytes);
     }
 
     #[inline]

@@ -69,7 +69,12 @@ impl PropertyOffset {
 
     #[inline(always)]
     pub const fn out_of_line_capacity(self) -> usize {
-        match self.out_of_line_size() {
+        Self::capacity_for(self.out_of_line_size())
+    }
+
+    #[inline(always)]
+    pub const fn capacity_for(out_of_line_size: usize) -> usize {
+        match out_of_line_size {
             0 => 0,
             1..=Self::INITIAL_OUT_OF_LINE_CAPACITY => Self::INITIAL_OUT_OF_LINE_CAPACITY,
             size => size.next_power_of_two(),

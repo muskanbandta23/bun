@@ -1,7 +1,7 @@
 use core::num::NonZeroU64;
 
 use crate::civil::{week_day, year_month_day};
-use crate::time_value::{TIME_VALUES, make_date, make_day, make_time};
+use crate::time_value::{make_date, make_day, make_time, split_at_midnight, time_as_integer};
 use crate::zone::{Offset, TimeZoneId};
 
 /// Where a field is in the bits of `DateFields`.
@@ -43,19 +43,6 @@ pub enum Component {
     Millisecond,
 }
 
-pub(crate) const MS_PER_DAY: u32 = 86_400_000;
-
-/// The days since the epoch and the milliseconds since midnight. `time` is within a day of the range of time values.
-#[inline(always)]
-pub(crate) const fn split_at_midnight(time: i64) -> (i32, u32) {
-    const DAYS_BEFORE_EPOCH: u64 = 100_000_001;
-    let since_start = (time as u64).wrapping_add(DAYS_BEFORE_EPOCH * MS_PER_DAY as u64);
-    (
-        (since_start / MS_PER_DAY as u64).wrapping_sub(DAYS_BEFORE_EPOCH) as i32,
-        (since_start % MS_PER_DAY as u64) as u32,
-    )
-}
-
 /// The fields that an offset decides.
 #[derive(Clone, Copy)]
 pub(crate) struct OffsetBits(u32);
@@ -89,14 +76,13 @@ impl DateFields {
     /// `None` if `time` is not in the range of time values.
     #[inline]
     pub fn utc(time: f64) -> Option<DateFields> {
-        let time = (time.to_int_checked()).filter(|time| TIME_VALUES.contains(time))?;
-        let (days, since_midnight) = split_at_midnight(time);
+        let (days, since_midnight) = split_at_midnight(time_as_integer(time)?);
         Some(DateFields::at_midnight(days, OffsetBits::UTC).later(since_midnight))
     }
 
     /// `None` if `time` is not in the range of time values.
     pub fn in_zone(time: f64, zone: TimeZoneId) -> Option<DateFields> {
-        let time = (time.to_int_checked()).filter(|time| TIME_VALUES.contains(time))?;
+        let time = time_as_integer(time)?;
         let offset = zone.rules().span_at(time.div_euclid(1000)).offset;
         let (days, since_midnight) = split_at_midnight(time + i64::from(offset.seconds) * 1000);
         Some(DateFields::at_midnight(days, OffsetBits::new(offset)).later(since_midnight))

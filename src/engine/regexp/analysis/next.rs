@@ -74,9 +74,13 @@ impl Next {
 
     /// The units, ascending.
     pub(crate) fn ranges(&self) -> impl Iterator<Item = CharRange> {
+        self.latin1.ranges().chain(self.wide_ranges())
+    }
+
+    /// The units above Latin-1, ascending.
+    pub(crate) fn wide_ranges(&self) -> impl Iterator<Item = CharRange> {
         let pages = (self.pages - EDGE).ranges();
-        let wide = pages.map(|pages| CharRange::new(pages.first << 8, pages.last << 8 | 0xff));
-        self.latin1.ranges().chain(wide)
+        pages.map(|pages| CharRange::new(pages.first << 8, pages.last << 8 | 0xff))
     }
 }
 

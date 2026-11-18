@@ -36,21 +36,28 @@ impl LocaleResolver {
         }
     }
 
-    pub(crate) fn data_locale(&self) -> Result<CText> {
-        self.matched.icu_locale(&[])
-    }
-
     /// `None` stands for the default of the locale. The keys come in ascending order.
     pub(crate) fn keyword<T>(
         &mut self,
         key: Key,
         option: Option<&[u8]>,
-        mut supported: impl FnMut(&[u8]) -> Option<T>,
+        supported: impl Fn(&[u8]) -> Option<T>,
     ) -> Option<T> {
+        self.keyword_by_locale(key, option, |_, value| supported(value))
+    }
+
+    /// For a key whose values depend on the locale.
+    pub(crate) fn keyword_by_locale<T>(
+        &mut self,
+        key: Key,
+        option: Option<&[u8]>,
+        supported: impl Fn(&ResolvedLocale, &[u8]) -> Option<T>,
+    ) -> Option<T> {
+        let supported = |value| supported(&self.matched, value);
         let written = self.matched.tag.keyword(key);
         let requested = written.map(|it| if it.is_empty() { b"true" } else { it });
         if option != requested
-            && let Some(value) = option.and_then(&mut supported)
+            && let Some(value) = option.and_then(supported)
         {
             return Some(value);
         }

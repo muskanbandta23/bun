@@ -7,8 +7,9 @@ use crate::code::{
     Body, CodeFlags, CodeKind, Handler, IntCases, StringSwitch, SuspendPoint, Tables, TooLarge,
 };
 use crate::instruction::{Opcode, Shape};
+use crate::liveness::SavedRegisters;
 use crate::metadata::MetadataKind;
-use crate::operand::{Narrow, Operand, Register, Wide16, Wide32, Width};
+use crate::operand::{Narrow, Operand, Wide16, Wide32, Width};
 use crate::positions::Positions;
 
 const MAX_INSTRUCTION_BYTES: usize = 32;
@@ -156,6 +157,7 @@ pub(super) struct Encoder {
     shifts: Vec<(u32, u32)>,
     /// The sites of the instructions that suspend and resume, and the index that the point was added with.
     suspend_points: Vec<(u32, u32, u32)>,
+    saved_registers: SavedRegisters,
 }
 
 impl Encoder {
@@ -333,7 +335,7 @@ impl Assembler {
             has_wide_layout: layout.is_wide(),
         };
         if !body.suspend_points().is_empty() {
-            self.find_saved_registers(&mut body)?;
+            self.encoder.saved_registers.fill_in(&mut body)?;
         }
         Ok(body)
     }
@@ -645,15 +647,5 @@ impl Assembler {
             saved_registers: Box::default(),
             coverage_blocks: self.coverage_blocks.as_slice().into(),
         }))
-    }
-
-    fn find_saved_registers(&mut self, body: &mut Body) -> Result<(), TooLarge> {
-        let locals = body.locals;
-        let tables = body.tables.as_mut().expect("has suspend points");
-        tables.saved_registers = (0..locals).map(Register::local).collect();
-        for point in &mut tables.suspend_points {
-            point.registers = 0..locals;
-        }
-        Ok(())
     }
 }

@@ -6,7 +6,7 @@ use super::effects::EffectFlags;
 use super::entities::{Block, Entity, Patchpoint, Value};
 use super::function::Function;
 use super::op::{AccessFlags, Binary, Load, Op, Store, Type, Unary};
-use super::patchpoint::{Action, Boundary, Input, Output};
+use super::patchpoint::{Action, Boundary, Input, Output, PatchpointFlags};
 use crate::analysis::{Cfg, Dominators};
 use crate::bitset::BitSet;
 
@@ -65,6 +65,13 @@ pub fn validate(function: &Function) -> Checked {
                 value
             );
             let mut result = Ok(());
+            require!(!function.operands(value).contains(&value), value);
+            require!(
+                !function.state(function.state_of(value)).contains(&value),
+                value
+            );
+            // The edges that leave a patchpoint may pass on its result.
+            require!(defined.insert(value.index()), value);
             function.for_each_use(value, |used| {
                 if result.is_ok() {
                     result = check_use(function, &dominators, &defined, block, value, used);
@@ -72,7 +79,6 @@ pub fn validate(function: &Function) -> Checked {
             });
             result?;
             check_types(function, value)?;
-            require!(defined.insert(value.index()), value);
             previous = value;
         }
         check_edges(function, block)?;
@@ -353,12 +359,24 @@ fn check_patchpoint(function: &Function, value: Value, patchpoint: Patchpoint) -
         _ => Type::Tuple,
     };
     require!(function.type_of(value) == expected, value);
+    let has_results_in_memory = outputs
+        .iter()
+        .any(|(_, output)| matches!(output, Output::Outgoing(_)));
     require!(
-        outputs.is_empty() || !data.effects.has(EffectFlags::ENDS_BLOCK),
+        !has_results_in_memory || !data.effects.has(EffectFlags::ENDS_BLOCK),
         value
     );
     require!(
         ((data.clobbers_early | data.clobbers_late) & function.pinned).is_empty(),
+        value
+    );
+    let jumps_to_successors =
+        data.action == Action::Custom && data.effects.has(EffectFlags::ENDS_BLOCK);
+    let needs_code_after =
+        PatchpointFlags::UNEXTENDED_RESULTS | PatchpointFlags::MOVES_STACK_POINTER;
+    let has_successors = function.successors(function.block_of(value)).len() != 0;
+    require!(
+        !(jumps_to_successors && has_successors && data.flags.intersects(needs_code_after)),
         value
     );
     if data.action == Action::CallIndirect {

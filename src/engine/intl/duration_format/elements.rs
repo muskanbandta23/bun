@@ -7,7 +7,7 @@ use super::{Display, Units};
 
 pub(super) enum Magnitude {
     Whole(f64),
-    /// Of the unit and of those that are its fraction.
+    /// Of the unit and of those that are its fraction. Not zero.
     Nanoseconds(u128),
 }
 
@@ -21,15 +21,19 @@ pub(super) struct Element {
 
 impl Magnitude {
     fn of(duration: &Duration, unit: Unit, has_fraction: bool) -> Magnitude {
-        if has_fraction {
+        const EXACT_LIMIT: f64 = (1u64 << 53) as f64;
+
+        let whole = duration.get(unit).abs();
+        let is_whole = || (Unit::ALL.iter()).all(|&it| it >= unit || duration.get(it) == 0.0);
+        if has_fraction && (whole > EXACT_LIMIT || !is_whole()) {
             Magnitude::Nanoseconds(duration.nanoseconds_from(unit).unsigned_abs())
         } else {
-            Magnitude::Whole(duration.get(unit).abs())
+            Magnitude::Whole(whole)
         }
     }
 
     fn is_zero(&self) -> bool {
-        matches!(self, Magnitude::Whole(0.0) | Magnitude::Nanoseconds(0))
+        matches!(self, Magnitude::Whole(0.0))
     }
 }
 

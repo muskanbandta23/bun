@@ -280,7 +280,9 @@ impl<'a> Generator<'a> {
             && !has(binding, BindingFlags::CAPTURED)
             && !has(binding, BindingFlags::WRITTEN)
             && !self.suspends();
-        if is_only_read && self.uses(Features::ONLY_ARGUMENTS_LENGTH) {
+        let body = self.ast.root.body_scope.map(|it| self.ast.bindings(it));
+        let is_redeclared = body.is_some_and(|it| it.iter().any(|it| it.name == Name::ARGUMENTS));
+        if is_only_read && !is_redeclared && self.uses(Features::ONLY_ARGUMENTS_LENGTH) {
             Arguments::OnlyLength(NO_REGISTER)
         } else if is_only_read && !has_mappings {
             let (register, empty) = (self.temp(), self.empty());
@@ -382,10 +384,16 @@ impl<'a> Generator<'a> {
         if !self.uses(Features::SIMPLE_PARAMETERS) {
             self.bind_parameters();
         }
+        if self.function_kind != FunctionKind::FieldInitializer {
+            self.cover(root.start, 0);
+        }
         if let (Suspension::Generator | Suspension::AsyncGenerator, Some(generator)) =
             (self.suspension, self.generator.as_register())
         {
             handler = Some(self.begin_generator(generator));
+        }
+        if let Some(body) = ast.get(root.body, 0).filter(|_| self.suspends()) {
+            self.cover(ast[body].start, root.end);
         }
         if let Some(body) = root.body_scope {
             self.enter_body_scope(scope, body, merged_body, &mut next_variable);
@@ -393,9 +401,6 @@ impl<'a> Generator<'a> {
         let body_scope = root.body_scope.unwrap_or(scope);
         self.instantiate_functions(body_scope);
 
-        if self.function_kind != FunctionKind::FieldInitializer {
-            self.cover(root.start, 0);
-        }
         self.debug_hook(DebugHook::DidEnterCallFrame, root.start);
         if (self.function.and_then(|it| it.fields.as_deref())).is_some_and(|it| it.sets_brand) {
             self.set_brand();
@@ -443,7 +448,6 @@ impl<'a> Generator<'a> {
         } else {
             self.asm().create_async_generator(generator);
         }
-        self.debug_hook(DebugHook::WillLeaveCallFrame, self.ast.root.end);
         self.suspend(generator.into(), SuspendKind::Start);
         let handler = self.push_base_try(HandlerKind::SynthesizedFinally);
         let (mark, ignored) = (self.top, self.temp());
@@ -700,7 +704,10 @@ impl<'a> Generator<'a> {
             };
             let is_changed = changes(binding) || shared.iter().any(changes);
             if in_slot(binding) {
-                if let Some(position) = position.filter(|_| is_simple) {
+                if let Some(position) = position
+                    && is_simple
+                    && !has(binding, BindingFlags::FUNCTION)
+                {
                     let mark = self.top;
                     let value = self.load_argument(position, Dest::Any);
                     self.initialize(binding.name, value.into());

@@ -108,6 +108,15 @@ impl FunctionInfo {
         self.instance_fields
     }
 
+    /// Whether the name stands in the source as that of the function or class.
+    pub fn has_own_name(&self) -> bool {
+        self.has_own_name
+    }
+
+    pub fn has_no_outer_scope(&self) -> bool {
+        self.scope.is_none()
+    }
+
     pub fn origin(&self) -> Origin {
         self.origin
     }

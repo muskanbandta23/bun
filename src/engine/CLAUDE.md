@@ -14,20 +14,22 @@ JavaScript and WebAssembly execution for Bun, in Rust. Each folder here is a cra
 | `asm`, `codegen`                                | assemblers and macro assembler; SSA IR down to machine code                                        | forbidden    |
 | `wasm_format`, `wasm_compiler`                  | decoding and validation of modules; machine code for functions                                     | forbidden    |
 | `exec_memory`                                   | executable pages, linking, patching                                                                | yes          |
-| `macros`, `heap`                                | `Value`, `Gc<T>`, cell declarations, allocator, collector                                          | yes          |
-| `vm`                                            | object model, realms, calls, errors, modules, promises, inline caches, run-time operations         | `raw` module |
+| `wasm_runtime`                                  | linear memories, tables, instances, installing and tiering of code, faults                         | yes          |
+| `macros`, `vm`                                  | heap and collector, object model, realms, calls, errors, modules, promises, caches, operations     | yes          |
 | `interpreter`                                   | bytecode handlers and the stubs that enter, call and leave frames                                  | yes          |
 | `builtins`, `intl`, `temporal`                  | the standard library                                                                               | forbidden    |
 | `baseline`, `optimizer`, `wasm`                 | compilers (safe code that produces bytes) and the code that installs and enters what they produce  | install only |
 | `inspector`                                     | debugger, profilers, heap snapshots, protocol                                                      | sampling     |
+| `embed`                                         | C ABI and C++ headers for Bun's bindings                                                           | yes          |
 | `shell`, `standalone`                           | `engine-shell` and the native libraries it and the crates' tests link. Not part of Bun             |              |
 
-A crate below `heap` knows nothing of the garbage collector: it is plain Rust over slices and owned data. A crate calls upwards only through a table of hooks that `bun_engine` fills in.
+A crate below `vm` knows nothing of the garbage collector: it is plain Rust over slices and owned data. A crate calls upwards only through a table of hooks that `bun_engine` fills in.
 
 ## Build and test
 
 ```sh
-cargo build -p bun_engine_shell --release     # target/release/engine-shell
+cargo build -p bun_engine_shell               # target/debug/engine-shell: optimized, with assertions
+cargo build -p bun_engine_shell --release     # for measuring
 cargo test -p bun_engine_regexp               # a test file names `bun_engine_standalone` to link the native libraries
 cargo clippy -p bun_engine_<crate> --no-deps && cargo fmt -p bun_engine_<crate>
 cargo check -p bun_engine_<crate> --target aarch64-apple-darwin   # and x86_64-pc-windows-msvc: `cfg`-gated code is not checked otherwise
@@ -61,7 +63,7 @@ fp +  0        caller's fp
 fp -  8(n+1)   local n
 ```
 
-The caller builds the callee's header and arguments at the bottom of its own frame and restores the stack pointer after the call. A callee entered with fewer arguments than parameters moves the frame down and pads it. No register survives a call between JavaScript functions except the pinned ones, so unwinding restores none:
+The caller builds the callee's header and arguments at the bottom of its own frame, in an even number of words that all belong to the callee, and restores the stack pointer after the call. It takes the code block and the entry from the `Executable` of the callee and passes that executable in `rcx` / `x9`; nothing links call sites to their targets. A callee entered with fewer arguments than parameters moves the frame down and pads it. No register survives a call between JavaScript functions except the pinned ones, so unwinding restores none:
 
 | Pinned         | x86-64 | AArch64 |
 | -------------- | ------ | ------- |
@@ -74,4 +76,30 @@ Native functions and run-time operations use the C calling convention (System V 
 
 ## The heap
 
-Cells do not move. The collector is generational mark and sweep, finds roots by scanning the native stack conservatively, and traces cells precisely. So a `Gc<T>`, a `Value` or a `&T` of a cell is safe in a local, an argument or a struct on the stack, and in a field of another cell. It is **never** put in memory of the Rust allocator (`Vec`, `Box`, `Rc`, a hash map, a boxed closure, a static): use the containers of `heap` (`ValueVec`, `Strong`, `Weak`, traced fields).
+Cells do not move. The collector is generational mark and sweep, finds roots by scanning the native stack conservatively, and traces cells precisely. So a `Gc<T>`, a `Value` or a `&T` of a cell is safe in a local, an argument or a struct on the stack, and in a field of another cell. It is **never** put in memory of the Rust allocator (`Vec`, `Box`, `Rc`, `SmallVec`, a hash map, a boxed closure, a static). Instead:
+
+| For                                   | Use                                                                         |
+| ------------------------------------- | --------------------------------------------------------------------------- |
+| a list or map in a local              | `ValueVec`, `RootVec`, `RootMap`, `RootSet`, `RootDeque`, `RootBox`         |
+| a field that changes                  | `Field<T>`, `FieldArray<T, N>`, `WeakField<T>`                              |
+| a field that never changes            | the plain `Gc<T>` or `Value`                                                |
+| a collection that a cell owns         | `TracedVec`, `TracedMap`, or `GcCell<T>` for any `T: Trace`                 |
+| a reference from outside the heap     | `Strong`, `Weak`                                                            |
+| state of the `Vm`                     | the `State` of the module, which is a `Service` and visits what it holds    |
+
+What a function may do is in its signature:
+
+| Parameter     | May                                                        |
+| ------------- | ---------------------------------------------------------- |
+| `&Vm`         | allocate, and so collect                                   |
+| `&Cx`         | the same, in a realm, and throw. Derefs to `&Vm`           |
+| `&mut Cx`     | also run scripts                                           |
+| `&NoGc`       | none of these: `cx.no_gc()` borrows the `Cx` while it lives |
+
+Memory that a cell owns outside itself is borrowed through a guard that keeps the cell alive (`StringView`, `ResolvedString`, `PropertyKey`, `GcRef`) or, if a script or an allocation can replace it, under `NoGc` (`elements`, `elements_mut`). A loop that calls out reads lengths and elements again on each turn.
+
+## Cells and built-ins
+
+`#[cell(..)]` declares a type of cell (see `CellKind`), `#[object_ops]` the internal methods that it overrides (see `ClassOps`; `Inherited` calls those of the base). An object that owns something with a destructor extends `JsDestructibleObject`. A type whose layout a tier or the embedder reads is in `vm` and has `OFFSET_OF_*` constants; the others are in the crate that uses them. Objects with internal fields that built-ins written in JavaScript read have a `FieldArray` right after the `JsObject`.
+
+A native function is `#[native_abi] fn(&mut Cx, &CallFrame) -> JsResult<Value>`. Prototypes, constructors and namespaces list their properties in a `static_table!`, in the order in which they enumerate, and nothing is made before it is used: `builtins/fundamental/boolean.rs` has the pattern. What a realm has one of is a `RealmSlot`, and what a fast path assumes of the library is a `RealmWatchpoint`. A function that calls back for each element is written in JavaScript (`builtins/js`), where the compilers can inline the callback. Names are constants: add a line to `text/names.txt` and use `names::x`, `symbols::x` or `private_names::x`.

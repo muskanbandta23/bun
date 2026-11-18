@@ -5,6 +5,7 @@ mod finish;
 use bun_engine_syntax::EvalContext;
 
 use crate::code::{CoverageBlock, HandlerKind, IntCases, IntSwitch, StringSwitch};
+use crate::effects::for_each_operand_def;
 use crate::instruction::{Flow, Opcode, Shape, field_type};
 use crate::operand::*;
 use crate::positions::Position;
@@ -471,19 +472,12 @@ impl Assembler {
             let header = Header(self.words[at]);
             let operands = &self.words[at + 1..][..header.operands()];
             at += 1 + operands.len();
-            for (&shape, &word) in header.opcode().shapes().iter().zip(operands) {
-                let (first, count) = match shape {
-                    Shape::Dst | Shape::DstIfJumps | Shape::DstUnlessJumps | Shape::Mut => {
-                        (word, 1)
-                    }
-                    Shape::Dst2 => (word, 2),
-                    Shape::Dst3 | Shape::Mut3 => (word, 3),
-                    Shape::Variables => (Register::SCOPE.word(), word + 1),
-                    _ => continue,
-                };
-                if first.wrapping_sub(register.word()) < count {
-                    return true;
-                }
+            let mut writes = false;
+            for_each_operand_def(header.opcode(), operands, |run, _| {
+                writes |= run.contains(register);
+            });
+            if writes {
+                return true;
             }
         }
         false

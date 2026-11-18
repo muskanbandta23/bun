@@ -4,8 +4,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use bun_engine_syntax::ast::{self, Ast, BindingFlags, BindingKind, Features, ScopeId, StmtKind};
-use bun_engine_syntax::{EvalContext, FunctionFlags, FunctionKind, Name};
-use bun_engine_text::{Identifier, StringRef};
+use bun_engine_syntax::{
+    Error, ErrorKind, EvalContext, FunctionFlags, FunctionKind, Name, Recovery,
+};
+use bun_engine_text::{Identifier, StringRef, Text};
 
 use super::function::Arguments;
 use super::scope::{Layout, Place};
@@ -21,6 +23,30 @@ use crate::scope::{ScopeKind, StaticScope};
 pub(crate) enum Failure {
     TooLarge,
     UnknownBuiltinName(StringRef),
+}
+
+impl From<Failure> for Error {
+    fn from(failure: Failure) -> Error {
+        let (kind, message) = match failure {
+            Failure::TooLarge => (ErrorKind::OutOfMemory, StringRef::empty()),
+            Failure::UnknownBuiltinName(name) => {
+                let parts = [
+                    Text::from_ascii("Invalid private name '@"),
+                    name.text(),
+                    Text::from_ascii("'"),
+                ];
+                let message = StringRef::try_concat(&parts).unwrap_or_default();
+                (ErrorKind::Syntax, message)
+            }
+        };
+        Error {
+            kind,
+            recovery: Recovery::Irrecoverable,
+            message,
+            token: 0..0,
+            offset: 0,
+        }
+    }
 }
 
 /// What is the same for all kinds of code.
@@ -233,12 +259,14 @@ impl<'a> Generator<'a> {
             (true, false) => Suspension::AsyncFunction,
             (true, true) => Suspension::AsyncGenerator,
         };
-        if function.is_generator() || flags.contains(FunctionFlags::AWAITS) {
+        if function.is_generator() || self.ast.root.features.contains(Features::AWAITS) {
             self.flags |= CodeFlags::SUSPENDS;
         } else if function.is_async() {
             self.generator = self.empty();
         }
-        if self.ast.root.features.contains(Features::USES_NEW_TARGET) || self.captures_new_target()
+        if self.kind == CodeKind::Call
+            && (self.ast.root.features.contains(Features::USES_NEW_TARGET)
+                || self.captures_new_target())
         {
             self.new_target = self.undefined();
         }

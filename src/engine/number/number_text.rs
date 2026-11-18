@@ -12,17 +12,31 @@ pub const NUMBER_TEXT_CAPACITY: usize = 32;
 #[derive(Clone, Copy)]
 pub struct NumberText<const CAPACITY: usize = NUMBER_TEXT_CAPACITY> {
     bytes: [u8; CAPACITY],
-    length: usize,
+    start: u32,
+    end: u32,
 }
 
 impl<const CAPACITY: usize> NumberText<CAPACITY> {
+    const EMPTY: Self = NumberText {
+        bytes: [0; CAPACITY],
+        start: 0,
+        end: 0,
+    };
+
+    /// `write` fills the start of the buffer and returns where the text ends.
     #[inline(always)]
-    pub(crate) fn written_by(write: impl FnOnce(&mut [u8; CAPACITY]) -> usize) -> Self {
-        let mut text = NumberText {
-            bytes: [0; CAPACITY],
-            length: 0,
-        };
-        text.length = write(&mut text.bytes);
+    pub(crate) fn written_forward(write: impl FnOnce(&mut [u8; CAPACITY]) -> usize) -> Self {
+        let mut text = Self::EMPTY;
+        text.end = write(&mut text.bytes) as u32;
+        text
+    }
+
+    /// `write` fills the end of the buffer and returns where the text starts.
+    #[inline(always)]
+    pub(crate) fn written_backward(write: impl FnOnce(&mut [u8; CAPACITY]) -> usize) -> Self {
+        let mut text = Self::EMPTY;
+        text.start = write(&mut text.bytes) as u32;
+        text.end = CAPACITY as u32;
         text
     }
 
@@ -37,7 +51,7 @@ impl<const CAPACITY: usize> Deref for NumberText<CAPACITY> {
 
     #[inline]
     fn deref(&self) -> &[u8] {
-        &self.bytes[..self.length]
+        &self.bytes[self.start as usize..self.end as usize]
     }
 }
 
@@ -58,7 +72,7 @@ macro_rules! from_numbers {
         impl From<$number> for NumberText {
             #[inline]
             fn from(number: $number) -> NumberText {
-                NumberText::written_by(|out| $write(number, out))
+                NumberText::written_forward(|out| $write(number, out))
             }
         }
     )*};

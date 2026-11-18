@@ -160,7 +160,9 @@ impl Generator<'_> {
             ExprKind::Yield(argument) => self.yield_value(argument, dst),
             ExprKind::YieldDelegate { .. } => self.yield_delegate(node, dst),
             ExprKind::Await(argument) => {
+                let mark = self.top;
                 let value = self.expr(argument, Dest::Any);
+                self.top = mark;
                 let dst = self.final_dst(dst);
                 self.await_value(dst, value, node.start);
                 dst.into()
@@ -277,8 +279,11 @@ impl Generator<'_> {
     }
 
     pub(super) fn this_slot(&mut self) -> Option<Place> {
-        self.own_internal(Name::THIS_VALUE)
-            .or_else(|| self.resolve_outer_internal(Name::THIS_VALUE))
+        if self.inherits_context() {
+            self.resolve_outer_internal(Name::THIS_VALUE)
+        } else {
+            self.own_internal(Name::THIS_VALUE)
+        }
     }
 
     pub(super) fn reload_this(&mut self, this: Register) {

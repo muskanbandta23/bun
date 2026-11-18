@@ -1,5 +1,6 @@
 use bun_engine_date::{
-    Component, DateFields, date_string, iso_string, ms_from_time, time_clip, utc_string,
+    Component, DateFields, MAX_ISO_STRING_LENGTH, MAX_UTC_STRING_LENGTH, date_string, iso_string,
+    ms_from_time, time_clip, utc_string, write_iso_string, write_utc_string,
 };
 use bun_engine_standalone as _;
 
@@ -56,9 +57,16 @@ fn strings_in_utc() {
         ),
     ] {
         let fields = DateFields::utc(time).unwrap();
-        assert_eq!(&*iso_string(time).unwrap(), iso);
-        assert_eq!(&*utc_string(fields), utc);
-        assert_eq!(&*date_string(fields), date);
+        assert_eq!(iso_string(time).unwrap().to_string(), iso);
+        assert_eq!(utc_string(fields).to_string(), utc);
+        assert_eq!(date_string(fields).to_string(), date);
+
+        let mut units = [0u16; MAX_ISO_STRING_LENGTH];
+        let length = write_iso_string(time, &mut units).unwrap();
+        assert!(iso.encode_utf16().eq(units[..length].iter().copied()));
+        let mut bytes = [0; MAX_UTC_STRING_LENGTH];
+        let length = write_utc_string(fields, &mut bytes);
+        assert_eq!(&bytes[..length], utc.as_bytes());
     }
     for time in [f64::NAN, f64::INFINITY, -f64::MAX, 8.65e15] {
         assert_eq!(DateFields::utc(time), None);
@@ -92,7 +100,7 @@ fn setters() {
     let set = |first, values: &[f64]| {
         let fields = DateFields::utc(time).unwrap();
         let time = time_clip(fields.with_components(ms_from_time(time), first, values));
-        iso_string(time).as_deref().map(String::from)
+        iso_string(time).map(|text| text.to_string())
     };
     for (first, values, expected) in [
         (Component::Year, &[2023.0][..], "2023-03-01T13:05:09.045Z"),

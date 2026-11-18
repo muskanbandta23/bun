@@ -136,6 +136,8 @@ pub struct Embedder {
     pub reconcile_weak_references: Cell<Option<fn(&Vm, &Survivors)>>,
     /// After the last cell.
     pub destroy_members: Cell<Option<fn(&Vm)>>,
+    /// AgentCanSuspend is false.
+    pub must_not_block: Cell<bool>,
     pub errors: crate::ErrorHooks,
     pub microtasks: crate::MicrotaskHooks,
 }

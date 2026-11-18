@@ -44,6 +44,9 @@ impl Traps {
     pub fn fire(&self, trap: Trap) {
         self.pending.fetch_or(trap.bits(), Ordering::SeqCst);
         self.stack_limit.store(usize::MAX, Ordering::SeqCst);
+        if trap.contains(Trap::TERMINATION) {
+            crate::interrupt_wait(self);
+        }
     }
 
     pub fn request_termination(&self) {

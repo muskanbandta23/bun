@@ -4,14 +4,15 @@
 mod platform {
     use core::ptr::{null_mut, with_exposed_provenance_mut};
 
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    const RESERVE_FLAGS: i32 = libc::MAP_PRIVATE | libc::MAP_ANON | libc::MAP_NORESERVE;
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    const RESERVE_FLAGS: i32 = libc::MAP_PRIVATE | libc::MAP_ANON;
+
     pub fn reserve(size: usize) -> Option<usize> {
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        const NO_RESERVE: i32 = libc::MAP_NORESERVE;
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        const NO_RESERVE: i32 = 0;
-        let flags = libc::MAP_PRIVATE | libc::MAP_ANON | NO_RESERVE;
         // SAFETY: a new mapping at an address that the kernel picks.
-        let address = unsafe { libc::mmap(null_mut(), size, libc::PROT_NONE, flags, -1, 0) };
+        let address =
+            unsafe { libc::mmap(null_mut(), size, libc::PROT_NONE, RESERVE_FLAGS, -1, 0) };
         if address == libc::MAP_FAILED {
             return None;
         }
@@ -50,12 +51,24 @@ mod platform {
         }
     }
 
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub unsafe fn protect_none(address: usize, size: usize) -> bool {
         // SAFETY: the caller's.
         unsafe {
             discard(address, size);
             libc::mprotect(with_exposed_provenance_mut(address), size, libc::PROT_NONE) == 0
         }
+    }
+
+    /// Advice does not clear the pages here.
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    pub unsafe fn protect_none(address: usize, size: usize) -> bool {
+        let (address, flags) = (
+            with_exposed_provenance_mut(address),
+            RESERVE_FLAGS | libc::MAP_FIXED,
+        );
+        // SAFETY: the caller's.
+        unsafe { libc::mmap(address, size, libc::PROT_NONE, flags, -1, 0) != libc::MAP_FAILED }
     }
 
     pub unsafe fn release(address: usize, size: usize) {

@@ -382,10 +382,16 @@ impl<'a> Generator<'a> {
         if !self.uses(Features::SIMPLE_PARAMETERS) {
             self.bind_parameters();
         }
+        if self.function_kind != FunctionKind::FieldInitializer {
+            self.cover(root.start, 0);
+        }
         if let (Suspension::Generator | Suspension::AsyncGenerator, Some(generator)) =
             (self.suspension, self.generator.as_register())
         {
             handler = Some(self.begin_generator(generator));
+        }
+        if let Some(body) = ast.get(root.body, 0).filter(|_| self.suspends()) {
+            self.cover(ast[body].start, root.end);
         }
         if let Some(body) = root.body_scope {
             self.enter_body_scope(scope, body, merged_body, &mut next_variable);
@@ -393,9 +399,6 @@ impl<'a> Generator<'a> {
         let body_scope = root.body_scope.unwrap_or(scope);
         self.instantiate_functions(body_scope);
 
-        if self.function_kind != FunctionKind::FieldInitializer {
-            self.cover(root.start, 0);
-        }
         self.debug_hook(DebugHook::DidEnterCallFrame, root.start);
         if (self.function.and_then(|it| it.fields.as_deref())).is_some_and(|it| it.sets_brand) {
             self.set_brand();
@@ -443,7 +446,6 @@ impl<'a> Generator<'a> {
         } else {
             self.asm().create_async_generator(generator);
         }
-        self.debug_hook(DebugHook::WillLeaveCallFrame, self.ast.root.end);
         self.suspend(generator.into(), SuspendKind::Start);
         let handler = self.push_base_try(HandlerKind::SynthesizedFinally);
         let (mark, ignored) = (self.top, self.temp());

@@ -11,7 +11,6 @@ workspace = true
 
 [dependencies]
 bun_engine_text.workspace = true
-bun_engine_heap.workspace = true
 bun_engine_vm.workspace = true
 bun_engine_interpreter.workspace = true
 bun_engine_builtins.workspace = true

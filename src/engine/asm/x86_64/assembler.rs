@@ -1048,7 +1048,7 @@ impl Assembler {
     }
 
     #[inline]
-    fn leave_replaceable_bytes(&mut self) {
+    pub(super) fn leave_replaceable_bytes(&mut self) {
         if self.buffer.len < self.buffer.replaceable_end {
             self.nops((self.buffer.replaceable_end - self.buffer.len) as u32);
         }

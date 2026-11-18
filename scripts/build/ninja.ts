@@ -47,13 +47,11 @@ const ruleVars = {
   cc: ["cflags"],
   cxx: ["cxxflags"],
   cxx_pch: ["cxxflags", "pch_file", "pch_header"],
-  cxx_pch_chained: ["cxxflags", "pch_file", "pch_header", "pch_bases"],
   link: ["ldflags", "lazy"],
   link_trimmable: ["ldflags", "lazy"],
   mkdir_stamp: ["dir"],
   nasm: ["nasmflags"],
   pch: ["cxxflags", "pch_header"],
-  pch_chained: ["cxxflags", "pch_header"],
   pch_checksum: [],
   pch_msvc: ["cxxflags", "pch_header", "pch_stub_obj"],
   // configure.ts
@@ -68,7 +66,6 @@ const ruleVars = {
   // source.ts
   dep_cargo: ["name", "manifestdir", "env", "args"],
   dep_cargo_cross: ["name", "manifestdir", "env", "args", "rust_target"],
-  dep_check_defined: ["name", "symbols"],
   dep_check_undefined: ["name", "nm", "symbols"],
   dep_codegen: ["name", "cwd", "tool", "args"],
   dep_fetch: ["name", "repo", "commit", "dest", "cache", "patches"],

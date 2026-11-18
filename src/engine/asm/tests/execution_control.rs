@@ -391,16 +391,25 @@ fn assemble(blocks: &[Block], masm: &mut MacroAssembler, exit: usize) {
     let float = abi::ARGUMENT_FPRS[0];
     let labels: Vec<Label> = blocks.iter().map(|_| masm.new_label()).collect();
     let (callee, exit) = (masm.new_label(), masm.external_address(exit));
+    let places: Vec<Label> = blocks.iter().map(|_| masm.new_label()).collect();
+    let exits = [exit, masm.new_label()];
     masm.move32(steps, STEPS + 1);
-    for (block, &label) in blocks.iter().zip(&labels) {
+    for (index, block) in blocks.iter().enumerate() {
         if let Some((alignment, most)) = block.alignment {
             masm.align(alignment, most);
         }
         if block.is_replaceable {
             masm.replaceable_point();
         }
-        masm.bind(label);
-        masm.branch_sub32(ResultCond::Zero, steps, steps, 1, exit);
+        match index % 3 {
+            0 => masm.bind(labels[index]),
+            1 => {
+                masm.alias(labels[index], places[index]);
+                masm.bind(places[index]);
+            }
+            _ => masm.bind(places[index]),
+        }
+        masm.branch_sub32(ResultCond::Zero, steps, steps, 1, exits[index % 2]);
         masm.move_float_constant(FloatWidth::F64, float, block.constant);
         masm.move_f64_to_bits(temp, float);
         masm.mul64(state, state, MULTIPLIER);
@@ -445,6 +454,10 @@ fn assemble(blocks: &[Block], masm: &mut MacroAssembler, exit: usize) {
     masm.bind(callee);
     masm.xor64(state, state, 1);
     masm.ret();
+    for index in (2..blocks.len()).step_by(3) {
+        masm.alias(labels[index], places[index]);
+    }
+    masm.alias(exits[1], exit);
 }
 
 fn random_programs(count: usize, gaps: &[usize]) {

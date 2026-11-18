@@ -120,6 +120,13 @@ impl Effects {
         self.writes_memory() || self.has(KEEPING)
     }
 
+    /// Changes nothing, and control goes on with the next instruction unless it leaves the function.
+    #[inline]
+    pub fn at_most_exits(self) -> bool {
+        const HARMLESS: EffectFlags = EffectFlags::EXITS.union(EffectFlags::CONTROL_DEPENDENT);
+        !self.writes_memory() && HARMLESS.contains(self.flags)
+    }
+
     fn of_access(access: Access, reads: bool, writes: bool) -> Self {
         let heap_if = |wanted: bool| if wanted { access.heap() } else { Heap::NOTHING };
         let mut effects = Self {

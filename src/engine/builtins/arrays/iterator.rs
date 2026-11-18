@@ -4,10 +4,10 @@ use bun_engine_text::{StringRef, private_names};
 use bun_engine_vm::{
     Attributes, CellKind, DontEnumMode, GlobalObject, JsArrayIterator, JsFinalObject, JsFunction,
     JsIterator, JsIteratorHelper, JsStringIterator, JsWrapForValidIterator, PropertyNameMode,
-    RealmSlot, ValueVec, errors,
+    RealmSlot, errors,
 };
 
-use super::constructor::private_function;
+use super::hidden_function;
 pub(crate) use super::iterator_prototype::initialize_prototype;
 use crate::js;
 use crate::prelude::*;
@@ -112,7 +112,7 @@ pub(super) fn initialize_slot(cx: &Cx, slot: RealmSlot) -> bool {
                 private_names::iteratorHelperCreate,
                 Intrinsic::IteratorHelperCreate,
             );
-            let function = private_function(cx, name, create_helper, intrinsic);
+            let function = hidden_function(cx, name, create_helper, 2, intrinsic);
             global.init_private_iterator_helper_create(function);
         }
         RealmSlot::private_wrap_for_valid_iterator_create => {
@@ -120,17 +120,17 @@ pub(super) fn initialize_slot(cx: &Cx, slot: RealmSlot) -> bool {
                 private_names::wrapForValidIteratorCreate,
                 Intrinsic::WrapForValidIteratorCreate,
             );
-            let function = private_function(cx, name, create_wrapper, intrinsic);
+            let function = hidden_function(cx, name, create_wrapper, 2, intrinsic);
             global.init_private_wrap_for_valid_iterator_create(function);
         }
         RealmSlot::private_is_iterator_instance => {
             let name = private_names::isIteratorInstance;
-            let function = private_function(cx, name, is_instance, Intrinsic::None);
+            let function = hidden_function(cx, name, is_instance, 1, Intrinsic::None);
             global.init_private_is_iterator_instance(function);
         }
         RealmSlot::private_own_keys => {
             let function =
-                private_function(cx, names::ownKeys, own_keys, Intrinsic::ReflectOwnKeys);
+                hidden_function(cx, names::ownKeys, own_keys, 1, Intrinsic::ReflectOwnKeys);
             global.init_private_own_keys(function);
         }
         _ => return false,
@@ -179,11 +179,7 @@ fn is_instance(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 fn own_keys(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let object = frame.argument(0).to_object(cx)?;
     let kinds = PropertyNameMode::StringsAndSymbols;
-    let mut keys = ValueVec::new();
-    for name in object.own_keys(cx, kinds, DontEnumMode::Include)?.iter() {
-        keys.push(Value::from_name(cx, name.name()));
-    }
-    cx.new_array_from(&keys).map(Into::into)
+    (object.own_keys_array(cx, kinds, DontEnumMode::Include)).map(Into::into)
 }
 
 #[native_abi]

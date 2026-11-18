@@ -9,6 +9,9 @@ use crate::operand::{Address, FloatWidth, Scale, Size, Width};
 use crate::register::{Fpr, Gpr};
 
 /// Keeps every distance within the code well inside 32 bits.
+/// In the `vvvv` argument of the VEX paths: the operands have 256 bits.
+const LONG_VECTOR: u8 = 16;
+
 const MAX_CODE_SIZE: usize = 1 << 30;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -161,10 +164,10 @@ impl Cursor<'_> {
         self.byte(encoding.opcode());
     }
 
-    /// `rxb` holds the three bits that extend the register numbers.
+    /// `rxb` holds the three bits that extend the register numbers, and `vvvv` may have [`LONG_VECTOR`].
     #[inline(always)]
     fn vex_opcode(&mut self, encoding: Encoding, rxb: u8, vvvv: u8) {
-        let last = (!vvvv & 15) << 3 | encoding.prefix();
+        let last = (!vvvv & 15) << 3 | (vvvv & LONG_VECTOR) >> 2 | encoding.prefix();
         if rxb & 3 == 0 && encoding.map() == 1 && encoding.wide() == 0 {
             self.byte(0xc5);
             self.byte((!rxb & 4) << 5 | last);
@@ -313,6 +316,7 @@ pub struct Assembler {
     pub(crate) buffer: CodeBuffer<SiteKind>,
     pub(crate) features: X64Features,
     pub(crate) shorten_jumps: bool,
+    long_vectors: bool,
 }
 
 impl Assembler {
@@ -321,7 +325,36 @@ impl Assembler {
             buffer: CodeBuffer::new(MAX_CODE_SIZE),
             features,
             shorten_jumps,
+            long_vectors: false,
         }
+    }
+
+    /// Operations on whole vector registers inside `body` are on 256 bits. Needs AVX2.
+    pub fn with_long_vectors<R>(&mut self, body: impl FnOnce(&mut Assembler) -> R) -> R {
+        assert!(self.has(X64Features::AVX2), "256-bit operands need AVX2");
+        let before = core::mem::replace(&mut self.long_vectors, true);
+        let result = body(self);
+        self.long_vectors = before;
+        result
+    }
+
+    #[inline(always)]
+    fn long_bit(&self) -> u8 {
+        if self.long_vectors { LONG_VECTOR } else { 0 }
+    }
+
+    /// Reading a long vector register after code that has written only its low half costs many cycles, so code that
+    /// leaves `with_long_vectors` ends with this.
+    pub fn vzeroupper(&mut self) {
+        assert!(self.has(X64Features::AVX), "vzeroupper needs AVX");
+        self.write(|cursor| cursor.vex_opcode(Encoding(Encoding::MAP_0F | 0x77), 0, 0));
+    }
+
+    /// Both halves of `dst` get the 16 bytes at `src`.
+    pub fn broadcast_vector(&mut self, dst: Fpr, src: Address) {
+        assert!(self.has(X64Features::AVX2), "a long broadcast needs AVX2");
+        let encoding = Encoding(Encoding::PREFIX_66 | Encoding::MAP_38 | 0x5a);
+        self.vex_memory(encoding, dst.0, LONG_VECTOR, src, Immediate::NONE);
     }
 
     #[inline]
@@ -449,6 +482,7 @@ impl Assembler {
 
     #[inline(always)]
     fn vex(&mut self, encoding: Encoding, reg: u8, vvvv: u8, rm: Rm<u8>, imm: Immediate) {
+        let vvvv = vvvv | self.long_bit();
         match rm {
             Rm::Reg(rm) => self.vex_direct(encoding, reg, vvvv, rm, imm),
             Rm::Mem(address) => self.vex_memory(encoding, reg, vvvv, address, imm),
@@ -946,7 +980,8 @@ impl Assembler {
         let encoding = Encoding(Encoding::PREFIX_66 | Encoding::MAP_0F | op as u16 & 0xff);
         let extension = (op as u16 >> 8) as u8;
         if self.has(X64Features::AVX) {
-            self.vex_direct(encoding, extension, dst.0, src.0, Immediate::byte(amount));
+            let vvvv = dst.0 | self.long_bit();
+            self.vex_direct(encoding, extension, vvvv, src.0, Immediate::byte(amount));
         } else {
             assert!(dst == src, "without AVX the destination is the source");
             self.legacy_direct(encoding, extension, dst.0, Immediate::byte(amount));

@@ -249,7 +249,6 @@ impl<'a, M: Mode> Decoder<'_, 'a, M> {
     #[inline(never)]
     pub(super) fn catches(&mut self) -> Result<Catches<'a>, M::Error> {
         let context = self.context();
-        let dead = self.is_dead();
         let depth = self.cx.depth;
         let count = read!(
             self,
@@ -258,62 +257,39 @@ impl<'a, M: Mode> Decoder<'_, 'a, M> {
         );
         ensure!(
             self,
-            count != u32::MAX || dead,
+            count != u32::MAX || self.is_dead(),
             parse,
             "try_table's number of catch targets is too big {count}"
         );
         let reader = self.reader;
         for i in 0..count {
-            let kind = match self.reader.u8() {
-                Some(kind) => kind,
-                None if dead => fail!(self, parse, "can't get catch opcode for try_table{context}"),
-                None => fail!(
+            let kind = read!(
+                self,
+                self.reader.u8(),
+                live: "can't read opcode of try_table catch at index {i}",
+                dead: "can't get catch opcode for try_table"
+            );
+            ensure!(
+                self,
+                kind <= Catches::ALL_TAGS | Catches::PASSES_EXNREF,
+                parse,
+                live: "invalid opcode of try_table catch at index {i},  opcode {kind} is invalid",
+                dead: "invalid catch opcode for try_table"
+            );
+            if kind & Catches::ALL_TAGS == 0 {
+                read!(
                     self,
-                    parse,
-                    "can't read opcode of try_table catch at index {i}"
-                ),
-            };
-            if kind > Catches::ALL_TAGS | Catches::PASSES_EXNREF {
-                ensure!(
-                    self,
-                    !dead,
-                    parse,
-                    "invalid catch opcode for try_table{context}"
-                );
-                fail!(
-                    self,
-                    parse,
-                    "invalid opcode of try_table catch at index {i},  opcode {kind} is invalid"
-                );
-            }
-            if kind & Catches::ALL_TAGS == 0 && self.tag().is_err() {
-                ensure!(
-                    self,
-                    !dead,
-                    parse,
-                    "invalid exception tag for try_table{context}"
-                );
-                fail!(
-                    self,
-                    parse,
-                    "can't read tag of try_table catch at index {i}"
+                    self.tag().ok(),
+                    live: "can't read tag of try_table catch at index {i}",
+                    dead: "invalid exception tag for try_table"
                 );
             }
-            let label = match self.reader.u32() {
-                Some(label) => label,
-                None if dead => {
-                    fail!(
-                        self,
-                        parse,
-                        "invalid destination label for try_table{context}"
-                    )
-                }
-                None => fail!(
-                    self,
-                    parse,
-                    "can't read label of try_table catch at index {i}"
-                ),
-            };
+            let label = read!(
+                self,
+                self.reader.u32(),
+                live: "can't read label of try_table catch at index {i}",
+                dead: "invalid destination label for try_table"
+            );
             ensure!(
                 self,
                 label < depth,
@@ -407,17 +383,12 @@ impl<'a, M: Mode> Decoder<'_, 'a, M> {
     /// The validator checks the kind.
     #[inline(never)]
     pub(super) fn call_ref_type(&mut self) -> Result<TypeIndex, M::Error> {
-        let index = match self.reader.u32() {
-            Some(index) => index,
-            None if self.is_dead() => {
-                fail!(
-                    self,
-                    parse,
-                    "can't call_ref's signature index in unreachable context"
-                )
-            }
-            None => fail!(self, parse, "can't get call_ref's signature index"),
-        };
+        let index = read!(
+            self,
+            self.reader.u32(),
+            live: "can't get call_ref's signature index",
+            dead: "can't call_ref's signature index"
+        );
         ensure!(
             self,
             index < self.cx.header.types.len(),

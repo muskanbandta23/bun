@@ -6,8 +6,7 @@ use bun_engine_text::{PropertyName, private_names};
 
 use crate::{
     Cx, Gc, GetterSetter, GlobalObject, GlobalProxy, InternalFieldTuple, JsCell, JsFunction,
-    JsObject, JsSymbol,
-    ModuleLoader, Shape, Vm,
+    JsObject, JsSymbol, ModuleLoader, Shape, Vm,
 };
 
 macro_rules! realm_slots {
@@ -143,6 +142,8 @@ realm_slots! {
         string_constructor: JsObject = @String,
         string_object_shape: Shape,
         string_prototype_iterator: JsFunction,
+        string_prototype_trim_start: JsFunction,
+        string_prototype_trim_end: JsFunction,
         string_iterator_prototype: JsObject,
         string_iterator_shape: Shape,
         number_prototype: JsObject,

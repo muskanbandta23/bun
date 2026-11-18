@@ -264,7 +264,7 @@ public:
     WTF::UncheckedKeyHashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
     Vector<Bun::IsolatedInternalModule> isolationInternalModules;
 
-    void reconcileWeakReferencesAtGCEnd(JSC::VM&, JSC::CollectionScope) final;
+    void reportErrorOfMicrotask(JSC::JSGlobalObject*, JSC::Exception*) final;
 
     JSC::DecoderStringTable* decoderStringTable() final { return m_decoderStringTable.get(); }
     void setDecoderStringTable(std::span<const uint8_t>);

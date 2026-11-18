@@ -84,18 +84,4 @@ impl<'a, S: Sink> Parser<'a, S> {
             _ => self.sink.back_reference(None),
         }
     }
-
-    /// What only the end of the pattern decides.
-    #[inline]
-    pub(super) fn check_references(&self, has_escaped_k: bool) -> Result<(), Error> {
-        if self.highest_reference > u32::from(self.group_count) {
-            return Err(Error::InvalidBackReference);
-        }
-        if let Some(names) = &self.names
-            && (has_escaped_k || !names.all_have_groups())
-        {
-            return Err(Error::InvalidNamedReference);
-        }
-        Ok(())
-    }
 }

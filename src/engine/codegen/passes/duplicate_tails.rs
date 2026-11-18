@@ -9,7 +9,6 @@ use crate::ir::{Block, Edge, Function, Op, Table, Value};
 use crate::target::Target;
 
 const GREATEST_COST_OF_TAIL: u32 = 2;
-const MOST_PARAMS_OF_TAIL: usize = 2;
 const MOST_SUCCESSORS_OF_TAIL: usize = 3;
 const MOST_PREDECESSORS_OF_TAIL: usize = 16;
 const GREATEST_COST_OF_SETTLED_TEST: u32 = 4;
@@ -24,15 +23,19 @@ const VALUES_PER_UNIT_OF_BUDGET: usize = 4;
 #[derive(Clone, Copy)]
 struct BlockState {
     ways_in: u32,
+    /// From blocks that are not cold. All but one of them take an instruction.
+    jumps_in: u32,
     is_copied: bool,
     is_visited: bool,
     /// Once visited: among the block and its dominators, up to one in which ways meet and which is not copied.
     copied_in_a_row: u8,
 }
 
-struct Plan {
+struct Step {
     /// The edge that the block is certain to take.
     taken: Option<Edge>,
+    cost: u32,
+    pays: bool,
 }
 
 struct Duplication<'a> {
@@ -41,32 +44,39 @@ struct Duplication<'a> {
     frequencies: &'a Frequencies,
     copier: Copier,
     blocks: Table<Block, BlockState>,
+    path: Vec<Step>,
     budget: usize,
 }
 
 pub(super) fn run(function: &mut Function, analyses: &mut Analyses, _: Target) {
-    let (cfg, dominators, frequencies) = analyses.all(function);
-    let is_join = |&block: &Block| cfg.predecessors(block).len() > 1;
-    if !cfg.order().iter().any(is_join) {
+    let cfg = analyses.cfg(function);
+    let is_tail =
+        |&block: &Block| cfg.predecessors(block).len() > 1 && cfg.loop_headed_by(block).is_none();
+    if !cfg.order().iter().any(is_tail) {
         return;
     }
-    let mut blocks = function.block_table(BlockState {
-        ways_in: 1,
-        is_copied: false,
-        is_visited: false,
-        copied_in_a_row: 0,
-    });
-    for &block in cfg.order() {
-        blocks[block].ways_in = cfg.predecessors(block).len().max(1) as u32;
-    }
+    let (cfg, dominators, frequencies) = analyses.all(function);
     let mut duplication = Duplication {
         cfg,
         dominators,
         frequencies,
         copier: Copier::new(function),
-        blocks,
+        blocks: function.block_table(BlockState {
+            ways_in: 0,
+            jumps_in: 0,
+            is_copied: false,
+            is_visited: false,
+            copied_in_a_row: 0,
+        }),
+        path: Vec::new(),
         budget: LEAST_BUDGET + function.value_count() / VALUES_PER_UNIT_OF_BUDGET,
     };
+    for entry in function.entries() {
+        duplication.blocks[entry.block].ways_in = 1;
+    }
+    for &block in cfg.order() {
+        duplication.count_ways_out(function, block, frequencies.is_cold(block), 1);
+    }
     let mut changed = false;
     for &block in cfg.order() {
         changed |= duplication.visit(function, block);
@@ -76,7 +86,20 @@ pub(super) fn run(function: &mut Function, analyses: &mut Analyses, _: Target) {
     }
 }
 
+fn ends_with_jump(function: &Function, block: Block) -> bool {
+    *function.op(function.last(block)) == Op::Jump
+}
+
 impl Duplication<'_> {
+    fn count_ways_out(&mut self, function: &Function, block: Block, is_cold: bool, by: i32) {
+        let jumps = !is_cold && ends_with_jump(function, block);
+        for edge in function.successors(block) {
+            let target = &mut self.blocks[function.target(edge)];
+            target.ways_in = target.ways_in.strict_add_signed(by);
+            target.jumps_in = target.jumps_in.strict_add_signed(by * i32::from(jumps));
+        }
+    }
+
     fn visit(&mut self, function: &mut Function, block: Block) -> bool {
         let is_join = self.cfg.predecessors(block).len() > 1;
         self.blocks[block].copied_in_a_row = match (self.blocks[block].is_copied, is_join) {
@@ -85,12 +108,7 @@ impl Duplication<'_> {
         };
         self.blocks[block].is_visited = true;
         if self.blocks[block].ways_in == 0 {
-            for edge in function.successors(block) {
-                self.blocks[function.target(edge)].ways_in -= 1;
-            }
-            return false;
-        }
-        if matches!(function.op(function.last(block)), Op::Patchpoint(_)) {
+            self.count_ways_out(function, block, self.frequencies.is_cold(block), -1);
             return false;
         }
         let mut changed = false;
@@ -115,103 +133,136 @@ impl Duplication<'_> {
     }
 
     fn follow(&mut self, function: &mut Function, first: Edge) -> bool {
-        let is_cold = function.is_rare(first) || self.frequencies.is_cold(function.source(first));
-        let mut allowance = GREATEST_COST_OF_PATH;
-        let mut plan = self.plan(function, first, first, is_cold, &mut allowance);
-        if plan.is_none() {
+        let source = function.source(first);
+        let is_cold = function.is_rare(first) || self.frequencies.is_cold(source);
+        self.plan_path(function, first, is_cold);
+        if self.path.is_empty() {
             return false;
         }
+        let tail = &mut self.blocks[function.target(first)];
+        tail.ways_in -= 1;
+        tail.jumps_in -=
+            u32::from(!self.frequencies.is_cold(source) && ends_with_jump(function, source));
         let mut edge = as_jump(function, first);
         let into = function.source(edge);
-        for copied in 1.. {
-            let Some(Plan { taken }) = plan else {
-                break;
-            };
-            let tail = function.target(edge);
+        for position in 0..self.path.len() {
+            let (tail, Step { taken, cost, .. }) = (function.target(edge), &self.path[position]);
+            let taken = *taken;
+            let spent = 1 + *cost as usize + function.params(tail).len();
+            self.budget = self.budget.saturating_sub(spent);
             self.blocks[tail].is_copied = true;
-            self.blocks[tail].ways_in -= 1;
             if taken.is_some_and(|taken| function.is_rare(taken)) {
                 self.make_rare(function, first);
             }
             self.copier.copy_body(function, edge);
             self.copier.copy_end(function, tail, into, taken);
-            for new in function.successors(into) {
-                self.blocks[function.target(new)].ways_in += 1;
-                self.budget = self.budget.saturating_sub(function.args(new).len());
+            if taken.is_some() {
+                edge = function.successor(into, 0);
             }
-            if taken.is_none() || copied == MOST_BLOCKS_ON_PATH {
-                break;
-            }
-            edge = function.successor(into, 0);
-            plan = self.plan(function, first, edge, is_cold, &mut allowance);
         }
+        for new in function.successors(into) {
+            self.budget = self.budget.saturating_sub(function.args(new).len());
+        }
+        self.count_ways_out(function, into, is_cold, 1);
         self.copier.end_path(into);
         true
     }
 
+    /// Up to the last block that is worth the copies.
+    fn plan_path(&mut self, function: &mut Function, first: Edge, is_cold: bool) {
+        self.path.clear();
+        let (mut edge, mut total, mut unpaid) = (first, 0, 0);
+        while self.path.len() < MOST_BLOCKS_ON_PATH
+            && let Some(step) = self.plan_step(function, first, edge, is_cold, unpaid)
+        {
+            total += step.cost;
+            unpaid = if step.pays { 0 } else { unpaid + step.cost };
+            if total > GREATEST_COST_OF_PATH || unpaid > GREATEST_COST_OF_SETTLED_TEST {
+                break;
+            }
+            let taken = step.taken;
+            self.path.push(step);
+            let Some(taken) = taken else {
+                break;
+            };
+            edge = taken;
+        }
+        self.copier.forget_stand_ins();
+        while self.path.pop_if(|step| !step.pays).is_some() {}
+    }
+
     /// For the target of `edge`, which is reached by way of `first`.
-    fn plan(
+    fn plan_step(
         &mut self,
-        function: &Function,
+        function: &mut Function,
         first: Edge,
         edge: Edge,
         is_cold: bool,
-        allowance: &mut u32,
-    ) -> Option<Plan> {
+        unpaid: u32,
+    ) -> Option<Step> {
         let tail = function.target(edge);
-        if self.cfg.loop_headed_by(tail).is_some() {
+        let (last, params) = (function.last(tail), function.params(tail).len());
+        if self.cfg.loop_headed_by(tail).is_some()
+            || params >= self.budget
+            || self.copied_above(tail) >= MOST_COPIED_BLOCKS_IN_A_ROW
+        {
             return None;
         }
-        let preview = self.copier.preview(function, edge)?;
-        let end = *function.op(function.last(tail));
-        let (mut cost, params) = (preview.cost, function.params(tail).len());
+        let preview = self.copier.preview_target(function, edge)?;
+        let (end, mut cost) = (*function.op(last), preview.cost);
         let taken = preview.taken.or_else(|| {
-            let holds = self.known_on_the_way(function, first, edge)?;
-            let is_computed_here = function.previous(function.last(tail)) != Value::NONE
-                && end == Op::Branch(function.previous(function.last(tail)));
+            let holds = self.known_on_the_way(function, first, tail)?;
+            let is_computed_here = end == Op::Branch(function.previous(last));
             cost -= u32::from(is_computed_here).min(cost);
             Some(function.successor(tail, usize::from(!holds)))
         });
-        let is_last_way_in = self.blocks[tail].ways_in == 1;
-        let is_settled =
-            taken.is_some() && end != Op::Jump || preview.settled_check_fails.is_some();
-        let pays = if is_settled {
-            cost <= GREATEST_COST_OF_SETTLED_TEST && (cost == 0 || !is_cold || is_last_way_in)
-        } else if is_cold || is_last_way_in || cost > GREATEST_COST_OF_TAIL {
-            false
-        } else if let Op::Branch(condition) = end
-            && function.block_of(condition) == tail
-            && let stand_in = self.copier.stand_in_along(function, edge, condition)
-            && matches!(
-                function.op(stand_in),
-                Op::Compare(..) | Op::FloatCompare(..)
-            )
-            && stand_in != condition
+        if taken.is_none()
+            && (function.successors(tail).len() > MOST_SUCCESSORS_OF_TAIL
+                || !matches!(end, Op::Branch(_) | Op::Switch(..) | Op::Return(_)))
         {
-            true
-        } else {
-            *function.op(function.last(function.source(edge))) == Op::Jump
-                && self.cfg.predecessors(tail).len() <= MOST_PREDECESSORS_OF_TAIL
-                && (params <= MOST_PARAMS_OF_TAIL || matches!(end, Op::Jump | Op::Return(_)))
-        };
-        let can_end = taken.is_some()
-            || function.successors(tail).len() <= MOST_SUCCESSORS_OF_TAIL
-                && !matches!(end, Op::Patchpoint(_) | Op::Unreachable);
-        if !pays || !can_end || self.copied_above(tail) >= MOST_COPIED_BLOCKS_IN_A_ROW {
             return None;
         }
-        *allowance = allowance.checked_sub(cost)?;
-        self.budget = self.budget.checked_sub(1 + cost as usize + params)?;
-        Some(Plan { taken })
+        let owed = unpaid + cost;
+        let pays = if taken.is_some() && end != Op::Jump || preview.settled_check_fails.is_some() {
+            let replaces_original = edge == first && self.blocks[tail].ways_in == 1;
+            owed <= GREATEST_COST_OF_SETTLED_TEST && (owed == 0 || !is_cold || replaces_original)
+        } else {
+            !is_cold
+                && owed <= GREATEST_COST_OF_TAIL
+                && (self.tests_comparison_passed_in(function, tail)
+                    || self.saves_jump(function, first, edge, cost))
+        };
+        Some(Step { taken, cost, pays })
     }
 
-    /// Whether the target of `edge` takes its first edge, as far as the branches that lead to `first` tell.
-    fn known_on_the_way(&self, function: &Function, first: Edge, edge: Edge) -> Option<bool> {
+    fn tests_comparison_passed_in(&self, function: &Function, tail: Block) -> bool {
+        let Op::Branch(condition) = *function.op(function.last(tail)) else {
+            return false;
+        };
+        let passed = self.copier.stand_in(condition);
+        passed != condition && matches!(function.op(passed), Op::Compare(..) | Op::FloatCompare(..))
+    }
+
+    fn saves_jump(&self, function: &Function, first: Edge, edge: Edge, cost: u32) -> bool {
         let tail = function.target(edge);
+        let takes_jump = edge != first
+            || ends_with_jump(function, function.source(first)) && self.blocks[tail].jumps_in > 1;
+        let mut successors = function.successors(tail);
+        let needs_few_params = successors.len() == 0
+            || successors.any(|edge| self.cfg.is_backward(function, edge))
+            || !ends_with_jump(function, tail)
+                && function.params(tail).len() + cost as usize <= GREATEST_COST_OF_TAIL as usize;
+        takes_jump
+            && needs_few_params
+            && self.cfg.predecessors(tail).len() <= MOST_PREDECESSORS_OF_TAIL
+    }
+
+    /// Whether the block takes its first edge, as far as the branches that lead to `first` tell.
+    fn known_on_the_way(&self, function: &Function, first: Edge, tail: Block) -> Option<bool> {
         let Op::Branch(condition) = *function.op(function.last(tail)) else {
             return None;
         };
-        let along = |value| self.copier.stand_in_along(function, edge, value);
+        let along = |value| self.copier.stand_in(value);
         let condition = along(condition);
         let comparison = match *function.op(condition) {
             Op::Compare(cond, operands) => Some((cond, operands.map(along))),

@@ -9,9 +9,14 @@ fn without_last_dot(domain: &[u8]) -> &[u8] {
 /// The ends in a number checker, for a lowercase domain.
 pub(crate) fn ends_in_number(domain: &[u8]) -> bool {
     let domain = without_last_dot(domain);
+    if !domain
+        .last()
+        .is_some_and(|last| last.is_ascii_hexdigit() || *last == b'x')
+    {
+        return false;
+    }
     let start = bun_highway::last_index_of_char(domain, b'.').map_or(0, |dot| dot + 1);
     match &domain[start..] {
-        [] => false,
         [b'0', b'x', digits @ ..] => digits.iter().all(u8::is_ascii_hexdigit),
         digits => digits.iter().all(u8::is_ascii_digit),
     }
@@ -51,26 +56,28 @@ pub(crate) fn parse(domain: &[u8]) -> Result<u32> {
     }
 }
 
-/// Whether `host` is what [`serialize`] writes for some address.
-pub(crate) fn is_serialized(host: &[u8]) -> bool {
-    let mut rest = host;
+/// The length of what `text` starts with, if [`serialize`] writes that for some address.
+pub(crate) fn serialized_length(text: &[u8]) -> Option<usize> {
+    let digit = |at: usize| text.get(at)?.digit_value(10);
+    let mut at = 0;
     for part in 0..4 {
-        rest = match rest {
-            [b'1', b'0'..=b'9', b'0'..=b'9', rest @ ..]
-            | [b'2', b'0'..=b'4', b'0'..=b'9', rest @ ..]
-            | [b'2', b'5', b'0'..=b'5', rest @ ..]
-            | [b'1'..=b'9', b'0'..=b'9', rest @ ..]
-            | [b'0'..=b'9', rest @ ..] => rest,
-            _ => return false,
-        };
-        if part < 3 {
-            let [b'.', after_dot @ ..] = rest else {
-                return false;
-            };
-            rest = after_dot;
+        if part != 0 {
+            text.get(at).filter(|&&byte| byte == b'.')?;
+            at += 1;
+        }
+        let first = digit(at)?;
+        at += 1;
+        if first != 0
+            && let Some(second) = digit(at)
+        {
+            at += 1;
+            if let Some(third) = digit(at) {
+                u8::try_from(first * 100 + second * 10 + third).ok()?;
+                at += 1;
+            }
         }
     }
-    rest.is_empty()
+    Some(at)
 }
 
 pub(crate) fn serialize(address: u32, storage: &mut [u8; 16]) -> &[u8] {

@@ -2,7 +2,7 @@ use bun_engine_bytecode::ResumeMode;
 use bun_engine_macros::cell;
 
 use super::async_function::resume_mode_for;
-use super::async_iteration::{answer, answer_with_error, requeue_early_answer};
+use super::async_iteration::{REQUESTED_STEP, answer, answer_with_error, requeue_early_answer};
 use super::tagged_field::TaggedField;
 use crate::{
     CallFrame, Coroutine, CoroutineState, Cx, Field, Gc, InternalMicrotask, InternalReaction,
@@ -285,7 +285,7 @@ impl JsAsyncGenerator {
                     let task = InternalMicrotask::AsyncGeneratorYield;
                     self.await_for(cx, task, value)?.map(Completion::throw)
                 }
-                _ if value == cx.async_iteration_sentinel().into() => {
+                _ if value == REQUESTED_STEP => {
                     requeue_early_answer(cx, self);
                     None
                 }

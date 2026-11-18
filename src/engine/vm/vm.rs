@@ -136,9 +136,16 @@ pub struct Embedder {
     pub reconcile_weak_references: Cell<Option<fn(&Vm, &Survivors)>>,
     /// After the last cell.
     pub destroy_members: Cell<Option<fn(&Vm)>>,
+    /// AgentCanSuspend is false.
+    pub must_not_block: Cell<bool>,
     pub errors: crate::ErrorHooks,
+    pub console: Cell<Option<&'static crate::ConsoleHooks>>,
     pub microtasks: crate::MicrotaskHooks,
 }
+
+/// Room for what only the class that C++ sees has. The alignment keeps it in place when the fields before it change.
+#[repr(C, align(256))]
+struct EmbedderMembers(UnsafeCell<MaybeUninit<[usize; 32]>>);
 
 /// All that the scripts of one thread share.
 #[derive(FieldOffsets)]
@@ -148,26 +155,28 @@ pub struct Vm {
     traps: Traps,
     top_call_frame: Cell<usize>,
     top_entry_frame: Cell<usize>,
-    shape_base: usize,
-    catch_frame: Cell<usize>,
-    catch_address: Cell<usize>,
-    catch_bytecode_offset: Cell<u32>,
-    /// Changes when a property of a prototype does, and with each collection. The low 31 bits are never zero.
-    prototype_chain_epoch: Cell<u64>,
     pub client_data: Cell<*mut c_void>,
     entry_global: Root<GlobalObject>,
     termination_exception: Root<Exception>,
     last_exception: Root<Exception>,
-    /// For generated code to pass values through.
-    scratch: [Cell<u64>; 4],
     internal_function_executable: Root<Executable>,
     ref_count: AtomicU32,
     pub did_enter: Cell<bool>,
     is_execution_forbidden: Cell<bool>,
     deletes_unconfigurable_properties: Cell<bool>,
     pub(crate) is_async_context_tracked: Cell<bool>,
-    /// Members of the class that C++ sees.
-    embedder_members: UnsafeCell<MaybeUninit<[usize; 48]>>,
+
+    // C++ does not know of these.
+    shape_base: usize,
+    catch_frame: Cell<usize>,
+    catch_address: Cell<usize>,
+    catch_bytecode_offset: Cell<u32>,
+    /// Changes when a property of a prototype does, and with each collection. The low 31 bits are never zero.
+    prototype_chain_epoch: Cell<u64>,
+    /// For generated code to pass values through.
+    scratch: [Cell<u64>; 4],
+
+    embedder_members: EmbedderMembers,
     pub heap: Heap,
     heap_padding: MaybeUninit<[u8; Heap::SIZE_LIMIT - size_of::<Heap>()]>,
     /// The last field whose offset C++ knows.
@@ -225,7 +234,7 @@ impl VmRef {
             last_exception: Root::new(),
             scratch: Default::default(),
             shapes: VmShapes::new(),
-            embedder_members: UnsafeCell::new(MaybeUninit::zeroed()),
+            embedder_members: EmbedderMembers(UnsafeCell::new(MaybeUninit::zeroed())),
             heap,
             heap_padding: MaybeUninit::uninit(),
             small_strings: SmallStrings::new(),

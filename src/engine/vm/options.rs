@@ -2,6 +2,8 @@
 
 use std::sync::OnceLock;
 
+use bun_engine_platform::machine;
+
 macro_rules! options {
     ($($name:ident / $external:ident: $type:ty = $default:expr,)*) => {
         #[derive(Clone)]
@@ -55,16 +57,17 @@ macro_rules! parse_numbers {
 
 parse_numbers!(i32 u32 usize f64);
 
-fn processor_count() -> u32 {
-    std::thread::available_parallelism().map_or(1, |count| count.get() as u32)
-}
-
 options! {
     use_jit / useJIT: bool = true,
     use_baseline_jit / useBaselineJIT: bool = true,
     use_quick_optimizer / useDFGJIT: bool = true,
     use_full_optimizer / useFTLJIT: bool = true,
     use_regexp_jit / useRegExpJIT: bool = true,
+    use_eager_regexp_jit / useEagerRegExpJIT: bool = false,
+    max_regexp_code_size / maximumRegExpJITCodeSize: usize = 16 << 20,
+    max_regexp_stack_size / maxRegExpStackSize: usize = 192 << 20,
+    use_shared_regexp_literals / useSharedRegExpLiteralObjects: bool = true,
+    threshold_for_replace_cache / thresholdForStringReplaceCache: usize = 4096,
     use_concurrent_jit / useConcurrentJIT: bool = true,
     threshold_for_baseline / thresholdForJITAfterWarmUp: i32 = 500,
     threshold_for_baseline_soon / thresholdForJITSoon: i32 = 100,
@@ -91,7 +94,7 @@ options! {
     use_gc / useGC: bool = true,
     use_generational_gc / useGenerationalGC: bool = true,
     use_concurrent_gc / useConcurrentGC: bool = true,
-    number_of_gc_markers / numberOfGCMarkers: u32 = processor_count().min(8),
+    number_of_gc_markers / numberOfGCMarkers: u32 = machine::processor_count().min(8),
     sweep_synchronously / sweepSynchronously: bool = false,
     force_mini_vm_mode / forceMiniVMMode: bool = false,
     gc_max_heap_size / gcMaxHeapSize: usize = 0,
@@ -120,7 +123,7 @@ static OPTIONS: OnceLock<Options> = OnceLock::new();
 /// Does nothing the second time.
 pub fn set_options(mut options: Options) {
     if options.ram_size == 0 {
-        options.ram_size = physical_memory();
+        options.ram_size = machine::ram_size();
     }
     options.number_of_gc_markers = options.number_of_gc_markers.max(1);
     options.use_jit &= bun_engine_exec_memory::is_available();
@@ -130,22 +133,4 @@ pub fn set_options(mut options: Options) {
 #[inline(always)]
 pub fn options() -> &'static Options {
     OPTIONS.get().expect("set before the first Vm is made")
-}
-
-#[cfg(unix)]
-fn physical_memory() -> usize {
-    // SAFETY: no preconditions.
-    let pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };
-    usize::try_from(pages).map_or(512 << 20, |pages| pages * bun_alloc::page_size())
-}
-
-#[cfg(windows)]
-fn physical_memory() -> usize {
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        safe fn GetPhysicallyInstalledSystemMemory(kilobytes: &mut u64) -> i32;
-    }
-    let mut kilobytes = 512 << 10;
-    GetPhysicallyInstalledSystemMemory(&mut kilobytes);
-    kilobytes as usize * 1024
 }

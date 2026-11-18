@@ -9,10 +9,10 @@ use bun_icu::calendar::ZoneName;
 use last_parsed::LastParsed;
 use recent_days::{Day, RecentDays};
 
-use crate::fields::{DateFields, MS_PER_DAY, OffsetBits, split_at_midnight};
+use crate::fields::{DateFields, OffsetBits};
 use crate::format::{date_time_string, time_string};
 use crate::parse::{Parsed, parse_date};
-use crate::time_value::{TIME_VALUES, time_clip, time_clip_integer};
+use crate::time_value::{DAY, TIME_VALUES, split_at_midnight, time_clip, time_clip_integer};
 use crate::zone::{Side, TimeZoneId, ZoneRules, system_time_zone, time_zone_generation};
 
 /// A span of time values.
@@ -149,7 +149,7 @@ impl DateCache {
         let (days, since_midnight) = split_at_midnight(time + i64::from(span.offset));
         let fields = DateFields::at_midnight(days, span.offset_bits);
         let midnight = time - i64::from(since_midnight);
-        if span.start <= midnight && midnight + i64::from(MS_PER_DAY) <= span.end {
+        if span.start <= midnight && midnight + DAY <= span.end {
             self.local_days.add(time, Day { midnight, fields });
         }
         Some(fields.later(since_midnight))

@@ -38,6 +38,12 @@ impl AsciiLiteral {
         }
     }
 
+    /// # Safety
+    /// ASCII in static memory. The size counts the zero byte that ends it.
+    pub const unsafe fn from_raw_parts(characters: *const u8, size: usize) -> AsciiLiteral {
+        AsciiLiteral { characters, size }
+    }
+
     pub const fn is_null(self) -> bool {
         self.size == 0
     }
@@ -214,6 +220,19 @@ impl Class {
             reserved: core::ptr::null(),
             types,
             size: size_of::<T>() as u32,
+            ops: T::OPS,
+        }
+    }
+
+    /// Of cells of that size that start with a `T` and behave as one.
+    pub(crate) const fn extending<T: CellKind>(name: AsciiLiteral, size: usize) -> Class {
+        Class {
+            name,
+            parent: Some(T::CLASS),
+            static_table: None,
+            reserved: core::ptr::null(),
+            types: CellTypeRange::NONE,
+            size: size as u32,
             ops: T::OPS,
         }
     }

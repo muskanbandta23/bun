@@ -3,9 +3,7 @@ use bun_engine_macros::{cell, native_abi};
 use bun_engine_text::StringRef;
 
 use crate::call::native_not_a_constructor;
-use crate::{
-    CallFrame, Cx, Gc, GcFree, Intrinsic, JsFunction, JsResult, NativeExecutable, Value,
-};
+use crate::{CallFrame, Cx, Gc, GcFree, Intrinsic, JsFunction, JsResult, NativeExecutable, Value};
 
 /// Gets the values that the function keeps alive.
 pub trait NativeClosure: Fn(&mut Cx, &CallFrame, &[Value]) -> JsResult<Value> + GcFree {}
@@ -22,6 +20,7 @@ unsafe impl GcFree for Body {}
 pub struct JsNativeClosure {
     base: JsFunction,
     body: Body,
+    #[cfg_attr(rootcheck, rootcheck::allow("made with collection deferred"))]
     captures: Box<[Value]>,
 }
 

@@ -1916,7 +1916,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteWarning, (JSC::JSGlobalObject * le
             return JSValue::encode(jsUndefined());
     }
     Identifier stderrName = Identifier::fromString(vm, "stderr"_s);
-    bool holdsEveryModule = !Bun::hasCompiledModules() && !JSC::Bun__removableFeatureState.isTrimmed;
+    bool holdsEveryModule = !Bun::hasCompiledModules();
     unsigned stderrAttributes = 0;
     JSValue stderrProperty = process->getDirect(vm, stderrName, stderrAttributes);
     bool isStderrPlaceholder = stderrProperty && stderrAttributes & PropertyAttribute::CustomValue;

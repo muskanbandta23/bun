@@ -4,7 +4,7 @@ use bun_engine_vm::heap::{HeapKind, Scope};
 use bun_engine_vm::*;
 
 static HOOKS: RealmHooks = RealmHooks {
-    modules: ModuleHooks {},
+    modules: ModuleHooks::DEFAULT,
     promise_rejection_tracker: |_, _, _| {},
     report_uncaught_exception: |_, _| {},
     current_script_execution_owner: |cx| cx.global().upcast(),
@@ -118,12 +118,13 @@ fn a_queue_keeps_its_order() {
             for _ in 0..2 {
                 let first = array.get_index(cx, 0).unwrap();
                 assert_eq!(first.get(cx, names::value).unwrap(), next_out.into());
-                assert!(array.try_remove_range(cx, 0, 1));
+                assert!(array.try_shift().is_some());
                 next_out += 1;
             }
             if round % 100 == 0 {
-                assert!(array.try_insert_holes(cx, 1, 5).unwrap());
-                assert!(array.try_remove_range(cx, 1, 5));
+                let length = u64::from(array.length());
+                assert!(array.try_splice(cx, length, 1, 0, &[Value::NULL; 5]).unwrap());
+                assert!(array.try_splice(cx, length + 5, 1, 5, &[]).unwrap());
                 cx.heap.collect_and_sweep(None);
             }
         }

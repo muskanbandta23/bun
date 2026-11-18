@@ -148,6 +148,13 @@ impl PropertyNameList {
         }
     }
 
+    pub fn clear(&mut self) {
+        self.names.clear();
+        self.seen.clear();
+        self.has_only_indices = true;
+        self.has_overflowed = false;
+    }
+
     pub fn into_vec(self) -> Vec<Identifier> {
         self.names
     }

@@ -1,4 +1,5 @@
 use core::cell::Cell;
+use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_alloc::default_alloc;
@@ -19,10 +20,18 @@ pub struct PreciseAllocation {
     pub(super) attributes: CellAttributes,
     is_marked: AtomicBool,
     is_newly_allocated: Cell<bool>,
+    /// In the list of the heap, while no collection runs.
+    pub(super) index: Cell<u32>,
 }
 
 const HEADER_SIZE: usize =
     (size_of::<PreciseAllocation>() - PRECISE_BIT).next_multiple_of(ATOM_SIZE) + PRECISE_BIT;
+
+fn size_with_header(cell_size: usize) -> Option<usize> {
+    cell_size
+        .checked_add(HEADER_SIZE)?
+        .checked_next_multiple_of(ATOM_SIZE)
+}
 
 impl PreciseAllocation {
     pub const HEADER_SIZE: usize = HEADER_SIZE;
@@ -31,11 +40,9 @@ impl PreciseAllocation {
         heap: &Heap,
         cell_size: usize,
         attributes: CellAttributes,
+        allocate: fn(usize) -> *mut c_void,
     ) -> Option<&'static PreciseAllocation> {
-        let size = cell_size
-            .checked_add(HEADER_SIZE)?
-            .checked_next_multiple_of(ATOM_SIZE)?;
-        let memory = default_alloc::malloc(size).cast::<PreciseAllocation>();
+        let memory = allocate(size_with_header(cell_size)?).cast::<PreciseAllocation>();
         if memory.is_null() {
             return None;
         }
@@ -48,9 +55,27 @@ impl PreciseAllocation {
                 attributes,
                 is_marked: AtomicBool::new(false),
                 is_newly_allocated: Cell::new(true),
+                index: Cell::new(0),
             });
             memory.byte_add(HEADER_SIZE).cast::<u64>().write(0);
             Some(&*memory)
+        }
+    }
+
+    /// # Safety
+    /// `cell` is as for `of_cell`. If this succeeds, nothing uses the old address.
+    pub(super) unsafe fn try_resize(
+        cell: usize,
+        cell_size: usize,
+    ) -> Option<&'static PreciseAllocation> {
+        let old = core::ptr::with_exposed_provenance_mut(cell - HEADER_SIZE);
+        // SAFETY: from `try_create`, and the caller's.
+        unsafe {
+            let memory = default_alloc::realloc(old, size_with_header(cell_size)?);
+            let allocation = memory.cast::<PreciseAllocation>().as_mut()?;
+            assert!(memory.expose_provenance().is_multiple_of(ATOM_SIZE));
+            allocation.cell_size = cell_size;
+            Some(allocation)
         }
     }
 

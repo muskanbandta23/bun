@@ -4,15 +4,15 @@ use bun_engine_bytecode::CloseMode;
 use bun_engine_macros::Trace;
 use bun_engine_text::{names, symbols};
 
-use super::array_iterator::typed_array_length;
 use super::protocol::{Caller, iterator_close_on_throw, iterator_close_quietly};
+use super::spread::list_of_code_points;
 use super::string_iterator::code_point_string_at;
 use crate::{
-    CellType, Cx, ElementKind, Gc, HoleMode, IterationKind, IterationMode, JsArray,
-    JsArrayBufferView, JsArrayIterator, JsCell, JsMap, JsMapIterator, JsObject, JsResult, JsSet,
-    JsSetIterator, JsString, JsStringIterator, MapKind, OrderedCursor, RealmSlot, RealmWatchpoint,
-    SetKind, TableKind, Thrown, Value, errors, iterator_complete, iterator_value,
-    throw_not_iterable,
+    CellType, ClonedArguments, Cx, ElementKind, Gc, HoleMode, IterationKind, IterationMode,
+    JsArray, JsArrayIterator, JsCell, JsMap, JsMapIterator, JsObject, JsResult,
+    JsSet, JsSetIterator, JsString, JsStringIterator, JsTypedArray, MapKind, MappedArguments,
+    OrderedCursor, RealmSlot, RealmWatchpoint, SetKind, TableKind, Thrown, Value, errors,
+    iterator_complete, iterator_value, throw_not_iterable,
 };
 
 /// The Iterator Record of ECMA-262. Where nothing can tell the difference it has no iterator, or does not call its
@@ -89,6 +89,37 @@ impl IteratorRecord {
         }
     }
 
+    /// GetIterator(iterable, sync), if that runs no script and neither does `next`.
+    pub fn for_pristine_iterable(cx: &Cx, iterable: Value) -> Option<IteratorRecord> {
+        let cell = iterable.as_cell()?;
+        let is_of_realm = || cell.shape().global() == Some(cx.global());
+        let slot = match cell.cell_type() {
+            CellType::Array => (cell.cast::<JsArray>().is_iteration_pristine() && is_of_realm())
+                .then_some(RealmSlot::array_prototype_values)?,
+            CellType::Map => (cell.cast::<JsMap>().is_iteration_pristine(cx) && is_of_realm())
+                .then_some(RealmSlot::map_prototype_entries)?,
+            CellType::Set => (cell.cast::<JsSet>().is_iteration_pristine(cx) && is_of_realm())
+                .then_some(RealmSlot::set_prototype_values)?,
+            CellType::String => RealmSlot::string_prototype_iterator,
+            CellType::DirectArguments | CellType::ScopedArguments | CellType::ClonedArguments => {
+                let is_pristine = match cell.downcast::<MappedArguments>() {
+                    Some(arguments) => arguments.is_iteration_pristine(),
+                    None => cell.cast::<ClonedArguments>().is_iteration_pristine(),
+                };
+                return (is_pristine && is_of_realm()).then(|| {
+                    let iterator = JsArrayIterator::create(cx, cell.cast(), IterationKind::Values);
+                    Self::new(iterator.into(), IterationMode::ArrayValues.marker())
+                });
+            }
+            _ => match cell.downcast::<JsTypedArray>() {
+                Some(array) => (array.is_iteration_pristine(cx) && is_of_realm())
+                    .then_some(RealmSlot::typed_array_prototype_values)?,
+                None => return Some(Self::new(iterable, mode_of_iterator(cx, cell)?.marker())),
+            },
+        };
+        Self::of_builtin_kind(cx, iterable, cx.global().slot(cx, slot).into())
+    }
+
     #[inline(always)]
     fn get_iterator(cx: &mut Cx, iterable: Value, caller: Caller) -> JsResult<IteratorRecord> {
         if let Some(cell) = iterable.as_cell()
@@ -103,6 +134,9 @@ impl IteratorRecord {
 
     #[inline(never)]
     fn get_iterator_slow(cx: &mut Cx, iterable: Value, caller: Caller) -> JsResult<Self> {
+        if let Some(record) = Self::for_pristine_iterable(cx, iterable) {
+            return Ok(record);
+        }
         let method = iterable.get(cx, symbols::iterator)?;
         Self::get_iterator_from_method(cx, iterable, method, caller)
     }
@@ -154,25 +188,45 @@ impl IteratorRecord {
                     && is_slot(cx, RealmSlot::iterator_prototype_iterator, method))
                 .then(|| mode_of_iterator(cx, cell))?
             }
-            CellType::StringIterator | CellType::MapIterator | CellType::SetIterator => {
+            CellType::MapIterator | CellType::SetIterator | CellType::StringIterator => {
                 is_slot(cx, RealmSlot::iterator_prototype_iterator, method)
                     .then(|| mode_of_iterator(cx, cell))?
             }
             CellType::Map => {
                 return (is_slot(cx, RealmSlot::map_prototype_entries, method)
                     && cx.holds(RealmWatchpoint::MapIteratorProtocol))
-                .then(|| cell.cast::<JsMap>().cursor().parts().0)
-                .map(|place| Self::new(place.into(), IterationMode::Map.marker()));
+                .then(|| Self::at(cell.cast::<JsMap>().cursor().parts(), IterationMode::Map));
             }
             CellType::Set => {
                 return (is_slot(cx, RealmSlot::set_prototype_values, method)
                     && cx.holds(RealmWatchpoint::SetIteratorProtocol))
-                .then(|| cell.cast::<JsSet>().cursor().parts().0)
-                .map(|place| Self::new(place.into(), IterationMode::Set.marker()));
+                .then(|| Self::at(cell.cast::<JsSet>().cursor().parts(), IterationMode::Set));
             }
-            _ => None,
+            _ => (is_slot(cx, RealmSlot::typed_array_prototype_values, method)
+                && cx.global().array_iterator_protocol_is_pristine()
+                && (cell.downcast::<JsTypedArray>()).is_some_and(|it| {
+                    !it.is_out_of_bounds() && it.max_length() < u32::MAX as usize
+                }))
+            .then_some(IterationMode::TypedArray),
         }?;
         Some(Self::new(cell.into(), mode.marker()))
+    }
+
+    #[inline(always)]
+    fn at((place, number): (Gc<JsCell>, u32), mode: IterationMode) -> IteratorRecord {
+        IteratorRecord {
+            position: Value::int32(number as i32),
+            next: mode.marker(),
+            subject: place.into(),
+        }
+    }
+
+    /// # Safety
+    /// The mode says that it is one of that kind, and it is not done.
+    #[inline(always)]
+    unsafe fn cursor<K: TableKind>(&self) -> OrderedCursor<K> {
+        // SAFETY: the caller's.
+        unsafe { OrderedCursor::from_parts_unchecked(self.subject_as(), self.index()) }
     }
 
     #[inline(always)]
@@ -208,47 +262,47 @@ impl IteratorRecord {
         unsafe { Gc::from_address(self.subject.to_bits() as usize) }
     }
 
-    /// # Safety
-    /// The mode is that of the kind.
-    #[inline(always)]
-    unsafe fn cursor<K: TableKind>(&self) -> OrderedCursor<K> {
-        // SAFETY: the caller's.
-        unsafe { OrderedCursor::from_parts_unchecked(self.subject_as(), self.index()) }
-    }
-
-    /// `[[Iterator]]`. If there is none, each call makes one that is where the record is.
+    /// `[[Iterator]]`. If there is none, each call makes one that is where the record is. Panics if it is done.
     pub fn iterator(&self, cx: &Cx) -> Value {
+        assert!(!self.is_done());
         match self.mode() {
             IterationMode::Array | IterationMode::TypedArray => {
                 let (object, kind) = (self.subject.cast(), IterationKind::Values);
                 let iterator = JsArrayIterator::create(cx, object, kind);
-                iterator.set_index((!self.is_done()).then(|| self.index().into()));
+                iterator.set_index(Some(self.index().into()));
                 iterator.into()
+            }
+            IterationMode::Map => {
+                // SAFETY: of that mode.
+                let cursor = unsafe { self.cursor() };
+                JsMapIterator::create_at(cx, cursor, IterationKind::Entries).into()
+            }
+            IterationMode::Set => {
+                // SAFETY: as above.
+                let cursor = unsafe { self.cursor() };
+                JsSetIterator::create_at(cx, cursor, IterationKind::Values).into()
             }
             IterationMode::String => {
                 let iterator = JsStringIterator::create(cx, self.subject.cast());
                 iterator.set_index(self.index());
                 iterator.into()
             }
-            IterationMode::Map => {
-                // SAFETY: of that mode.
-                let cursor = unsafe { self.cursor() };
-                let iterator = JsMapIterator::create_at(cx, cursor, IterationKind::Entries);
-                if self.is_done() {
-                    iterator.close(cx);
-                }
-                iterator.into()
-            }
-            IterationMode::Set => {
-                // SAFETY: as above.
-                let cursor = unsafe { self.cursor() };
-                let iterator = JsSetIterator::create_at(cx, cursor, IterationKind::Values);
-                if self.is_done() {
-                    iterator.close(cx);
-                }
-                iterator.into()
-            }
             _ => self.subject,
+        }
+    }
+
+    /// The object whose elements it yields, and the index of the next one.
+    pub fn next_element(&self) -> Option<(Gc<JsObject>, u32)> {
+        match self.mode() {
+            IterationMode::Array | IterationMode::TypedArray => {
+                Some((self.subject.cast(), self.index()))
+            }
+            IterationMode::ArrayKeys | IterationMode::ArrayValues | IterationMode::ArrayEntries => {
+                let iterator = self.subject.cast::<JsArrayIterator>();
+                let index = iterator.index().and_then(|it| u32::try_from(it).ok());
+                Some((iterator.iterated_object(), index.unwrap_or(u32::MAX)))
+            }
+            _ => None,
         }
     }
 
@@ -405,28 +459,50 @@ impl IteratorRecord {
         Ok(array)
     }
 
-    fn collect_at_once(&self, cx: &mut Cx) -> JsResult<Option<Gc<JsArray>>> {
-        use IterationMode::{Map, MapEntries, MapKeys, MapValues, Set, SetEntries, SetValues};
-        // SAFETY: each is what the mode says.
-        let array = unsafe {
-            match self.mode() {
-                IterationMode::Array => {
-                    let source = self.subject_as::<JsArray>();
-                    let length = source.length();
-                    let range = self.index().min(length).into()..length.into();
-                    return JsArray::try_copy(cx, &source, range, HoleMode::FillWithUndefined);
-                }
-                _ if self.is_done() => return Ok(None),
-                Map => JsMapIterator::rest_to_array(cx, self.cursor(), IterationKind::Entries),
-                Set => JsSetIterator::rest_to_array(cx, self.cursor(), IterationKind::Values),
-                MapKeys | MapValues | MapEntries => {
-                    self.subject_as::<JsMapIterator>().drain_to_array(cx)
-                }
-                SetValues | SetEntries => self.subject_as::<JsSetIterator>().drain_to_array(cx),
-                _ => return Ok(None),
-            }
+    /// What is left, if getting it runs no script.
+    pub(super) fn collect_at_once(&self, cx: &mut Cx) -> JsResult<Option<Gc<JsArray>>> {
+        let copy_from = |cx: &mut Cx, source: Gc<JsObject>, index: u64| {
+            let Some(length) = plain_length(&source) else {
+                return Ok(None);
+            };
+            let range = index.min(length)..length;
+            JsArray::try_copy(cx, &source, range, HoleMode::FillWithUndefined)
         };
-        array.map(Some)
+        // SAFETY: each is what the mode says.
+        unsafe {
+            match self.mode() {
+                _ if self.is_done() => Ok(None),
+                IterationMode::Array | IterationMode::TypedArray => {
+                    copy_from(cx, self.subject_as(), self.index().into())
+                }
+                IterationMode::ArrayValues => {
+                    let iterator = self.subject_as::<JsArrayIterator>();
+                    let Some(index) = iterator.index() else {
+                        return Ok(None);
+                    };
+                    let array = copy_from(cx, iterator.iterated_object(), index)?;
+                    Ok(array.inspect(|_| iterator.set_index(None)))
+                }
+                IterationMode::String if self.position == Self::START => {
+                    let list = list_of_code_points(cx, &self.subject_as::<JsString>())?;
+                    JsArray::from_immutable(cx, list).map(Some)
+                }
+                IterationMode::Map => {
+                    JsMapIterator::rest_to_array(cx, self.cursor(), IterationKind::Entries)
+                        .map(Some)
+                }
+                IterationMode::Set => {
+                    JsSetIterator::rest_to_array(cx, self.cursor(), IterationKind::Values).map(Some)
+                }
+                IterationMode::MapKeys | IterationMode::MapValues | IterationMode::MapEntries => {
+                    (self.subject_as::<JsMapIterator>().drain_to_array(cx)).map(Some)
+                }
+                IterationMode::SetValues | IterationMode::SetEntries => {
+                    (self.subject_as::<JsSetIterator>().drain_to_array(cx)).map(Some)
+                }
+                _ => Ok(None),
+            }
+        }
     }
 }
 
@@ -462,37 +538,27 @@ impl IteratorRecord {
                 }
                 _ if self.is_done() => None,
                 IterationMode::TypedArray => {
-                    let view = self.subject_as::<JsArrayBufferView>();
-                    if (index as usize) < typed_array_length(cx, &view)? {
-                        Some((view.get_index(cx, index.into())?, index + 1))
-                    } else {
-                        None
-                    }
-                }
-                IterationMode::ArrayKeys
-                | IterationMode::ArrayValues
-                | IterationMode::ArrayEntries => {
-                    let value = self.subject_as::<JsArrayIterator>().next(cx)?;
-                    value.map(|value| (value, 0))
+                    let array = self.subject_as::<JsTypedArray>();
+                    array.validate(cx)?;
+                    let element = array.get_element(cx, index as usize);
+                    element.map(|element| (element, index + 1))
                 }
                 IterationMode::Map => {
                     let mut cursor = self.cursor::<MapKind>();
-                    match cursor.next() {
-                        Some((key, value)) => {
-                            let (pair, (place, next)) = (cx.new_pair(key, value)?, cursor.parts());
-                            self.subject = place.into();
-                            Some((pair.into(), next))
-                        }
-                        None => None,
+                    if let Some((key, value)) = cursor.next() {
+                        let entry = cx.new_pair(key, value)?;
+                        *self = Self::at(cursor.parts(), IterationMode::Map);
+                        return Ok(Some(entry.into()));
                     }
+                    None
                 }
                 IterationMode::Set => {
                     let mut cursor = self.cursor::<SetKind>();
-                    cursor.next().map(|key| {
-                        let (place, next) = cursor.parts();
-                        self.subject = place.into();
-                        (key, next)
-                    })
+                    if let Some(key) = cursor.next() {
+                        *self = Self::at(cursor.parts(), IterationMode::Set);
+                        return Ok(Some(key));
+                    }
+                    None
                 }
                 IterationMode::MapKeys | IterationMode::MapValues | IterationMode::MapEntries => {
                     let value = self.subject_as::<JsMapIterator>().next(cx)?;
@@ -500,6 +566,12 @@ impl IteratorRecord {
                 }
                 IterationMode::SetValues | IterationMode::SetEntries => {
                     let value = self.subject_as::<JsSetIterator>().next(cx)?;
+                    value.map(|value| (value, 0))
+                }
+                IterationMode::ArrayKeys
+                | IterationMode::ArrayValues
+                | IterationMode::ArrayEntries => {
+                    let value = self.subject_as::<JsArrayIterator>().next(cx)?;
                     value.map(|value| (value, 0))
                 }
                 IterationMode::StringIterator => {
@@ -549,7 +621,20 @@ impl IteratorRecord {
     }
 }
 
-/// `None` unless its `next` is the original one.
+/// The length that an array iterator goes by, if getting it runs no script and throws nothing.
+pub(super) fn plain_length(object: &JsObject) -> Option<u64> {
+    if let Some(array) = object.downcast::<JsArray>() {
+        Some(array.length().into())
+    } else if let Some(array) = object.downcast::<JsTypedArray>() {
+        array.checked_length().map(|length| length as u64)
+    } else if let Some(arguments) = object.downcast::<MappedArguments>() {
+        arguments.original_length().map(u64::from)
+    } else {
+        (object.downcast::<ClonedArguments>()?.try_length()).map(u64::from)
+    }
+}
+
+/// `None` unless its `next` is the original one, it is its own iterator, and it has no `return`.
 fn mode_of_iterator(cx: &Cx, iterator: Gc<JsCell>) -> Option<IterationMode> {
     let has_shape = |slot| is_slot(cx, slot, iterator.shape().into());
     match iterator.cell_type() {
@@ -560,9 +645,6 @@ fn mode_of_iterator(cx: &Cx, iterator: Gc<JsCell>) -> Option<IterationMode> {
             IterationKind::Values => IterationMode::ArrayValues,
             IterationKind::Entries => IterationMode::ArrayEntries,
         }),
-        CellType::StringIterator => (has_shape(RealmSlot::string_iterator_shape)
-            && cx.holds(RealmWatchpoint::StringIteratorProtocol))
-        .then_some(IterationMode::StringIterator),
         CellType::MapIterator => (has_shape(RealmSlot::map_iterator_shape)
             && cx.holds(RealmWatchpoint::MapIteratorProtocol))
         .then(|| match iterator.cast::<JsMapIterator>().kind() {
@@ -576,6 +658,9 @@ fn mode_of_iterator(cx: &Cx, iterator: Gc<JsCell>) -> Option<IterationMode> {
             IterationKind::Keys | IterationKind::Values => IterationMode::SetValues,
             IterationKind::Entries => IterationMode::SetEntries,
         }),
+        CellType::StringIterator => (has_shape(RealmSlot::string_iterator_shape)
+            && cx.holds(RealmWatchpoint::StringIteratorProtocol))
+        .then_some(IterationMode::StringIterator),
         _ => None,
     }
 }

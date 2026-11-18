@@ -11,6 +11,7 @@ doctest = false
 
 [dependencies]
 bun_alloc.workspace = true
+bun_core.workspace = true
 
 [build-dependencies]
 cc = "1"

@@ -63,6 +63,6 @@ extern "C" fn Support__Condition__wait(sequence: &AtomicU32, seen: u32, seconds:
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn Support__Condition__wake(sequence: *const AtomicU32, count: u32) {
-    Futex::wake_raw(sequence, count);
+extern "C" fn Support__Condition__wakeAll(sequence: *const AtomicU32) {
+    Futex::wake_raw(sequence, u32::MAX);
 }

@@ -493,7 +493,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
                 JSC::Options::disallowNonStaticCode() = true;
             if (Bun::isCodeGenerationStrictOnlyBesideCompiledProgram()) [[unlikely]]
                 JSC::Options::disallowNonStaticCodeOnlyWithCompiledCode() = true;
-            if (JSC::isFeatureRemoved(JSC::RemovableFeature::Interpreter)) [[unlikely]] {
+            if (JSC::isFeatureRemoved(Bun::Feature::Interpreter)) [[unlikely]] {
                 JSC::Options::functionOverrides() = nullptr;
                 JSC::Options::validateBytecode() = false;
             }

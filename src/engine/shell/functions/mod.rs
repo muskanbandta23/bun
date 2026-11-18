@@ -1,5 +1,6 @@
 //! What scripts find in the global object besides the standard library.
 
+mod agent;
 mod coverage;
 mod dollar;
 mod dollar_vm;
@@ -12,7 +13,9 @@ mod values;
 
 use bun_engine_vm::{Intrinsic, JsFunction};
 
+pub(crate) use agent::Inbox;
 pub(crate) use heap::footprint;
+pub(crate) use tasks::drain_microtasks;
 
 use crate::global::define_hidden;
 use crate::prelude::*;
@@ -41,6 +44,7 @@ fn put(cx: &Cx, object: &JsObject, name: &'static str, value: Value) {
 
 pub(crate) fn define_globals(cx: &Cx) {
     for functions in [
+        agent::GLOBAL_FUNCTIONS,
         heap::FUNCTIONS,
         io::FUNCTIONS,
         scripts::FUNCTIONS,

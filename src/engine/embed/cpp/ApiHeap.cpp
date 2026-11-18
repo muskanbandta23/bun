@@ -9,7 +9,10 @@ static const CollectionScope* scopeOf(const GCRequest& request)
 
 void Heap::collectSync(GCRequest request)
 {
-    Engine::heap_collect(*this, scopeOf(request));
+    if (request.isIdle)
+        Engine::heap_collect_when_idle(*this);
+    else
+        Engine::heap_collect(*this, scopeOf(request));
     if (request.didFinishEndPhase)
         request.didFinishEndPhase->run();
 }

@@ -2756,12 +2756,10 @@ impl TestCommand {
                 environment: ctx.test_options.environment,
                 coverage_skips_test_files: ctx.test_options.coverage.skip_test_files,
                 reports_to_junit: ctx.test_options.reporters.junit,
-                // `test_filter_regex` is an erased `*mut RegularExpression` (see
-                // options_types::context).
-                filter_regex: ctx
-                    .test_options
-                    .test_filter_regex()
-                    .map(|p| jsc::RegularExpression::opaque_ref(p.as_ptr().cast())),
+                filter_regex: ctx.test_options.test_filter_regex().map(|p| {
+                    // SAFETY: a leaked `Box<RegularExpression>` (see options_types::context).
+                    unsafe { p.cast::<jsc::RegularExpression>().as_ref() }
+                }),
                 snapshots: RefCell::new(Snapshots::init(ctx.test_options.update_snapshots)),
                 bun_test_root: bun_test::BunTestRoot::init(),
                 current_file: jest::CurrentFile::default(),

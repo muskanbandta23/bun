@@ -2484,7 +2484,7 @@ void GlobalObject::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
-    setConsoleClient(WebCore::clientData(vm)->consoleClient());
+    setConsoleClient(&WebCore::clientData(vm)->consoleClient());
 
     if (Bun::codeGenerationFromStrings() != Bun::CodeGenerationFromStrings::Allowed) [[unlikely]]
         setEvalEnabled(false, Bun::codeGenerationFromStringsDisallowedMessage());
@@ -3830,7 +3830,7 @@ extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, c
     auto& vm = JSC::getVM(globalObject);
 
     if (WTF::setTimeZoneOverride(Zig::toString(*timeZone))) {
-        Bun::resetDateCachesAfterTimeZoneChange(vm);
+        vm.dateCache.clearForTimeZoneChange();
         return true;
     }
 

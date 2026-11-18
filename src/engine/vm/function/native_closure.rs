@@ -20,6 +20,7 @@ unsafe impl GcFree for Body {}
 pub struct JsNativeClosure {
     base: JsFunction,
     body: Body,
+    #[cfg_attr(rootcheck, rootcheck::allow("made with collection deferred"))]
     captures: Box<[Value]>,
 }
 

@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicU64, Ordering, fence};
 use super::block::Version;
 use super::container::{self, Container};
 use super::marking::Marking;
-use super::{CellState, Gc, HeapAnalyzer, Scope, barrier};
+use super::{CellState, Gc, HeapAnalyzer, RootReason, Scope, barrier};
 use crate::{CellKind, JsCell, ShapeId, Value, object};
 
 /// An entry of a mark stack with this bit is a cell whose memory has been counted by an earlier visit.
@@ -262,6 +262,13 @@ impl Visitor {
     /// For C++, which restores the old one in a destructor.
     pub fn replace_referrer(&mut self, cell: usize) -> usize {
         core::mem::replace(&mut self.current_cell, cell)
+    }
+
+    /// What a heap snapshot says of the roots that are appended from now on. Returns the old one.
+    pub fn replace_root_reason(&mut self, reason: RootReason) -> RootReason {
+        self.analyzer().map_or(RootReason::None, |analyzer| {
+            core::mem::replace(&mut analyzer.root_reason, reason)
+        })
     }
 
     #[inline(always)]

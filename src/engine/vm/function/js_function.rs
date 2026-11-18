@@ -651,7 +651,7 @@ pub fn display_name(object: &JsObject) -> StringRef {
 impl JsObject {
     /// Defines `prototype` on a constructor of the library, and `constructor` on the prototype unless that is in its
     /// static table: a script may have got there first.
-    pub(super) fn link_with_prototype(&self, vm: &Vm, prototype: &JsObject) {
+    pub fn link_with_prototype(&self, vm: &Vm, prototype: &JsObject) {
         self.put_direct(vm, names::prototype, prototype.into(), Attributes::CONSTANT);
         let shape = prototype.shape();
         let table = shape.class().static_table();

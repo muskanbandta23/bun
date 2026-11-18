@@ -30,6 +30,11 @@ impl StringRef {
         Self::from_static(&ATOMS[usize::from(character)])
     }
 
+    /// Panics unless the index is below `STATIC_ATOM_COUNT`.
+    pub fn static_atom(index: usize) -> StringRef {
+        Self::from_static(&ATOMS[index])
+    }
+
     /// Does not copy.
     pub fn from_literal(ascii: &'static str) -> StringRef {
         debug_assert!(ascii.is_ascii());

@@ -10,9 +10,9 @@ use super::string_iterator::code_point_string_at;
 use crate::{
     CellType, ClonedArguments, Cx, ElementKind, Gc, HoleMode, IterationKind, IterationMode,
     JsArray, JsArrayBufferView, JsArrayIterator, JsCell, JsMap, JsMapIterator, JsObject, JsResult,
-    JsSet, JsSetIterator, JsString, JsStringIterator, MapKind, MappedArguments, OrderedCursor,
-    RealmSlot, RealmWatchpoint, SetKind, TableKind, Thrown, Value, errors, iterator_complete,
-    iterator_value, throw_not_iterable,
+    JsSet, JsSetIterator, JsString, JsStringIterator, JsTypedArray, MapKind, MappedArguments,
+    OrderedCursor, RealmSlot, RealmWatchpoint, SetKind, TableKind, Thrown, Value, errors,
+    iterator_complete, iterator_value, throw_not_iterable,
 };
 
 /// The Iterator Record of ECMA-262. Where nothing can tell the difference it has no iterator, or does not call its
@@ -198,7 +198,12 @@ impl IteratorRecord {
                     && cx.holds(RealmWatchpoint::SetIteratorProtocol))
                 .then(|| Self::at(cell.cast::<JsSet>().cursor().parts(), IterationMode::Set));
             }
-            _ => None,
+            _ => (is_slot(cx, RealmSlot::typed_array_prototype_values, method)
+                && cx.global().array_iterator_protocol_is_pristine()
+                && (cell.downcast::<JsTypedArray>()).is_some_and(|it| {
+                    !it.is_out_of_bounds() && it.max_length() < u32::MAX as usize
+                }))
+            .then_some(IterationMode::TypedArray),
         }?;
         Some(Self::new(cell.into(), mode.marker()))
     }
@@ -279,6 +284,21 @@ impl IteratorRecord {
                 iterator.into()
             }
             _ => self.subject,
+        }
+    }
+
+    /// The object whose elements it yields, and the index of the next one.
+    pub fn next_element(&self) -> Option<(Gc<JsObject>, u32)> {
+        match self.mode() {
+            IterationMode::Array | IterationMode::TypedArray => {
+                Some((self.subject.cast(), self.index()))
+            }
+            IterationMode::ArrayKeys | IterationMode::ArrayValues | IterationMode::ArrayEntries => {
+                let iterator = self.subject.cast::<JsArrayIterator>();
+                let index = iterator.index().and_then(|it| u32::try_from(it).ok());
+                Some((iterator.iterated_object(), index.unwrap_or(u32::MAX)))
+            }
+            _ => None,
         }
     }
 

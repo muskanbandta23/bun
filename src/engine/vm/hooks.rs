@@ -1,12 +1,12 @@
 use bun_engine_bytecode::{BuiltinFunction, FunctionKind, FunctionRef, Visibility};
-use bun_engine_bytecode::{CoverageBlockIndex, DebugHook};
+use bun_engine_bytecode::{Code, DebugHook};
 use bun_engine_text::{Identifier, PropertyName, Text};
 
 use crate::heap::{Scope, Survivors};
 use crate::{
-    BuiltinId, CallFrame, CodeBlock, CompileError, Cx, Gc, GlobalObject, Intrinsic, JsCell,
-    JsObject, JsPromise, JsResult, JsSourceCode, ModuleLoader, PropertyCondition, RealmSlot,
-    RealmWatchpoint, SourceProvider, Value, Visitor, Vm, WasmFrame, WasmNames,
+    BuiltinId, CallFrame, CodeBlock, CompileError, CoverageCount, Cx, Gc, GlobalObject, Intrinsic,
+    JsCell, JsObject, JsPromise, JsResult, JsSourceCode, ModuleLoader, PropertyCondition, RealmSlot,
+    RealmWatchpoint, ScriptExecutable, SourceProvider, Value, Visitor, Vm, WasmFrame, WasmNames,
 };
 
 /// What this crate needs from those above it.
@@ -25,7 +25,8 @@ pub struct Hooks {
     /// The last argument is the scope.
     pub debug: fn(&mut Cx, &CallFrame, DebugHook, crate::Value) -> crate::JsResult<()>,
     pub debug_await: fn(&mut Cx, &CallFrame, DebugHook, Gc<crate::Coroutine>) -> JsResult<()>,
-    pub cover: fn(&Vm, &CodeBlock, CoverageBlockIndex, &crate::code::metadata::Word),
+    /// Code that counts its blocks is being linked. Returns a count for each.
+    pub cover: fn(&Vm, &ScriptExecutable, &Code) -> Box<[CoverageCount]>,
     /// Sets the eager slots but `global_this`.
     pub initialize_realm: fn(&Cx),
     pub initialize_realm_slot: fn(&Cx, RealmSlot),
@@ -36,6 +37,8 @@ pub struct Hooks {
     pub builtin_source: fn(BuiltinId) -> &'static BuiltinSource,
     /// `toLocaleString` of an instance of a class of `Temporal`, with the locales and the options.
     pub temporal_to_locale_string: fn(&mut Cx, Gc<JsObject>, Value, Value) -> JsResult<Value>,
+    /// Of a `WebAssembly.Memory`, by so many pages. Returns whether it has grown.
+    pub grow_wasm_memory: fn(&mut Cx, Gc<JsObject>, usize) -> bool,
     /// `JSON.parse` without a reviver.
     pub parse_json: fn(&mut Cx, Text<'_>) -> JsResult<Value>,
     /// Settles the promise with the record of the module whose bytes are the Latin-1 characters of the source.

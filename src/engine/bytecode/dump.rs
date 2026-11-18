@@ -420,12 +420,7 @@ impl<'a> Dump<'a> {
             "coverage",
             body.coverage_blocks(),
             |f, _, block| {
-                let header = if block.is_in_loop_header {
-                    " in a loop header"
-                } else {
-                    ""
-                };
-                write!(f, "{}..{}{header}", block.start, block.end)
+                write!(f, "{:?} {}..{}", block.kind, block.start, block.end)
             },
         )?;
         table(formatter, "constants", &code.constants, |f, _, value| {

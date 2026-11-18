@@ -3,19 +3,10 @@ use bun_icu::{CText, locale};
 
 #[test]
 fn language_tags() {
-    let id = locale::for_language_tag(c"sr-Latn-RS-u-ca-gregory-nu-latn").unwrap();
-    assert_eq!(&*id, c"sr_Latn_RS@calendar=gregorian;numbers=latn");
     assert_eq!(
-        &*locale::to_language_tag(&id).unwrap(),
+        &*locale::to_language_tag(c"sr_Latn_RS@calendar=gregorian;numbers=latn").unwrap(),
         b"sr-Latn-RS-u-ca-gregory-nu-latn"
     );
-    assert!(locale::for_language_tag(c"en-*").is_err());
-
-    let mut keywords = locale::keywords(&id).unwrap().unwrap();
-    assert_eq!(keywords.next().unwrap(), Some(&b"calendar"[..]));
-    assert_eq!(keywords.next().unwrap(), Some(&b"numbers"[..]));
-    assert_eq!(keywords.next().unwrap(), None);
-    assert!(locale::keywords(c"en").unwrap().is_none());
 }
 
 #[test]

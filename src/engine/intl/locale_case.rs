@@ -3,10 +3,9 @@
 use bun_engine_text::{StringRef, Text};
 pub use bun_icu::case_map::Case;
 
-use crate::error::IcuResult;
 use crate::parts::new_string;
 use crate::utf16::Utf16Buffer;
-use crate::{Cache, LanguageTag, Result};
+use crate::{Cache, Error, LanguageTag, Result};
 
 /// TransformCase. `None` if `text` stays as it is.
 pub fn transform_case(
@@ -33,7 +32,7 @@ pub fn transform_case(
     };
     let mut buffer = Utf16Buffer::new();
     let units = buffer.widen(text)?;
-    let converted = (case.convert(units, language)).or_type_error("U_INDEX_OUTOFBOUNDS_ERROR")?;
+    let converted = (case.convert(units, language)).map_err(|_| Error::OutOfMemory)?;
     if *converted == *units {
         return Ok(None);
     }

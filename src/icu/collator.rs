@@ -7,7 +7,8 @@ use crate::enumeration::UEnumeration;
 use crate::error::Status;
 use crate::ffi::{call, length, open};
 use crate::locale::listed;
-use crate::{Enumeration, Result};
+use crate::normalizer::{decompose_stream_safe, has_long_run_of_marks};
+use crate::{Buffer, Enumeration, Error, Result};
 
 bun_opaque::opaque_ffi! { struct UCollator; }
 
@@ -81,7 +82,17 @@ impl Collator {
     }
 
     pub fn compare(&self, a: &[u16], b: &[u16]) -> Result<Ordering> {
-        let (a_length, b_length) = (length(a)?, length(b)?);
+        if !needs_decomposition(a)? && !needs_decomposition(b)? {
+            return self.compare_as_is(a, b);
+        }
+        let (mut decomposed_a, mut decomposed_b) = (Buffer::new(), Buffer::new());
+        decompose_stream_safe(a, &mut decomposed_a)?;
+        decompose_stream_safe(b, &mut decomposed_b)?;
+        self.compare_as_is(&decomposed_a, &decomposed_b)
+    }
+
+    fn compare_as_is(&self, a: &[u16], b: &[u16]) -> Result<Ordering> {
+        let (a_length, b_length) = lengths(a, b)?;
         // SAFETY: the collator is open, and the strings have these lengths.
         let order =
             unsafe { ucol_strcoll(self.0.as_ptr(), a.as_ptr(), a_length, b.as_ptr(), b_length) };
@@ -90,7 +101,7 @@ impl Collator {
 
     /// An ill-formed sequence counts as U+FFFD.
     pub fn compare_utf8(&self, a: &[u8], b: &[u8]) -> Result<Ordering> {
-        let (a_length, b_length) = (length(a)?, length(b)?);
+        let (a_length, b_length) = lengths(a, b)?;
         // SAFETY: the collator is open, and the strings have these lengths.
         call(|status| unsafe {
             ucol_strcollUTF8(
@@ -104,6 +115,29 @@ impl Collator {
         })
         .map(|order| order.cmp(&0))
     }
+}
+
+#[inline]
+fn needs_decomposition(text: &[u16]) -> Result<bool> {
+    // One form of supplementary text for all releases that macOS has.
+    if cfg!(system_icucore) && text.iter().any(|unit| unit & 0xf800 == 0xd800) {
+        return Ok(true);
+    }
+    has_long_run_of_marks(text)
+}
+
+#[inline]
+fn lengths<T: PartialEq>(a: &[T], b: &[T]) -> Result<(i32, i32)> {
+    /// Of what follows the common prefix, whose collation elements are all kept in memory.
+    const MAX_COMPARED_LENGTH: usize = 1 << 26;
+
+    let longer = a.len().max(b.len());
+    if longer > MAX_COMPARED_LENGTH
+        && longer - a.iter().zip(b).take_while(|(a, b)| a == b).count() > MAX_COMPARED_LENGTH
+    {
+        return Err(Error::MEMORY_ALLOCATION);
+    }
+    Ok((length(a)?, length(b)?))
 }
 
 pub fn available_locales() -> impl Iterator<Item = &'static CStr> {

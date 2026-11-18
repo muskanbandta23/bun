@@ -73,13 +73,13 @@ impl Options {
     }
 
     /// UpdateLanguageId and MakeLocaleRecord
-    pub(super) fn apply_to<'a>(&'a self, id: &mut LocaleId<'a>) {
+    pub(super) fn apply_to<'a>(&'a mut self, id: &mut LocaleId<'a>) {
         let language_id = &mut id.language_id;
         language_id.language = self.language.unwrap_or(language_id.language);
         language_id.script = self.script.or(language_id.script);
         language_id.region = self.region.or(language_id.region);
-        if let Some(variants) = &self.variants {
-            language_id.variants.clone_from(variants);
+        if let Some(variants) = self.variants.take() {
+            language_id.variants = variants;
         }
         let bytes = |value: &'a Option<KeywordValue>| value.as_ref().map(KeywordValue::as_bytes);
         let numeric = (self.numeric).map(|it| if it { "true" } else { "false" });

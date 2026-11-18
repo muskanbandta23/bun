@@ -29,6 +29,7 @@ mod reify;
 mod shape;
 mod shape_cache;
 mod slot;
+mod small;
 mod sparse_elements;
 mod special_property_cache;
 mod static_table;
@@ -39,10 +40,10 @@ mod visit;
 pub use accessor::{CustomGetterSetter, GetterSetter};
 pub use array::{JsArray, JsArrayInit};
 pub use class::{AsciiLiteral, Class, ClassOps};
+pub(crate) use condition::may_be_special_property;
 pub use condition::{
     ConditionKind, ConditionSet, PropertyCondition, Watchability, watch_condition,
 };
-pub(crate) use condition::may_be_special_property;
 pub use define::validate_property_descriptor;
 pub use descriptor::PropertyDescriptor;
 pub use element_search::{Direction, SearchResult};
@@ -67,6 +68,7 @@ pub use slot::{
     CustomGetter, CustomSetter, DeleteKind, DeletePropertySlot, InternalMethod, PropertySlot,
     PutContext, PutKind, PutPropertySlot,
 };
+pub(crate) use small::SnugShape;
 pub use sparse_elements::{SparseElements, SparseEntry};
 pub use special_property_cache::SpecialProperty;
 pub use static_table::{

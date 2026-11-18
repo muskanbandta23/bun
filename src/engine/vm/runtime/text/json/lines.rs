@@ -4,7 +4,7 @@ use bun_engine_text::{CodeUnit, Text, scan};
 use bun_simdutf_sys::simdutf;
 
 use super::parser::Parser;
-use super::{Encoding, Failure, Latin1, Source, Utf8, Utf16, with_source};
+use super::{Failure, Source, with_units};
 use crate::{Cx, JsResult, ValueVec};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -24,7 +24,7 @@ pub struct ParsedLines {
 
 /// Appends the values up to the first one that is incomplete or has an error.
 pub fn parse_lines(cx: &Cx, source: Source<'_>, values: &mut ValueVec) -> JsResult<ParsedLines> {
-    with_source!(source, parse_units(cx, _, source, values))
+    with_units!(source, |units, _| parse_units(cx, units, source, values))
 }
 
 /// Whether the text breaks off between the digits before `at` and those of an exponent.
@@ -49,20 +49,21 @@ fn length_when_repaired(bytes: &[u8]) -> usize {
     bytes.utf8_chunks().map(length).sum()
 }
 
-fn parse_units<E: Encoding>(
+fn parse_units<T: CodeUnit>(
     cx: &Cx,
-    units: &[E::Unit],
+    units: &[T],
     source: Source<'_>,
     values: &mut ValueVec,
 ) -> JsResult<ParsedLines> {
-    Parser::<E, ()>::run(cx, units, (), |parser| {
+    Parser::run(cx, source, (), |parser, tables, mut cursor| {
         let mut read = 0;
         let end = loop {
-            if parser.skip_white_space() == units.len() {
+            if parser.skip_white_space(&mut cursor) == units.len() {
                 break LinesEnd::Complete;
             }
-            let value = match parser.value() {
-                Ok(value) => value,
+            let value;
+            (cursor, value) = match parser.value(tables, cursor) {
+                Ok(read) => read,
                 Err(Failure::Thrown(thrown)) => return Err(thrown),
                 Err(Failure::Syntax(error)) => {
                     let is_incomplete = lacks_only_exponent(units, error.at)
@@ -74,7 +75,7 @@ fn parse_units<E: Encoding>(
                     };
                 }
             };
-            let after = parser.position();
+            let after = parser.position(&cursor);
             if lacks_only_exponent(units, after) {
                 break LinesEnd::NeedsMoreText;
             }

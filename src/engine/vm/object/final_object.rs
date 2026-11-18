@@ -193,8 +193,8 @@ impl JsFinalObject {
         shape: Gc<Shape>,
         values: &[Value],
     ) -> Result<Gc<JsFinalObject>, AllocError> {
-        const UNFIT: ShapeFlags =
-            (ShapeFlags::DICTIONARY.union(ShapeFlags::IS_CLAIMED)).union(ShapeFlags::HAS_ANY_ACCESSOR);
+        const UNFIT: ShapeFlags = (ShapeFlags::DICTIONARY.union(ShapeFlags::IS_CLAIMED))
+            .union(ShapeFlags::HAS_ANY_ACCESSOR);
         let (count, capacity) = (values.len(), shape.inline_capacity());
         if (shape.max_offset().get() + 1) as usize != count
             || count.wrapping_sub(1) >= capacity

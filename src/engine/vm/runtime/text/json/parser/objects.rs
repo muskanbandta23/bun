@@ -1,14 +1,14 @@
 //! Keys that were not foreseen, and objects whose shape is not known yet.
 
 use bun_alloc::AllocError;
-use bun_engine_text::{CodeUnit, Identifier, PropertyName, Text, parse_array_index};
+use bun_engine_text::{Identifier, PropertyName, Text, parse_array_index};
 use smallvec::SmallVec;
 
 use super::keys::{KeyTree, NodeId};
-use super::{Parser, Tables, skip_white_space};
+use super::reader::Cursor;
+use super::{Parser, Tables};
 use crate::json::records::Recorder;
 use crate::json::syntax_error::Expected;
-use crate::json::{Encoding, Failure};
 use crate::{Attributes, Cx, Gc, JsFinalObject, JsObject, Shape, Value};
 
 /// Of an object outside the tree.
@@ -38,7 +38,9 @@ impl Tables {
                 return Ok(node);
             }
             let (start, depth) = (self.keys.len(), self.tree[parent].depth);
-            self.keys.try_reserve(depth.into()).map_err(|_| AllocError)?;
+            self.keys
+                .try_reserve(depth.into())
+                .map_err(|_| AllocError)?;
             let path = self.tree.path(parent);
             (self.keys).extend(path.map(|name| Key::Name(name.to_identifier())));
             self.keys[start..].reverse();
@@ -60,14 +62,16 @@ impl Tables {
         }
     }
 
-    /// An object that ends at `node`, which has no shape.
-    #[inline(never)]
+    /// An object that ends at `node`.
     pub(super) fn create_object(
         &mut self,
         cx: &Cx,
         node: NodeId,
         values: &mut [Value],
     ) -> Result<Gc<JsObject>, AllocError> {
+        if let Some(shape) = self.tree[node].shape() {
+            return JsFinalObject::try_create_with_values(cx, shape, values).map(Gc::upcast);
+        }
         if node == NodeId::OUTSIDE {
             let first = self.keys.len() - values.len();
             let object = object_with_keys(cx, &self.keys[first..], values);
@@ -108,7 +112,11 @@ fn object_with_names<'a>(
     object.upcast()
 }
 
-fn object_with_keys(cx: &Cx, keys: &[Key], values: &mut [Value]) -> Result<Gc<JsObject>, AllocError> {
+fn object_with_keys(
+    cx: &Cx,
+    keys: &[Key],
+    values: &mut [Value],
+) -> Result<Gc<JsObject>, AllocError> {
     let mut elements = Vec::new();
     let mut named = 0;
     for (position, key) in keys.iter().enumerate() {
@@ -134,23 +142,65 @@ fn object_with_keys(cx: &Cx, keys: &[Key], values: &mut [Value]) -> Result<Gc<Js
     Ok(object)
 }
 
-impl<'a, E: Encoding, R: Recorder> Parser<'a, E, R> {
-    /// Reads a key and the colon. Returns their length and where the key leads from `parent`.
-    #[inline(never)]
-    pub(super) fn unforeseen_key(
+impl<'a, R: Recorder> Parser<'a, R> {
+    /// Reads a key and the colon. Returns where the key leads from `parent`.
+    #[inline(always)]
+    fn read_key(
         &mut self,
-        rest: &[E::Unit],
+        tables: &mut Tables,
+        cursor: &mut Cursor<'a>,
         parent: NodeId,
-        expected: Expected,
-    ) -> Result<(usize, NodeId), Failure> {
-        if !rest.first().is_some_and(|unit| unit.is(b'"')) {
-            return Err(self.unexpected(rest, expected));
+    ) -> Option<NodeId> {
+        let node = self.with_characters(cursor, |text| tables.follow(parent, text))?;
+        let node = self.or_out_of_memory(node)?;
+        if self.reader.window(cursor)[0] != b':' {
+            self.skip_white_space(cursor);
+            if self.reader.window(cursor)[0] != b':' {
+                return self.unexpected(cursor, Expected::Colon);
+            }
         }
-        let (node, length) = self.with_characters(rest, |tables, text| tables.follow(parent, text))?;
-        let node = self.cx.or_out_of_memory(node)?;
-        match skip_white_space(&rest[length..]) {
-            [colon, after @ ..] if colon.is(b':') => Ok((rest.len() - after.len(), node)),
-            after => Err(self.unexpected(after, Expected::Colon)),
+        cursor.advance(1);
+        Some(node)
+    }
+
+    /// In the value of the key `context`. No node: it has failed.
+    #[inline(never)]
+    pub(super) extern "rust-cold" fn unforeseen_first_key(
+        &mut self,
+        tables: &mut Tables,
+        mut cursor: Cursor<'a>,
+        context: NodeId,
+    ) -> (Cursor<'a>, NodeId) {
+        let first = self.read_key(tables, &mut cursor, self.root);
+        if let Some(first) = first.filter(|&it| it != NodeId::OUTSIDE) {
+            tables.tree[context].child = first;
         }
+        (cursor, first.unwrap_or(NodeId::NONE))
+    }
+
+    /// The same.
+    #[inline(never)]
+    pub(super) extern "rust-cold" fn unforeseen_next_key(
+        &mut self,
+        tables: &mut Tables,
+        mut cursor: Cursor<'a>,
+        previous: NodeId,
+    ) -> (Cursor<'a>, NodeId) {
+        let next = self.read_key(tables, &mut cursor, previous);
+        if let Some(next) = next.filter(|&it| it != NodeId::OUTSIDE) {
+            tables.tree[previous].next = next;
+        }
+        (cursor, next.unwrap_or(NodeId::NONE))
+    }
+
+    #[inline(never)]
+    pub(super) extern "rust-cold" fn any_object(
+        &mut self,
+        tables: &mut Tables,
+        node: NodeId,
+        members: &mut [Value],
+    ) -> Option<Value> {
+        let object = tables.create_object(self.cx, node, members);
+        self.or_out_of_memory(object).map(Into::into)
     }
 }

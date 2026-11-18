@@ -5,26 +5,47 @@ use bun_alloc::AllocError;
 use bun_engine_text::{Identifier, PropertyName, Text, names, scan};
 
 use crate::heap::{Scope, Survivors};
+use crate::object::SnugShape;
 use crate::{Gc, GlobalObject, Shape, ShapeId};
 
+/// The offset of a node in bytes. None is kept outside the tree but by a running parser, so it is always valid.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) struct NodeId(pub(super) u32);
+#[repr(transparent)]
+pub(super) struct NodeId(u32);
 
 impl NodeId {
     /// Matches no text.
-    pub(super) const NONE: NodeId = NodeId(0);
+    pub(super) const NONE: NodeId = NodeId::at(0);
     /// Where an object is whose keys are not followed in the tree.
-    pub(super) const OUTSIDE: NodeId = NodeId(1);
-    pub(super) const BITS: u32 = 28;
+    pub(super) const OUTSIDE: NodeId = NodeId::at(1);
+    /// The low bits that are always clear.
+    pub(super) const SPARE_BITS: u32 = size_of::<Node>() as u32 - 1;
+
+    const fn at(index: usize) -> NodeId {
+        NodeId((index * size_of::<Node>()) as u32)
+    }
+
+    #[inline(always)]
+    pub(super) fn bits(self) -> u32 {
+        self.0
+    }
+
+    /// # Safety
+    /// What `bits` has returned to this parser.
+    #[inline(always)]
+    pub(super) unsafe fn from_bits(bits: u32) -> NodeId {
+        NodeId(bits)
+    }
 }
 
-pub(super) const LONGEST_TEXT: usize = 32;
+const HALF: usize = 16;
 
 #[repr(C, align(64))]
 pub(super) struct Node {
-    /// The key in quotes, and the colon.
-    text: [[u8; LONGEST_TEXT / 2]; 2],
-    /// More than `LONGEST_TEXT` unless `text` has it all and it reads the same in every encoding and dialect.
+    /// The key in quotes, and the colon, if that fits and reads the same in every encoding and dialect. Else zeros.
+    text: [[u8; HALF]; 2],
+    /// A bit for each byte of `text` that counts.
+    mask: u32,
     length: u8,
     /// The number of keys up to and including this one.
     pub(super) depth: u8,
@@ -33,10 +54,12 @@ pub(super) struct Node {
     /// The first key of the last object in the value.
     pub(super) child: NodeId,
     parent: NodeId,
-    /// Not kept alive.
-    shape: ShapeId,
+    /// The id, which does not keep it alive, with `NOT_SNUG` unless it is a `SnugShape`.
+    shape: u32,
     name: Identifier,
 }
+
+const NOT_SNUG: u32 = 1;
 
 const _: () = assert!(size_of::<Node>() == 64);
 
@@ -44,12 +67,13 @@ impl Node {
     fn new(name: Identifier, parent: NodeId, depth: u8) -> Node {
         let mut node = Node {
             text: Default::default(),
-            length: u8::MAX,
+            mask: 1,
+            length: 0,
             depth,
             next: NodeId::NONE,
             child: NodeId::NONE,
             parent,
-            shape: ShapeId::NONE,
+            shape: NOT_SNUG,
             name,
         };
         if depth != 0
@@ -63,27 +87,35 @@ impl Node {
             text[1..=key.len()].copy_from_slice(key);
             text[key.len() + 1..].copy_from_slice(b"\":");
             node.length = text.len() as u8;
+            node.mask = u32::MAX >> (u32::BITS - u32::from(node.length));
         }
         node
     }
 
-    /// The length of the key with all that goes with it, if `bytes` start with that.
+    /// The length of the key with all that goes with it, if `bytes` start with that. The first one is a quote.
     #[inline(always)]
-    pub(super) fn find_in(&self, bytes: &[[u8; LONGEST_TEXT / 2]; 2]) -> Option<usize> {
-        let low = scan::equal_mask(&bytes[0], &self.text[0]);
-        let high = scan::equal_mask(&bytes[1], &self.text[1]);
-        let length = u32::from(self.length);
-        ((low | high << 16).trailing_ones() >= length).then_some(length as usize)
+    pub(super) fn find_in(&self, bytes: [&[u8; HALF]; 2]) -> Option<u32> {
+        let low = scan::equal_mask(bytes[0], &self.text[0]);
+        let high = scan::equal_mask(bytes[1], &self.text[1]);
+        (!(low | high << HALF) & self.mask == 0).then_some(self.length.into())
     }
 
     pub(super) fn name(&self) -> PropertyName<'_> {
         self.name.name()
     }
 
-    #[inline(always)]
     pub(super) fn shape(&self) -> Option<Gc<Shape>> {
+        let id = ShapeId::from_bits(self.shape & !NOT_SNUG);
         // SAFETY: cleared by `reconcile` before it is freed.
-        (!self.shape.is_none()).then(|| unsafe { self.shape.decode() })
+        (!id.is_none()).then(|| unsafe { id.decode() })
+    }
+
+    /// It is alive, and has `depth` slots.
+    #[inline(always)]
+    pub(super) fn snug_shape(&self) -> Option<SnugShape> {
+        // SAFETY: what the bit says.
+        (self.shape & NOT_SNUG == 0)
+            .then(|| unsafe { SnugShape::new_unchecked(ShapeId::from_bits(self.shape)) })
     }
 }
 
@@ -102,14 +134,18 @@ impl core::ops::Index<NodeId> for KeyTree {
 
     #[inline(always)]
     fn index(&self, id: NodeId) -> &Node {
-        &self.nodes[id.0 as usize]
+        debug_assert!(
+            (id.0 as usize) < size_of_val(&*self.nodes) && id.0 & NodeId::SPARE_BITS == 0
+        );
+        // SAFETY: valid.
+        unsafe { &*self.nodes.as_ptr().byte_add(id.0 as usize) }
     }
 }
 
 impl core::ops::IndexMut<NodeId> for KeyTree {
     #[inline(always)]
     fn index_mut(&mut self, id: NodeId) -> &mut Node {
-        &mut self.nodes[id.0 as usize]
+        &mut self.nodes[id.0 as usize / size_of::<Node>()]
     }
 }
 
@@ -127,6 +163,7 @@ impl Default for KeyTree {
 
 impl KeyTree {
     pub(super) const MAX_DEPTH: u8 = 128;
+    const MAX_NODES: usize = u32::MAX as usize / size_of::<Node>();
     const MAX_PROBES: usize = 32;
     const MAX_KEPT_BY_COLLECTION: usize = 1 << 12;
     const MAX_KEPT_BETWEEN_TEXTS: usize = 1 << 16;
@@ -156,7 +193,7 @@ impl KeyTree {
             None => {
                 let empty = PropertyName::EMPTY.to_identifier();
                 self.nodes.push(Node::new(empty, NodeId::NONE, 0));
-                NodeId(self.nodes.len() as u32 - 1)
+                NodeId::at(self.nodes.len() - 1)
             }
         };
         self.roots.push((global, root));
@@ -165,7 +202,8 @@ impl KeyTree {
 
     #[inline(always)]
     fn probe(slot_count: usize, parent: NodeId, hash: u32) -> impl Iterator<Item = usize> {
-        let mixed = (u64::from(parent.0) << 32 | u64::from(hash)).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        let mixed =
+            (u64::from(parent.0) << 32 | u64::from(hash)).wrapping_mul(0x9e37_79b9_7f4a_7c15);
         let first = (mixed >> 32) as usize;
         (first..).map(move |slot| slot & (slot_count - 1))
     }
@@ -194,7 +232,7 @@ impl KeyTree {
         hash: u32,
     ) -> Result<NodeId, AllocError> {
         let depth = self[parent].depth + 1;
-        if depth > Self::MAX_DEPTH || self.nodes.len() >> NodeId::BITS != 0 {
+        if depth > Self::MAX_DEPTH || self.nodes.len() >= Self::MAX_NODES {
             return Err(AllocError);
         }
         self.nodes.try_reserve(1).map_err(|_| AllocError)?;
@@ -202,7 +240,7 @@ impl KeyTree {
         let mut node = Node::new(name.into(), parent, depth);
         // The values of a map are much alike.
         node.child = self[parent].child;
-        let id = NodeId(self.nodes.len() as u32);
+        let id = NodeId::at(self.nodes.len());
         self.nodes.push(node);
         self.slots[slot] = id;
         if self.nodes.len() * 2 > self.slots.len() {
@@ -217,10 +255,10 @@ impl KeyTree {
         let mut slots = Vec::new();
         slots.try_reserve_exact(count).map_err(|_| AllocError)?;
         slots.resize(count, NodeId::NONE);
-        for (id, node) in (0..).zip(&self.nodes).filter(|(_, node)| node.depth != 0) {
+        for (index, node) in self.nodes.iter().enumerate().filter(|it| it.1.depth != 0) {
             let mut probe = Self::probe(count, node.parent, node.name().hash());
             if let Some(slot) = probe.find(|&slot| slots[slot] == NodeId::NONE) {
-                slots[slot] = NodeId(id);
+                slots[slot] = NodeId::at(index);
             }
         }
         self.slots = slots;
@@ -236,25 +274,27 @@ impl KeyTree {
 
     /// `shape` has the keys of the path for its properties.
     pub(super) fn set_shape(&mut self, node: NodeId, shape: &Shape) {
+        assert!(shape.slot_count() == usize::from(self[node].depth));
         if self.shaped.try_reserve(1).is_ok() {
             self.shaped.push(node);
-            self[node].shape = shape.id();
+            let tag = if SnugShape::fits(shape) { 0 } else { NOT_SNUG };
+            self[node].shape = shape.id().bits() | tag;
         }
     }
 
     pub(super) fn reconcile(&mut self, survivors: &Survivors) {
         // SAFETY: only the address is looked at.
-        let is_live = |global| survivors.contains(unsafe { Gc::<GlobalObject>::from_address(global) });
+        let is_live =
+            |global| survivors.contains(unsafe { Gc::<GlobalObject>::from_address(global) });
         if survivors.scope() == Scope::Full
             || self.nodes.len() > Self::MAX_KEPT_BY_COLLECTION
             || !self.roots.iter().all(|root| is_live(root.0))
         {
             *self = KeyTree::default();
         }
-        for id in self.shaped.drain(..) {
-            let shape = &mut self.nodes[id.0 as usize].shape;
-            if !survivors.contains_shape(*shape) {
-                *shape = ShapeId::NONE;
+        while let Some(id) = self.shaped.pop() {
+            if !self[id].shape().is_some_and(|it| survivors.contains(it)) {
+                self[id].shape = NOT_SNUG;
             }
         }
     }

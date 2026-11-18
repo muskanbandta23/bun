@@ -286,8 +286,12 @@ impl ShapeSpec {
         self
     }
 
+    pub(super) const fn instance_header(self) -> u32 {
+        instance_header(self.indexing_mode, self.cell_type, self.flags)
+    }
+
     pub(super) fn identity(self) -> (&'static Class, u32) {
-        let header = instance_header(self.indexing_mode, self.cell_type, self.flags);
+        let header = self.instance_header();
         let capacity = u32::from(self.inline_capacity);
         (self.class, header & 0x00ff_ffff | capacity << 24)
     }

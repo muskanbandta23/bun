@@ -9,11 +9,29 @@ pub(super) const SHORT: usize = 16;
 const LONGEST: usize = 256;
 const COUNT: usize = 256;
 
+/// ASCII without control characters, and zeros after it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) struct ShortText([u64; 2]);
+
+impl ShortText {
+    /// The first `length` characters, none of which is a control character.
+    #[inline(always)]
+    pub(super) fn new(characters: &[u8; SHORT], length: u32) -> ShortText {
+        let kept = u128::from_le_bytes(*characters) & KEPT[length as usize];
+        ShortText([kept as u64, (kept >> 64) as u64])
+    }
+
+    #[inline(always)]
+    fn slot(self) -> usize {
+        let folded = self.0[0] ^ self.0[1].rotate_left(29);
+        (folded.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> (u64::BITS - COUNT.ilog2())) as usize
+    }
+}
+
 #[derive(Clone, Copy)]
 #[repr(C, align(32))]
 struct Short {
-    /// Latin-1 without control characters, and zeros after it.
-    characters: u128,
+    text: ShortText,
     string: usize,
 }
 
@@ -24,7 +42,7 @@ pub(super) struct Strings {
 }
 
 const VACANT: Short = Short {
-    characters: 1,
+    text: ShortText([1, 0]),
     string: 0,
 };
 
@@ -59,51 +77,47 @@ impl Strings {
         self.long.fill(0);
     }
 
-    /// Of the first `length` characters, none of which is a control character.
     #[inline(always)]
-    pub(super) fn short(
-        &mut self,
-        vm: &Vm,
-        characters: [u8; SHORT],
-        length: usize,
-    ) -> Result<Gc<JsString>, AllocError> {
-        let characters = u128::from_le_bytes(characters) & KEPT[length];
-        let hash = mix(characters as u64, (characters >> 64) as u64);
-        let entry = &mut self.short[hash as usize % COUNT];
-        if entry.characters == characters {
-            // SAFETY: made since the last collection.
-            return Ok(unsafe { Gc::from_address(entry.string) });
-        }
-        Self::add_short(entry, vm, characters, length)
+    pub(super) fn find_short(&self, text: ShortText) -> Option<Gc<JsString>> {
+        let entry = &self.short[text.slot()];
+        // SAFETY: made since the last collection.
+        (entry.text == text).then(|| unsafe { Gc::from_address(entry.string) })
     }
 
-    #[inline(never)]
-    fn add_short(
-        entry: &mut Short,
+    #[inline(always)]
+    pub(super) fn add_short(
+        &mut self,
         vm: &Vm,
-        characters: u128,
-        length: usize,
+        text: ShortText,
     ) -> Result<Gc<JsString>, AllocError> {
         /// What fills the two smallest blocks that have room for the header.
         const SMALL: usize = 12;
         const LARGE: usize = 28;
+        let characters = u128::from(text.0[1]) << 64 | u128::from(text.0[0]);
+        let length = SHORT - characters.leading_zeros() as usize / 8;
         let mut bytes = [0; LARGE];
         bytes[..SHORT].copy_from_slice(&characters.to_le_bytes());
         // What a script compares it with, or uses it for, is likely to be a name.
-        let string = match (Atom::find(Text::Latin1(&bytes[..length])), bytes.first_chunk()) {
+        let string = match (
+            Atom::find(Text::Latin1(&bytes[..length])),
+            bytes.first_chunk(),
+        ) {
             (Some(atom), _) => atom.into_string(),
-            (None, Some(few)) if length <= SMALL => StringRef::try_from_prefix::<_, SMALL>(few, length)?,
+            (None, Some(few)) if length <= SMALL => {
+                StringRef::try_from_prefix::<_, SMALL>(few, length)?
+            }
             _ => StringRef::try_from_prefix(&bytes, length)?,
         };
         let string = JsString::new(vm, string);
-        *entry = Short {
-            characters,
+        self.short[text.slot()] = Short {
+            text,
             string: string.address(),
         };
         Ok(string)
     }
 
     /// Latin-1 if the characters allow it.
+    #[inline(always)]
     pub(super) fn any(&mut self, vm: &Vm, text: Text<'_>) -> Result<Gc<JsString>, AllocError> {
         with_text!(text, |units| self.of_units(vm, units))
     }
@@ -138,7 +152,9 @@ fn sample(bytes: &[u8]) -> u64 {
     let length = bytes.len();
     let (Some(head), Some(tail)) = (bytes.first_chunk(), bytes.last_chunk()) else {
         let few = [0, 1, length / 2 - 1, length / 2, length - 2, length - 1];
-        let few = few.iter().fold(0, |word, &at| word << 8 | u64::from(bytes[at]));
+        let few = few
+            .iter()
+            .fold(0, |word, &at| word << 8 | u64::from(bytes[at]));
         return mix(few, length as u64);
     };
     let middle = bytes[length / 2 - 4..].first_chunk().unwrap_or(head);

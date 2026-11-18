@@ -131,3 +131,4 @@ opaque  TerminationDeadline class JSC::TerminationDeadline
 # Modules, scopes and cached bytecode
 
 # Inspector, profilers and options
+opaque  Options struct Engine::Options

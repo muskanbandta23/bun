@@ -4,7 +4,7 @@ use core::ops::Range;
 
 use super::places::Place;
 use crate::analysis::Cfg;
-use crate::ir::{Block, Function, Heap, HeapRange, Table, Value};
+use crate::ir::{Block, Effects, Function, Heap, HeapRange, Table, Value};
 
 const GROUPS: usize = u64::BITS as usize;
 
@@ -29,12 +29,12 @@ pub(super) struct Writes {
 }
 
 impl Writes {
-    /// Of the blocks that are wanted. `visit` sees their instructions.
+    /// Of the blocks that are wanted. `visit` sees their instructions, with the number of the next write.
     pub(super) fn collect(
         function: &Function,
         cfg: &Cfg,
         is_wanted: impl Fn(Block) -> bool,
-        mut visit: impl FnMut(Value, u32),
+        mut visit: impl FnMut(Value, Effects, u32),
     ) -> Self {
         let mut writes = Vec::new();
         let mut first_at = Vec::with_capacity(cfg.order().len() + 1);
@@ -46,8 +46,9 @@ impl Writes {
                 continue;
             }
             for value in function.instructions(block) {
-                visit(value, writes.len() as u32);
-                let heap = function.effects(value).writes;
+                let effects = function.effects(value);
+                visit(value, effects, writes.len() as u32);
+                let heap = effects.writes;
                 if heap != Heap::NOTHING {
                     writes.push(value);
                     if core::mem::replace(&mut heaps[heap].group, 1) == 0 {

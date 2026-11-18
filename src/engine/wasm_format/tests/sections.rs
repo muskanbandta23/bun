@@ -270,6 +270,7 @@ fn names() {
     ]
     .concat();
     let module = with_names(&[&all, &[1, 4, 1, 1, 1, b'z']]);
+    assert_eq!(module.custom_sections().len(), 2);
     assert_eq!(
         module.bytes(module.names().unwrap().module().unwrap()),
         b"m"
@@ -281,13 +282,15 @@ fn names() {
     assert_eq!(unordered.names().unwrap().module(), None);
 
     assert!(with_names(&[]).names().is_none());
-    let malformed: [&[u8]; 6] = [
+    let malformed: [&[u8]; 8] = [
         &[1, 4, 1, 3, 1, b'a'],
         &[1, 4, 1, 0, 1, 0xff],
         &[1, 5, 1, 0, 1, b'a'],
         &[1, 3, 1, 0, 1, b'a'],
         &[2, 2, 1, 0],
         &[0x80, 0],
+        &[1, 4, 1, 0, 1, b'a', 0, 2, 1, b'm'],
+        &[1, 4, 1, 0, 1, b'a', 1, 4, 1, 1, 1, b'b'],
     ];
     for section in malformed {
         assert!(with_names(&[section]).names().is_none(), "{section:?}");
@@ -1022,4 +1025,86 @@ fn errors_come_in_pieces() {
         format!("duplicate export: '{}...'", &name[..4096])
     );
     assert_eq!(error.function(), None);
+}
+
+#[test]
+fn imports_that_the_engine_provides() {
+    let types = list(&[
+        &[ARRAY, I16, 1],
+        &[ARRAY, I16, 0],
+        &[FUNC, 1, EXTERNREF, 1, I32],
+        &[FUNC, 1, EXTERNREF, 1, REF, EXTERNREF],
+        &[FUNC, 1, EXTERNREF, 1, EXTERNREF],
+        &[FUNC, 3, NULLABLE, 0, I32, I32, 1, REF, EXTERNREF],
+        &[FUNC, 3, NULLABLE, 1, I32, I32, 1, REF, EXTERNREF],
+        &[FUNC, 3, REF, 0, I32, I32, 1, REF, EXTERNREF],
+        &[FUNC, 1, EXTERNREF, 0],
+    ]);
+    let provided = |string_builtins, from: &str, field: &str, item: &[u8]| {
+        let import = [&sized(from.as_bytes()), &sized(field.as_bytes()), item].concat();
+        let module = valid(&module(&[
+            (TYPE, &types),
+            (IMPORT, &list(&[&[0, 0, 0, 2], &import])),
+        ]));
+        let options = CompileOptions {
+            imported_string_constants: Some(b"'"),
+            string_builtins,
+        };
+        let provided = module
+            .provided_imports(options)
+            .map_err(|error| error.to_string())?;
+        assert_eq!((provided.len(), provided[0]), (2, None));
+        Ok::<_, String>(provided[1])
+    };
+
+    let builtin = |field, ty| provided(true, "wasm:js-string", field, &[0, ty]);
+    let found = |builtin| Ok(Some(Provided::StringBuiltin(builtin)));
+    assert_eq!(builtin("length", 2), found(StringBuiltin::Length));
+    assert_eq!(builtin("cast", 3), found(StringBuiltin::Cast));
+    assert_eq!(
+        builtin("fromCharCodeArray", 5),
+        found(StringBuiltin::FromCharCodeArray)
+    );
+    assert_eq!(builtin("other", 2), Ok(None));
+    assert_eq!(
+        provided(false, "wasm:js-string", "length", &[0, 3]),
+        Ok(None)
+    );
+    assert_eq!(provided(true, "js-string", "length", &[0, 3]), Ok(None));
+    let mismatch = |field| {
+        Err(format!(
+            "builtin import wasm:js-string:{field} has an unexpected signature"
+        ))
+    };
+    for (field, ty) in [
+        ("cast", 4),
+        ("test", 8),
+        ("equals", 2),
+        ("fromCharCodeArray", 6),
+        ("fromCharCodeArray", 7),
+    ] {
+        assert_eq!(builtin(field, ty), mismatch(field));
+    }
+    assert_eq!(
+        provided(true, "wasm:js-string", "test", &[3, I32, 0]),
+        mismatch("test")
+    );
+
+    let constant = |item: &[u8]| provided(true, "'", "é", item);
+    assert_eq!(
+        constant(&[3, EXTERNREF, 0]),
+        Ok(Some(Provided::StringConstant))
+    );
+    assert_eq!(
+        constant(&[3, REF, EXTERNREF, 0]),
+        Ok(Some(Provided::StringConstant))
+    );
+    assert_eq!(
+        constant(&[0, 2]),
+        Err("imported string constant ':é is not a global".into())
+    );
+    for item in [[3, EXTERNREF, 1], [3, ANYREF, 0], [3, I32, 0]] {
+        let expected = "imported string constant ':é is not an immutable external reference";
+        assert_eq!(constant(&item), Err(expected.into()));
+    }
 }

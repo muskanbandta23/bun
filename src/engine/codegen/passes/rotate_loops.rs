@@ -8,6 +8,7 @@ use crate::ir::{Block, Edge, Function, Op};
 use crate::target::Target;
 
 const GREATEST_COST: u32 = 8;
+const MOST_PARAMS: usize = 64;
 
 struct Rotation<'a> {
     entering: &'a [Edge],
@@ -25,7 +26,7 @@ pub(super) fn run(function: &mut Function, analyses: &mut Analyses, target: Targ
         .loops()
         .keys()
         .filter(|&found| !frequencies.is_cold(cfg.loops()[found].header))
-        .filter_map(|found| plan(function, cfg, &copier, found))
+        .filter_map(|found| plan(function, cfg, &mut copier, found))
         .collect();
     if rotations.is_empty() {
         return;
@@ -36,9 +37,9 @@ pub(super) fn run(function: &mut Function, analyses: &mut Analyses, target: Targ
             function.split_edge(staying);
         }
         let entering = only_entering_edge(function, rotation.entering);
-        let taken = copier
-            .preview(function, entering)
-            .and_then(|preview| preview.taken);
+        let preview = copier.preview_target(function, entering);
+        let taken = preview.and_then(|preview| preview.taken);
+        copier.forget_stand_ins();
         let entering = as_jump(function, entering);
         let (into, header) = (function.source(entering), function.target(entering));
         copier.copy_body(function, entering);
@@ -50,9 +51,11 @@ pub(super) fn run(function: &mut Function, analyses: &mut Analyses, target: Targ
     hoist_loop_invariants::run(function, analyses, target);
 }
 
-/// The edge that stays in the loop, if the block ends with a branch whose other edge leaves it.
+/// The edge that stays in the loop, if the block ends with a test whose other edge leaves it.
 fn staying_edge(function: &Function, cfg: &Cfg, around: Loop, block: Block) -> Option<Edge> {
-    if !matches!(function.op(function.last(block)), Op::Branch(_)) {
+    if function.successors(block).len() != 2
+        || matches!(function.op(function.last(block)), Op::Patchpoint(_))
+    {
         return None;
     }
     let edges = [0, 1].map(|position| function.successor(block, position));
@@ -64,9 +67,9 @@ fn staying_edge(function: &Function, cfg: &Cfg, around: Loop, block: Block) -> O
 }
 
 fn plan<'a>(
-    function: &Function,
+    function: &mut Function,
     cfg: &'a Cfg,
-    copier: &Copier,
+    copier: &mut Copier,
     rotated: Loop,
 ) -> Option<Rotation<'a>> {
     let data = cfg.loops()[rotated];
@@ -78,8 +81,13 @@ fn plan<'a>(
     if !data.is_natural
         || tests_at_bottom
         || function.is_rare(staying)
-        || copier.preview(function, entering[0])?.cost > GREATEST_COST
+        || function.params(data.header).len() > MOST_PARAMS
     {
+        return None;
+    }
+    let preview = copier.preview_target(function, entering[0]);
+    copier.forget_stand_ins();
+    if preview?.cost > GREATEST_COST {
         return None;
     }
     let is_shared = cfg.predecessors(function.target(staying)).len() > 1;

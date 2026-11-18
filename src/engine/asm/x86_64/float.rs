@@ -338,6 +338,28 @@ impl FloatAssembly for MacroAssembler {
             .sse_store(pick(width, SseStore::Movss, SseStore::Movsd), dst, src);
     }
 
+    fn load_pair_f64(&mut self, low: Fpr, high: Fpr, src: Address) {
+        assert!(low != high);
+        self.load_f64(low, src);
+        self.load_f64(high, src.plus(8));
+    }
+
+    fn store_pair_f64(&mut self, dst: Address, low: Fpr, high: Fpr) {
+        self.store_f64(dst, low);
+        self.store_f64(dst.plus(8), high);
+    }
+
+    fn load_pair_vector(&mut self, low: Fpr, high: Fpr, src: Address) {
+        assert!(low != high);
+        self.load_vector(low, src);
+        self.load_vector(high, src.plus(16));
+    }
+
+    fn store_pair_vector(&mut self, dst: Address, low: Fpr, high: Fpr) {
+        self.store_vector(dst, low);
+        self.store_vector(dst.plus(16), high);
+    }
+
     fn add_float(&mut self, width: FloatWidth, dst: Fpr, lhs: Fpr, rhs: Fpr) {
         self.sse_binary(pick(width, Sse::Addss, Sse::Addsd), dst, lhs, rhs);
     }
@@ -683,6 +705,19 @@ impl FloatAssembly for MacroAssembler {
     ) {
         let flags = self.set_float_flags(width, cond, lhs, rhs);
         self.select_vector_on_flags(flags, dst, then, or);
+    }
+
+    fn select_float_test(
+        &mut self,
+        width: Width,
+        cond: TestCond,
+        dst: Fpr,
+        value: Gpr,
+        mask: impl Into<RegOrImm>,
+        then: Fpr,
+        or: Fpr,
+    ) {
+        self.select_vector_test(width, cond, dst, value, mask, then, or);
     }
 
     fn select_vector_test(

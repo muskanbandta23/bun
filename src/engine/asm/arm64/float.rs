@@ -11,7 +11,7 @@ use crate::assembly::{FloatAssembly, MacroAssembly};
 use crate::features::Arm64Features;
 use crate::label::Label;
 use crate::operand::{
-    FloatCond, FloatWidth, Memory, NegativeZero, RegOrImm, Rounding, Sign, TestCond, Width,
+    Address, FloatCond, FloatWidth, Memory, NegativeZero, RegOrImm, Rounding, Sign, TestCond, Width,
 };
 use crate::register::{Fpr, Gpr};
 
@@ -161,6 +161,26 @@ impl FloatAssembly for MacroAssembler {
     fn store_float(&mut self, width: FloatWidth, dst: impl Into<Memory>, src: Fpr) {
         let dst = self.mem(width, dst);
         self.asm.str_fpr(src, dst);
+    }
+
+    fn load_pair_f64(&mut self, low: Fpr, high: Fpr, src: Address) {
+        let src = self.pair_mem(AccessSize::S64, src);
+        self.asm.ldp_fpr(low, high, src);
+    }
+
+    fn store_pair_f64(&mut self, dst: Address, low: Fpr, high: Fpr) {
+        let dst = self.pair_mem(AccessSize::S64, dst);
+        self.asm.stp_fpr(low, high, dst);
+    }
+
+    fn load_pair_vector(&mut self, low: Fpr, high: Fpr, src: Address) {
+        let src = self.pair_mem(AccessSize::S128, src);
+        self.asm.ldp_fpr(low, high, src);
+    }
+
+    fn store_pair_vector(&mut self, dst: Address, low: Fpr, high: Fpr) {
+        let dst = self.pair_mem(AccessSize::S128, dst);
+        self.asm.stp_fpr(low, high, dst);
     }
 
     fn add_float(&mut self, width: FloatWidth, dst: Fpr, lhs: Fpr, rhs: Fpr) {
@@ -462,6 +482,20 @@ impl FloatAssembly for MacroAssembler {
         self.select_on_float_flags(cond, dst, then, or, |masm, then, or, cc| {
             masm.asm.fcsel(FloatWidth::F64, dst, then, or, cc);
         });
+    }
+
+    fn select_float_test(
+        &mut self,
+        width: Width,
+        cond: TestCond,
+        dst: Fpr,
+        value: Gpr,
+        mask: impl Into<RegOrImm>,
+        then: Fpr,
+        or: Fpr,
+    ) {
+        let cc = self.set_flags_for_test(width, cond, value.into(), mask.into());
+        self.asm.fcsel(FloatWidth::F64, dst, then, or, cc);
     }
 
     fn select_vector_test(

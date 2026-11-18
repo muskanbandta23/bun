@@ -180,6 +180,16 @@ impl Heap {
             }
             self.vm().visit_output_constraints(visitor);
             set_root_reason(visitor, RootReason::Embedder);
+            if is_first_round {
+                for space in self.spaces_with_output_constraints.borrow().iter() {
+                    self.for_each_marked_cell_in(space, |cell| {
+                        visitor.with_referrer(&cell, |visitor| {
+                            // SAFETY: the method of its class.
+                            unsafe { (cell.class().ops().visit_output_constraints)(&cell, visitor) }
+                        });
+                    });
+                }
+            }
             for constraint in self.constraints.borrow().iter() {
                 if is_first_round || constraint.depends_on_marking {
                     constraint.execute(visitor);
@@ -245,6 +255,9 @@ impl Heap {
             .borrow_mut()
             .extract_if(first.., |allocation| !allocation.is_marked())
             .collect();
+        for (index, allocation) in self.precise.borrow().iter().enumerate().skip(first) {
+            allocation.index.set(index as u32);
+        }
         self.first_young_precise.set(self.precise.borrow().len());
         for allocation in dead {
             self.precise_bytes

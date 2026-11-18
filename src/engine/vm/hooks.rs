@@ -1,12 +1,12 @@
 use bun_engine_bytecode::{BuiltinFunction, FunctionKind, FunctionRef, Visibility};
 use bun_engine_bytecode::{CoverageBlockIndex, DebugHook};
-use bun_engine_text::{Identifier, PropertyName};
+use bun_engine_text::{Identifier, PropertyName, Text};
 
 use crate::heap::{Scope, Survivors};
 use crate::{
     BuiltinId, CallFrame, CodeBlock, CompileError, Cx, Gc, GlobalObject, Intrinsic, JsCell,
-    JsObject, JsResult, PropertyCondition, RealmSlot, RealmWatchpoint, SourceProvider, Value,
-    Visitor, Vm, WasmFrame, WasmNames,
+    JsObject, JsPromise, JsResult, JsSourceCode, ModuleLoader, PropertyCondition, RealmSlot,
+    RealmWatchpoint, SourceProvider, Value, Visitor, Vm, WasmFrame, WasmNames,
 };
 
 /// What this crate needs from those above it.
@@ -24,6 +24,7 @@ pub struct Hooks {
     pub tier_up: fn(&Vm, &CodeBlock, &CallFrame, Option<u32>) -> usize,
     /// The last argument is the scope.
     pub debug: fn(&mut Cx, &CallFrame, DebugHook, crate::Value) -> crate::JsResult<()>,
+    pub debug_await: fn(&mut Cx, &CallFrame, DebugHook, Gc<crate::Coroutine>) -> JsResult<()>,
     pub cover: fn(&Vm, &CodeBlock, CoverageBlockIndex, &crate::code::metadata::Word),
     /// Sets the eager slots but `global_this`.
     pub initialize_realm: fn(&Cx),
@@ -35,6 +36,13 @@ pub struct Hooks {
     pub builtin_source: fn(BuiltinId) -> &'static BuiltinSource,
     /// `toLocaleString` of an instance of a class of `Temporal`, with the locales and the options.
     pub temporal_to_locale_string: fn(&mut Cx, Gc<JsObject>, Value, Value) -> JsResult<Value>,
+    /// Of a `WebAssembly.Memory`, by so many pages. Returns whether it has grown.
+    pub grow_wasm_memory: fn(&mut Cx, Gc<JsObject>, usize) -> bool,
+    /// `JSON.parse` without a reviver.
+    pub parse_json: fn(&mut Cx, Text<'_>) -> JsResult<Value>,
+    /// Settles the promise with the record of the module whose bytes are the Latin-1 characters of the source.
+    pub make_wasm_module:
+        fn(&mut Cx, Gc<ModuleLoader>, &Identifier, Gc<JsSourceCode>, Gc<JsPromise>) -> JsResult<()>,
     pub find_wasm_handler: fn(&Vm, &CallFrame) -> Option<(usize, u32)>,
     /// With the address that the callee returns to, or zero if the frame has called an operation, and the number of
     /// inlined functions that have been visited.

@@ -1,5 +1,6 @@
 //! The years before the first, in calendars for which ICU does not name their era.
 
+use bun_engine_date::{MS_PER_DAY, days_from_civil};
 use bun_engine_temporal::CalendarId;
 use bun_icu::Buffer;
 use bun_icu::calendar::{Calendar, Field};
@@ -37,7 +38,10 @@ impl EarlyEra {
             return Ok(None);
         }
         let (era, year) = match self {
-            EarlyEra::Islamic => ("Before Hijra", year_text(format, calendar, 1 - year)?),
+            EarlyEra::Islamic => (
+                "Before Hijra",
+                islamic_year_text(format, calendar, 1 - year)?,
+            ),
             EarlyEra::Coptic => ("Anno Martyrum", None),
         };
         let era = era.encode_utf16().collect();
@@ -61,14 +65,18 @@ impl EarlyEraText {
 }
 
 /// With the digits and the width that `format` gives a year.
-fn year_text(
+fn islamic_year_text(
     format: &DateFormat,
     calendar: &Calendar,
     year: i32,
 ) -> bun_icu::Result<Option<Buffer<u16>>> {
+    const EPOCH_DAYS: f64 = days_from_civil(622, 7, 19) as f64;
+    /// Thirty years have 10631 days.
+    const MEAN_YEAR_DAYS: f64 = 10631.0 / 30.0;
+
+    let middle_of_year = EPOCH_DAYS + (f64::from(year) - 0.5) * MEAN_YEAR_DAYS;
     let mut calendar = calendar.try_clone()?;
-    calendar.set(Field::Year, year);
-    calendar.set(Field::DayOfMonth, 1);
+    calendar.set_millis(middle_of_year * MS_PER_DAY)?;
     let mut text = DateText::new();
     let mut fields = format.format_fields(&mut calendar, &mut text)?;
     let year_field = fields.find(|&(date_field, _)| date_field == field::YEAR);

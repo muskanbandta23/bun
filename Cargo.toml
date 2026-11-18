@@ -152,6 +152,7 @@ members = [
   "src/engine/bytecode",
   "src/engine/asm",
   "src/engine/exec_memory",
+  "src/engine/platform",
   "src/engine/codegen",
   "src/engine/vm",
   "src/engine/interpreter",
@@ -261,7 +262,7 @@ warnings = { level = "deny", priority = -1 }
 # (`--cfg=...` + `--check-cfg=cfg(...)`) by scripts/build/rust.ts; register
 # them here so a plain `cargo build` / `cargo check` (without those flags)
 # doesn't warn.
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)', 'cfg(bun_debug)', 'cfg(bun_fuzzilli)', 'cfg(bun_hardened)', 'cfg(bun_locked_environment)', 'cfg(bun_refuses_execute_only_start)', 'cfg(bun_starts_without_mdwe)', 'cfg(socket_fault_injection)', 'cfg(bun_disallow_code_generation_from_strings)', 'cfg(bun_sema_mimalloc)', 'cfg(mordant)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)', 'cfg(bun_debug)', 'cfg(bun_fuzzilli)', 'cfg(bun_hardened)', 'cfg(bun_locked_environment)', 'cfg(bun_refuses_execute_only_start)', 'cfg(bun_starts_without_mdwe)', 'cfg(socket_fault_injection)', 'cfg(bun_disallow_code_generation_from_strings)', 'cfg(bun_sema_mimalloc)', 'cfg(mordant)', 'cfg(rootcheck)'] }
 # link.exe unconditionally prints "Creating library X.dll.lib and object
 # X.dll.exp" to stdout when linking each proc-macro DLL on Windows hosts;
 # there is no linker flag to suppress it. The lint already exempts itself
@@ -438,6 +439,7 @@ bun_engine_syntax = { path = "src/engine/syntax" }
 bun_engine_bytecode = { path = "src/engine/bytecode" }
 bun_engine_asm = { path = "src/engine/asm" }
 bun_engine_exec_memory = { path = "src/engine/exec_memory" }
+bun_engine_platform = { path = "src/engine/platform" }
 bun_engine_codegen = { path = "src/engine/codegen" }
 bun_engine_vm = { path = "src/engine/vm" }
 bun_engine_interpreter = { path = "src/engine/interpreter" }
@@ -629,6 +631,8 @@ opt-level = 2
 [profile.dev.package.bun_engine_embed]
 opt-level = 2
 [profile.dev.package.bun_engine_exec_memory]
+opt-level = 2
+[profile.dev.package.bun_engine_platform]
 opt-level = 2
 [profile.dev.package.bun_engine_inspector]
 opt-level = 2

@@ -65,10 +65,17 @@ handler! {
 
     fn get_import(m, op: op::GetImport) {
         let entry = m.entry::<GetImport>(op.metadata);
-        if entry.slot.get() == 0 {
-            slow!(m, op::GetImport)
+        let mut address = entry.slot.get();
+        if address <= GetImport::VARIES {
+            let module = m.outer_scope(op.scope, op.depth);
+            let index = module.slot_unchecked(op.slot + 1).get().and_then(Value::as_index_int32);
+            let (GetImport::VARIES, Some(index)) = (address, index) else {
+                slow!(m, op::GetImport)
+            };
+            let target = Value::bits_of(module.slot_unchecked(op.slot).get()) as usize;
+            address = target + Environment::allocation_size(index);
         }
-        let value = *core::ptr::with_exposed_provenance::<u64>(entry.slot.get());
+        let value = *core::ptr::with_exposed_provenance::<u64>(address);
         if value == EMPTY {
             slow!(m, op::GetImport)
         }

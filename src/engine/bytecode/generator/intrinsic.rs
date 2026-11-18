@@ -4,6 +4,7 @@ use bun_engine_syntax::Name;
 use bun_engine_syntax::ast::{Expr, ExprId, ExprKind, List};
 use bun_engine_text::{PropertyName, StringRef, find_private_name};
 
+use super::control::Control;
 use super::operator::Branch;
 use super::{Dest, Failure, Generator};
 use crate::code::HandlerKind;
@@ -36,6 +37,8 @@ pub(super) enum Intrinsic {
     IsConstructor,
     IsNullish,
     IsObject,
+    /// Only as what `for`-`of` iterates over.
+    IterableWithMethod,
     IteratorClose,
     IteratorNext,
     NewArrayWithSize,
@@ -72,6 +75,7 @@ fn intrinsic_named(name: &[u8]) -> Option<Intrinsic> {
         b"isConstructor" => Intrinsic::IsConstructor,
         b"isObject" => Intrinsic::IsObject,
         b"isUndefinedOrNull" => Intrinsic::IsNullish,
+        b"iterableWithMethod" => Intrinsic::IterableWithMethod,
         b"iteratorGenericClose" => Intrinsic::IteratorClose,
         b"iteratorGenericNext" => Intrinsic::IteratorNext,
         b"newArrayWithSize" => Intrinsic::NewArrayWithSize,
@@ -178,6 +182,19 @@ impl Generator<'_> {
         }
     }
 
+    /// The arguments of `@iterableWithMethod(iterable, method)`.
+    pub(super) fn iterable_with_method(&mut self, id: ExprId) -> Option<(ExprId, ExprId)> {
+        if let ExprKind::Call {
+            callee, arguments, ..
+        } = self.ast[id].kind
+            && let ExprKind::Identifier(name) = self.ast[callee].kind
+            && let Some(Builtin::Intrinsic(Intrinsic::IterableWithMethod)) = self.builtin(name)
+        {
+            return self.ast.get(arguments, 0).zip(self.ast.get(arguments, 1));
+        }
+        None
+    }
+
     /// False, having done nothing, unless the call is a test that an instruction can jump on.
     pub(super) fn intrinsic_condition(&mut self, node: &Expr, branch: Branch) -> bool {
         let ExprKind::Call {
@@ -225,6 +242,10 @@ impl Generator<'_> {
         let strict = self.is_strict;
         match intrinsic {
             Intrinsic::Assert => self.undefined_in(dst),
+            Intrinsic::IterableWithMethod => {
+                self.misuse(node);
+                self.undefined_in(dst)
+            }
             Intrinsic::Throw(kind) => {
                 let message = match self.ast.get(arguments, 0) {
                     None => self.string(Name::EMPTY),
@@ -397,11 +418,18 @@ impl Generator<'_> {
     fn close_if_abrupt(&mut self, arguments: List<ExprId>, range: (u32, u32, u32)) {
         let iterator = self.value(arguments, 0);
         let [handler, failed, rethrow, done] = core::array::from_fn(|_| self.asm().label());
+        let try_depth = self.asm().try_depth();
         self.asm()
             .push_try(handler, HandlerKind::SynthesizedFinally);
+        self.b.controls.push(Control::IteratorObject {
+            iterator,
+            try_depth,
+            range,
+        });
         if let Some(step) = self.ast.get(arguments, 1) {
             self.effect(step);
         }
+        self.b.controls.pop();
         self.asm().pop_try();
         self.asm().jump(done);
         let (exception, scratch) = (self.temp(), self.temps(2));

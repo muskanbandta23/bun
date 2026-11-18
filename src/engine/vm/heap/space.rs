@@ -1,3 +1,5 @@
+use bun_alloc::default_alloc;
+
 use super::allocator::Allocator;
 use super::block::{ATOM_SIZE, PAYLOAD_SIZE};
 use super::block_memory::BlockSource;
@@ -5,7 +7,7 @@ use super::{CellAttributes, Heap};
 
 /// The largest cell that goes in a block.
 pub const LARGE_CUTOFF: usize = PAYLOAD_SIZE / 2 / ATOM_SIZE * ATOM_SIZE;
-const EXACT_CUTOFF: usize = 128;
+pub const EXACT_CUTOFF: usize = 128;
 const STEP_COUNT: usize = LARGE_CUTOFF / ATOM_SIZE + 1;
 const MAX_CLASSES: usize = 40;
 
@@ -33,6 +35,16 @@ const fn size_classes() -> ([usize; MAX_CLASSES], usize) {
 
 pub const SIZE_CLASS_COUNT: usize = size_classes().1;
 const SIZE_CLASSES: [usize; MAX_CLASSES] = size_classes().0;
+
+/// For checking another computation of the classes.
+pub const SIZE_CLASS_CHECKSUM: usize = {
+    let (mut sum, mut class) = (0, 0);
+    while class < SIZE_CLASS_COUNT {
+        sum += (class + 1) * SIZE_CLASSES[class];
+        class += 1;
+    }
+    sum
+};
 
 /// The class of a size, indexed by the number of atoms that it takes.
 pub static SIZE_CLASS_OF_STEP: [u8; STEP_COUNT] = CLASS_OF_STEP;
@@ -91,6 +103,12 @@ impl Space {
         size_class(size) * size_of::<Allocator>()
     }
 
+    /// # Safety
+    /// As for `Allocator::try_allocate_uninitialized`.
+    pub unsafe fn try_allocate_uninitialized(&self, heap: &Heap, size: usize) -> usize {
+        self.try_allocate(heap, size)
+    }
+
     /// The address of a new cell, or zero if there is no memory. May collect.
     #[inline(always)]
     pub(crate) fn try_allocate(&self, heap: &Heap, size: usize) -> usize {
@@ -98,8 +116,14 @@ impl Space {
             let class = size_class(size);
             self.allocators[class].try_allocate_sized(heap, SIZE_CLASSES[class])
         } else {
-            heap.allocate_precisely(size, self.allocators[0].attributes)
+            heap.allocate_precisely(size, self.allocators[0].attributes, default_alloc::malloc)
         }
+    }
+
+    /// The same, of more than `LARGE_CUTOFF` bytes that are zero. Pages that come from the system are not touched.
+    pub(crate) fn try_allocate_large_zeroed(&self, heap: &Heap, size: usize) -> usize {
+        assert!(size > LARGE_CUTOFF);
+        heap.allocate_precisely(size, self.allocators[0].attributes, default_alloc::zalloc)
     }
 }
 

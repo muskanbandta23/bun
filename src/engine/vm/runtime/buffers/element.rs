@@ -1,5 +1,6 @@
 //! The types of the elements of typed arrays.
 
+use bun_alloc::AllocError;
 use bun_engine_number::{float16_from_f64, float16_to_f64, to_int32, to_uint8_clamp};
 use bun_engine_text::{PropertyName, names};
 use bun_highway::elements::Lane;
@@ -112,6 +113,15 @@ impl ElementType {
         )
     }
 
+    /// An integer that can be negative.
+    #[inline(always)]
+    pub const fn is_signed(self) -> bool {
+        matches!(
+            self,
+            ElementType::Int8 | ElementType::Int16 | ElementType::Int32 | ElementType::BigInt64
+        )
+    }
+
     /// The highest bit.
     #[inline(always)]
     pub const fn sign_bit(self) -> u64 {
@@ -127,6 +137,12 @@ impl ElementType {
             ElementType::Float64 => f64::INFINITY.to_bits(),
             _ => 0,
         }
+    }
+
+    /// The highest bit of the fraction is set, and no other.
+    #[inline(always)]
+    pub const fn bits_of_nan(self) -> u64 {
+        self.bits_of_infinity() | self.bits_of_infinity() >> 1
     }
 
     /// Whether converting an element of `source` to this type leaves its bits as they are.
@@ -182,6 +198,9 @@ pub unsafe trait Element: Copy + Default + GcFree + 'static {
     /// ToNumber or ToBigInt, and then the conversion operation of the type.
     fn from_value(cx: &mut Cx, value: Value) -> JsResult<Self>;
 
+    /// The same for a number or a BigInt, whichever the type takes. `None` for anything else.
+    fn from_numeric(value: Value) -> Option<Self>;
+
     /// The element that is the same value, if there is one. Any NaN stands for NaN.
     fn exactly(value: Value) -> Option<Self>;
 
@@ -210,6 +229,12 @@ pub trait Bits: Element + Ord + Into<u64> + AtomicBits + Lane {
     fn truncate(wide: u64) -> Self;
 
     fn swap_bytes(self) -> Self;
+
+    fn try_zeroed_vec(length: usize) -> Result<Vec<Self>, AllocError> {
+        let zeroed = Box::try_new_zeroed_slice(length).map_err(|_| AllocError)?;
+        // SAFETY: any bits are a value.
+        Ok(unsafe { zeroed.assume_init() }.into_vec())
+    }
 }
 
 macro_rules! bits {
@@ -240,15 +265,6 @@ pub trait NumberElement: Element {
     fn convert<T: NumberElement>(self) -> T;
 
     fn to_number_value(self) -> Value;
-
-    /// `None` if it is no number.
-    #[inline(always)]
-    fn from_number_value(value: Value) -> Option<Self> {
-        match value.as_int32() {
-            Some(integer) => Some(Self::from_int32(integer)),
-            None => value.as_double().map(Self::from_double),
-        }
-    }
 }
 
 macro_rules! number_methods {
@@ -263,6 +279,14 @@ macro_rules! number_methods {
             match value.as_int32() {
                 Some(integer) => Ok(Self::from_int32(integer)),
                 None => value.to_number(cx).map(Self::from_double),
+            }
+        }
+
+        #[inline(always)]
+        fn from_numeric(value: Value) -> Option<Self> {
+            match value.as_int32() {
+                Some(integer) => Some(Self::from_int32(integer)),
+                None => value.as_double().map(Self::from_double),
             }
         }
     };
@@ -418,8 +442,7 @@ macro_rules! float_elements {
 
             #[inline(always)]
             fn to_number_value(self) -> Value {
-                let number = f64::from(self);
-                if number.is_nan() { Value::NAN } else { Value::double(number) }
+                Value::double(self.into())
             }
         }
     )*};
@@ -432,7 +455,7 @@ float_elements! {
 }
 
 macro_rules! bigint_elements {
-    ($($type:ty, $name:ident, $wrapping:ident, $exact:ident;)*) => {$(
+    ($($type:ty, $name:ident, $exact:ident;)*) => {$(
         // SAFETY: an integer of that size.
         unsafe impl Element for $type {
             const TYPE: ElementType = ElementType::$name;
@@ -446,7 +469,12 @@ macro_rules! bigint_elements {
 
             #[inline]
             fn from_value(cx: &mut Cx, value: Value) -> JsResult<$type> {
-                value.$wrapping(cx)
+                value.to_biguint64(cx).map(|bits| bits as $type)
+            }
+
+            #[inline]
+            fn from_numeric(value: Value) -> Option<$type> {
+                Some(value.as_bigint()?.value().to_u64_wrapping() as $type)
             }
 
             #[inline]
@@ -458,6 +486,6 @@ macro_rules! bigint_elements {
 }
 
 bigint_elements! {
-    i64, BigInt64, to_bigint64, to_i64;
-    u64, BigUint64, to_biguint64, to_u64;
+    i64, BigInt64, to_i64;
+    u64, BigUint64, to_u64;
 }

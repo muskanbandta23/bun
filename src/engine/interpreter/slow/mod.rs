@@ -11,7 +11,7 @@ mod operators;
 mod properties;
 mod regexp;
 mod scopes;
-mod suspension;
+pub(crate) mod suspension;
 
 use bun_engine_bytecode::{
     IdentifierIndex, Jump, Narrow, Op, Opcode, Operand, Register, Wide16, Wide32, op,
@@ -233,17 +233,7 @@ macro_rules! execute {
     )*};
 }
 
-/// For instructions whose run-time support is yet to come.
-#[allow(unused_macros)]
-macro_rules! not_supported {
-    ($($Op:ident)*) => { $crate::slow::execute! {$(
-        $Op(op, cx, f) {
-            return Err(cx.throw_type_error(concat!("Not supported: ", stringify!($Op))))
-        }
-    )*} };
-}
-
-pub(crate) use {execute, not_supported};
+pub(crate) use execute;
 
 impl From<()> for Next {
     #[inline(always)]

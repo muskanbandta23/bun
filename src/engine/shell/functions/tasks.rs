@@ -7,6 +7,7 @@ use std::time::{Instant, SystemTime};
 use bun_engine_vm::{JsFunction, WorkKind};
 
 use super::return_undefined;
+use crate::global::ShellGlobal;
 use crate::prelude::*;
 
 pub(super) const FUNCTIONS: Functions = &[
@@ -15,7 +16,12 @@ pub(super) const FUNCTIONS: Functions = &[
     ("flashHeapAccess", sleep_milliseconds, 0),
     ("dropAllLocks", return_undefined, 1),
     ("setTimeout", set_timeout, 2),
-    ("drainMicrotasks", drain_microtasks, 0),
+    ("drainMicrotasks", call_drain_microtasks, 0),
+    (
+        "setUnhandledRejectionCallback",
+        set_unhandled_rejection_callback,
+        1,
+    ),
     ("asyncTestStart", async_test_start, 1),
     ("asyncTestPassed", async_test_passed, 1),
 ];
@@ -66,15 +72,48 @@ fn set_timeout(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     cx.timer_queue().start(delay, move |_| {
         ticket.schedule(|cx, ticket| {
             let callback = ticket.target(cx).map_or_default(Into::into);
-            cx.call(callback, Value::UNDEFINED, &[]).map(|_| ())
+            cx.call(callback, Value::UNDEFINED, &[])?;
+            drain_microtasks(cx)
         });
     });
     Ok(Value::UNDEFINED)
 }
 
+/// And reports the rejections that are left unhandled. Fails only if execution is terminated.
+pub(crate) fn drain_microtasks(cx: &mut Cx) -> JsResult<()> {
+    let state = State::of(cx);
+    loop {
+        cx.drain_microtasks()?;
+        let rejected = state.rejected_promises.take();
+        if rejected.is_empty() {
+            return Ok(());
+        }
+        for promise in rejected {
+            let promise = promise.get(cx);
+            let global = promise.global().downcast::<ShellGlobal>();
+            if !promise.is_handled()
+                && let Some(callback) = global.and_then(|it| it.unhandled_rejection_callback())
+                && let arguments = [promise.into(), promise.result()]
+                && let Err(thrown) = cx.call(callback.into(), Value::NULL, &arguments)
+            {
+                cx.catch(thrown)?;
+            }
+        }
+    }
+}
+
 #[native_abi]
-fn drain_microtasks(cx: &mut Cx, _: &CallFrame) -> JsResult<Value> {
-    cx.drain_microtasks().map(|()| Value::UNDEFINED)
+fn call_drain_microtasks(cx: &mut Cx, _: &CallFrame) -> JsResult<Value> {
+    drain_microtasks(cx).map(|()| Value::UNDEFINED)
+}
+
+#[native_abi]
+fn set_unhandled_rejection_callback(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let Some(callback) = frame.argument(0).as_object().filter(|it| it.is_callable()) else {
+        return Err(cx.throw_type_error("Type error"));
+    };
+    (cx.global().cast::<ShellGlobal>()).set_unhandled_rejection_callback(Some(callback));
+    Ok(Value::UNDEFINED)
 }
 
 #[native_abi]

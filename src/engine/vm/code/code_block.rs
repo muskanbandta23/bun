@@ -13,6 +13,7 @@ use bun_engine_macros::cell;
 use bun_engine_text::{Identifier, PropertyName, names};
 
 use super::metadata;
+use super::optimization::Optimization;
 use super::profile::ValueProfile;
 use crate::heap::Survivors;
 use crate::{
@@ -129,6 +130,7 @@ pub struct CodeBlock {
     words: Words,
     compiled: RefCell<Option<Rc<dyn CompiledCode>>>,
     pub(crate) caches: metadata::SideTables,
+    pub(super) optimization: Optimization,
 }
 
 impl CodeBlock {
@@ -176,6 +178,7 @@ impl CodeBlock {
             words,
             compiled: RefCell::new(None),
             caches: metadata::SideTables::default(),
+            optimization: Optimization::default(),
         });
         for (slot, constant) in code_block.fields().iter().zip(&code_block.code.constants) {
             let value = code_block.link_constant(cx, constant)?;
@@ -210,6 +213,7 @@ impl CodeBlock {
             words: Words::zeroed(0).unwrap_or_else(|| bun_alloc::out_of_memory()),
             compiled: RefCell::new(None),
             caches: metadata::SideTables::default(),
+            optimization: Optimization::default(),
         })
     }
 
@@ -424,6 +428,15 @@ impl CodeBlock {
 
     pub fn constant(&self, index: u32) -> Option<Value> {
         self.baseline().fields()[..self.code.constants.len()][index as usize].get()
+    }
+
+    /// By the same elements in a more general kind. Code that has the address of the old one keeps that alive itself.
+    pub fn replace_array_constant(&self, index: u32, elements: Gc<ImmutableArray>) {
+        let owner = self.baseline();
+        let field = &owner.fields()[..self.code.constants.len()][index as usize];
+        assert!(field.get().is_some_and(Value::is::<ImmutableArray>));
+        // SAFETY: one of its own.
+        unsafe { field.set(&owner, Some(elements.into())) };
     }
 
     /// # Safety

@@ -4,6 +4,7 @@
 mod access_case;
 mod call_profile;
 mod load;
+mod private;
 mod prototype_lookup;
 mod query;
 mod store;

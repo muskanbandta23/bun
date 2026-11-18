@@ -47,6 +47,11 @@ impl HeapRange {
 impl Heap {
     pub const EVERYTHING: Self = Self(0);
     pub const NOTHING: Self = Self(1);
+
+    /// For a client that adds its first heaps in a fixed order.
+    pub const fn at(index: u32) -> Self {
+        Self(index)
+    }
 }
 
 bitflags::bitflags! {
@@ -62,6 +67,8 @@ bitflags::bitflags! {
         const WRITES_VARIABLE = 1 << 5;
         /// Stays even if nothing else says so.
         const KEPT = 1 << 6;
+        /// Gives another value than an instruction that looks the same.
+        const DISTINCT = 1 << 7;
     }
 }
 
@@ -111,6 +118,13 @@ impl Effects {
             .union(EffectFlags::WRITES_VARIABLE)
             .union(EffectFlags::KEPT);
         self.writes_memory() || self.has(KEEPING)
+    }
+
+    /// Changes nothing, and control goes on with the next instruction unless it leaves the function.
+    #[inline]
+    pub fn at_most_exits(self) -> bool {
+        const HARMLESS: EffectFlags = EffectFlags::EXITS.union(EffectFlags::CONTROL_DEPENDENT);
+        !self.writes_memory() && HARMLESS.contains(self.flags)
     }
 
     fn of_access(access: Access, reads: bool, writes: bool) -> Self {

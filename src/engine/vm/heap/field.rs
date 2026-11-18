@@ -90,6 +90,13 @@ impl<T> Field<T> {
         unsafe { AtomicU64::from_ptr(self.0.get()) }
     }
 
+    /// # Safety
+    /// As for `set_without_barrier`, and the word suits what the memory is taken for.
+    #[inline(always)]
+    pub unsafe fn set_word_without_barrier(&self, word: u64) {
+        self.atomic().store(word, Ordering::Relaxed);
+    }
+
     #[inline(always)]
     pub(crate) fn word_concurrently(&self) -> u64 {
         self.atomic().load(Ordering::Relaxed)

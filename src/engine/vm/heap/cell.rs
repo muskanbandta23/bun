@@ -201,7 +201,8 @@ impl JsCell {
     /// As for `set_shape`. The header of an instance is the same for both, and the barrier follows.
     #[inline(always)]
     pub unsafe fn set_shape_id_directly(&self, shape: ShapeId) {
-        self.shape_id_atomic().store(shape.bits(), Ordering::Release);
+        self.shape_id_atomic()
+            .store(shape.bits(), Ordering::Release);
     }
 
     /// Tells a marker that the shape and the storage disagree until the next `set_shape`.
@@ -214,6 +215,11 @@ impl JsCell {
     #[inline(always)]
     pub(crate) fn state(&self) -> u8 {
         self.state.load(Ordering::Relaxed)
+    }
+
+    #[inline(always)]
+    pub fn state_bits(&self) -> u8 {
+        self.state()
     }
 
     #[inline(always)]

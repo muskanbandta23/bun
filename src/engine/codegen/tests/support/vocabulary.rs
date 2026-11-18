@@ -128,7 +128,7 @@ impl Machine<'_> {
             found.ok_or(Stop::Undefined("call of what is no function"))
         };
         let (callee, uses) = match function.patchpoint(patchpoint).action {
-            Action::Custom => (CALLEE_COUNT, uses),
+            Action::Custom | Action::CustomCall => (CALLEE_COUNT, uses),
             Action::Call(bun_engine_asm::Target::Symbol(callee)) => (callee as usize, uses),
             Action::Call(bun_engine_asm::Target::Address(address)) => {
                 (callee_at(address as u64)?, uses)

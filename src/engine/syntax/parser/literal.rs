@@ -1,6 +1,6 @@
 //! Literals.
 
-use bun_engine_text::Text;
+use bun_engine_regexp::check_syntax;
 
 use super::function::Method;
 use super::pattern::ABBREVIATED_KEYWORD;
@@ -15,10 +15,6 @@ use crate::names::Name;
 use crate::options::{FunctionFlags, FunctionKind};
 use crate::scope::Scopes;
 use crate::token::{Token, TokenKind};
-
-fn regexp_error(_pattern: Text<'_>, _flags: Text<'_>) -> Option<&'static str> {
-    None
-}
 
 /// What the properties of an object literal have shown so far.
 #[derive(Default)]
@@ -91,8 +87,8 @@ impl Session<'_> {
         if !self.context.contains(super::Context::CHECKED_BEFORE) {
             let source = self.lexer.source;
             let pattern = source.slice(token.start() + 1, token.value() - 1);
-            if let Some(message) = regexp_error(pattern, source.slice(token.value(), token.end())) {
-                return Err(self.complain(Complaint::Verbatim(message)));
+            if let Err(error) = check_syntax(pattern, source.slice(token.value(), token.end())) {
+                return Err(self.complain(Complaint::Verbatim(error.message())));
             }
         }
         Ok(token)

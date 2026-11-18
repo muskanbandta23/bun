@@ -81,7 +81,7 @@ pub(crate) struct Shape {
     pub(crate) withheld_percent: u32,
 }
 
-pub(crate) const PROFILES: [&str; 15] = [
+pub(crate) const PROFILES: [&str; 16] = [
     "templates",
     "themes",
     "integer themes",
@@ -96,6 +96,7 @@ pub(crate) const PROFILES: [&str; 15] = [
     "sites",
     "nodes",
     "shapes",
+    "tangles",
     "everything",
 ];
 
@@ -259,10 +260,16 @@ impl Shape {
                 graphs: 2,
                 ..basic
             },
+            "tangles" => Weights {
+                integers: 5,
+                accesses: 40,
+                graphs: 15,
+                ..none
+            },
             "everything" => everything,
             _ => panic!("the profiles are {PROFILES:?}"),
         };
-        let has_entries = matches!(profile, "graphs" | "variables" | "everything");
+        let has_entries = matches!(profile, "graphs" | "variables" | "tangles" | "everything");
         Self {
             size: random.pick(&[3, 6, 10, 16, 24, 40]),
             weights,

@@ -1,10 +1,10 @@
 use super::immediate::FloatImm;
 use super::macro_assembler::MacroAssembler;
 use super::neon::VectorImm;
-use super::neon_opcode::{Arrangement, NeonFloatBinary, NeonPermute};
+use super::neon_opcode::{Arrangement, NeonBinary, NeonFloatBinary, NeonPermute, NeonShiftNarrow};
 use super::shuffle::Plan;
 use super::vector_arithmetic::Binary;
-use crate::assembly::{FloatAssembly, Reuse, ScratchNeeds, VectorAssembly};
+use crate::assembly::{FloatAssembly, MacroAssembly, Reuse, ScratchNeeds, VectorAssembly};
 use crate::features::Arm64Features;
 use crate::label::Label;
 use crate::operand::{Address, Amount, FloatWidth, Sign, Size, TestCond, Width};
@@ -181,6 +181,30 @@ impl VectorAssembly for MacroAssembler {
             TestCond::NonZero => self.asm.cbnz(Width::W64, folded, target),
             TestCond::Negative | TestCond::NonNegative => unreachable!("a vector has no sign"),
         }
+    }
+
+    const BYTE_MASK_SHIFT: u8 = 2;
+
+    fn move_byte_mask(&mut self, dst: Gpr, mask: Fpr) {
+        let nibbles = self.scratch_fpr(0);
+        self.asm
+            .neon_shift_narrow(NeonShiftNarrow::Shrn, Arrangement::B8, nibbles, mask, 4);
+        self.move_f64_to_bits(dst, nibbles);
+    }
+
+    fn first_in_byte_mask(&mut self, dst: Gpr, mask: Gpr) {
+        self.count_trailing_zeros64(dst, mask);
+        self.shr32(dst, dst, Self::BYTE_MASK_SHIFT);
+    }
+
+    fn narrow_to_bytes(&mut self, _: Sign, dst: Fpr, lhs: Fpr, rhs: Fpr) {
+        self.asm
+            .neon_permute(NeonPermute::Uzp1, Arrangement::B16, dst, lhs, rhs);
+    }
+
+    fn test_bit_in_bytes(&mut self, dst: Fpr, value: Fpr, bit: Fpr) {
+        self.asm
+            .neon(NeonBinary::Cmtst, Arrangement::B16, dst, value, bit);
     }
 
     fn relaxed(features: Arm64Features) -> Relaxed {

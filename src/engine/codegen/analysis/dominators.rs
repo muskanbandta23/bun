@@ -25,6 +25,12 @@ pub struct Dominators {
     by_rank: Vec<Ancestry>,
 }
 
+const ROOT: Ancestry = Ancestry {
+    parent: 0,
+    jump: 0,
+    depth: 0,
+};
+
 fn child_of(tree: &[Ancestry], parent: u32) -> Ancestry {
     let above = tree[parent as usize];
     let jumped = tree[above.jump as usize];
@@ -76,6 +82,91 @@ fn distant_common_ancestor(tree: &[Ancestry], mut a: u32, mut b: u32) -> u32 {
     a
 }
 
+/// A block in a depth-first search, in which blocks are numbered from one as they are entered.
+#[derive(Clone, Copy)]
+struct Vertex {
+    block: Block,
+    parent: u32,
+    semidominator: u32,
+    /// In the tree of the search, once the vertex has its semidominator.
+    ancestor: u32,
+    /// Of the vertices below `ancestor` down to this.
+    least_semidominator: u32,
+}
+
+fn search(function: &Function, numbers: &mut Table<Block, u32>) -> Vec<Vertex> {
+    let vertex = |block, number, parent| Vertex {
+        block,
+        parent,
+        semidominator: parent,
+        ancestor: parent,
+        least_semidominator: number,
+    };
+    let mut vertices = vec![vertex(Block::NONE, 0, 0)];
+    let entries = function.entries().iter();
+    let mut pending: Vec<(Block, u32)> = entries.map(|entry| (entry.block, 0)).collect();
+    while let Some((block, parent)) = pending.pop() {
+        if numbers[block] == 0 {
+            let number = vertices.len() as u32;
+            numbers[block] = number;
+            vertices.push(vertex(block, number, parent));
+            let targets = function.successors(block).map(|edge| function.target(edge));
+            pending.extend(targets.map(|target| (target, number)));
+        }
+    }
+    vertices
+}
+
+/// Their ranks, in the order of the blocks. Georgiadis, Tarjan and Werneck, "Finding Dominators in Practice".
+fn nearest_dominators(function: &Function, cfg: &Cfg) -> Vec<u32> {
+    let mut numbers = function.block_table(0);
+    let mut vertices = search(function, &mut numbers);
+    let mut path = Vec::new();
+    for number in (1..vertices.len()).rev() {
+        let mut least = vertices[number].parent;
+        for &edge in cfg.predecessors(vertices[number].block) {
+            let source = numbers[function.source(edge)] as usize;
+            let mut at = source;
+            while vertices[at].ancestor as usize > number {
+                path.push(at);
+                at = vertices[at].ancestor as usize;
+            }
+            while let Some(below) = path.pop() {
+                let (above, below) = (
+                    vertices[vertices[below].ancestor as usize],
+                    &mut vertices[below],
+                );
+                below.least_semidominator =
+                    below.least_semidominator.min(above.least_semidominator);
+                below.ancestor = above.ancestor;
+            }
+            least = least.min(vertices[source].least_semidominator);
+        }
+        (
+            vertices[number].semidominator,
+            vertices[number].least_semidominator,
+        ) = (least, least);
+    }
+    let mut tree = vec![ROOT];
+    let mut nearest = vec![0; cfg.order().len()];
+    for vertex in &vertices[1..] {
+        let mut above = vertex.parent;
+        while above > vertex.semidominator {
+            let Ancestry { parent, jump, .. } = tree[above as usize];
+            above = if jump > vertex.semidominator {
+                jump
+            } else {
+                parent
+            };
+        }
+        tree.push(child_of(&tree, above));
+        if let Some(dominator) = vertices[above as usize].block.expand() {
+            nearest[cfg.position(vertex.block) as usize] = cfg.position(dominator) + 1;
+        }
+    }
+    nearest
+}
+
 impl Dominators {
     pub fn new(function: &Function, cfg: &Cfg) -> Self {
         let mut dominators = Self::default();
@@ -83,46 +174,23 @@ impl Dominators {
         dominators
     }
 
-    /// Cooper, Harvey and Kennedy, "A Simple, Fast Dominance Algorithm".
     pub fn compute(&mut self, function: &Function, cfg: &Cfg) {
-        const ROOT: Ancestry = Ancestry {
-            parent: 0,
-            jump: 0,
-            depth: 0,
-        };
         let tree = &mut self.by_rank;
         tree.clear();
-        tree.resize(cfg.order().len() + 1, ROOT);
-        let backward_edges_matter = cfg.loops().values().any(|data| !data.is_natural);
-        let mut is_first_round = true;
-        loop {
-            let mut changed = is_first_round;
+        tree.push(ROOT);
+        if cfg.loops().values().all(|data| data.is_natural) {
             for (rank, &block) in (1..).zip(cfg.order()) {
-                let mut sources = cfg
-                    .predecessors(block)
-                    .iter()
-                    .map(|&edge| cfg.position(function.source(edge)) + 1);
-                let mut common = sources.next().filter(|&first| first < rank).unwrap_or(0);
-                for mut other in sources {
-                    if other >= rank && is_first_round {
-                        break;
-                    }
-                    // What comes later still has the ancestors of the round before.
-                    while other > rank {
-                        let Ancestry { parent, jump, .. } = tree[other as usize];
-                        other = if jump >= rank { jump } else { parent };
-                    }
-                    if other != rank {
-                        common = common_ancestor(tree, common, other);
-                    }
-                }
-                changed |= tree[rank as usize].parent != common;
-                tree[rank as usize] = child_of(tree, common);
+                let sources = cfg.predecessors(block).iter();
+                let common = sources
+                    .map(|&edge| cfg.position(function.source(edge)) + 1)
+                    .take_while(|&source| source < rank)
+                    .reduce(|a, b| common_ancestor(tree, a, b));
+                tree.push(child_of(tree, common.unwrap_or(0)));
             }
-            if !changed || !backward_edges_matter {
-                break;
+        } else {
+            for parent in nearest_dominators(function, cfg) {
+                tree.push(child_of(tree, parent));
             }
-            is_first_round = false;
         }
 
         let count = function.block_count();

@@ -48,5 +48,6 @@
 #include "engine/support/Variant.h"
 #include "engine/support/Vector.h"
 #include "engine/support/VectorTraits.h"
+#include "engine/text/Text.h"
 
 #endif

@@ -1,11 +1,12 @@
 use super::MacroAssembly;
 use crate::label::Label;
 use crate::operand::{
-    FloatCond, FloatWidth, Memory, NegativeZero, RegOrImm, Rounding, Sign, TestCond, Width,
+    Address, FloatCond, FloatWidth, Memory, NegativeZero, RegOrImm, Rounding, Sign, TestCond, Width,
 };
 use crate::register::{Fpr, Gpr};
 
-/// What is above the float in a register that is written is unspecified.
+/// What is above the float in a register that is written is unspecified, and so is the destination of a conversion
+/// that branches. Arithmetic gives any quiet NaN. What moves, selects or changes only the sign keeps the other bits.
 pub trait FloatAssembly: MacroAssembly {
     fn move_float(&mut self, dst: Fpr, src: Fpr);
     fn move_vector(&mut self, dst: Fpr, src: Fpr);
@@ -18,6 +19,12 @@ pub trait FloatAssembly: MacroAssembly {
     /// Clears the rest of the vector.
     fn load_float(&mut self, width: FloatWidth, dst: Fpr, src: impl Into<Memory>);
     fn store_float(&mut self, width: FloatWidth, dst: impl Into<Memory>, src: Fpr);
+    /// `low` from `src`, `high` from the bytes after it. The two differ.
+    fn load_pair_f64(&mut self, low: Fpr, high: Fpr, src: Address);
+    fn store_pair_f64(&mut self, dst: Address, low: Fpr, high: Fpr);
+    /// `low` from `src`, `high` from the bytes after it. The two differ.
+    fn load_pair_vector(&mut self, low: Fpr, high: Fpr, src: Address);
+    fn store_pair_vector(&mut self, dst: Address, low: Fpr, high: Fpr);
     fn add_float(&mut self, width: FloatWidth, dst: Fpr, lhs: Fpr, rhs: Fpr);
     fn sub_float(&mut self, width: FloatWidth, dst: Fpr, lhs: Fpr, rhs: Fpr);
     fn mul_float(&mut self, width: FloatWidth, dst: Fpr, lhs: Fpr, rhs: Fpr);
@@ -88,6 +95,7 @@ pub trait FloatAssembly: MacroAssembly {
     );
     /// `dst` becomes 0 or 1.
     fn compare_float(&mut self, width: FloatWidth, cond: FloatCond, dst: Gpr, lhs: Fpr, rhs: Fpr);
+    /// Moves all 64 bits.
     fn select_on_float(
         &mut self,
         width: FloatWidth,
@@ -98,6 +106,7 @@ pub trait FloatAssembly: MacroAssembly {
         then: Gpr,
         or: Gpr,
     );
+    /// Moves a float of either width. `width` is that of the comparison.
     fn select_float_on_float(
         &mut self,
         width: FloatWidth,
@@ -105,6 +114,17 @@ pub trait FloatAssembly: MacroAssembly {
         dst: Fpr,
         lhs: Fpr,
         rhs: Fpr,
+        then: Fpr,
+        or: Fpr,
+    );
+    /// Moves a float of either width. `width` is that of the test.
+    fn select_float_test(
+        &mut self,
+        width: Width,
+        cond: TestCond,
+        dst: Fpr,
+        value: Gpr,
+        mask: impl Into<RegOrImm>,
         then: Fpr,
         or: Fpr,
     );

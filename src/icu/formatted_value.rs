@@ -145,7 +145,6 @@ icu_handle! {
 
 impl FieldPositions {
     /// `function` fills the list.
-    #[expect(dead_code, reason = "for the date formatter")]
     pub(crate) fn collect<T>(
         function: impl FnOnce(*mut UFieldPositionIterator) -> Result<T>,
     ) -> Result<(T, FieldPositions)> {

@@ -18,7 +18,8 @@ impl CText {
         CText::from_buffer(buffer)
     }
 
-    pub(crate) fn from_buffer(mut buffer: Buffer<u8>) -> Result<CText> {
+    /// Fails if a byte is zero.
+    pub fn from_buffer(mut buffer: Buffer<u8>) -> Result<CText> {
         buffer
             .try_reserve(1)
             .map_err(|_| Error::MEMORY_ALLOCATION)?;

@@ -139,13 +139,15 @@ pub trait CallAssembly: FloatAssembly {
                 dst = dst.plus(8);
             }
         }
-        for fpr in registers.fprs() {
-            if vector_bytes == 8 {
-                self.store_f64(dst, fpr);
-            } else {
-                self.store_vector(dst, fpr);
+        let mut fprs = registers.fprs();
+        while let Some(low) = fprs.next() {
+            match (fprs.next(), vector_bytes) {
+                (Some(high), 8) => self.store_pair_f64(dst, low, high),
+                (Some(high), _) => self.store_pair_vector(dst, low, high),
+                (None, 8) => self.store_f64(dst, low),
+                (None, _) => self.store_vector(dst, low),
             }
-            dst = dst.plus(vector_bytes);
+            dst = dst.plus(2 * vector_bytes);
         }
     }
 
@@ -161,13 +163,15 @@ pub trait CallAssembly: FloatAssembly {
                 src = src.plus(8);
             }
         }
-        for fpr in registers.fprs() {
-            if vector_bytes == 8 {
-                self.load_f64(fpr, src);
-            } else {
-                self.load_vector(fpr, src);
+        let mut fprs = registers.fprs();
+        while let Some(low) = fprs.next() {
+            match (fprs.next(), vector_bytes) {
+                (Some(high), 8) => self.load_pair_f64(low, high, src),
+                (Some(high), _) => self.load_pair_vector(low, high, src),
+                (None, 8) => self.load_f64(low, src),
+                (None, _) => self.load_vector(low, src),
             }
-            src = src.plus(vector_bytes);
+            src = src.plus(2 * vector_bytes);
         }
     }
 }

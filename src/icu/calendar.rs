@@ -127,6 +127,10 @@ impl Calendar {
         .map(Calendar)
     }
 
+    pub(crate) fn as_mut_ptr(&mut self) -> *mut UCalendar {
+        self.0.as_ptr()
+    }
+
     pub fn try_clone(&self) -> Result<Calendar> {
         // SAFETY: the calendar is open.
         open(|status| unsafe { ucal_clone(self.0.as_ptr(), status) }).map(Calendar)

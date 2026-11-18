@@ -16,7 +16,6 @@ bun_engine_number.workspace = true
 bun_engine_regexp.workspace = true
 bun_engine_syntax.workspace = true
 bun_engine_bytecode.workspace = true
-bun_engine_heap.workspace = true
 bun_engine_vm.workspace = true
 bun_threading.workspace = true
 smallvec.workspace = true

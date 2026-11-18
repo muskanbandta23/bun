@@ -178,7 +178,7 @@ impl<'a> Positions<'a> {
         self.all()
     }
 
-    /// None before the first entry, where the start of the code has to do.
+    /// The first entry holds for what is before it too. If there is none, the start of the code has to do.
     pub fn find(self, offset: u32) -> Option<Position> {
         let chapters_begun = self
             .chapters
@@ -188,7 +188,8 @@ impl<'a> Positions<'a> {
             None => self.all(),
         };
         let entries = entries.take_while(|&(start, _)| start <= offset);
-        entries.last().map(|(_, position)| position)
+        let found = entries.last().or_else(|| self.all().next());
+        found.map(|(_, position)| position)
     }
 
     /// Whether all bytes decode, the offsets ascend and are accepted, and the chapters agree with the entries.

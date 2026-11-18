@@ -34,10 +34,11 @@ fn every_offset_finds_the_last_entry_up_to_it() {
         let positions = Positions::read(&bytes).unwrap();
         assert!(positions.is_valid(|_| true));
         assert_eq!(positions.entries().collect::<Vec<_>>(), entries);
-        assert_eq!(positions.find(0), None);
+        let first = positions.entries().next().map(|(_, position)| position);
+        assert_eq!(positions.find(0), first);
         let mut previous = None;
         for &(offset, position) in &entries {
-            assert_eq!(positions.find(offset - 1), previous);
+            assert_eq!(positions.find(offset - 1), previous.or(first));
             assert_eq!(positions.find(offset), Some(position));
             previous = Some(position);
         }

@@ -7,9 +7,9 @@ use smallvec::{Array, SmallVec};
 
 use crate::Result;
 use crate::calendar::{Calendar, UCalendar};
-use crate::date_pattern::Pattern;
+use crate::date_pattern::{Pattern, pattern_length};
 use crate::error::Status;
-use crate::ffi::{fill, length, open};
+use crate::ffi::{fill, open};
 use crate::formatted_value::{FieldPositions, UFieldPositionIterator};
 
 bun_opaque::opaque_ffi! { struct UDateFormat; }
@@ -26,6 +26,7 @@ icu_functions! {
         status: &mut Status,
     ) -> *mut UDateFormat;
     fn udat_close(format: *mut UDateFormat);
+    fn udat_applyPattern(format: *mut UDateFormat, localized: i8, pattern: *const u16, length: i32);
     fn udat_toPattern(format: *const UDateFormat, localized: i8, out: *mut u16, capacity: i32, status: &mut Status) -> i32;
     fn udat_formatCalendarForFields(
         format: *const UDateFormat,
@@ -70,6 +71,8 @@ pub mod field {
     pub const HOUR_0_TO_11: i32 = 16;
     /// `z`
     pub const ZONE_SPECIFIC: i32 = 17;
+    /// `Y`
+    pub const YEAR_OF_WEEK: i32 = 18;
     /// `e`
     pub const LOCAL_WEEKDAY: i32 = 19;
     /// `u`
@@ -115,7 +118,7 @@ icu_handle! {
 
 impl DateFormat {
     pub fn open(locale: &CStr, pattern: &[u16]) -> Result<DateFormat> {
-        let length = length(pattern)?;
+        let length = pattern_length(pattern)?;
         // SAFETY: `locale` is terminated, `pattern`, which is copied, has `length` units, and the zone is optional.
         open(|status| unsafe {
             udat_open(
@@ -130,6 +133,13 @@ impl DateFormat {
             )
         })
         .map(DateFormat)
+    }
+
+    pub fn set_pattern(&mut self, pattern: &[u16]) -> Result<()> {
+        let length = pattern_length(pattern)?;
+        // SAFETY: the format is open, and `pattern`, which is copied, has `length` units.
+        unsafe { udat_applyPattern(self.0.as_ptr(), 0, pattern.as_ptr(), length) };
+        Ok(())
     }
 
     /// The instant that `calendar` is set to, in its zone. The calendar is one for the locale of the format.

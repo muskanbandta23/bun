@@ -29,6 +29,7 @@ pub(super) struct Table {
 impl Table {
     pub(super) const UTC: u16 = 0;
     const FREE: u16 = u16::MAX;
+    const MAX_NAMES: usize = Entry::NOT_AVAILABLE as usize - 1;
 
     pub(super) fn get() -> &'static Table {
         static TABLE: OnceLock<Table> = OnceLock::new();
@@ -40,7 +41,7 @@ impl Table {
         let source = data::names().ok();
         let count = (source.as_ref())
             .map_or(0, |names| names.item_count())
-            .min(usize::from(Entry::NOT_AVAILABLE) - 1);
+            .min(Table::MAX_NAMES);
         let mut table = Table {
             names: String::with_capacity(16 * count),
             entries: Vec::with_capacity(count + 1),
@@ -98,12 +99,18 @@ impl Table {
         });
         let mask = self.slots.len() - 1;
         let mut slot = (hash >> 15) as usize & mask;
-        while self.slots[slot] != Table::FREE
-            && !Text::from_ascii(self.name(self.slots[slot])).eq_ignore_ascii_case(T::text(name))
-        {
+        while self.slots[slot] != Table::FREE && !self.is_named(self.slots[slot], name) {
             slot = (slot + 1) & mask;
         }
         slot
+    }
+
+    fn is_named<T: CodeUnit>(&self, index: u16, name: &[T]) -> bool {
+        let own = self.name(index).as_bytes();
+        own.len() == name.len()
+            && own.iter().zip(name).all(|(&own, &unit)| {
+                unit.is(own) || (unit.is(own ^ 0x20) && own.is_ascii_alphabetic())
+            })
     }
 
     /// Those of the zone that the name is a link to, if it is one.

@@ -5,8 +5,9 @@ use core::ptr;
 
 use crate::Result;
 use crate::calendar::{Calendar, UCalendar};
+use crate::date_pattern::pattern_length;
 use crate::error::Status;
-use crate::ffi::{call, length, open};
+use crate::ffi::{call, open};
 use crate::formatted_value::{FormattedValue, UFormattedValue};
 
 bun_opaque::opaque_ffi! {
@@ -46,7 +47,7 @@ icu_handle! {
 
 impl DateIntervalFormat {
     pub fn open(locale: &CStr, skeleton: &[u16]) -> Result<DateIntervalFormat> {
-        let length = length(skeleton)?;
+        let length = pattern_length(skeleton)?;
         // SAFETY: `locale` is terminated, `skeleton`, which is copied, has `length` units, and the zone is optional.
         open(|status| unsafe {
             udtitvfmt_open(

@@ -52,9 +52,8 @@ macro_rules! instruction_table {
         EnsureArguments ensure_arguments Throws { arguments: Mut, mapped: Flag };
         /// `arguments.length`, where `arguments` may be empty.
         GetArgumentsLength get_arguments_length Throws { dst: Dst, arguments: Reg } => Value;
-        /// `arguments[key]`, where `arguments` may be empty. Jumps, having done nothing, unless it is and `key` is
-        /// the index of an argument.
-        GetArgumentByVal get_argument_by_val Pure { dst: DstUnlessJumps, arguments: Reg, key: Src, otherwise: Target } => Value;
+        /// `arguments[key]`, if `arguments` is empty and `key` is the index of an argument: then it jumps.
+        GetArgumentByVal get_argument_by_val Pure { dst: DstIfJumps, arguments: Reg, key: Src, done: Target } => Value;
 
         // Scopes
 

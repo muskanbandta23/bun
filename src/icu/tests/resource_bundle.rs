@@ -36,6 +36,15 @@ fn typed_nodes() {
 }
 
 #[test]
+fn zone_names() {
+    let names = ResourceBundle::open_zone_names(c"en").unwrap();
+    let japan = names.by_key(c"zoneStrings").unwrap().by_key(c"meta:Japan");
+    let standard = japan.unwrap().by_key(c"ls").unwrap();
+    let standard = String::from_utf16(standard.string().unwrap()).unwrap();
+    assert_eq!(standard, "Japan Standard Time");
+}
+
+#[test]
 #[cfg(unix)]
 fn a_process_starts_in_the_c_locale() {
     assert_eq!(host_language(), c"en-US");

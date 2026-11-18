@@ -62,7 +62,6 @@ pub struct FunctionInfo {
     /// Whether `name` stands in the source as the name of the function or class.
     pub(crate) has_own_name: bool,
     pub(crate) context: EvalContext,
-    /// Of a constructor, as far as a byte counts.
     pub(crate) instance_fields: u8,
     pub(crate) text: Range<u32>,
     pub(crate) start: u32,
@@ -95,8 +94,27 @@ impl FunctionInfo {
     pub fn is_constructor(&self) -> bool {
         match self.kind {
             FunctionKind::Normal => !self.is_async() && !self.is_generator(),
-            kind => kind.is_class_constructor() || kind == FunctionKind::NakedConstructor,
+            _ => self.needs_new(),
         }
+    }
+
+    /// Whether a call without `new` throws.
+    pub fn needs_new(&self) -> bool {
+        self.kind.is_class_constructor() || self.kind == FunctionKind::NakedConstructor
+    }
+
+    /// Of a constructor: how many fields its class declares for instances, as far as a byte counts.
+    pub fn instance_fields(&self) -> u8 {
+        self.instance_fields
+    }
+
+    /// Whether the name stands in the source as that of the function or class.
+    pub fn has_own_name(&self) -> bool {
+        self.has_own_name
+    }
+
+    pub fn has_no_outer_scope(&self) -> bool {
+        self.scope.is_none()
     }
 
     pub fn origin(&self) -> Origin {

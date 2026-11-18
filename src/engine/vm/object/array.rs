@@ -125,6 +125,11 @@ impl JsArray {
 }
 
 impl JsArray {
+    /// For a type that extends this one.
+    pub fn init(base: JsObjectInit) -> JsArrayInit {
+        JsArrayInit { base }
+    }
+
     pub(crate) fn create_shape(
         vm: &Vm,
         global: Gc<GlobalObject>,

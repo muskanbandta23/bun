@@ -28,6 +28,8 @@ function sourceIdentifier(source: Source): string | undefined {
   switch (source.kind) {
     case "github-archive":
       return source.commit;
+    case "tarball":
+      return source.sha256;
     case "prebuilt":
       return source.identity;
     case "local":

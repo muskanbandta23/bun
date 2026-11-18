@@ -1,25 +1,21 @@
 //! The kinds of objects that the language itself, and not only its library, knows.
 
-mod array_buffer_view;
-mod enumerator;
+pub(crate) mod buffers;
+pub(crate) mod collections;
+pub(crate) mod control;
+pub(crate) mod exotic;
 mod internal_fields;
-mod microtask;
-mod module;
-mod promise;
-mod proxy;
-mod regexp;
-mod string_object;
-mod wrapper;
+pub(crate) mod iteration;
+pub(crate) mod modules;
+pub(crate) mod text;
 
-pub use array_buffer_view::JsArrayBufferView;
-pub use enumerator::PropertyNameEnumerator;
+pub use buffers::*;
+#[allow(unused_imports, unreachable_pub)]
+pub use collections::*;
+pub use control::*;
+pub use exotic::*;
 pub use internal_fields::{InternalFieldTuple, OFFSET_OF_INTERNAL_FIELDS, Sentinel};
-pub use microtask::{MicrotaskQueue, MicrotaskQueueRef};
-pub use module::{ModuleHooks, ModuleLoader};
-pub use promise::JsPromise;
-pub use proxy::ProxyObject;
-pub use regexp::{RegExp, RegExpGlobalState};
-pub use string_object::StringObject;
-pub use wrapper::{
-    BigIntObject, BooleanObject, JsWrapperObject, JsWrapperObjectInit, NumberObject, SymbolObject,
-};
+#[allow(unused_imports, unreachable_pub)]
+pub use iteration::*;
+pub use modules::*;
+pub use text::*;

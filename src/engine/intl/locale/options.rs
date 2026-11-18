@@ -1,5 +1,6 @@
-use bun_engine_text::Text;
+use bun_engine_text::{CodeUnit, Text};
 
+use super::WEEKDAYS;
 use crate::collator::CaseFirst;
 use crate::language_tag::subtag::{
     Subtag, Subtags, is_language, is_region, is_script, lowercase_subtags,
@@ -59,11 +60,9 @@ impl Options {
     }
 
     pub fn set_first_day_of_week(&mut self, text: Text<'_>) -> Result<()> {
-        const NAMES: [&str; 8] = ["sun", "mon", "tue", "wed", "thu", "fri", "sat", "sun"];
-
-        let number = (text.get(0)).and_then(|unit| unit.checked_sub(b'0'.into()));
-        let name = match number.and_then(|number| NAMES.get(usize::from(number))) {
-            Some(name) if text.len() == 1 => Text::from_ascii(name),
+        // Sunday is both 0 and 7.
+        let name = match text.get(0).and_then(|unit| unit.digit_value(8)) {
+            Some(day) if text.len() == 1 => Text::from_ascii(WEEKDAYS[(day as usize + 6) % 7]),
             _ => text,
         };
         let value = KeywordValue::parse(Key::FIRST_DAY, name)?.ok_or(Error::Range(

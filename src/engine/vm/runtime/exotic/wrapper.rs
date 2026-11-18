@@ -59,6 +59,12 @@ pub struct BigIntObject {
 macro_rules! constructors {
     ($($name:ident, $init:ident, $test:ident;)*) => {$(
         impl $name {
+            /// For a type that extends this one.
+            pub fn init(base: JsWrapperObjectInit) -> $init {
+                assert!(base.internal_value.$test());
+                $init { base }
+            }
+
             /// Panics if the value is of another type.
             pub fn create(vm: &Vm, shape: Gc<Shape>, value: Value) -> Gc<$name> {
                 assert!(value.$test());

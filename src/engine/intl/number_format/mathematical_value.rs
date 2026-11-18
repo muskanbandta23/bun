@@ -7,6 +7,7 @@ use bun_icu::number_format::{
     NumberRangeFormatter,
 };
 
+use super::DigitOptions;
 use crate::{Error, Result};
 
 type Decimal = bun_icu::Buffer<u8>;
@@ -22,6 +23,23 @@ enum Representation {
     Decimal(Decimal),
     /// An integer with more digits than can be formatted.
     TooLong,
+}
+
+/// How ICU is given a Number.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NumberInput {
+    Double,
+    /// It rounds to an increment from an estimate of the last digits of a double.
+    Decimal,
+}
+
+impl From<&DigitOptions> for NumberInput {
+    fn from(options: &DigitOptions) -> NumberInput {
+        match options.rounding_increment.get() {
+            1 => NumberInput::Double,
+            _ => NumberInput::Decimal,
+        }
+    }
 }
 
 impl From<f64> for MathematicalValue {
@@ -94,11 +112,12 @@ impl MathematicalValue {
     pub(crate) fn format(
         &self,
         formatter: &NumberFormatter,
+        input: NumberInput,
         result: &mut FormattedNumber,
     ) -> bun_icu::Result<()> {
-        match &self.0 {
-            Representation::Number(number) => formatter.format_double(*number, result),
-            _ => self.with_decimal(|decimal| formatter.format_decimal(decimal, result)),
+        match self.as_double(input) {
+            Some(number) => formatter.format_double(number, result),
+            None => self.with_decimal(|decimal| formatter.format_decimal(decimal, result)),
         }
     }
 
@@ -106,13 +125,18 @@ impl MathematicalValue {
         &self,
         end: &MathematicalValue,
         formatter: &NumberRangeFormatter,
+        input: NumberInput,
     ) -> bun_icu::Result<FormattedNumberRange> {
-        match (self.as_number(), end.as_number()) {
+        match (self.as_double(input), end.as_double(input)) {
             (Some(start), Some(end)) => formatter.format_doubles(start, end),
             _ => self.with_decimal(|start| {
                 end.with_decimal(|end| formatter.format_decimals(start, end))
             }),
         }
+    }
+
+    fn as_double(&self, input: NumberInput) -> Option<f64> {
+        self.as_number().filter(|_| input == NumberInput::Double)
     }
 
     fn with_decimal<T>(

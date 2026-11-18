@@ -5,7 +5,7 @@ pub use bun_icu::case_map::Case;
 
 use crate::error::IcuResult;
 use crate::parts::new_string;
-use crate::utf16::Utf16;
+use crate::utf16::Utf16Buffer;
 use crate::{Cache, LanguageTag, Result};
 
 /// TransformCase. `None` if `text` stays as it is.
@@ -31,8 +31,9 @@ pub fn transform_case(
         (_, Case::Lower) => return Ok(bun_engine_unicode::to_lower_case(text)?),
         (_, Case::Upper) => return Ok(bun_engine_unicode::to_upper_case(text)?),
     };
-    let units = Utf16::new(text)?;
-    let converted = (case.convert(&units, language)).or_type_error("U_INDEX_OUTOFBOUNDS_ERROR")?;
+    let mut buffer = Utf16Buffer::default();
+    let units = buffer.widen(text)?;
+    let converted = (case.convert(units, language)).or_type_error("U_INDEX_OUTOFBOUNDS_ERROR")?;
     if *converted == *units {
         return Ok(None);
     }

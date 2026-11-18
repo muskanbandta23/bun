@@ -32,7 +32,7 @@ mod transition_table;
 mod visit;
 
 pub use accessor::{CustomGetterSetter, GetterSetter};
-pub use array::JsArray;
+pub use array::{JsArray, JsArrayInit};
 pub use class::{AsciiLiteral, Class, ClassOps};
 pub use condition::{
     ConditionKind, ConditionSet, PropertyCondition, Watchability, watch_condition,

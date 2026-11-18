@@ -25,7 +25,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { downloadWithRetry, extractTarGz, fetchPrebuilt } from "./download.ts";
+import { checkSha256, downloadWithRetry, extractTarGz, fetchPrebuilt } from "./download.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
 import { formatElapsed } from "./tty.ts";
@@ -52,7 +52,16 @@ async function main(): Promise<void> {
       const [name, repo, commit, dest, cache, ...patches] = args;
       assert(name !== undefined && repo !== undefined && commit !== undefined, "dep: missing name/repo/commit");
       assert(dest !== undefined && cache !== undefined, "dep: missing dest/cache");
-      return fetchDep(name, repo, commit, dest, cache, patches);
+      const url = `https://github.com/${repo}/archive/${commit}.tar.gz`;
+      return fetchDep(name, { url, commit }, dest, cache, patches);
+    }
+
+    case "tarball": {
+      // fetch-cli.ts tarball <name> <url> <sha256> <dest> <cache> [...patches]
+      const [name, url, sha256, dest, cache, ...patches] = args;
+      assert(name !== undefined && url !== undefined && sha256 !== undefined, "tarball: missing name/url/sha256");
+      assert(dest !== undefined && cache !== undefined, "tarball: missing dest/cache");
+      return fetchDep(name, { url, sha256 }, dest, cache, patches);
     }
 
     case "subst": {
@@ -117,6 +126,7 @@ Usage: bun fetch-cli.ts <kind> <args...>
 
 Kinds:
   dep             <name> <repo> <commit> <dest> <cache> [...patches]
+  tarball         <name> <url> <sha256> <dest> <cache> [...patches]
   prebuilt        <name> <url> <dest> <identity> [...rm_paths]
   subst           <in> <out> [<from> <to>]...
   check-undefined <name> <nm> <rspfile> <stamp> <symbol,...>
@@ -192,11 +202,11 @@ function checkUndefined(name: string, nm: string, rspfile: string, stamp: string
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// github-archive dep fetch: download tarball, extract, patch, stamp
+// source fetch: download tarball, extract, patch, stamp
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * Fetch a github archive, extract, apply patches, write .ref stamp.
+ * Fetch a source tarball, extract, apply patches, write .ref stamp.
  *
  * Idempotent: if .ref exists and matches the computed identity, does nothing.
  * The ninja rule has restat=1, so a no-op fetch won't trigger downstream.
@@ -207,8 +217,7 @@ function checkUndefined(name: string, nm: string, rspfile: string, stamp: string
  */
 async function fetchDep(
   name: string,
-  repo: string,
-  commit: string,
+  source: { url: string } & ({ commit: string } | { sha256: string }),
   dest: string,
   cache: string,
   patches: string[],
@@ -229,7 +238,7 @@ async function fetchDep(
     }
   }
 
-  const identity = computeSourceIdentity(commit, patchContents);
+  const identity = computeSourceIdentity("sha256" in source ? source.sha256 : source.commit, patchContents);
 
   // Short-circuit: already fetched at this identity?
   if (existsSync(refPath)) {
@@ -244,11 +253,11 @@ async function fetchDep(
     console.log(`source identity changed (was ${existing.slice(0, 8)}, now ${identity.slice(0, 8)})`);
   }
 
-  console.log(`fetching ${repo}@${commit.slice(0, 8)}`);
+  const { url } = source;
+  console.log(`fetching ${url}`);
   const started = performance.now();
 
   // ─── Download (with cache) ───
-  const url = `https://github.com/${repo}/archive/${commit}.tar.gz`;
   const urlHash = createHash("sha256").update(url).digest("hex").slice(0, 16);
   const tarballPath = join(cache, `${name}-${urlHash}.tar.gz`);
 
@@ -257,13 +266,22 @@ async function fetchDep(
   if (!existsSync(tarballPath)) {
     await downloadWithRetry(url, tarballPath, name);
   }
+  if ("sha256" in source) {
+    try {
+      checkSha256(tarballPath, source.sha256);
+    } catch (error) {
+      // Or the next build would find it in the cache again.
+      await rm(tarballPath, { force: true });
+      throw error;
+    }
+  }
 
   // ─── Extract ───
   // Wipe dest first — we don't want leftover files from a previous version.
   await rm(dest, { recursive: true, force: true });
   await mkdir(dest, { recursive: true });
 
-  // Github archives have a top-level directory <repo>-<commit>/. Strip it.
+  // Strip the top-level directory (<repo>-<commit>/ in a github archive).
   await extractTarGz(tarballPath, dest);
 
   // ─── Apply patches ───
@@ -280,7 +298,7 @@ async function fetchDep(
 }
 
 /**
- * Source identity: sha256(commit + patch_contents)[:16]. This is what goes
+ * Source identity: sha256(commit or checksum + patch_contents)[:16]. This is what goes
  * in the .ref stamp. Hashing patch CONTENTS (not paths) means editing a
  * patch invalidates the source without a commit bump.
  *
@@ -295,9 +313,9 @@ async function fetchDep(
  * Exported so source.ts can compute the same identity at configure time
  * (for the preemptive-delete-on-mismatch check).
  */
-export function computeSourceIdentity(commit: string, patchContents: string[]): string {
+export function computeSourceIdentity(pin: string, patchContents: string[]): string {
   const h = createHash("sha256");
-  h.update(commit);
+  h.update(pin);
   for (const content of patchContents) {
     h.update("\0"); // Separator so patch concatenation can't produce collisions.
     h.update(normalizeLf(content));

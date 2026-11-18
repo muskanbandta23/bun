@@ -236,6 +236,11 @@ impl ShapeSpec {
         self
     }
 
+    /// For `Array.prototype`.
+    pub const fn array_without_elements(self) -> ShapeSpec {
+        self.with_indexing_mode(IndexingMode::array(ElementKind::None))
+    }
+
     pub(crate) const fn with_indexing_mode(mut self, mode: IndexingMode) -> ShapeSpec {
         self.indexing_mode = mode;
         self

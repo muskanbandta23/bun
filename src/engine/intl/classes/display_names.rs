@@ -52,7 +52,7 @@ fn resolved_options(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let this: Gc<JsDisplayNames> =
         this!(cx, frame.this_value(), "DisplayNames", "resolvedOptions")?;
     let resolved = *this.names.options();
-    let options = Record::with_locale(cx, this.names.locale());
+    let options = Record::with_locale(cx, this.names.locale().string().clone());
     options.put_named(names::style, resolved.style);
     options.put_named(names::r#type, resolved.kind);
     options.put_named(names::fallback, resolved.fallback);

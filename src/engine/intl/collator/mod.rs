@@ -68,6 +68,8 @@ struct Settings {
     ignore_punctuation: Option<bool>,
 }
 
+const ESTIMATED_SIZE: usize = 1 << 10;
+
 /// Those with the same locale and options are one.
 #[derive(Clone)]
 pub struct Collator(Rc<Shared>);
@@ -85,7 +87,10 @@ impl Collator {
         let (locale, settings) = resolve(cache, requested, options)?;
         cache.collators.find_or_insert(
             |it| it.0.settings == settings && it.0.locale == locale,
-            || Ok(Collator(Rc::new(Shared::new(locale.clone(), settings)?))),
+            || {
+                cache.note_allocation(ESTIMATED_SIZE);
+                Ok(Collator(Rc::new(Shared::new(locale.clone(), settings)?)))
+            },
         )
     }
 

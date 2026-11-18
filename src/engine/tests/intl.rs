@@ -102,3 +102,24 @@ fn a_realm_can_have_its_own_language() {
         });
     }
 }
+
+#[test]
+fn dates_and_durations_survive_collection() {
+    with_realm(&HOOKS, |cx| {
+        let options = record(cx, &[(names::timeZone, "+0100"), (names::month, "long")]);
+        let format = construct(cx, names::DateTimeFormat, &[Value::UNDEFINED, options]).unwrap();
+        cx.heap.collect_and_sweep(Some(Scope::Full));
+        let range = invoke(cx, format, names::formatRange, &[0.into(), 3e9.into()]);
+        assert_eq!(text(cx, range), "January – February");
+        let resolved = invoke(cx, format, names::resolvedOptions, &[]);
+        let time_zone = resolved.get(cx, names::timeZone).unwrap();
+        assert_eq!(text(cx, time_zone), "+01:00");
+
+        let options = record(cx, &[(names::style, "digital")]);
+        let format = construct(cx, names::DurationFormat, &[Value::UNDEFINED, options]).unwrap();
+        cx.heap.collect_and_sweep(Some(Scope::Full));
+        let duration = record(cx, &[(names::hours, "1"), (names::milliseconds, "500")]);
+        let formatted = invoke(cx, format, names::format, &[duration]);
+        assert_eq!(text(cx, formatted), "1:00:00.5");
+    });
+}

@@ -1,7 +1,7 @@
 //! Control flow in small blocks, as the passes that copy, thread and fold look for it.
 
 use bun_engine_asm::{Cond, FloatCond};
-use bun_engine_codegen::ir::{Binary, Block, Checked, Successor, Type, Value};
+use bun_engine_codegen::ir::{Binary, Block, Checked, Op, Successor, Type, Unary, Value, Wide};
 
 use super::super::integers::width;
 use super::super::{Class, Generator};
@@ -18,7 +18,7 @@ pub(in super::super) struct Counting {
 
 impl Generator<'_> {
     pub(super) fn shape_statement(&mut self, budget: u32) {
-        match self.random.below(16) {
+        match self.random.below(20) {
             0 | 1 => self.chain_of_truths(),
             2 => self.switch_on_param(),
             3 | 4 => self.related_branches(),
@@ -27,6 +27,8 @@ impl Generator<'_> {
             7 | 8 if self.trips * 8 <= self.shape.trips => self.tested_counter(budget),
             9 => self.use_in_one_arm(),
             10 => self.empty_diamond(),
+            11 if self.trips * 8 <= self.shape.trips => self.unruly_counter(),
+            12 if self.trips * 8 <= self.shape.trips => self.checks_at_top(1),
             _ if self.shape.weights.accesses != 0 => self.memory_shape(budget),
             _ => self.related_branches(),
         }
@@ -125,7 +127,7 @@ impl Generator<'_> {
     }
 
     fn chain_of_truths(&mut self) {
-        let mut condition = self.condition();
+        let (mut condition, mut tuples) = (self.condition(), Vec::new());
         for _ in 0..self.random.between(1, 9) {
             let (ty, other) = (self.int_type(), self.int_type());
             let mut arm = |this: &mut Self| {
@@ -142,6 +144,11 @@ impl Generator<'_> {
             if self.random.one_in(3) {
                 self.trifle();
             }
+            if self.random.one_in(10) {
+                let word = self.convert_int(params[1], Type::I64);
+                let op = Op::Wide(Wide::Add, [word; 4]);
+                tuples.push(self.emit(op, Type::Tuple));
+            }
             condition = match self.random.below(6) {
                 0 => self.compare_constant(Cond::Eq, params[0], 0),
                 1 => self.binary_constant(Binary::And, params[0], 1),
@@ -157,6 +164,10 @@ impl Generator<'_> {
             }
         }
         self.witness(condition);
+        for tuple in tuples {
+            let high = self.builder().extract(tuple, 1);
+            self.keep_all(&[high]);
+        }
     }
 
     fn switch_on_param(&mut self) {
@@ -248,8 +259,13 @@ impl Generator<'_> {
             self.int_type()
         };
         let near = self.random.pick(&[0, 0, 4, 10, -3]);
-        let values = [(); 3].map(|()| match self.random.below(4) {
+        let values = [(); 3].map(|()| match self.random.below(5) {
             _ if has_floats => self.float(ty).0,
+            2 => {
+                let edge = self.random.pick(&[-1, i64::MIN, i64::MAX]) >> (64 - width(ty));
+                let edge = self.constant(ty, edge);
+                self.unary(Unary::Opaque, ty, edge)
+            }
             0 => {
                 let any = self.known_int(ty);
                 self.binary_constant(Binary::And, any, 15)
@@ -324,11 +340,18 @@ impl Generator<'_> {
         let low = self.binary_constant(Binary::And, any, mask);
         let subject = self.binary_constant(Binary::Add, low, base);
         let (join, seen) = self.block_with(&[Type::I64]);
-        let mark = self.mark();
+        let (direct, mark) = (self.known_int(Type::I64), self.mark());
         let mut arms = Vec::new();
-        for _ in 0..self.random.between(2, 12) {
+        let mut shortcut = self.random.one_in(5).then(|| {
+            let condition = self.condition();
+            let ways = [self.plain_way(), self.plain_way()];
+            let [start, middle] = [ways[0].target, ways[1].target];
+            self.branch(condition, ways);
+            self.block = start;
+            (middle, self.mark())
+        });
+        for turn in (0..self.random.between(2, 12)).rev() {
             let key = base + self.random.between(0, mask + 1);
-            let direct = self.known_int(Type::I64);
             let mut matching = |this: &mut Self| {
                 if this.random.one_in(4) {
                     return this.way(join, &[direct]);
@@ -337,7 +360,11 @@ impl Generator<'_> {
                 arms.push((this.way(way.target, &[]), this.scope.clone(), this.sum));
                 way
             };
-            let rest = self.plain_way();
+            let joined = shortcut.take_if(|_| turn == 0 || self.random.one_in(3));
+            let rest = match joined {
+                Some((middle, _)) => self.way(middle, &[]),
+                None => self.plain_way(),
+            };
             let next = rest.target;
             match self.random.below(10) {
                 0 => {
@@ -360,6 +387,9 @@ impl Generator<'_> {
                 }
             }
             self.block = next;
+            if let Some((_, before)) = joined {
+                self.restore(before);
+            }
             if self.random.one_in(10) {
                 self.trifle();
             }
@@ -467,7 +497,7 @@ impl Generator<'_> {
         let from = if cond == Cond::Ne { first } else { base };
         let mut limit = along(self, from, turns);
         if self.random.flip() {
-            limit = self.unary(bun_engine_codegen::ir::Unary::Opaque, ty, limit);
+            limit = self.unary(Unary::Opaque, ty, limit);
         }
 
         let types: Vec<Type> = initial.iter().map(|&value| self.type_of(value)).collect();
@@ -540,6 +570,159 @@ impl Generator<'_> {
         self.keep_all(&results);
     }
 
+    /// Any start, step and test. Fuel brings it to an end.
+    fn unruly_counter(&mut self) {
+        let ty = self.int_type();
+        let greatest = i64::MAX >> (64 - width(ty));
+        let near = self.random.pick(&[0, greatest, !greatest, 9]);
+        let around = |this: &mut Self| {
+            let number = near.wrapping_add(this.random.between(-5, 5));
+            let constant = this.constant(ty, number);
+            if this.random.one_in(3) {
+                constant
+            } else {
+                let opaque = this.unary(Unary::Opaque, ty, constant);
+                let mask = this.random.pick(&[-1, -1, greatest, 15]);
+                this.binary_constant(Binary::And, opaque, mask)
+            }
+        };
+        let add = |this: &mut Self, value, by| {
+            let by = this.constant(ty, by);
+            if this.random.one_in(5) {
+                this.checked(Checked::Add, value, by)
+            } else {
+                this.builder().add(value, by)
+            }
+        };
+        let (end, fixed_limit) = (around(self), around(self));
+        let first = if self.random.flip() {
+            let back = self.random.between(-2, 1);
+            add(self, end, back)
+        } else {
+            around(self)
+        };
+        let step = self.random.pick(&[1, 1, 1, 2, 3, -1, -1, -1, -2]);
+        let cond = self.random.pick(&Cond::ALL);
+        let (header, params) = self.block_with(&[Type::I64, ty, Type::I32]);
+        let (exit, results) = self.block_with(&[Type::I64]);
+        let [sum, counter, fuel] = params[..] else {
+            unreachable!()
+        };
+        let (initial, full) = (self.known_int(Type::I64), self.function.const32(7));
+        if self.random.flip() {
+            let enters = self.builder().compare(cond, first, fixed_limit);
+            let ways = [
+                self.way(header, &[initial, first, full]),
+                self.way(exit, &[initial]),
+            ];
+            self.branch(enters, ways);
+        } else {
+            self.builder().jump(header, &[initial, first, full]);
+        }
+        let (mark, outer_trips) = (self.mark(), self.trips);
+        self.trips *= 8;
+        self.block = header;
+        let limit = if self.random.one_in(5) {
+            let fuel = self.convert_int(fuel, ty);
+            self.binary(Binary::Sub, fixed_limit, fuel)
+        } else {
+            fixed_limit
+        };
+        let early = self.random.one_in(4).then(|| add(self, counter, step));
+        let go_on_if = |this: &mut Self, condition| {
+            let ways = [this.plain_way(), this.way(exit, &[sum])];
+            let inside = ways[0].target;
+            this.branch(condition, ways);
+            this.block = inside;
+        };
+        let tests_first = self.random.flip();
+        if tests_first && self.random.one_in(5) {
+            let holds = self.builder().compare(cond, counter, limit);
+            self.perhaps(holds, &[], &mut |_| Vec::new());
+        } else if tests_first {
+            let holds = self.builder().compare(cond, counter, limit);
+            go_on_if(self, holds);
+        }
+        go_on_if(self, fuel);
+        let less = self.binary_constant(Binary::Add, fuel, -1);
+        let seen = self.test_again(&[counter, first, limit, end], near, 0);
+        let stirred = self.binary_constant(Binary::Mul, sum, 5);
+        let sum = self.binary(Binary::Add, stirred, seen);
+        if self.random.one_in(4) {
+            let other_step = self.random.pick(&[step, -step, -3 * step]);
+            let (turns_back, other) = (self.condition(), add(self, counter, other_step));
+            let ways = [self.way(header, &[sum, other, less]), self.plain_way()];
+            let rest = ways[1].target;
+            self.branch(turns_back, ways);
+            self.block = rest;
+        }
+        let next = early.unwrap_or_else(|| add(self, counter, step));
+        if tests_first {
+            self.builder().jump(header, &[sum, next, less]);
+        } else {
+            let holds = self.builder().compare(cond, next, limit);
+            let ways = [self.way(header, &[sum, next, less]), self.way(exit, &[sum])];
+            self.branch(holds, ways);
+        }
+        self.restore(mark);
+        self.trips = outer_trips;
+        self.block = exit;
+        self.keep_all(&results);
+    }
+
+    /// Checks of what is settled before the loop, or before the loop around it, near the top of a loop that tests last.
+    fn checks_at_top(&mut self, inner_loops: u32) {
+        let settled = [(); 2].map(|()| {
+            let any = self.known_int(Type::I32);
+            let low = self.binary_constant(Binary::And, any, 3);
+            let fails = self.compare_constant(Cond::Eq, low, 3);
+            self.learn(fails, Class::BOOLEAN);
+            fails
+        });
+        let (header, params) = self.block_with(&[Type::I32]);
+        let zero = self.function.const32(0);
+        self.builder().jump(header, &[zero]);
+        let (mark, outer_trips) = (self.mark(), self.trips);
+        self.trips *= 4;
+        self.block = header;
+        self.keep_all(&params);
+        let next = self.binary_constant(Binary::Add, params[0], 1);
+        for _ in 0..self.random.between(1, 4) {
+            match self.random.below(10) {
+                0 => {
+                    let skips = self.compare_constant(Cond::Lt, next, 2);
+                    let ways = [self.way(header, &[next]), self.plain_way()];
+                    let rest = ways[1].target;
+                    self.branch(skips, ways);
+                    self.block = rest;
+                }
+                1 if self.shape.weights.calls != 0 => self.call_with_handlers(0),
+                2 => self.trifle(),
+                3 | 4 if inner_loops != 0 => self.checks_at_top(inner_loops - 1),
+                5 => {
+                    let varies = self.compare_constant(Cond::Eq, params[0], 9);
+                    let fails = self.binary(Binary::Or, varies, settled[0]);
+                    self.learn(fails, Class::BOOLEAN);
+                }
+                6 | 7 => {
+                    let fails = self.boolean();
+                    self.check(fails);
+                }
+                _ => {
+                    let fails = self.random.pick(&settled);
+                    self.check_keeping(fails, &params);
+                }
+            }
+        }
+        let goes_on = self.compare_constant(Cond::Lt, next, 3);
+        let ways = [self.way(header, &[next]), self.plain_way()];
+        let exit = ways[1].target;
+        self.branch(goes_on, ways);
+        self.restore(mark);
+        self.trips = outer_trips;
+        self.block = exit;
+    }
+
     fn use_in_one_arm(&mut self) {
         let mark = self.mark();
         let made: Vec<Value> = (0..self.random.between(1, 4))
@@ -553,8 +736,9 @@ impl Generator<'_> {
         self.trifle();
         let condition = self.condition();
         let (usual, last) = (self.known_int(Type::I64), made[made.len() - 1]);
-        let seen = match self.random.below(3) {
+        let seen = match self.random.below(4) {
             0 => self.perhaps(condition, &[last], &mut |_| vec![usual]),
+            1 if self.shape.weights.accesses != 0 => self.load_for_rare_edge(),
             _ => self.perhaps(condition, &[usual], &mut |this| {
                 this.trifle();
                 let inner = this.condition();
@@ -586,7 +770,16 @@ impl Generator<'_> {
             ),
         };
         let same = self.known_int(Type::I64);
-        let seen = if self.random.flip() {
+        let seen = if self.random.one_in(6) {
+            let (join, seen) = self.block_with(&[Type::I64, ty]);
+            let (arm, passed) = self.block_with(&[ty]);
+            let ways = [self.way(arm, &[then]), self.way(join, &[same, or])];
+            self.branch(condition, ways);
+            self.block = arm;
+            self.builder().jump(join, &[same, passed[0]]);
+            self.block = join;
+            seen
+        } else if self.random.flip() {
             self.perhaps(condition, &[same, or], &mut |_| vec![same, then])
         } else {
             self.choose(condition, &[Type::I64, ty], &mut |_, holds| {

@@ -16,7 +16,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use bun_engine_asm::{Arm64Features, Relaxed, X64Features};
 use bun_engine_codegen::Target;
-use bun_engine_codegen::ir::{Function, validate};
+use bun_engine_codegen::analysis::Cfg;
+use bun_engine_codegen::ir::{Function, Op, PatchpointFlags, validate};
 use bun_engine_codegen::passes::{Analyses, Level, Pass};
 
 use super::generator::{PROFILES, Program, Shape, generate};
@@ -373,6 +374,11 @@ pub(crate) fn all_passes() -> Vec<&'static Pass> {
     Pass::ALL.iter().collect()
 }
 
+fn has_natural_loops(function: &Function) -> bool {
+    let cfg = Cfg::new(function);
+    cfg.loops().values().all(|data| data.is_natural)
+}
+
 pub(crate) fn pass_named(name: &str) -> &'static Pass {
     let found = all_passes().into_iter().find(|pass| pass.name == name);
     found.unwrap_or_else(|| panic!("no pass is named {name}"))
@@ -425,6 +431,29 @@ impl Passes {
                     .collect();
                 vec![[first, chosen].concat()]
             }
+        }
+    }
+
+    /// What no input shows.
+    fn check_structure(function: &Function, had_natural_loops: bool) -> Result<(), String> {
+        if had_natural_loops && !has_natural_loops(function) {
+            return Err("a loop has got another entry".into());
+        }
+        let cfg = Cfg::new(function);
+        let instructions = cfg.order().iter();
+        let instructions = instructions.flat_map(|&block| function.instructions(block));
+        let mut tokens: Vec<u32> = instructions
+            .filter_map(|value| match *function.op(value) {
+                Op::Patchpoint(patchpoint) => Some(function.patchpoint(patchpoint)),
+                _ => None,
+            })
+            .filter(|data| data.flags.contains(PatchpointFlags::UNIQUE))
+            .map(|data| data.token.0)
+            .collect();
+        tokens.sort_unstable();
+        match tokens.chunk_by(|a, b| a == b).find(|same| same.len() > 1) {
+            Some(same) => Err(format!("#{} has been copied", same[0])),
+            None => Ok(()),
         }
     }
 

@@ -100,6 +100,15 @@ impl Generator<'_> {
         }
     }
 
+    /// With just these values in the state.
+    pub(super) fn check_keeping(&mut self, condition: Value, values: &[Value]) {
+        let exit = Exit {
+            token: self.token(Behaviour::empty()),
+            state: self.function.add_state(values),
+        };
+        self.builder().check(condition, exit);
+    }
+
     pub(super) fn checked(&mut self, op: Checked, a: Value, b: Value) -> Value {
         let extra: &[Value] = match self.random.below(4) {
             0 => &[],

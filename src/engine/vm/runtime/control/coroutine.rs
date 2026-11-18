@@ -20,7 +20,7 @@
 //! | `async_return`           | returns what `async_return` does                                                      |
 //! | `async_throw`            | returns what `async_throw` does                                                       |
 //! | `async_iterator_open`    | `open_async_iterator`                                                                 |
-//! | `async_iterator_next`    | if `next` is `Vm::async_iteration_sentinel`: `Coroutine::ensure`, `request_async_step` |
+//! | `async_iterator_next`    | if `IterationMode::is_marker(next)`: `Coroutine::ensure`, `request_async_step`        |
 //!
 //! No script runs between `await_value` and `save`. `unwind` completes a coroutine whose resumed frame it removes.
 //!
@@ -208,6 +208,21 @@ impl Coroutine {
         point: SuspendPointIndex,
         kind: SuspendKind,
     ) {
+        // SAFETY: the caller's, and the barrier follows.
+        unsafe { self.save_without_barrier(frame, registers, point, kind) };
+        self.write_barrier_for_cell();
+    }
+
+    /// # Safety
+    /// As for `save`, and the write barrier runs before the next allocation.
+    #[inline(always)]
+    pub unsafe fn save_without_barrier(
+        &self,
+        frame: &CallFrame,
+        registers: &[Register],
+        point: SuspendPointIndex,
+        kind: SuspendKind,
+    ) {
         let saved = self.registers();
         debug_assert!(saved.addr() + registers.len() * 8 <= self.address() + self.cell_size());
         for (index, register) in registers.iter().enumerate() {
@@ -221,7 +236,6 @@ impl Coroutine {
         (self.saved_count).store(registers.len() as u32, Ordering::Relaxed);
         self.point.set(point.0);
         self.set_state(kind.into());
-        self.write_barrier_for_cell();
     }
 
     /// # Safety

@@ -424,6 +424,12 @@ impl JsString {
         vm.string_caches.retire(self.address(), old);
     }
 
+    /// `None` unless both are atoms.
+    #[inline(always)]
+    pub fn equals_if_atoms(&self, other: &JsString) -> Option<bool> {
+        (self.is_atom() && other.is_atom()).then(|| self.fiber() == other.fiber())
+    }
+
     #[inline(always)]
     pub fn equals(&self, cx: &Cx, other: &JsString) -> JsResult<bool> {
         if let (Some(a), Some(b)) = (self.try_impl(), other.try_impl()) {

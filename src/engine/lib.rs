@@ -21,6 +21,7 @@ fn hooks() -> Hooks {
         native_call_entry: |_, _| call::native_call_entry(),
         jettison: |_, _| {},
         debug: |_, _, _, _| Ok(()),
+        debug_await: |_, _, _, _| Ok(()),
         cover: |_, _, _, _| {},
         access_handler: |_, _, _| 0,
         tier_up: |_, code_block, _, _| {

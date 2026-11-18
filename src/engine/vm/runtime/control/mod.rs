@@ -39,12 +39,10 @@ pub use resolving::{JsFunctionWithFields, PromiseCapability};
 pub use synchronous_module_queue::SynchronousModuleQueueScope;
 
 use crate::heap::Scope;
-use crate::vm::Root;
-use crate::{Sentinel, Visitor, Vm};
+use crate::{Visitor, Vm};
 
 pub(crate) struct State {
     has_synchronous_module_queue: Cell<bool>,
-    async_iteration_sentinel: Root<Sentinel>,
     /// For those that have not come to their `await` yet.
     early_answers: MicrotaskQueue,
     resolver_executables: resolving::ResolverExecutables,
@@ -57,7 +55,6 @@ impl Default for State {
     fn default() -> State {
         State {
             has_synchronous_module_queue: Cell::new(false),
-            async_iteration_sentinel: Root::new(),
             early_answers: MicrotaskQueue::new(),
             resolver_executables: Default::default(),
             queues: RefCell::default(),
@@ -70,7 +67,6 @@ impl Default for State {
 impl crate::services::Service for State {
     fn initialize(&self, vm: &Vm) {
         vm.default_microtask_queue().register(vm);
-        (self.async_iteration_sentinel).set(Some(Sentinel::create(vm)));
     }
 
     /// Those that they were for have been terminated.
@@ -80,7 +76,6 @@ impl crate::services::Service for State {
     }
 
     fn visit(&self, visitor: &mut Visitor) {
-        self.async_iteration_sentinel.visit(visitor);
         self.resolver_executables.visit(visitor);
         self.early_answers.visit(visitor);
         for queue in self.synchronous_module_queues.borrow().iter() {

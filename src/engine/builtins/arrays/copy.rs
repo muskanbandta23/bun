@@ -58,10 +58,15 @@ fn define_properties_from(
     target: &JsObject,
     start: u64,
 ) -> JsResult<()> {
-    for (to, from) in (start..).zip(range) {
-        if let Some(value) = source.get_index_if_has_property(cx, from)? {
-            target.create_data_index(cx, to, value, true)?;
-        }
+    let mut index = range.start;
+    while index < range.end {
+        index = match source.get_index_if_has_property(cx, index)? {
+            Some(value) => {
+                target.create_data_index(cx, start + (index - range.start), value, true)?;
+                index + 1
+            }
+            None => source.skip_holes(index + 1..range.end),
+        };
         cx.check_traps()?;
     }
     Ok(())

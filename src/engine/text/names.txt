@@ -774,6 +774,7 @@ yield
 zip
 zipKeyed
 zonedDateTimeISO
+arrayIterator = Array Iterator
 boundPrefix = bound 
 dollar1 = $1
 dollar2 = $2
@@ -801,6 +802,7 @@ intlPluralRules = Intl.PluralRules
 intlRelativeTimeFormat = Intl.RelativeTimeFormat
 intlSegmenter = Intl.Segmenter
 invalidDate = Invalid Date
+iteratorHelper = Iterator Helper
 negativeInfinity = -Infinity
 notEqual = not-equal
 objectArguments = [object Arguments]
@@ -820,6 +822,7 @@ segmenterStringIterator = Segmenter String Iterator
 setIterator = Set Iterator
 starDefaultText = *default*
 stopBeforePartial = stop-before-partial
+stringIterator = String Iterator
 timedOut = timed-out
 useStrict = use strict
 @@asyncDispose
@@ -911,6 +914,28 @@ useStrict = use strict
 @clear
 @cloneObject
 @collectForSpread
+@arrayFromAsyncIterator
+@arrayFromAsyncArrayLike
+@arrayIteratorStep
+@isIteratorInstance
+@getIteratorFlattenable
+@closeIteratorQuietly
+@closeIterators
+@closeIteratorsQuietly
+@iteratorLimit
+@checkChunkSize
+@mappedValues
+@filteredValues
+@takenValues
+@remainingValues
+@flatMappedValues
+@chunkedValues
+@windowedValues
+@concatenatedValues
+@zippedValues
+@zipOptions
+@zipIterators
+@map
 @constructor
 @copyDataProperties
 @create
@@ -1009,7 +1034,9 @@ useStrict = use strict
 @iterationKindEntries
 @iterationKindKey
 @iterationKindValue
+@iterableWithMethod
 @iteratorGenericClose
+@iteratorPrototypeSymbolIterator
 @iteratorGenericNext
 @iteratorHelperCreate
 @iteratorHelperFieldGenerator

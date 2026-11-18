@@ -367,6 +367,25 @@ impl JsObject {
         (!self.holes_must_forward_to_prototype() || !elements.has_holes()).then_some(elements)
     }
 
+    /// For a loop that has met a hole: where to go on, which is past the indices at the start of the range that
+    /// neither the object nor a prototype has, if that is worth finding out.
+    pub fn skip_holes(&self, range: Range<u64>) -> u64 {
+        /// Looking at an entry is that much cheaper than a turn of the loop.
+        const ENTRIES_PER_TURN: u64 = 8;
+        let (Some(sparse), Ok(start)) = (self.sparse_elements(), u32::try_from(range.start)) else {
+            return range.start;
+        };
+        let (count, turns) = (sparse.len() as u64, range.end.saturating_sub(range.start));
+        if count * count >= turns.saturating_mul(ENTRIES_PER_TURN)
+            || range.end > u64::from(u32::MAX)
+            || self.holes_must_forward_to_prototype()
+        {
+            return range.start;
+        }
+        let next = sparse.first_index_from(start);
+        next.map_or(range.end, |next| range.end.min(next.into()))
+    }
+
     fn dense_attributes(&self) -> Attributes {
         if !self.indexing_mode().is_slow_put() {
             return Attributes::NONE;

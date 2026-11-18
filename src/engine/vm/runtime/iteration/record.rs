@@ -8,9 +8,9 @@ use super::array_iterator::typed_array_length;
 use super::protocol::{Caller, iterator_close_on_throw, iterator_close_quietly};
 use super::string_iterator::code_point_string_at;
 use crate::{
-    CellType, Cx, ElementKind, Gc, HoleMode, IterationKind, IterationMode, JsArray,
+    CellType, ClonedArguments, Cx, ElementKind, Gc, HoleMode, IterationKind, IterationMode, JsArray,
     JsArrayBufferView, JsArrayIterator, JsCell, JsMap, JsMapIterator, JsObject, JsResult, JsSet,
-    JsSetIterator, JsString, JsStringIterator, MapKind, OrderedCursor, RealmSlot, RealmWatchpoint,
+    JsSetIterator, JsString, JsStringIterator, MapKind, MappedArguments, OrderedCursor, RealmSlot, RealmWatchpoint,
     SetKind, TableKind, Thrown, Value, errors, iterator_complete, iterator_value,
     throw_not_iterable,
 };
@@ -89,6 +89,33 @@ impl IteratorRecord {
         }
     }
 
+    /// GetIterator(iterable, sync), if that runs no script and neither does `next`.
+    pub fn for_pristine_iterable(cx: &Cx, iterable: Value) -> Option<IteratorRecord> {
+        let cell = iterable.as_cell()?;
+        let is_of_realm = || cell.shape().global() == Some(cx.global());
+        let slot = match cell.cell_type() {
+            CellType::Array => (cell.cast::<JsArray>().is_iteration_pristine() && is_of_realm())
+                .then_some(RealmSlot::array_prototype_values)?,
+            CellType::Map => (cell.cast::<JsMap>().is_iteration_pristine(cx) && is_of_realm())
+                .then_some(RealmSlot::map_prototype_entries)?,
+            CellType::Set => (cell.cast::<JsSet>().is_iteration_pristine(cx) && is_of_realm())
+                .then_some(RealmSlot::set_prototype_values)?,
+            CellType::String => RealmSlot::string_prototype_iterator,
+            CellType::DirectArguments | CellType::ScopedArguments | CellType::ClonedArguments => {
+                let is_pristine = match cell.downcast::<MappedArguments>() {
+                    Some(arguments) => arguments.is_iteration_pristine(),
+                    None => cell.cast::<ClonedArguments>().is_iteration_pristine(),
+                };
+                return (is_pristine && is_of_realm()).then(|| {
+                    let iterator = JsArrayIterator::create(cx, cell.cast(), IterationKind::Values);
+                    Self::new(iterator.into(), IterationMode::ArrayValues.marker())
+                });
+            }
+            _ => return Some(Self::new(iterable, mode_of_iterator(cx, cell)?.marker())),
+        };
+        Self::of_builtin_kind(cx, iterable, cx.global().slot(cx, slot).into())
+    }
+
     #[inline(always)]
     fn get_iterator(cx: &mut Cx, iterable: Value, caller: Caller) -> JsResult<IteratorRecord> {
         if let Some(cell) = iterable.as_cell()
@@ -103,6 +130,9 @@ impl IteratorRecord {
 
     #[inline(never)]
     fn get_iterator_slow(cx: &mut Cx, iterable: Value, caller: Caller) -> JsResult<Self> {
+        if let Some(record) = Self::for_pristine_iterable(cx, iterable) {
+            return Ok(record);
+        }
         let method = iterable.get(cx, symbols::iterator)?;
         Self::get_iterator_from_method(cx, iterable, method, caller)
     }
@@ -562,7 +592,7 @@ impl IteratorRecord {
     }
 }
 
-/// `None` unless its `next` is the original one.
+/// `None` unless its `next` is the original one, it is its own iterator, and it has no `return`.
 fn mode_of_iterator(cx: &Cx, iterator: Gc<JsCell>) -> Option<IterationMode> {
     let has_shape = |slot| is_slot(cx, slot, iterator.shape().into());
     match iterator.cell_type() {

@@ -544,6 +544,14 @@ impl<K: PlainKey, V: Copy> Owned<'_, TracedMap<K, V>> {
         self.read(|map| map.keys().cloned().collect())
     }
 
+    /// Of those that `filter`, which touches no cell, lets pass.
+    pub(crate) fn min_key(self, filter: impl Fn(&K) -> bool) -> Option<K>
+    where
+        K: Ord,
+    {
+        self.read(|map| map.keys().filter(|key| filter(key)).min().cloned())
+    }
+
     pub fn entries(self) -> RootVec<(K, V)> {
         let mut entries = root_vec();
         self.read(|map| entries.extend(map.iter().map(|(key, &value)| (key.clone(), value))));

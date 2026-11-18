@@ -137,6 +137,10 @@ impl SparseElements {
         indices
     }
 
+    pub(super) fn first_index_from(&self, start: u32) -> Option<u32> {
+        self.map().min_key(|&index| index >= start)
+    }
+
     pub(super) fn entries(&self) -> RootVec<(u32, SparseEntry)> {
         self.map().entries()
     }

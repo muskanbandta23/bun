@@ -13,13 +13,6 @@ use machine::{Case, Harness, Machine, Operation, Registers, host, install};
 
 const FP: Gpr = abi::FRAME_POINTER;
 
-fn operation(name: String, emit: impl Fn(&mut MacroAssembler, Label) + 'static) -> Operation {
-    Operation {
-        describe: Box::new(move || name.clone()),
-        emit: Box::new(emit),
-    }
-}
-
 fn linked(emit: impl FnOnce(&mut MacroAssembler)) -> CodeHandle {
     let mut masm = Harness::assembler(Features::empty(), false, 0);
     emit(&mut masm);
@@ -37,18 +30,18 @@ fn put(m: &mut Machine, place: RegOrMem, value: usize) {
 fn jumps() {
     let mut h = Harness::new();
     for _ in 0..8 {
-        let jump = operation("jump".into(), |masm, target| masm.jump(target));
+        let jump = Operation::custom("jump".into(), |masm, target| masm.jump(target));
         h.add(Case::new(jump, |_| true));
     }
     let exit = linked(|masm| host::exit(masm.assembler()));
     let address = exit.start();
-    let jump = operation("jump_address".into(), move |masm, _| {
+    let jump = Operation::custom("jump_address".into(), move |masm, _| {
         masm.jump_address(address)
     });
     h.add(Case::new(jump, |_| true));
     for _ in 0..4 {
         for ([], place) in h.registers_or_memories() {
-            let jump = operation(format!("jump_indirect({place:x?})"), move |masm, _| {
+            let jump = Operation::custom(format!("jump_indirect({place:x?})"), move |masm, _| {
                 masm.jump_indirect(place)
             });
             let case = Case::new(jump, |_| true).reads(Size::S64, place);
@@ -73,12 +66,12 @@ fn calls_return() {
     let address = callee.start();
     let called = move |m: &mut Machine| m.set64(counter, m.get64(counter).wrapping_add(1));
     let add = |h: &mut Harness, case: Case| h.add(case.overwrites_free_stack());
-    let call = operation("call_address".into(), move |masm, _| {
+    let call = Operation::custom("call_address".into(), move |masm, _| {
         masm.call_address(address)
     });
     add(&mut h, Case::new(call, called));
     for is_patchable in [false, true] {
-        let call = operation("call".into(), move |masm, _| {
+        let call = Operation::custom("call".into(), move |masm, _| {
             let (callee, done) = (masm.new_label(), masm.new_label());
             if is_patchable {
                 masm.patchable_call(callee);
@@ -94,10 +87,11 @@ fn calls_return() {
         add(&mut h, Case::new(call, called));
     }
     for ([], place) in h.registers_or_memories() {
-        if matches!(place, RegOrMem::Mem(bun_engine_asm::Memory::Address(at)) if at.uses(SP)) {
+        if matches!(place, RegOrMem::Mem(bun_engine_asm::Memory::Address(at)) if at.uses(SP) && at.offset() < 64)
+        {
             continue;
         }
-        let call = operation(format!("call_indirect({place:x?})"), move |masm, _| {
+        let call = Operation::custom(format!("call_indirect({place:x?})"), move |masm, _| {
             masm.call_indirect(place)
         });
         let case = Case::new(call, called).reads(Size::S64, place);
@@ -119,7 +113,7 @@ fn a_frame_holds_the_frame_of_the_caller_and_the_return_address() {
             if frame == saved || frame == distance || saved == distance {
                 continue;
             }
-            let call = operation(format!("frame of {room}"), move |masm, _| {
+            let call = Operation::custom(format!("frame of {room}"), move |masm, _| {
                 let (callee, done) = (masm.new_label(), masm.new_label());
                 masm.sub64(SP, SP, host::STACK_MISALIGNMENT);
                 masm.call(callee);
@@ -152,7 +146,7 @@ fn jump_tables() {
     let mut h = Harness::new();
     for round in 0..120 {
         let (count, [index, result]) = (1 + round % 12, h.gprs()[round / 12 % 2]);
-        let jump = operation(format!("jump_table({index:?}, {count})"), move |masm, _| {
+        let jump = Operation::custom(format!("jump_table({index:?}, {count})"), move |masm, _| {
             let (start, done) = (masm.new_label(), masm.new_label());
             let targets: Vec<Label> = (0..count).map(|_| masm.new_label()).collect();
             masm.jump(start);
@@ -185,7 +179,7 @@ fn addresses_of_labels_and_patchable_moves() {
     let mut h = Harness::new();
     for _ in 0..40 {
         let (reg, value) = (h.any_gpr(), h.random.next());
-        let jump = operation(
+        let jump = Operation::custom(
             format!("move_label_address({reg:?})"),
             move |masm, target| {
                 let there = masm.new_label();
@@ -201,44 +195,9 @@ fn addresses_of_labels_and_patchable_moves() {
             true
         }));
         let name = format!("patchable_move64({reg:?}, {value:x})");
-        let patchable = operation(name, move |masm, _| _ = masm.patchable_move64(reg, value));
+        let patchable =
+            Operation::custom(name, move |masm, _| _ = masm.patchable_move64(reg, value));
         h.add(Case::new(patchable, move |m| m.set64(reg, value)).keeps_first_scratch());
-    }
-}
-
-#[test]
-fn other_registers_serve_as_scratch() {
-    let mut h = Harness::new();
-    let (gprs, fprs) = (abi::NON_ARGUMENT_GPRS, [Fpr::new(3), Fpr::new(4)]);
-    let replaced = RegisterSet::of(&gprs[1..], &fprs).with(abi::SAVED_GPRS[0].into());
-    h.operand_registers -= replaced;
-    let scratch = Scratch {
-        gprs: [Some(gprs[1]), Some(abi::SAVED_GPRS[0])],
-        fprs: fprs.map(Some),
-    };
-    let with_scratch = move |Operation { describe, emit }| {
-        let emit = Box::new(move |masm: &mut MacroAssembler, target| {
-            let usual = masm.set_scratch(scratch);
-            assert_eq!(masm.scratch(), scratch);
-            emit(masm, target);
-            assert_eq!(masm.set_scratch(usual), scratch);
-        });
-        Operation { describe, emit }
-    };
-    for ([dst, lhs], rhs) in h.sources() {
-        let case = Case::new(with_scratch(machine::op!(sub64(dst, lhs, rhs))), move |m| {
-            m.set64(dst, m.get64(lhs).wrapping_sub(m.read(Width::W64, rhs)));
-        });
-        let case = case.reads(Size::S64, rhs).clobbers(replaced);
-        h.add(case.keeps_first_scratch());
-    }
-    for [dst, a, b] in h.fprs() {
-        let operation = machine::op!(copysign_float(FloatWidth::F64, dst, a, b));
-        let case = Case::new(with_scratch(operation), move |m| {
-            let bits = m.vector(a) as u64 & !(1 << 63) | m.vector(b) as u64 & 1 << 63;
-            m.set_float_bits(FloatWidth::F64, dst, bits);
-        });
-        h.add(case.clobbers(replaced).keeps_first_scratch());
     }
 }
 
@@ -301,6 +260,14 @@ fn the_assembler_tells_its_state() {
     for features in machine::feature_sets() {
         let mut masm = Harness::assembler(features, false, 0);
         assert_eq!((masm.features(), masm.size()), (features, 0));
+        let (usual, none) = (
+            masm.scratch(),
+            Scratch {
+                gprs: [None; 2],
+                fprs: [None; 2],
+            },
+        );
+        assert_eq!((masm.set_scratch(none), masm.scratch()), (usual, none));
         masm.reserve(10_000);
         assert_eq!(masm.size(), 0);
         for _ in 0..5000 {

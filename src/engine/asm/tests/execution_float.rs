@@ -282,15 +282,13 @@ fn double_to_half(value: f64) -> u16 {
 
 /// Where there are no instructions for them, the case branches.
 fn if_supported(operation: Operation) -> Operation {
-    let Operation { describe, emit } = operation;
-    let emit = Box::new(move |masm: &mut MacroAssembler, target| {
+    operation.wrapped(RegisterSet::EMPTY, |masm, target, emit| {
         if masm.supports_f16() {
-            emit(masm, target);
+            emit(masm);
         } else {
             masm.jump(target);
         }
-    });
-    Operation { describe, emit }
+    })
 }
 
 #[test]
@@ -326,13 +324,13 @@ fn half_precision() {
             }));
         }
 
-        let Operation { describe, emit } = op!(convert_f16_bits_to_f64(fpr, gpr));
-        let emit = Box::new(move |masm: &mut MacroAssembler, target| {
-            emit(masm, target);
+        let operation = op!(convert_f16_bits_to_f64(fpr, gpr));
+        let operation = operation.wrapped(keeper, move |masm, _, emit| {
+            emit(masm);
             masm.canonicalize_nan(fpr);
             masm.move_f64_to_bits(keeper, fpr);
         });
-        let case = Case::new(if_supported(Operation { describe, emit }), move |m| {
+        let case = Case::new(if_supported(operation), move |m| {
             let value = half_to_double(m.get64(gpr) as u16);
             m.set64(
                 keeper,

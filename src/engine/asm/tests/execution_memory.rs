@@ -145,17 +145,13 @@ fn integers_are_loaded_from_an_absolute_address_without_scratch_registers() {
     for src in h.absolute_addresses() {
         for size in SIZES {
             let dst = h.any_gpr();
-            let operation = Operation {
-                describe: op!(load(size, dst, src)).describe,
-                emit: Box::new(move |masm, _| {
-                    let scratch = masm.set_scratch(bun_engine_asm::Scratch {
-                        gprs: [None; 2],
-                        fprs: [None; 2],
-                    });
-                    masm.load(size, dst, src);
-                    masm.set_scratch(scratch);
-                }),
-            };
+            let operation = op!(load(size, dst, src)).wrapped(dst, |masm, _, emit| {
+                masm.set_scratch(bun_engine_asm::Scratch {
+                    gprs: [None; 2],
+                    fprs: [None; 2],
+                });
+                emit(masm);
+            });
             let case = Case::new(operation, move |m| m.set64(dst, m.load(size, src)));
             h.add(case.accesses(src));
         }
@@ -364,12 +360,11 @@ fn atomic_compare_exchange() {
 
 /// `first` moves the stack pointer by `distance`, and a constant moves it back.
 fn moving_by(distance: i32, operation: Operation, model: impl Fn(&mut Machine) + 'static) -> Case {
-    let Operation { describe, emit } = operation;
-    let emit = Box::new(move |masm: &mut MacroAssembler, target| {
-        emit(masm, target);
+    let operation = operation.wrapped(SP, move |masm, _, emit| {
+        emit(masm);
         masm.sub64(SP, SP, distance);
     });
-    Case::new(Operation { describe, emit }, model)
+    Case::new(operation, model)
 }
 
 #[test]

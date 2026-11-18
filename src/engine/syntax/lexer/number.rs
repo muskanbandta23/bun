@@ -179,12 +179,7 @@ impl Lexer<'_> {
     }
 
     fn malformed_decimal(&mut self, start: usize, end: usize, message: &'static str) {
-        let kind = if end >= self.bytes.len() {
-            TokenKind::Unterminated
-        } else {
-            TokenKind::Invalid
-        };
-        self.fail(kind, start, end, message);
+        self.fail(self.kind_of_malformed(end), start, end, message);
     }
 
     /// The number, and whether it is written as an integer.

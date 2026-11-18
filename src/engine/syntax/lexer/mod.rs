@@ -187,6 +187,15 @@ impl<'a> Lexer<'a> {
         self.set(kind, start, end);
     }
 
+    /// Of a literal that is well formed up to `end`.
+    fn kind_of_malformed(&self, end: usize) -> TokenKind {
+        if end >= self.bytes.len() {
+            TokenKind::Unterminated
+        } else {
+            TokenKind::Invalid
+        }
+    }
+
     #[inline(never)]
     fn move_window(&mut self, offset: usize) {
         self.window

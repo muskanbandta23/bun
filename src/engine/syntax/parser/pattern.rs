@@ -92,7 +92,7 @@ impl Session<'_> {
     fn bind<const BUILD: bool>(&mut self, binder: Binder, token: Token) -> Parsed<Pattern> {
         let name = token.name();
         self.declare_bound_name(binder, name, token.start)?;
-        if BUILD && self.context.contains(Context::EXPORTING) {
+        if BUILD && binder != Binder::Assignment && self.context.contains(Context::EXPORTING) {
             self.export_declaration(name, "Cannot export a duplicate name '%'")?;
         }
         let declaration = binder.declaration();

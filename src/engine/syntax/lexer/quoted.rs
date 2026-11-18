@@ -41,12 +41,13 @@ impl Lexer<'_> {
                     self.token.is_elaborate = true;
                     match self.escape(offset + 1, self.is_strict()) {
                         Ok(end) => offset = end,
-                        Err(bad) => return self.malformed_string(start, bad.end, bad.message),
+                        Err(bad) => return self.malformed_escape(start, offset, &bad),
                     }
                 }
                 Some(b'\n') if self.source.text.at(offset) > 0xff => offset += 1,
                 Some(b'\n' | b'\r') | None => {
-                    return self.malformed_string(start, offset, "Unexpected EOF");
+                    let kind = self.kind_of_malformed(offset);
+                    return self.fail(kind, start, offset, "Unexpected EOF");
                 }
                 Some(_) => offset = self.skip_stop(offset),
             }
@@ -54,13 +55,24 @@ impl Lexer<'_> {
         }
     }
 
-    fn malformed_string(&mut self, start: usize, end: usize, message: &'static str) {
-        let kind = if end >= self.bytes.len() {
-            TokenKind::Unterminated
+    /// The token takes in the one digit after `\x` only if something unusual is in the string before.
+    #[cold]
+    fn malformed_escape(&mut self, start: usize, backslash: usize, bad: &BadEscape) {
+        let mut is_escaped = false;
+        let is_plain = self.bytes[start..backslash].iter().all(|&byte| {
+            let follows_backslash = is_escaped;
+            is_escaped = !is_escaped && byte == b'\\';
+            match byte {
+                b'0'..=b'9' | b'u' | 0x0e..=0x1f | 0x7f.. => !follows_backslash,
+                _ => byte >= 0x0e || chars::is_newline(byte),
+            }
+        });
+        let end = if is_plain && self.byte(backslash + 1) == b'x' {
+            backslash + 2
         } else {
-            TokenKind::Invalid
+            bad.end
         };
-        self.fail(kind, start, end, message);
+        self.fail(self.kind_of_malformed(bad.end), start, end, bad.message);
     }
 
     /// `offset` is past the backslash.

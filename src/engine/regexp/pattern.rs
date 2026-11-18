@@ -1,8 +1,8 @@
-use bun_engine_text::Text;
+use bun_engine_text::{AllocError, Text};
 
-use crate::build::{GroupNames, build};
+use crate::construct::{GroupNames, build};
 use crate::tree::Tree;
-use crate::{Error, Flags};
+use crate::{Error, Flags, Form};
 
 /// A parsed pattern.
 pub struct Pattern {
@@ -12,7 +12,7 @@ pub struct Pattern {
 
 impl Pattern {
     pub fn new(source: Text<'_>, flags: Flags) -> Result<Pattern, Error> {
-        let (tree, names, _) = build(source, flags)?;
+        let (tree, names) = build(source, flags)?;
         Ok(Pattern { tree, names })
     }
 
@@ -30,5 +30,13 @@ impl Pattern {
     #[inline]
     pub fn group_names(&self) -> &GroupNames {
         &self.names
+    }
+
+    pub fn into_group_names(self) -> GroupNames {
+        self.names
+    }
+
+    pub fn form(&self) -> Result<Option<Form>, AllocError> {
+        Form::of(&self.tree)
     }
 }

@@ -1,4 +1,3 @@
-#![cfg(target_arch = "x86_64")]
 #![allow(clippy::disallowed_methods)]
 
 use bun_engine_asm::prelude::*;
@@ -19,7 +18,7 @@ impl Client<MacroAssembler> for Plain {
         None
     }
     fn exit(&mut self, masm: &mut MacroAssembler, site: &ExitSite<'_>) {
-        match site.state[0] {
+        match site.state.iter().next().unwrap() {
             Location::Gpr(reg) => masm.move64(abi::RETURN_GPRS[0], reg),
             Location::Frame(offset) => masm.load64(
                 abi::RETURN_GPRS[0],

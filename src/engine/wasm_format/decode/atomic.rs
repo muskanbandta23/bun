@@ -33,7 +33,7 @@ const UPDATES: [AtomicOp; 6] = [
     AtomicOp::Exchange,
 ];
 
-impl<M: Mode> Decoder<'_, M> {
+impl<M: Mode> Decoder<'_, '_, M> {
     #[inline(never)]
     pub(super) fn atomic<V: Visitor<Error = M::Error>>(
         &mut self,

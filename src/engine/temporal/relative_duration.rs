@@ -4,12 +4,12 @@ use core::cmp::Ordering;
 
 use bun_engine_text::Text;
 
-use crate::plain_date_time::{add, rounded_difference, total_difference};
+use crate::plain_date_time::{rounded_difference, total_difference};
 use crate::rounding::Rounding;
 use crate::settings::DifferenceSettings;
 use crate::unit::UnitGroup;
 use crate::{
-    DateDuration, Duration, Error, IsoDateTime, Overflow, PlainDate, RelativeTo, Result,
+    DateDuration, Duration, Error, IsoDateTime, Overflow, PlainDate, PlainTime, RelativeTo, Result,
     RoundOptions, RoundingIncrement, TimeDuration, Unit, UnitOption,
 };
 
@@ -128,9 +128,11 @@ impl Duration {
     }
 
     fn ends_from(&self, date: PlainDate) -> Result<(IsoDateTime, IsoDateTime)> {
-        let start = IsoDateTime::at_midnight(date.iso_date());
-        let end = add(start, self, date.calendar(), Overflow::Constrain)?;
-        Ok((start, end))
+        let (start, calendar) = (date.iso_date(), date.calendar());
+        let (days, time) = PlainTime::MIDNIGHT.add_with_carry(self.time_with_24_hour_days());
+        let date = calendar.add(start, self.date().with_days(0), Overflow::Constrain)?;
+        let date = calendar.add(date, DateDuration::from_days(days), Overflow::Constrain)?;
+        Ok((IsoDateTime::at_midnight(start), IsoDateTime { date, time }))
     }
 }
 

@@ -12,7 +12,7 @@ fn utc(text: &str) -> f64 {
 fn enter(cache: &DateCache, zone: &str) {
     assert!(set_time_zone_override(Text::from_ascii(zone)));
     assert!(cache.is_stale());
-    cache.reset();
+    cache.refresh();
     assert!(!cache.is_stale());
 }
 
@@ -66,7 +66,7 @@ fn local_times(cache: &DateCache) {
         ("2024-11-03", "2024-11-03T00:00:00.000Z"),
     ] {
         let time = cache.parse(Text::from_ascii(local));
-        assert_eq!(iso_string(time).as_deref(), Some(expected));
+        assert_eq!(iso_string(time).unwrap().to_string(), expected);
     }
     let too_late = make_date_from_integers([275_760, 8, 12, 20, 0, 0, 1]);
     assert!(time_clip(cache.utc(too_late)).is_nan());
@@ -101,7 +101,7 @@ fn transitions_that_are_days_apart(cache: &DateCache) {
     enter(cache, "America/Noronha");
     let days = [1, 7, 8, 14, 15, 25];
     for (first, second) in days.iter().flat_map(|a| days.iter().map(move |b| (a, b))) {
-        cache.reset();
+        let cache = DateCache::default();
         for &day in [first, second] {
             let noon = make_date_from_integers([2000, 9, day, 12, 0, 0, 0]);
             let hours = if (8..15).contains(&day) { -1 } else { -2 };
@@ -114,14 +114,17 @@ fn transitions_that_are_days_apart(cache: &DateCache) {
 
 fn changes_of_zone(cache: &DateCache) {
     enter(cache, "Asia/Kolkata");
-    assert!(!cache.reset());
+    assert!(!cache.refresh());
     assert_eq!(
         to_string(cache, 0.0),
         "Thu Jan 01 1970 05:30:00 GMT+0530 (India Standard Time)"
     );
+    let kolkata = cache.time_zone();
+    assert!(set_time_zone_override(Text::from_ascii("IST")));
+    assert!(!cache.refresh());
     assert!(set_time_zone_override(Text::from_ascii("UTC")));
-    assert_eq!(cache.time_zone().identifier(), "Asia/Kolkata");
-    assert!(cache.reset());
+    assert_eq!(cache.time_zone(), kolkata);
+    assert!(cache.refresh());
     assert_eq!(
         to_string(cache, 0.0),
         "Thu Jan 01 1970 00:00:00 GMT+0000 (Coordinated Universal Time)"

@@ -94,8 +94,10 @@ impl PlainDateTime {
 
     /// AddDurationToDateTime
     pub fn add(self, duration: &Duration, overflow: Overflow) -> Result<PlainDateTime> {
-        let date_time = add(self.iso_date_time(), duration, self.calendar, overflow)?;
-        PlainDateTime::new(date_time, self.calendar)
+        let (days, time) = self.time.add_with_carry(duration.time_with_24_hour_days());
+        let date_duration = duration.date().with_days(days);
+        let date = self.calendar.add(self.date, date_duration, overflow)?;
+        PlainDateTime::new(IsoDateTime { date, time }, self.calendar)
     }
 
     pub fn subtract(self, duration: &Duration, overflow: Overflow) -> Result<PlainDateTime> {
@@ -158,21 +160,6 @@ impl PlainDateTime {
         text.push_calendar(self.calendar, show_calendar);
         Ok(text)
     }
-}
-
-/// The date of the result is within the limits.
-#[inline]
-pub(crate) fn add(
-    start: IsoDateTime,
-    duration: &Duration,
-    calendar: CalendarId,
-    overflow: Overflow,
-) -> Result<IsoDateTime> {
-    let (days, time) = start.time.add_with_carry(duration.time());
-    let date_duration = duration.date();
-    let date_duration = date_duration.with_days(date_duration.days + days);
-    let date = calendar.add(start.date, date_duration, overflow)?;
-    Ok(IsoDateTime { date, time })
 }
 
 /// DifferenceISODateTime

@@ -43,38 +43,16 @@ pub fn parse_time_zone(text: Text<'_>) -> Result<TimeZone> {
     })
 }
 
-/// For a `timeZone` option with `Purpose::ZonedDateTime`.
-pub const TIME_ZONE_OPTION_NOT_ACCEPTED: Error = Error::Type(
-    "ZonedDateTime.toLocaleString does not accept a timeZone option; the ZonedDateTime's time zone is used",
-);
-
-/// In the order in which CreateDateTimeFormat reads them, less those that are only validated.
-#[derive(Clone, PartialEq, Eq, Debug)]
+/// In the order in which CreateDateTimeFormat reads them, less the time zone and those that are only validated.
+#[derive(Clone, PartialEq, Eq, Default, Debug)]
 pub struct Options {
     pub calendar: Option<KeywordValue>,
     pub numbering_system: Option<KeywordValue>,
     pub hour12: Option<bool>,
     pub hour_cycle: Option<HourCycle>,
-    /// That of the system if the option is absent.
-    pub time_zone: TimeZone,
     pub components: Components,
     pub date_style: Option<Style>,
     pub time_style: Option<Style>,
-}
-
-impl Options {
-    pub fn new(time_zone: TimeZone) -> Options {
-        Options {
-            calendar: None,
-            numbering_system: None,
-            hour12: None,
-            hour_cycle: None,
-            time_zone,
-            components: Components::default(),
-            date_style: None,
-            time_style: None,
-        }
-    }
 }
 
 /// The arguments `required` and `defaults` of CreateDateTimeFormat.

@@ -3,6 +3,7 @@ use super::assembler::Assembler;
 use super::immediate::BitmaskImm;
 use super::load_store::{Mem, PairMem};
 use super::macro_assembler::{MacroAssembler, all_ones, arithmetic_imm, signed, unsigned};
+use super::neon_opcode::{Arrangement, NeonAcross, NeonUnary};
 use super::opcode::{
     AddSub, AtomicUpdate, Barrier, Bitfield, Cc, Extend, IndexExtend, Logical, MoveWide,
     MultiplyAdd, MultiplyAddLong, Select, ShiftOp, Unary, WithCarry,
@@ -250,7 +251,7 @@ impl MacroAssembly for MacroAssembler {
         if self.asm.buffer.overflowed {
             usize::MAX
         } else {
-            self.asm.buffer.len
+            self.asm.buffer.len as usize
         }
     }
 
@@ -669,8 +670,10 @@ impl MacroAssembly for MacroAssembler {
             Width::W64 => FloatWidth::F64,
         };
         self.asm.fmov_to_fpr(same_width, bytes, src);
-        self.asm.basic_count_ones(bytes, bytes);
-        self.asm.basic_add_bytes(bytes, bytes);
+        self.asm
+            .neon_unary(NeonUnary::Cnt, Arrangement::B8, bytes, bytes);
+        self.asm
+            .neon_across(NeonAcross::Addv, Arrangement::B8, bytes, bytes);
         self.asm.fmov_from_fpr(FloatWidth::F32, dst, bytes);
     }
 

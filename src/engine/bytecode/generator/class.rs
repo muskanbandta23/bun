@@ -1,14 +1,14 @@
 //! Classes.
 
 use bun_engine_syntax::ast::{
-    Binding, Class, ClassElement, ClassElementKind, ClassId, ExprId, FunctionId, PropertyKey,
-    ScopeId, Stmt,
+    Binding, BindingFlags, Class, ClassElement, ClassElementKind, ClassId, ExprId, FunctionId,
+    PropertyKey, ScopeId, Stmt,
 };
 use bun_engine_syntax::{EvalContext, FieldKind, FieldSource, FunctionFlags, FunctionKind, Name};
 
 use super::scope::{Layout, Place};
 use super::{Dest, Generator};
-use crate::function::{Fields, FunctionName, Origin, Visibility};
+use crate::function::{Fields, Origin, Visibility};
 use crate::operand::{DefineFlags, Operand, Register, StaticError};
 use crate::scope::{ScopeKind, SlotKind};
 
@@ -38,7 +38,6 @@ impl<'a> Generator<'a> {
         body: Option<ScopeId>,
         computed_keys: u32,
     ) -> u32 {
-        use bun_engine_syntax::ast::BindingFlags;
         let first_binding = self.b.bindings.len();
         let (register, mut layout) = (self.temp(), Layout::new(ScopeKind::Class));
         for binding in self.bindings_of(head) {
@@ -90,6 +89,7 @@ impl<'a> Generator<'a> {
     }
 
     /// `name` is the name of an anonymous class, where that is computed.
+    #[inline(never)]
     pub(super) fn class(
         &mut self,
         start: u32,
@@ -185,8 +185,10 @@ impl<'a> Generator<'a> {
             self.new_field_initializer(scratch, start, class, instance, brand.is_some(), false);
             self.put(place, Name::CLASS_FIELD_INITIALIZER, None, scratch.into());
         }
-        if let Some(own_name) = class.own_name.filter(|_| class.head_scope.is_some()) {
-            self.initialize(own_name, constructor.into());
+        for binding in self.bindings_of(class.head_scope) {
+            if binding.flags.contains(BindingFlags::USED) {
+                self.initialize(binding.name, constructor.into());
+            }
         }
         if !statics.sources.is_empty() {
             self.new_field_initializer(scratch, start, class, statics, false, true);
@@ -211,6 +213,7 @@ impl<'a> Generator<'a> {
                 info.origin |= Origin::DEFAULT_CONSTRUCTOR;
                 info.origin -= Origin::BUILTIN | Origin::NO_POSITIONS;
                 info.visibility = Visibility::Public;
+                info.parameters_start = "(function ".len() as u32;
                 info
             }
         };
@@ -366,10 +369,6 @@ impl<'a> Generator<'a> {
         is_static: bool,
     ) {
         let mut info = self.synthetic_function_info(FunctionKind::FieldInitializer, start + 1);
-        info.name = FunctionName::Source {
-            start: 0,
-            length: 0,
-        };
         info.flags.set(FunctionFlags::STATIC, is_static);
         info.visibility = info.visibility.max(Visibility::Private);
         (info.start, info.parameters_start, info.end) = (start, start, class.end);
@@ -393,6 +392,7 @@ impl<'a> Generator<'a> {
         self.top = mark;
     }
 
+    #[inline(never)]
     pub(super) fn define_field(
         &mut self,
         start: u32,
@@ -450,6 +450,7 @@ impl<'a> Generator<'a> {
         }
     }
 
+    #[inline(never)]
     pub(super) fn run_static_block(&mut self, node: &Stmt, function: FunctionId) {
         let block = self.temp();
         self.new_function(block, function, node.start);

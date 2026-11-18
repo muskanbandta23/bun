@@ -8,12 +8,12 @@ use smallvec::SmallVec;
 use super::allocate::{Allocation, Stored};
 use super::code::{AT_HOME, Class, Code, Home, Operand, Registers, Role, Site, VReg};
 use super::lower::Instruction;
-use super::moves::{Move, Spot, SpotKind};
+use super::moves::{Move, MoveKind, Spot, SpotKind};
 use crate::analysis::{Cfg, Frequencies};
 use crate::client::{CallSite, Client, ExitSite, Frame, PatchpointSite};
 use crate::ir::{
     Action, Bits64, Block, Edge, Function, Input, Location, Op, Origin, Output, PatchpointFlags,
-    Table, Value,
+    Span, State, Table, Type, Value,
 };
 
 pub(crate) trait Isa: Instruction {
@@ -31,6 +31,7 @@ pub(crate) trait Isa: Instruction {
     fn emit_move(
         masm: &mut Self::Masm,
         function: &Function,
+        frame: &Frame,
         from: Location,
         to: Location,
         class: Class,
@@ -143,6 +144,44 @@ fn register(reg: Reg) -> Location {
     }
 }
 
+/// Where the values of a state are at one place in the code.
+#[derive(Clone, Copy)]
+pub struct StateLocations<'a> {
+    places: Places<'a>,
+    state: State,
+    vregs: Span<VReg>,
+    assigned: Span<u8>,
+}
+
+impl<'a> StateLocations<'a> {
+    pub fn state(self) -> State {
+        self.state
+    }
+
+    pub fn len(self) -> usize {
+        self.vregs.len()
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.vregs.is_empty()
+    }
+
+    /// Two that are not empty and have the same key are of the same state and have the same locations.
+    pub fn key(self) -> u32 {
+        self.assigned.range().start as u32
+    }
+
+    pub fn iter(self) -> impl ExactSizeIterator<Item = Location> + use<'a> {
+        let Places {
+            code, allocation, ..
+        } = self.places;
+        let pairs = code.vreg_lists[self.vregs]
+            .iter()
+            .zip(&allocation.state_assigned[self.assigned]);
+        pairs.map(move |(&vreg, &assigned)| self.places.location(vreg, assigned))
+    }
+}
+
 /// Hands out the operands of an instruction in the order in which lowering gave them.
 #[derive(Clone)]
 pub(crate) struct Operands<'a> {
@@ -178,6 +217,10 @@ impl Operands<'_> {
 
     pub(crate) fn class_of_next(&self) -> Class {
         self.places.code.vregs[self.rest.as_slice()[0].vreg].class
+    }
+
+    pub(crate) fn function(&self) -> &Function {
+        self.places.function
     }
 
     pub(crate) fn any_is_in(&self, reg: Gpr) -> bool {
@@ -350,14 +393,14 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
 
     fn emit_blocks(&mut self, mut origins: Option<&mut Vec<(Label, Origin)>>) {
         let (places, moves) = (self.places, &self.places.allocation.moves);
-        let mut note = |masm: &mut I::Masm, position: u32| {
-            if let Some(origins) = &mut origins {
-                let origin = places.code.heads[position as usize].origin;
-                if origins.last().is_none_or(|&(_, last)| last != origin) {
-                    origins.push((masm.mark(), origin));
-                }
+        let mut note = |masm: &mut I::Masm, origin: Origin| {
+            if let Some(origins) = &mut origins
+                && origins.last().is_none_or(|&(_, last)| last != origin)
+            {
+                origins.push((masm.mark(), origin));
             }
         };
+        let origin_at = |position: u32| places.code.heads[position as usize].origin;
         I::prepare(self.masm);
         for index in 0..self.tables.layout.len() {
             self.block = self.tables.layout[index];
@@ -371,7 +414,7 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
             let data = places.code.blocks[self.block];
             let label = self.label(self.block);
             self.masm.bind(label);
-            note(self.masm, data.first);
+            note(self.masm, origin_at(data.first));
             if self.cfg.predecessors(self.block).is_empty() {
                 let entry = places
                     .function
@@ -387,7 +430,7 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
             let mut next_move = self.tables.first_moves[self.block] as usize;
             for position in data.first..data.end {
                 self.position = position;
-                note(self.masm, position);
+                note(self.masm, origin_at(position));
                 while let Some(&(before, step)) = moves.get(next_move)
                     && before == position
                 {
@@ -413,7 +456,8 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
         for index in 0..self.tables.exits.len() {
             let (label, position) = self.tables.exits[index];
             self.masm.bind(label);
-            note(self.masm, position);
+            let check = places.code.sites[self.site(position)].value;
+            note(self.masm, places.function.origin(check));
             self.emit_exit(position);
         }
         self.client.out_of_line(self.masm);
@@ -424,7 +468,7 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
             self.places.spot::<I>(step.from, step.class),
             self.places.spot::<I>(step.to, step.class),
         );
-        let keeps_flags = !step.is_swap
+        let keeps_flags = step.kind != MoveKind::Swap
             && matches!(
                 from,
                 Location::Gpr(_) | Location::Fpr(_) | Location::Frame(_)
@@ -436,10 +480,17 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
         {
             self.flags_describe = None;
         }
-        if step.is_swap {
+        if step.kind == MoveKind::Swap {
             self.masm.swap(from.gpr(), to.gpr());
         } else if from != to {
-            I::emit_move(self.masm, self.places.function, from, to, step.class);
+            I::emit_move(
+                self.masm,
+                self.places.function,
+                self.frame,
+                from,
+                to,
+                step.class,
+            );
         }
     }
 
@@ -526,14 +577,14 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
             })
     }
 
-    fn push_state(&mut self, site: Site) {
-        let (places, data) = (self.places, &self.places.code.sites[site]);
-        let state = places.code.vreg_lists[data.state_vregs]
-            .iter()
-            .zip(&places.allocation.state_assigned[data.state_assigned]);
-        self.tables
-            .locations
-            .extend(state.map(|(&vreg, &assigned)| places.location(vreg, assigned)));
+    fn state_at(&self, site: Site) -> StateLocations<'a> {
+        let data = &self.places.code.sites[site];
+        StateLocations {
+            places: self.places,
+            state: data.state,
+            vregs: data.state_vregs,
+            assigned: data.state_assigned,
+        }
     }
 
     fn emit_exit(&mut self, position: u32) {
@@ -552,16 +603,14 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
                 self.cursor(position),
             );
         }
-        self.tables.locations.clear();
-        self.push_state(site);
         self.client.exit(
             self.masm,
             &ExitSite {
                 function: self.places.function,
                 frame: self.frame,
                 token: self.places.function.op(data.value).exit().unwrap().token,
-                origin: self.places.code.heads[position as usize].origin,
-                state: &self.tables.locations,
+                origin: self.places.function.origin(data.value),
+                state: self.state_at(site),
             },
         );
     }
@@ -602,7 +651,7 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
             };
             self.tables.locations.push(location);
         }
-        self.push_state(site);
+        let state = self.state_at(site);
         let ends_block = site_data.value == self.last_value();
         let returns_to_first = ends_block && data.action != Action::Custom;
         let edges = function
@@ -611,10 +660,9 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
             .skip(returns_to_first.into());
         let successors: SmallVec<[Label; 4]> = edges.map(|edge| self.label_of_edge(edge)).collect();
         let next_label = self.next_block.expand().map(|next| self.label(next));
-        let (results, rest) = self.tables.locations.split_at(outputs.len());
-        let (operands, state) = rest.split_at(inputs.len());
+        let (results, operands) = self.tables.locations.split_at(outputs.len());
 
-        let own_scratch = I::lend_scratch(self.masm, data.clobbers_early);
+        let own_scratch = I::lend_scratch(self.masm, data.clobbers_early & data.clobbers_late);
         match data.action {
             Action::Custom => self.client.patchpoint(
                 self.masm,
@@ -667,6 +715,13 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
         }
         self.masm.set_scratch(own_scratch);
         if returns_to_first && function.successors(self.block).len() != 0 {
+            if data.flags.contains(PatchpointFlags::UNEXTENDED_RESULTS) {
+                for (&(ty, _), result) in outputs.iter().zip(&self.tables.locations) {
+                    if ty == Type::I32 {
+                        self.masm.zero_extend32(result.gpr(), result.gpr());
+                    }
+                }
+            }
             self.jump();
         }
     }

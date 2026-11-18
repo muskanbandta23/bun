@@ -16,6 +16,8 @@ use subtag::{Subtags, is_singleton, is_value, lowercase_subtags};
 
 use crate::Result;
 
+static ENGLISH: [StaticString; 2] = [StaticString::new(b"en"), StaticString::new(b"en-US")];
+
 /// Structurally valid and canonical.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct LanguageTag(StringRef);
@@ -23,6 +25,10 @@ pub struct LanguageTag(StringRef);
 impl LanguageTag {
     /// `None` unless `text` is structurally valid.
     pub(crate) fn canonicalize(text: Text<'_>) -> Result<Option<LanguageTag>> {
+        // The most common ones do not load the aliases.
+        if let Some(tag) = ENGLISH.iter().find(|it| it.get().text() == text) {
+            return Ok(Some(LanguageTag(StringRef::from_static(tag))));
+        }
         let Some(subtags) = lowercase_subtags(text)? else {
             return Ok(None);
         };
@@ -36,9 +42,8 @@ impl LanguageTag {
         Ok(LanguageTag(StringRef::try_concat(parts)?))
     }
 
-    /// `tag` is canonical.
-    pub(crate) fn from_static(tag: &'static StaticString) -> LanguageTag {
-        LanguageTag(StringRef::from_static(tag))
+    pub(crate) fn english() -> LanguageTag {
+        LanguageTag(StringRef::from_static(&ENGLISH[0]))
     }
 
     pub fn string(&self) -> &StringRef {

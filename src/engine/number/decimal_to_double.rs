@@ -101,13 +101,18 @@ pub(crate) fn from_long_decimal(digits: impl Iterator<Item = u8> + Clone, point:
 }
 
 /// `digits` start with a nonzero one.
-fn compare(mut digits: impl Iterator<Item = u8>, point: i64, expansion: Expansion) -> Ordering {
-    let mut expected = expansion.digits();
-    if point != i64::from(expected.point()) {
-        return point.cmp(&i64::from(expected.point()));
+fn compare(mut digits: impl Iterator<Item = u8>, point: i64, mut other: Expansion) -> Ordering {
+    let head = other.head();
+    if point != i64::from(head.point) {
+        return point.cmp(&i64::from(head.point));
     }
-    for expected in expected.by_ref() {
-        let ordering = digits.next().unwrap_or(0).cmp(&expected);
+    let other_digits = head
+        .block
+        .into_iter()
+        .skip(head.zeros)
+        .chain(other.flatten());
+    for other_digit in other_digits {
+        let ordering = digits.next().unwrap_or(0).cmp(&(other_digit - b'0'));
         if ordering.is_ne() {
             return ordering;
         }

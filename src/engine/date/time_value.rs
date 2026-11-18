@@ -1,5 +1,6 @@
 //! Time values and the arithmetic of ECMA-262, 21.4.1.
 
+use core::ops::RangeInclusive;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::civil::days_from_civil;
@@ -9,8 +10,8 @@ pub const MS_PER_MINUTE: f64 = 60_000.0;
 pub const MS_PER_HOUR: f64 = 3_600_000.0;
 pub const MS_PER_DAY: f64 = 86_400_000.0;
 pub const MAX_TIME_VALUE: f64 = 8.64e15;
-/// No clock is a day away from UTC.
-pub(crate) const MAX_LOCAL_TIME: f64 = MAX_TIME_VALUE + MS_PER_DAY;
+pub(crate) const TIME_VALUES: RangeInclusive<i64> =
+    -(MAX_TIME_VALUE as i64)..=MAX_TIME_VALUE as i64;
 
 /// The time value of now.
 pub fn current_time() -> f64 {
@@ -29,6 +30,15 @@ pub fn time_clip(time: f64) -> f64 {
     }
 }
 
+#[inline]
+pub(crate) fn time_clip_integer(time: i64) -> f64 {
+    if TIME_VALUES.contains(&time) {
+        time as f64
+    } else {
+        f64::NAN
+    }
+}
+
 /// The result is not finite if an argument is not, which `make_date` turns into NaN.
 #[inline]
 pub fn make_time(hour: f64, minute: f64, second: f64, millisecond: f64) -> f64 {
@@ -41,14 +51,29 @@ pub fn make_time(hour: f64, minute: f64, second: f64, millisecond: f64) -> f64 {
 /// `month` is from zero. NaN if the year that it falls in does not fit in 32 bits.
 #[inline]
 pub fn make_day(year: f64, month: f64, date: f64) -> f64 {
-    let month = month.trunc();
-    let years_in_months = (month / 12.0).floor();
-    let year = year.trunc() + years_in_months;
-    let month = month - years_in_months * 12.0;
-    if f64::from(year as i32) != year || !(0.0..12.0).contains(&month) {
-        return f64::NAN;
+    let integers = match (year.to_int_checked(), month.to_int_checked()) {
+        (Some(year), Some(month)) => Some((year, month)),
+        _ => balance_large_year_and_month(year, month),
+    };
+    match integers.and_then(|(year, month)| first_day_of_month(year, month)) {
+        Some(day) => day as f64 + date.trunc() - 1.0,
+        None => f64::NAN,
     }
-    days_from_civil(year as i32, month as u8 + 1, 1) as f64 + date.trunc() - 1.0
+}
+
+#[cold]
+fn balance_large_year_and_month(year: f64, month: f64) -> Option<(i32, i32)> {
+    let years_in_months = (month.trunc() / 12.0).floor();
+    Some((
+        (year.trunc() + years_in_months).to_int_checked()?,
+        (month.trunc() - years_in_months * 12.0).to_int_checked()?,
+    ))
+}
+
+#[inline(always)]
+fn first_day_of_month(year: i32, month: i32) -> Option<i64> {
+    let year = year.checked_add(month.div_euclid(12))?;
+    Some(days_from_civil(year, month.rem_euclid(12) as u8 + 1, 1))
 }
 
 #[inline]
@@ -71,10 +96,10 @@ pub fn make_full_year(year: f64) -> f64 {
 #[inline]
 pub fn make_date_from_integers(components: [i32; 7]) -> f64 {
     let [year, month, day, hour, minute, second, millisecond] = components;
-    let Some(year) = year.checked_add(month.div_euclid(12)) else {
+    let Some(first_day) = first_day_of_month(year, month) else {
         return f64::NAN;
     };
-    let days = days_from_civil(year, month.rem_euclid(12) as u8 + 1, 0) + i64::from(day);
+    let days = first_day + i64::from(day) - 1;
     let time = i64::from(hour) * 3_600_000
         + i64::from(minute) * 60_000
         + i64::from(second) * 1000
@@ -82,8 +107,9 @@ pub fn make_date_from_integers(components: [i32; 7]) -> f64 {
     days as f64 * MS_PER_DAY + time as f64
 }
 
-/// msFromTime of a time value that is not NaN.
+/// msFromTime. Zero for NaN.
 #[inline]
 pub fn ms_from_time(time: f64) -> u16 {
-    (time as i64).rem_euclid(1000) as u16
+    let time: i64 = time.to_int_checked().unwrap_or(0);
+    (time.wrapping_sub(*TIME_VALUES.start()) as u64 % 1000) as u16
 }

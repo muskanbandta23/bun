@@ -2,7 +2,7 @@ use bun_engine_date::{iso_string, parse_cookie_date, parse_date_as_utc};
 use bun_engine_standalone as _;
 
 fn iso(time: f64) -> Option<String> {
-    iso_string(time).as_deref().map(String::from)
+    iso_string(time).map(|text| text.to_string())
 }
 
 #[test]

@@ -490,8 +490,7 @@ public:
       if (!P.isValid())
         continue;
       std::string file = P.getFilename();
-      if (!matchesAny(file, under) ||
-          file.find("vendor/WebKit") != std::string::npos)
+      if (!matchesAny(file, under))
         continue;
       os << mangledKey(FD) << "\t" << summaryKey(FD) << "\t"
          << Summary::kindName(s.kind) << "\t" << s.exitStates << "\t"
@@ -1065,8 +1064,7 @@ private:
     if (file.find(m_onlyUnder) != std::string::npos)
       m_analyzer.analyzeFunction(FD);
     else if (!ExportSummaries.empty() &&
-             Analyzer::matchesAny(file, m_exportUnder) &&
-             file.find("vendor/WebKit") == std::string::npos)
+             Analyzer::matchesAny(file, m_exportUnder))
       m_analyzer.summarizeForExport(FD);
   }
 

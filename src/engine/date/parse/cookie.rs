@@ -1,7 +1,7 @@
 //! The formats of RFC 822, RFC 850 and RFC 1123, and variations that servers send.
 
 use crate::civil::days_from_civil;
-use crate::time_value::MAX_TIME_VALUE;
+use crate::time_value::TIME_VALUES;
 use crate::zone::system_time_zone;
 
 const MONTHS: [&[u8; 3]; 12] = [
@@ -84,6 +84,7 @@ impl Reader<'_> {
 
     /// After spaces, a plus and a minus, each if it is there. Nothing is consumed unless the number is strictly inside the
     /// range of `i32`.
+    #[inline(never)]
     fn integer(&mut self) -> Option<i32> {
         let mut reader = *self;
         reader.skip_while(is_space);
@@ -248,7 +249,7 @@ pub fn parse_cookie_date(text: &[u8]) -> Option<i64> {
         year => year,
     };
     let time = days_from_civil(year, month as u8, day as u8) * 86_400 + i64::from(seconds);
-    if time.abs() > MAX_TIME_VALUE as i64 / 1000 {
+    if !TIME_VALUES.contains(&time.saturating_mul(1000)) {
         return None;
     }
     let offset = match offset {

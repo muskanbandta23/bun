@@ -14,7 +14,7 @@ use crate::error::IcuResult;
 use crate::language_tag::Key;
 use crate::language_tag::subtag::Subtag;
 use crate::locale_resolver::{LocaleResolver, ResolvedLocale};
-use crate::utf16::Utf16;
+use crate::utf16::Utf16Buffer;
 use crate::{AvailableLocales, Cache, Error, KeywordValue, LanguageTag, Named, Result, collation};
 
 option_enum! {
@@ -137,12 +137,14 @@ impl Collator {
     }
 
     /// CompareStrings
-    #[inline]
+    #[inline(always)]
     pub fn compare(&self, a: Text<'_>, b: Text<'_>) -> Result<Ordering> {
-        match self.0.root_order.and_then(|order| order.compare(a, b)) {
-            Some(order) => Ok(order),
-            None => self.0.compare(a, b),
+        if let (Text::Latin1([x, ..]), Text::Latin1([y, ..])) = (a, b)
+            && let Some(order) = self.0.root_order.and_then(|it| it.decide(*x, *y))
+        {
+            return Ok(order);
         }
+        self.0.compare(a, b)
     }
 }
 
@@ -207,13 +209,22 @@ impl Shared {
         })
     }
 
+    #[inline(never)]
     fn compare(&self, a: Text<'_>, b: Text<'_>) -> Result<Ordering> {
+        match self.root_order.and_then(|order| order.compare(a, b)) {
+            Some(order) => Ok(order),
+            None => self.compare_with_icu(a, b),
+        }
+    }
+
+    #[inline(never)]
+    fn compare_with_icu(&self, a: Text<'_>, b: Text<'_>) -> Result<Ordering> {
         let collator = (self.collator).get_or_try_init(|| self.settings.open(&self.locale))?;
         let order = match (a, b) {
             (Text::Latin1(a), Text::Latin1(b)) if a.is_ascii() && b.is_ascii() => {
                 collator.compare_utf8(a, b)
             }
-            _ => collator.compare(&Utf16::new(a)?, &Utf16::new(b)?),
+            _ => collator.compare(Utf16Buffer::new().widen(a)?, Utf16Buffer::new().widen(b)?),
         };
         order.or_error(Error::Plain("Failed to compare strings."))
     }

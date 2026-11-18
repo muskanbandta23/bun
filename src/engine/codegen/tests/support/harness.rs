@@ -229,6 +229,11 @@ pub(crate) trait Subject {
     fn narrow(&mut self, case: Case) -> Case {
         case
     }
+
+    /// What helps to understand a failure and takes long to find out.
+    fn describe(&mut self, _case: &Case) -> String {
+        String::new()
+    }
 }
 
 thread_local! {
@@ -303,8 +308,11 @@ fn report(subject: &mut impl Subject, case: Case, problem: &str) -> String {
     }
     let problem = test_catching(subject, &case).expect_err("the failure can be repeated");
     let quiets = case.program.function.quiets_nans;
-    let target = case.world.target;
-    format!("seed {seed}, {target:?}, quiets NaNs: {quiets}\n{problem}")
+    format!(
+        "seed {seed}, {:?}, quiets NaNs: {quiets}\n{problem}\n{}",
+        case.world.target,
+        subject.describe(&case)
+    )
 }
 
 /// Panics if the subject fails a test.

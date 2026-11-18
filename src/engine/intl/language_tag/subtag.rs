@@ -11,6 +11,7 @@ pub(crate) struct Subtag([u8; MAX_LENGTH]);
 
 impl Subtag {
     pub(crate) const UND: Subtag = Subtag(*b"und\0\0\0\0\0");
+    pub(crate) const WORLD: Subtag = Subtag(*b"001\0\0\0\0\0");
 
     pub(crate) fn new(bytes: &[u8]) -> Option<Subtag> {
         if bytes.is_empty() || !bytes.iter().all(u8::is_ascii_alphanumeric) {

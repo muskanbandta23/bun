@@ -8,10 +8,12 @@
 )]
 
 pub(crate) mod datum;
+pub(crate) mod disassembly;
 pub(crate) mod generator;
 pub(crate) mod harness;
 pub(crate) mod interpreter;
 pub(crate) mod memory;
+pub(crate) mod native;
 pub(crate) mod random;
 pub(crate) mod reducer;
 pub(crate) mod sketch;

@@ -213,6 +213,7 @@ impl Generator<'_> {
         self.top = mark;
     }
 
+    #[inline(never)]
     fn block(
         &mut self,
         node: &Stmt,
@@ -246,6 +247,7 @@ impl Generator<'_> {
         }
     }
 
+    #[inline(never)]
     fn hoist_function(&mut self, function: FunctionId, position: u32) {
         let node = &self.ast[function];
         if !node.flags.contains(FunctionFlags::HOISTED_AS_VARIABLE) {
@@ -280,6 +282,7 @@ impl Generator<'_> {
         })
     }
 
+    #[inline(never)]
     fn if_statement(&mut self, mut id: StmtId, completion: Option<Register>) {
         let (ast, done) = (self.ast, self.asm().label());
         while let StmtKind::If {
@@ -329,6 +332,7 @@ impl Generator<'_> {
             && self.tail_blockers == 0
     }
 
+    #[inline(never)]
     fn return_statement(&mut self, start: u32, value: Option<ExprId>) {
         let value = match value {
             None => self.undefined(),
@@ -339,13 +343,14 @@ impl Generator<'_> {
                 self.await_value(result, value, start);
                 result.into()
             }
-            Some(value) => self.expr(value, Dest::Any),
+            Some(value) => self.expr(value, self.return_dest()),
         };
         self.exit(Exit::Return(value));
     }
 
     // Loops
 
+    #[inline(never)]
     fn do_while(&mut self, node: &Stmt, body: StmtId, test: ExprId, completion: Option<Register>) {
         self.reset_if_jumps_early(completion, body);
         let [top, on_continue, on_break] = core::array::from_fn(|_| self.asm().label());
@@ -380,6 +385,7 @@ impl Generator<'_> {
     }
 
     /// The test comes twice, so that a turn takes one jump.
+    #[inline(never)]
     fn test_first_loop(
         &mut self,
         test: Option<ExprId>,
@@ -418,6 +424,7 @@ impl Generator<'_> {
         self.asm().bind(on_break);
     }
 
+    #[inline(never)]
     fn for_statement(&mut self, node: &Stmt, completion: Option<Register>) {
         let StmtKind::For {
             init,
@@ -455,6 +462,7 @@ impl Generator<'_> {
 
     // `switch`
 
+    #[inline(never)]
     fn switch(
         &mut self,
         discriminant: ExprId,
@@ -505,6 +513,7 @@ impl Generator<'_> {
         self.asm().bind(on_break);
     }
 
+    #[inline(never)]
     fn switch_by_table(
         &mut self,
         value: Operand,
@@ -554,6 +563,7 @@ impl Generator<'_> {
 
     // `try`
 
+    #[inline(never)]
     fn try_statement(&mut self, node: &Stmt, completion: Option<Register>) {
         let StmtKind::Try {
             block,
@@ -627,8 +637,10 @@ impl Generator<'_> {
         self.top -= 1;
         let catch = self.asm().last();
         let scope = parameter.and(parameter_scope);
-        if let (Some(parameter), Some(scope)) = (parameter, scope) {
+        if let Some(scope) = scope {
             self.enter_block_scope(scope);
+        }
+        if let Some(parameter) = parameter {
             match (self.resolve_pattern_register(parameter), catch) {
                 (Some(register), Some((site, _))) => {
                     use crate::operand::Field;

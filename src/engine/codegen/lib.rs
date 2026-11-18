@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 pub mod analysis;
+mod arm64;
 mod bitset;
 mod client;
 mod compiler;
@@ -16,8 +17,10 @@ mod x64;
 
 pub use bitset::BitSet;
 pub use client::{CallSite, Client, ExitSite, Frame, PatchpointSite};
+#[cfg(target_arch = "aarch64")]
+pub use compiler::Arm64Compiler as Compiler;
 #[cfg(target_arch = "x86_64")]
 pub use compiler::X64Compiler as Compiler;
-pub use compiler::{Compiled, Options, TooComplex, X64Compiler};
-pub use machine::Emitted;
+pub use compiler::{Arm64Compiler, Compiled, Options, TooComplex, X64Compiler};
+pub use machine::{Emitted, StateLocations};
 pub use target::Target;

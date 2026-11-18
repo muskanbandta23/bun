@@ -67,6 +67,7 @@ struct Heads {
     lexical: Link,
     variable: Link,
     is_exported: bool,
+    is_marked: bool,
 }
 
 /// A function in a block that may get a variable too.
@@ -186,6 +187,11 @@ impl Scopes {
     #[inline]
     pub(crate) fn kind(&self) -> ScopeKind {
         self.frame().kind
+    }
+
+    /// How many scopes are open.
+    pub(crate) fn depth(&self) -> usize {
+        self.frames.len()
     }
 
     /// Whether the innermost scope is the one that `var` declares in.
@@ -355,9 +361,13 @@ impl Scopes {
         self.hand_up(tentative.start, |reference| reference);
     }
 
-    pub(crate) fn discard_tentative(&mut self, tentative: Tentative) {
+    /// The code has turned out to run many times.
+    pub(crate) fn commit_tentative_as_repeated(&mut self, tentative: Tentative) {
         self.floor = tentative.outer_floor;
-        self.drop_references(tentative.start);
+        self.hand_up(tentative.start, |reference| Reference {
+            access: reference.access.repeated(),
+            ..reference
+        });
     }
 
     fn drop_references(&mut self, start: u32) {
@@ -570,20 +580,18 @@ impl Scopes {
 
     /// False if there is one of that name already.
     pub(crate) fn declare_parameter(&mut self, name: Name) -> bool {
-        match self.own_variable(name) {
-            Some(earlier) => {
-                core::mem::replace(&mut earlier.binding.kind, BindingKind::Parameter)
-                    != BindingKind::Parameter
-            }
-            None => {
-                self.add_variable(name, BindingKind::Parameter, 0);
-                true
-            }
+        let is_new = self.own_variable(name).is_none();
+        if is_new {
+            self.add_variable(name, BindingKind::Parameter, 0);
         }
+        is_new
     }
 
+    /// After the parameters, which hide it.
     pub(crate) fn declare_callee(&mut self, name: Name) {
-        self.add_variable(name, BindingKind::Callee, 0);
+        if self.own_variable(name).is_none() {
+            self.add_variable(name, BindingKind::Callee, 0);
+        }
     }
 
     /// A name of the engine in the scope of a class.
@@ -662,6 +670,20 @@ impl Scopes {
     /// False if the module exports something by that name already.
     pub(crate) fn export_name(&mut self, name: Name) -> bool {
         !core::mem::replace(&mut self.heads(name).is_exported, true)
+    }
+
+    /// False if it is marked already.
+    pub(crate) fn mark_name(&mut self, name: Name) -> bool {
+        !core::mem::replace(&mut self.heads(name).is_marked, true)
+    }
+
+    pub(crate) fn unmark_name(&mut self, name: Name) {
+        self.heads(name).is_marked = false;
+    }
+
+    /// For `eval` code that has turned out to be strict.
+    pub(crate) fn keep_variables_in_root(&mut self) {
+        self.frame_mut().kind = ScopeKind::Function;
     }
 
     /// False if the top level of the module declares no such thing.
@@ -827,9 +849,12 @@ impl Scopes {
             Some(FunctionKind::Arrow) => return None,
             Some(function) => function,
             None => {
-                let is_root = matches!(frame.kind, ScopeKind::Script | ScopeKind::Function);
-                return (is_root && name == Name::THIS_VALUE)
-                    .then_some(Some(BindingKind::Internal));
+                let provided = match frame.kind {
+                    ScopeKind::Script | ScopeKind::Function => Name::THIS_VALUE,
+                    ScopeKind::Module => Name::IMPORT_META,
+                    _ => return None,
+                };
+                return (name == provided).then_some(Some(BindingKind::Internal));
             }
         };
         let exists = match name {

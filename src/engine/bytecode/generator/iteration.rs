@@ -192,6 +192,7 @@ impl Generator<'_> {
         self.tail_blockers -= 1;
     }
 
+    #[inline(never)]
     pub(super) fn for_in(&mut self, it: &Enumeration, completion: Option<Register>) {
         let range = (it.divot, it.target_start, it.end);
         if let Some(call) = self.is_call(it.target) {
@@ -271,6 +272,7 @@ impl Generator<'_> {
         self.get_by_id(state.nth(1), state.into(), Name::NEXT);
     }
 
+    #[inline(never)]
     pub(super) fn for_of(&mut self, it: &Enumeration, completion: Option<Register>) {
         let (divot, start, end) = (it.divot, it.target_start, it.end);
         if let Some(call) = self.is_call(it.target) {
@@ -390,6 +392,7 @@ impl Generator<'_> {
         self.top = mark;
     }
 
+    #[inline(never)]
     pub(super) fn for_await(&mut self, it: &Enumeration, completion: Option<Register>) {
         let range = (it.divot, it.target_start, it.end);
         if let Some(call) = self.is_call(it.target) {
@@ -462,6 +465,7 @@ impl Generator<'_> {
         self.asm().resume(generator, point);
     }
 
+    #[inline(never)]
     pub(super) fn await_value(&mut self, dst: Register, value: Operand, position: u32) {
         self.debug_hook(DebugHook::WillAwait, position);
         self.suspend(value, SuspendKind::Await);
@@ -476,6 +480,7 @@ impl Generator<'_> {
         self.asm().bind(normal);
     }
 
+    #[inline(never)]
     pub(super) fn yield_value(&mut self, argument: Option<ExprId>, dst: Dest) -> Operand {
         let received = self.temp_dst(dst);
         let value = match argument {
@@ -487,6 +492,7 @@ impl Generator<'_> {
         self.deliver(dst, received)
     }
 
+    #[inline(never)]
     pub(super) fn yield_delegate(&mut self, node: &Expr, dst: Dest) -> Operand {
         let ExprKind::YieldDelegate {
             argument,
@@ -548,11 +554,13 @@ impl Generator<'_> {
         self.asm().bind(on_return);
         let (has_method, leave) = (self.asm().label(), self.asm().label());
         self.get_by_id(scratch, iterator, Name::RETURN);
-        self.asm().jump_if_not_nullish(scratch, has_method);
         if is_async {
+            self.asm().jump_if_not_nullish(scratch, has_method);
             self.await_value(value, value.into(), divot);
+            self.asm().jump(leave);
+        } else {
+            self.asm().jump_if_nullish(scratch, leave);
         }
-        self.asm().jump(leave);
         self.asm().bind(has_method);
         self.position(divot, node.start, end);
         self.call_method(value, scratch, iterator, Some(value.into()));

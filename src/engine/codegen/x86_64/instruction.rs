@@ -4,8 +4,8 @@
 use bun_engine_asm::x64::{Alu, BitCount, Cc, FloatFlags, RBP, ShiftOp, ShiftX, Sse, Unary};
 use bun_engine_asm::{AtomicOp, FloatWidth, Gpr, Scale, Sign, Size, Width, X64Features};
 
-use crate::ir::{Checked, Type, Value, Wide};
-use crate::machine::{Instruction, Lowering, Shared};
+use crate::ir::{Checked, Load, Type, Value, Wide};
+use crate::machine::{Instruction, Lowering, Shared, VectorInstruction};
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Amode {
@@ -54,6 +54,7 @@ pub(crate) enum Inst {
     LoadOutgoing(i32, Type),
     StoreResult(i32, Type),
     Shared(Shared),
+    Vector(VectorInstruction),
 
     /// Result, left, right.
     Alu(Alu, Width, Source),
@@ -80,7 +81,11 @@ pub(crate) enum Inst {
 
     /// Result, address.
     LoadFloat(Type, Amode),
+    LoadVector(Load, Amode),
+    /// Result, vector, address.
+    LoadLane(Size, u8, Amode),
     /// Value, address.
+    StoreLane(Size, u8, Amode),
     Store(Size, Stored, Amode),
     StoreFloat(Type, Amode),
     Update {
@@ -121,6 +126,7 @@ pub(crate) enum Inst {
 
 impl Instruction for Inst {
     type Features = X64Features;
+    type Selection = ();
 
     const COPY: Self = Self::Copy;
     const ZERO_EXTEND: Self = Self::ZeroExtend;

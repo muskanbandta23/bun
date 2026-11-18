@@ -185,10 +185,6 @@ NEVER_INLINE void putDirectNamed(JSC::VM& vm, JSC::JSObject* object, ASCIILitera
 
 using namespace JSC;
 
-#if !defined(BUN_WEBKIT_VERSION)
-#define BUN_WEBKIT_VERSION "unknown"
-#endif
-
 using JSGlobalObject = JSC::JSGlobalObject;
 using JSValue = JSC::JSValue;
 using JSString = JSC::JSString;
@@ -302,7 +298,7 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
         { "llhttp", "9.4.2" },
         { "mimalloc", BUN_VERSION_MIMALLOC },
         { "uwebsockets", BUN_VERSION_UWS },
-        { "webkit", BUN_VERSION_WEBKIT },
+        { "webkit", BUN_VERSION_ENGINE },
         { "zig", BUN_VERSION_ZIG },
         // Use commit hash for zlib to match test expectations
         { "zlib", BUN_VERSION_ZLIB_HASH },

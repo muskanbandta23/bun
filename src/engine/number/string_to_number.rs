@@ -1,4 +1,5 @@
 use bun_engine_text::{CodeUnit, Text, with_text};
+use bun_engine_unicode::is_str_white_space;
 
 use crate::decimal_scanner::scan_sign;
 use crate::double::with_sign;
@@ -34,23 +35,6 @@ fn uncommon_to_number<T: CodeUnit>(units: &[T]) -> f64 {
         Some((value, length)) if trim_start(&units[length..]).is_empty() => value,
         _ => f64::NAN,
     }
-}
-
-fn is_str_white_space(unit: u32) -> bool {
-    matches!(
-        unit,
-        0x09..=0x0d
-            | 0x20
-            | 0xa0
-            | 0x1680
-            | 0x2000..=0x200a
-            | 0x2028
-            | 0x2029
-            | 0x202f
-            | 0x205f
-            | 0x3000
-            | 0xfeff
-    )
 }
 
 pub(crate) fn trim_start<T: CodeUnit>(units: &[T]) -> &[T] {

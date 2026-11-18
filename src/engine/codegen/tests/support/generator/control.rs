@@ -1,5 +1,8 @@
 //! Statements, and structured control flow.
 
+#[path = "control_shapes.rs"]
+mod shapes;
+
 use bun_engine_asm::Cond;
 use bun_engine_codegen::ir::{Binary, Block, Checked, Op, Successor, Type, Value, Variable};
 
@@ -77,6 +80,7 @@ enum Statement {
     Switch,
     Graph,
     Pressure,
+    Shape,
 }
 
 impl Generator<'_> {
@@ -135,6 +139,7 @@ impl Generator<'_> {
             (if_nests(weights.switches), Statement::Switch),
             (if_turns(weights.graphs), Statement::Graph),
             (if_nests(weights.pressure), Statement::Pressure),
+            (if_nests(weights.shapes), Statement::Shape),
         ]);
         match statement {
             Statement::Theme => {
@@ -170,6 +175,7 @@ impl Generator<'_> {
                     Statement::Loop => self.loop_statement(share),
                     Statement::Switch => self.switch_statement(share),
                     Statement::Graph => self.graph_statement(share),
+                    Statement::Shape => self.shape_statement(share),
                     _ => self.pressure(share),
                 }
                 self.nesting -= 1;

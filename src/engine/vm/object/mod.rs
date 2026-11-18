@@ -7,6 +7,8 @@ mod class;
 mod condition;
 mod define;
 mod descriptor;
+mod element_moves;
+mod element_search;
 mod element_writer;
 mod elements;
 mod final_object;
@@ -39,8 +41,10 @@ pub use class::{AsciiLiteral, Class, ClassOps};
 pub use condition::{
     ConditionKind, ConditionSet, PropertyCondition, Watchability, watch_condition,
 };
+pub(crate) use condition::may_be_special_property;
 pub use define::validate_property_descriptor;
 pub use descriptor::PropertyDescriptor;
+pub use element_search::{Direction, SearchResult};
 pub use element_writer::{ElementWriter, HoleMode};
 pub use elements::{Elements, ElementsMut, Int32Elements, PutDirectIndexMode};
 pub use final_object::JsFinalObject;
@@ -54,7 +58,7 @@ pub use property_key::PropertyKey;
 pub use property_name_list::{DontEnumMode, PropertyNameList, PropertyNameMode};
 pub use property_offset::{Attributes, PropertyOffset};
 pub(crate) use reify::function_name;
-pub use shape::{CachedNames, Properties, Shape, ShapeFlags, ShapeId, ShapeSpec};
+pub use shape::{CachedNames, Properties, Shape, ShapeFlags, ShapeId, ShapeRareData, ShapeSpec};
 pub(crate) use shape_cache::ShapeCache;
 pub use slot::{
     CustomGetter, CustomSetter, DeleteKind, DeletePropertySlot, InternalMethod, PropertySlot,

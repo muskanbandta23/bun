@@ -145,6 +145,7 @@ impl<'a> Generator<'a> {
             self.position(class.divot, start, class.head_end);
         }
         (self.asm()).new_class(constructor, prototype, scope, function, heritage, name);
+        self.position_at(start);
         self.put_class_internal(class, Name::CLASS_HOME, prototype);
         self.put_class_internal(class, Name::CLASS_STATIC_HOME, constructor);
 

@@ -1,10 +1,11 @@
 use bun_engine_date::{
-    DateFields, LocalOffsets, TimeZone, TimeZoneId, days_from_civil, make_date_from_integers,
-    set_time_zone_override, system_time_zone, time_zone_generation,
+    DateCache, DateFields, LocalOffsets, TimeZone, TimeZoneId, days_from_civil,
+    make_date_from_integers, set_time_zone_override,
 };
 use bun_engine_standalone as _;
 use bun_engine_text::Text;
-use bun_icu::calendar::{Calendar, Side};
+use bun_icu::calendar::{Calendar, Field, ZoneName};
+use bun_icu::host_language;
 
 const HOUR: i32 = 3600;
 
@@ -151,30 +152,21 @@ fn every_zone_agrees_with_its_calendar() {
         while let Some(next) = rules.next_transition(time)
             && next < seconds(2040, 1, 1, 0)
         {
-            let local = next + i64::from(rules.offset_at(next));
-            for probe in [(time + next) / 2, next - 1, next, local - 1, local] {
+            for probe in [(time + next) / 2, next - 1, next] {
                 calendar.set_millis(probe as f64 * 1000.0).unwrap();
-                let [at, before, after] = [
-                    calendar.zone_offset(),
-                    calendar.zone_offset_from_local(Side::BeforeTransition),
-                    calendar.zone_offset_from_local(Side::AfterTransition),
-                ]
-                .map(|offset| offset.unwrap())
-                .map(|offset| (offset.standard + offset.daylight) / 1000);
-                assert_eq!(rules.offset_at(probe), at);
-                assert_eq!(
-                    rules.offsets_at_local(probe),
-                    LocalOffsets { before, after }
-                );
+                let [standard, daylight] = [Field::ZoneOffset, Field::DaylightOffset]
+                    .map(|field| calendar.get(field).unwrap());
+                let fields = DateFields::in_zone(probe as f64 * 1000.0, id).unwrap();
+                assert_eq!(rules.offset_at(probe) * 1000, standard + daylight);
+                assert_eq!(fields.is_daylight(), daylight != 0);
             }
             time = next;
         }
     }
 }
 
-#[test]
-fn zone_of_the_process() {
-    let host = system_time_zone();
+fn overrides() {
+    let host = DateCache::default().time_zone();
     for (name, expected) in [
         ("Japan", Some("Asia/Tokyo")),
         ("japan", None),
@@ -187,13 +179,41 @@ fn zone_of_the_process() {
         ("Asia/Tokyo\0", None),
         ("", Some(host.identifier())),
     ] {
-        let (zone, generation) = (system_time_zone(), time_zone_generation());
+        let cache = DateCache::default();
+        let before = cache.time_zone();
         let is_accepted = set_time_zone_override(Text::from_ascii(name));
         assert_eq!(is_accepted, expected.is_some());
-        assert_eq!(time_zone_generation() != generation, is_accepted);
+        assert_eq!(cache.is_stale(), is_accepted);
+        cache.refresh();
         assert_eq!(
-            system_time_zone().identifier(),
-            expected.unwrap_or_else(|| zone.identifier())
+            cache.time_zone().identifier(),
+            expected.unwrap_or_else(|| before.identifier())
         );
     }
+}
+
+fn names_agree_with_calendars() {
+    for id in TimeZoneId::primaries() {
+        assert!(set_time_zone_override(Text::from_ascii(id.identifier())));
+        let cache = DateCache::default();
+        let calendar = Calendar::open(&TimeZone::Named(id).icu_id(), c"").unwrap();
+        for month in [1, 7] {
+            let time = seconds(2010, month, 1, 0) as f64 * 1000.0;
+            let fields = cache.local_fields(time).unwrap();
+            let kind = match fields.is_daylight() {
+                true => ZoneName::Daylight,
+                false => ZoneName::Standard,
+            };
+            let name = calendar.zone_name(kind, host_language()).unwrap();
+            let expected = format!(" ({})", Text::Utf16(&name));
+            assert!(cache.time_string(fields).to_string().ends_with(&expected));
+        }
+    }
+}
+
+/// One test, because the zone is that of the process.
+#[test]
+fn zone_of_the_process() {
+    overrides();
+    names_agree_with_calendars();
 }

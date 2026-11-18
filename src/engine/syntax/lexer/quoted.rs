@@ -14,7 +14,7 @@ pub(crate) const TEMPLATE_IS_TAIL: u32 = 1;
 const TEMPLATE_IS_MALFORMED: u32 = 2;
 
 impl Lexer<'_> {
-    #[inline(never)]
+    #[inline(always)]
     pub(super) fn string(&mut self, start: usize, lead: Detail) {
         let end = self.stop(start + 1, |stops| stops.in_string);
         if self.byte(end) != self.byte(start) {

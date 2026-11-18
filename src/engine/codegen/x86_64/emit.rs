@@ -11,7 +11,7 @@ use bun_engine_asm::{
 use smallvec::SmallVec;
 
 use super::instruction::{Amode, Inst, Source, Stored, Test};
-use crate::client::Client;
+use crate::client::{Client, Frame};
 use crate::ir::{Checked, Function, Load, Location, Op, Type, Unary, Wide};
 use crate::machine::{Class, Emitter, Isa, Operands, Registers, Shared, SharesInstructions};
 
@@ -441,6 +441,7 @@ impl Isa for Inst {
     fn emit_move(
         masm: &mut MacroAssembler,
         function: &Function,
+        _: &Frame,
         from: Location,
         to: Location,
         class: Class,
@@ -456,6 +457,13 @@ impl Isa for Inst {
             }
             (Location::Constant(bits), Location::Gpr(dst)) if bits.get() == 0 => {
                 masm.move32(dst, 0)
+            }
+            (Location::Constant(bits), Location::Gpr(dst))
+                if bits.get() > u32::MAX.into()
+                    && let Some((base, distance)) =
+                        function.pinned_near(bits.get(), i32::MIN.into()..=i32::MAX.into()) =>
+            {
+                masm.compute_address(dst, Address::new(base, distance as i32));
             }
             (_, Location::Gpr(dst)) => {
                 load_location(
@@ -506,7 +514,7 @@ impl Isa for Inst {
             Self::Copy => {
                 let (class, to, from) = (o.class_of_next(), o.location(), o.location());
                 if from != to {
-                    Self::emit_move(emitter.masm, function, from, to, class);
+                    Self::emit_move(emitter.masm, function, emitter.frame, from, to, class);
                 }
             }
             Self::ZeroExtend => match (o.gpr(), o.location()) {

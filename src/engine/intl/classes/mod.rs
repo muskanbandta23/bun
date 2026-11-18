@@ -3,7 +3,9 @@
 #[macro_use]
 mod define;
 mod collator;
+mod date_time_format;
 mod display_names;
+mod duration_format;
 mod legacy;
 mod list_format;
 mod locale;
@@ -17,12 +19,15 @@ mod results;
 mod segmenter;
 mod state;
 mod string;
+mod temporal;
 
 use bun_engine_vm::{Cx, RealmSlot};
 pub use collator::locale_compare;
+pub use date_time_format::date_to_locale_string;
 pub use number_format::{bigint_to_locale_string, number_to_locale_string};
 pub use state::set_preferred_languages;
 pub use string::{normalize_string, to_locale_case};
+pub use temporal::temporal_to_locale_string;
 
 /// Sets the slot, and those that come with it. False if it belongs to another crate.
 pub fn initialize_slot(cx: &Cx, slot: RealmSlot) -> bool {
@@ -36,7 +41,9 @@ pub fn initialize_slot(cx: &Cx, slot: RealmSlot) -> bool {
             results::initialize
         }
         collator_constructor | collator_shape => collator::initialize,
+        date_time_format_constructor | date_time_format_shape => date_time_format::initialize,
         display_names_constructor | display_names_shape => display_names::initialize,
+        duration_format_constructor | duration_format_shape => duration_format::initialize,
         list_format_constructor | list_format_shape => list_format::initialize,
         locale_constructor | locale_shape => locale::initialize,
         number_format_constructor | number_format_shape => number_format::initialize,

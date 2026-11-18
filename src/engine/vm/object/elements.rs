@@ -7,17 +7,19 @@ use bun_alloc::AllocError;
 use bun_engine_text::Identifier;
 use bun_highway::elements::{index_of_nan, index_of_u64};
 
-use crate::heap::Owned;
+use crate::heap::{Owned, barrier};
 use crate::{
     Attributes, CellType, Cx, DeferredFire, DontEnumMode, ElementKind, Field, Gc, GetterSetter,
     GlobalObject, HoleMode, ImmutableArray, IndexingMode, JsArrayBufferView, JsObject, JsResult,
-    NoGc, PropertyDescriptor, PropertyNameList, PropertySlot, ProxyObject, ShapeFlags,
-    SparseElements, SparseEntry, Storage, TransitionKind, TypeFlags, Value, Vm, errors,
+    NoGc, PropertyDescriptor, PropertyNameList, PropertySlot, ProxyObject, PutPropertySlot,
+    ShapeFlags, SparseElements, SparseEntry, Storage, TransitionKind, TypeFlags, Value, Vm, errors,
 };
 
 pub(super) const MIN_SPARSE_INDEX: u32 = 100_000;
 const MIN_SPARSE_DISTANCE: u32 = 1000;
 const MIN_DENSITY: u32 = 8;
+/// For elements that are likely to be dense soon.
+const MIN_DENSITY_WHILE_FILLING: u32 = 256;
 
 pub(super) fn is_dense_enough(length: u32, count: usize) -> bool {
     (length / MIN_DENSITY) as usize <= count
@@ -270,6 +272,13 @@ impl JsObject {
         mode.kind().is_dense() && !mode.is_copy_on_write() && !mode.is_slow_put()
     }
 
+    /// Dense, and a store anywhere defines a plain data property. They may be shared.
+    #[inline(always)]
+    pub fn has_unrestricted_elements(&self) -> bool {
+        let mode = self.indexing_mode();
+        mode.kind().is_dense() && !mode.is_slow_put()
+    }
+
     #[inline(always)]
     pub fn try_get_dense(&self, index: u32) -> Option<Value> {
         let storage = self.storage();
@@ -358,6 +367,25 @@ impl JsObject {
         (!self.holes_must_forward_to_prototype() || !elements.has_holes()).then_some(elements)
     }
 
+    /// For a loop that has met a hole: where to go on, which is past the indices at the start of the range that
+    /// neither the object nor a prototype has, if that is worth finding out.
+    pub fn skip_holes(&self, range: Range<u64>) -> u64 {
+        /// Looking at an entry is that much cheaper than a turn of the loop.
+        const ENTRIES_PER_TURN: u64 = 8;
+        let (Some(sparse), Ok(start)) = (self.sparse_elements(), u32::try_from(range.start)) else {
+            return range.start;
+        };
+        let (count, turns) = (sparse.len() as u64, range.end.saturating_sub(range.start));
+        if count * count >= turns.saturating_mul(ENTRIES_PER_TURN)
+            || range.end > u64::from(u32::MAX)
+            || self.holes_must_forward_to_prototype()
+        {
+            return range.start;
+        }
+        let next = sparse.first_index_from(start);
+        next.map_or(range.end, |next| range.end.min(next.into()))
+    }
+
     fn dense_attributes(&self) -> Attributes {
         if !self.indexing_mode().is_slow_put() {
             return Attributes::NONE;
@@ -395,18 +423,29 @@ impl JsObject {
         }
     }
 
+    /// Ends the process if there is no memory.
     #[inline(always)]
     pub fn ensure_writable_elements(&self, vm: &Vm) {
-        if self.indexing_mode().is_copy_on_write() {
-            self.copy_shared_elements(vm)
-                .unwrap_or_else(|_| bun_alloc::out_of_memory());
-        }
+        self.try_ensure_writable_elements(vm)
+            .unwrap_or_else(|_| bun_alloc::out_of_memory());
     }
 
+    #[inline(always)]
+    pub fn try_ensure_writable_elements(&self, vm: &Vm) -> Result<(), AllocError> {
+        if self.indexing_mode().is_copy_on_write() {
+            return self.copy_shared_elements(vm, self.public_length());
+        }
+        Ok(())
+    }
+
+    /// Makes room for `needed` elements, and keeps no more than that.
     #[inline(never)]
-    fn copy_shared_elements(&self, vm: &Vm) -> Result<(), AllocError> {
-        let (kind, length) = (self.element_kind(), self.public_length());
-        let vector_length = Storage::optimal_vector_length(0, next_vector_length(length));
+    pub(super) fn copy_shared_elements(&self, vm: &Vm, needed: u32) -> Result<(), AllocError> {
+        let (kind, length) = (self.element_kind(), self.public_length().min(needed));
+        let mut vector_length = Storage::optimal_vector_length(0, length);
+        if vector_length < needed {
+            vector_length = grown_vector_length(0, length, needed);
+        }
         let mut deferred = DeferredFire::new(vm);
         let transition = TransitionKind::allocate(kind);
         let shape = self.shape();
@@ -442,19 +481,18 @@ impl JsObject {
         let shape = self.shape();
         let shape = shape.non_property_transition(vm, transition, &mut deferred);
         let capacity = shape.out_of_line_capacity();
-        let words = vector_length.max(1);
-        let storage = Storage::try_allocate(vm, 0, capacity, Some(words))?;
-        // SAFETY: new and of that size. The slots are copied, and the rest is cleared.
+        let storage = Storage::try_create(vm, capacity, kind, 0, vector_length.max(1))?;
+        // SAFETY: new and of that size.
         unsafe {
             if capacity != 0 {
                 self.storage()
                     .copy_words_to(storage, -1 - capacity as isize, capacity);
             }
             storage.set_lengths(public_length, vector_length);
-            storage.clear_elements(kind, 0, words);
             fill(storage);
             self.set_shape_and_storage(&shape, storage, false);
         }
+        self.did_change_as_prototype(vm, &shape);
         Ok(())
     }
 
@@ -463,6 +501,7 @@ impl JsObject {
             return Ok(sparse);
         }
         let sparse = SparseElements::create(vm);
+        sparse.try_reserve(self.count_dense_elements())?;
         let (length, attributes) = (self.public_length(), self.dense_attributes());
         for index in 0..length {
             if let Some(value) = self.try_get_dense(index) {
@@ -488,10 +527,8 @@ impl JsObject {
         let entries = sparse.entries();
         let capacity = self.shape().out_of_line_capacity();
         let vector_length = Storage::optimal_vector_length(capacity, length);
-        let kind = entries
-            .iter()
-            .map(|entry| ElementKind::for_value(entry.1.value))
-            .fold(ElementKind::Int32, ElementKind::max);
+        let values = entries.iter().map(|entry| entry.1.value);
+        let kind = ElementKind::Undecided.generalized_for(values);
         self.replace_elements(vm, kind, length, vector_length, |storage| {
             for &(index, entry) in &entries {
                 assert!(index < length);
@@ -528,39 +565,86 @@ impl JsObject {
                     *word = Value::bits_of((!number.is_nan()).then(|| Value::double(number)));
                 }
             }
-            crate::heap::barrier::publish_fence();
+            barrier::publish_fence();
             self.set_shape(&shape);
         }
     }
 
     /// Makes dense elements writable and able to represent what `kind` can.
     #[inline]
-    pub fn ensure_element_kind(&self, vm: &Vm, kind: ElementKind) {
+    pub fn ensure_element_kind(&self, vm: &Vm, kind: ElementKind) -> Result<(), AllocError> {
         assert!(self.element_kind().is_dense() && kind.is_dense());
-        self.ensure_writable_elements(vm);
+        self.try_ensure_writable_elements(vm)?;
         if self.element_kind() < kind {
             self.generalize_elements(vm, kind);
         }
+        Ok(())
     }
 
-    /// The elements are dense and writable.
-    #[inline(never)]
-    fn grow_vector(&self, vm: &Vm, length: u32) -> Result<(), AllocError> {
-        if length > Storage::MAX_VECTOR_LENGTH {
-            return Err(AllocError);
+    /// The unused words in front of the slots.
+    #[inline(always)]
+    pub(super) fn pre_capacity(&self, capacity: usize) -> usize {
+        if self.inline_flags().contains(TypeFlags::HAS_PRE_CAPACITY) {
+            // SAFETY: the flag says that there is a count.
+            unsafe { self.storage().pre_capacity(capacity) }
+        } else {
+            0
         }
-        let capacity = self.shape().out_of_line_capacity();
-        let vector_length = Storage::optimal_vector_length(capacity, next_vector_length(length));
-        let storage = Storage::try_allocate(vm, 0, capacity, Some(vector_length))?;
-        // SAFETY: larger than the old one in every part.
+    }
+
+    /// The elements are dense and writable, and there is no room for `needed`.
+    #[inline(never)]
+    fn grow_vector(&self, vm: &Vm, needed: u32) -> Result<(), AllocError> {
+        let (kind, capacity) = (self.element_kind(), self.shape().out_of_line_capacity());
+        let (used, old_length) = (self.public_length(), self.vector_length());
+        let vector_length = grown_vector_length(capacity, old_length, needed);
+        let (pre_capacity, header) = (self.pre_capacity(capacity), -1 - capacity as isize);
+        // SAFETY: each has the slots and the elements, and then holes.
         unsafe {
             let old = self.storage();
-            let used = old.public_length();
-            let count = capacity + 1 + used as usize;
-            old.copy_words_to(storage, -1 - capacity as isize, count);
+            let available = pre_capacity + old_length as usize;
+            // A queue goes on in the memory that it has, unless that is much more than it needs.
+            if (needed as usize * 5 / 4..=vector_length as usize * 4).contains(&available)
+                && pre_capacity != 0
+                && available <= Storage::MAX_VECTOR_LENGTH as usize
+                && !barrier::is_fenced()
+            {
+                let moved = old.shift_header(capacity, -(pre_capacity as isize));
+                moved.move_elements(pre_capacity as u32, 0, used);
+                moved.set_lengths(used, available as u32);
+                moved.clear_elements(kind, used, available as u32);
+                self.nuke_shape_and_set_storage(moved, false);
+                return Ok(());
+            }
+            let grown = (pre_capacity == 0).then(|| old.try_grow(vm, capacity, vector_length));
+            let (storage, initialized) = match grown.flatten() {
+                Some(storage) => (storage, old_length),
+                None => {
+                    let storage = Storage::try_allocate(vm, 0, capacity, Some(vector_length))?;
+                    old.copy_words_to(storage, header, capacity + 1 + used as usize);
+                    (storage, used)
+                }
+            };
             storage.set_lengths(used, vector_length);
-            storage.clear_elements(self.element_kind(), used, vector_length);
+            storage.clear_elements(kind, initialized, vector_length);
             self.set_storage(storage);
+        }
+        Ok(())
+    }
+
+    /// Makes the elements writable, with room for `needed`. Panics unless they are dense.
+    #[inline]
+    pub fn reserve_elements(&self, vm: &Vm, needed: u32) -> Result<(), AllocError> {
+        let mode = self.indexing_mode();
+        assert!(mode.kind().is_dense());
+        if needed > Storage::MAX_VECTOR_LENGTH {
+            return Err(AllocError);
+        }
+        if mode.is_copy_on_write() {
+            return self.copy_shared_elements(vm, needed.max(self.public_length()));
+        }
+        if needed > self.vector_length() {
+            return self.grow_vector(vm, needed);
         }
         Ok(())
     }
@@ -568,11 +652,7 @@ impl JsObject {
     /// Raises the public length. Panics unless the elements are dense.
     #[inline]
     pub(crate) fn ensure_public_length(&self, vm: &Vm, length: u32) -> Result<(), AllocError> {
-        assert!(self.element_kind().is_dense());
-        self.ensure_writable_elements(vm);
-        if length > self.vector_length() {
-            self.grow_vector(vm, length)?;
-        }
+        self.reserve_elements(vm, length)?;
         if length > self.public_length() {
             // SAFETY: inside the vector.
             unsafe { self.storage().set_public_length(length) };
@@ -603,9 +683,11 @@ impl JsObject {
                 let vector_length = Storage::optimal_vector_length(capacity, index + 1);
                 self.replace_elements(vm, needed, 0, vector_length, |_| {})?;
             }
-            kind if kind.is_dense() && stays_dense => self.ensure_element_kind(vm, needed),
+            kind if kind.is_dense() && stays_dense => {}
             _ => return self.store_sparse(vm, index, value, Attributes::NONE),
         }
+        self.reserve_elements(vm, index + 1)?;
+        self.ensure_element_kind(vm, needed)?;
         self.ensure_public_length(vm, index + 1)?;
         // SAFETY: inside, and the kind can represent the value.
         unsafe { store_unchecked(self.storage(), self.element_kind(), index, value) };
@@ -625,22 +707,31 @@ impl JsObject {
             self.notify_presence_of_indexed_accessors(vm);
         }
         let old_count = sparse.len();
+        sparse.try_reserve(1)?;
         sparse.insert(index, value, attributes);
         let length = self.public_length().max(index + 1);
         // SAFETY: not dense.
         unsafe { self.storage().set_public_length(length) };
-        if sparse.len() > old_count
-            && sparse.has_only_plain_entries()
-            && length <= Storage::MAX_VECTOR_LENGTH
-            && is_dense_enough(length, sparse.len())
-            && !self
-                .shape()
-                .has(ShapeFlags::ELEMENTS_ARE_SEALED | ShapeFlags::MAY_HAVE_INDEXED_ACCESSORS)
-        {
-            // It can stay sparse if there is no memory.
-            let _ = self.convert_sparse_to_dense(vm, &sparse, length);
+        if sparse.len() > old_count {
+            self.convert_to_dense_if_worthwhile(vm, &sparse);
         }
         Ok(())
+    }
+
+    pub(super) fn convert_to_dense_if_worthwhile(&self, vm: &Vm, sparse: &SparseElements) {
+        let (length, count) = (self.public_length(), sparse.len());
+        let restricted = ShapeFlags::ELEMENTS_ARE_SEALED | ShapeFlags::MAY_HAVE_INDEXED_ACCESSORS;
+        if (is_dense_enough(length, count)
+            || ((length / MIN_DENSITY_WHILE_FILLING) as usize <= count
+                && count >= MIN_SPARSE_DISTANCE as usize / MIN_DENSITY as usize
+                && sparse.is_being_filled(length)))
+            && length <= Storage::MAX_VECTOR_LENGTH
+            && sparse.has_only_plain_entries()
+            && !self.shape().has(restricted)
+        {
+            // It can stay sparse if there is no memory.
+            let _ = self.convert_sparse_to_dense(vm, sparse, length);
+        }
     }
 
     pub(crate) fn notify_presence_of_indexed_accessors(&self, vm: &Vm) {
@@ -749,6 +840,11 @@ impl JsObject {
                 return proxy
                     .put_index_with_receiver(cx, this, index, value, should_throw)
                     .map(Some);
+            }
+            if prototype.cell_type() == CellType::ModuleNamespaceObject {
+                let mut slot = PutPropertySlot::new(this, should_throw);
+                let name = Identifier::from_index(index);
+                return prototype.put(cx, name.name(), value, &mut slot).map(Some);
             }
             if CellType::TYPED_ARRAYS.contains(prototype.cell_type()) {
                 let length = prototype.cast::<JsArrayBufferView>().length();
@@ -897,7 +993,7 @@ impl JsObject {
         if let Some(sparse) = self.sparse_elements() {
             sparse.remove(index);
         } else {
-            self.ensure_writable_elements(cx);
+            cx.or_out_of_memory(self.try_ensure_writable_elements(cx))?;
             // SAFETY: there is an element at that index.
             unsafe {
                 self.storage()
@@ -924,8 +1020,10 @@ impl JsObject {
     }
 }
 
-pub(super) fn next_vector_length(length: u32) -> u32 {
-    (length + (length >> 1) + 4).min(Storage::MAX_VECTOR_LENGTH)
+/// At least `needed`, which is at most the limit.
+pub(super) fn grown_vector_length(capacity: usize, old: u32, needed: u32) -> u32 {
+    let amortized = (old + old / 2 + 4).min(Storage::MAX_VECTOR_LENGTH);
+    Storage::optimal_vector_length(capacity, needed.max(amortized))
 }
 
 /// # Safety

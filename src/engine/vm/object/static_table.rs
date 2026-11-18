@@ -4,7 +4,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_engine_macros::FieldOffsets;
-use bun_engine_text::{Identifier, PropertyName, Text};
+use bun_engine_text::{Identifier, PropertyName, Text, names};
 
 use crate::{
     Attributes, BuiltinId, Class, CustomGetter, CustomSetter, FunctionExecutable, Gc, Intrinsic,
@@ -14,14 +14,16 @@ use crate::{
 pub type BuiltinGenerator = unsafe extern "C" fn(&Vm) -> Gc<FunctionExecutable>;
 pub type PropertyCallback = unsafe extern "C" fn(&Vm, &JsObject) -> JsResult<Value>;
 /// For a value that takes no script to make.
-pub type PropertyMaker = fn(&Vm, &JsObject) -> Value;
+pub type PropertyMaker = fn(&crate::Cx, &JsObject) -> Value;
 
 /// Kinds of entries that only tables in Rust have.
 const ENGINE_BUILTIN: u32 = 1 << 24;
 const REALM_SLOT: u32 = 1 << 25;
 const CONSTANT_DOUBLE: u32 = 1 << 26;
-const CONSTANT_STRING: u32 = 1 << 27;
+const CONSTANT_NAME: u32 = 1 << 27;
 const MADE_VALUE: u32 = 1 << 28;
+const POSITION: u32 = 1 << 29;
+const PROTO_ACCESSOR: u32 = 1 << 30;
 
 /// In place of a size: the key is a static atom or symbol, not characters.
 const KEY_IS_NAME: usize = usize::MAX;
@@ -54,7 +56,8 @@ pub(crate) enum StaticValue {
     BuiltinGetter(BuiltinGenerator),
     EngineBuiltin(BuiltinId),
     Constant(Value),
-    String(PropertyName<'static>),
+    /// A string or a symbol.
+    Name(PropertyName<'static>),
     /// The offset of a `LazyField` in the object.
     LazyCell(usize),
     /// The offset of a `LazyClass` in the object.
@@ -154,7 +157,24 @@ impl StaticProperty {
             .union(Attributes::READ_ONLY)
             .union(Attributes::PROPERTY_CALLBACK);
         let value = value.as_ptr().as_ptr().cast_const().cast();
-        Self::new(name, attributes, CONSTANT_STRING, value, word(0))
+        Self::new(name, attributes, CONSTANT_NAME, value, word(0))
+    }
+
+    pub const fn symbol(name: PropertyName<'static>, value: PropertyName<'static>) -> Self {
+        Self::string(name, value).with(Attributes::DONT_DELETE)
+    }
+
+    /// Where a property enumerates that is defined when the object is made, such as the `length` of a constructor.
+    pub const fn position_of(name: PropertyName<'static>) -> StaticProperty {
+        Self::new(name, Attributes::DONT_ENUM, POSITION, word(0), word(0))
+    }
+
+    /// `Object.prototype.__proto__`, which stores to other names need not know of.
+    pub const fn proto_accessor(getter: NativeFunction, setter: NativeFunction) -> StaticProperty {
+        let mut property = Self::accessor(names::__proto__, getter, setter);
+        property.attributes =
+            Attributes::from_bits_retain(property.attributes.bits() | PROTO_ACCESSOR);
+        property
     }
 
     pub const fn realm_slot(name: PropertyName<'static>, slot: RealmSlot) -> StaticProperty {
@@ -193,6 +213,10 @@ impl StaticProperty {
         } else {
             self.attributes | Attributes::CUSTOM_VALUE
         }
+    }
+
+    pub(super) fn is_position(&self) -> bool {
+        self.attributes.bits() & POSITION != 0
     }
 
     fn static_name(pointer: *const c_void) -> PropertyName<'static> {
@@ -234,8 +258,8 @@ impl StaticProperty {
                 StaticValue::RealmSlot(RealmSlot::from_index(first.addr()))
             } else if has(CONSTANT_DOUBLE) {
                 StaticValue::Constant(Value::number(f64::from_bits(first.addr() as u64)))
-            } else if has(CONSTANT_STRING) {
-                StaticValue::String(Self::static_name(first))
+            } else if has(CONSTANT_NAME) {
+                StaticValue::Name(Self::static_name(first))
             } else if has(MADE_VALUE) {
                 StaticValue::Made(transmute::<*const c_void, PropertyMaker>(first))
             } else if attributes.contains(Attributes::BUILTIN) {
@@ -356,7 +380,10 @@ impl StaticTable {
         assert!(N == Self::index_length(values.len()));
         let (mut seen_attributes, mut position) = (0, 0);
         while position < values.len() {
-            seen_attributes |= values[position].attributes.bits() as u8;
+            let attributes = values[position].attributes.bits();
+            if attributes & PROTO_ACCESSOR == 0 {
+                seen_attributes |= attributes as u8;
+            }
             position += 1;
         }
         StaticTable {
@@ -382,12 +409,27 @@ impl StaticTable {
         unsafe { core::slice::from_raw_parts(self.values, self.count as usize) }
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &'static StaticProperty> + use<> {
+    pub(super) fn entries_and_positions(
+        &self,
+    ) -> impl Iterator<Item = &'static StaticProperty> + use<> {
         self.values().iter().filter(|entry| entry.key_size != 0)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &'static StaticProperty> + use<> {
+        self.entries_and_positions().filter(|it| !it.is_position())
     }
 
     #[inline]
     pub fn find(&self, name: PropertyName<'_>) -> Option<&'static StaticProperty> {
+        self.find_entry_or_position(name)
+            .filter(|it| !it.is_position())
+    }
+
+    #[inline]
+    pub(super) fn find_entry_or_position(
+        &self,
+        name: PropertyName<'_>,
+    ) -> Option<&'static StaticProperty> {
         let mut slot = (name.hash() & self.index_mask as u32) as usize;
         loop {
             // SAFETY: a bucket, or a link that the generator of the index wrote.

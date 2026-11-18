@@ -31,7 +31,7 @@ pub(crate) enum Buffer {
 }
 
 pub type FreeExternalBuffer =
-    unsafe extern "C" fn(context: *mut c_void, buffer: *mut c_void, byte_length: u32);
+    unsafe extern "C" fn(context: *mut c_void, buffer: *mut c_void, byte_length: usize);
 
 #[repr(C)]
 pub(crate) struct SubstringImpl {
@@ -155,9 +155,18 @@ impl StringImpl {
         self.flags() & Self::NEVER_ATOMIZE == 0
     }
 
-    pub(crate) fn set_never_atomize(&self) {
-        debug_assert!(!self.is_atom());
-        self.set_flags(self.flags() | Self::NEVER_ATOMIZE);
+    /// From now on nothing but the reference count changes. Panics for an atom of this thread.
+    pub fn set_never_atomize(&self) {
+        if !self.is_static() && self.can_become_atom() {
+            assert!(!self.is_atom());
+            self.hash();
+            self.set_flags(self.flags() | Self::NEVER_ATOMIZE);
+        }
+    }
+
+    /// Whether the string does nothing to keep its characters alive.
+    pub(crate) fn borrows_characters(&self) -> bool {
+        self.buffer() == Buffer::Internal && self.data.addr() != self.address() + Self::TAIL
     }
 
     pub(crate) fn mark_as_atom(&self, is_array_index: bool) {
@@ -318,7 +327,7 @@ impl StringImpl {
                         free(
                             external.context,
                             string.data.cast_mut(),
-                            string.byte_length() as u32,
+                            string.byte_length(),
                         );
                     }
                 }
@@ -328,11 +337,10 @@ impl StringImpl {
     }
 
     fn inline_size<T: CodeUnit>(length: usize) -> Result<usize, AllocError> {
-        let size = Self::TAIL + length.min(MAX_LENGTH + 1) * size_of::<T>();
-        if length > MAX_LENGTH || size > u32::MAX as usize {
+        if length > MAX_LENGTH.min((u32::MAX as usize - size_of::<StringImpl>()) / size_of::<T>()) {
             return Err(AllocError);
         }
-        Ok(size.max(size_of::<StringImpl>()))
+        Ok((Self::TAIL + length * size_of::<T>()).max(size_of::<StringImpl>()))
     }
 
     /// A string with one reference whose `length` units are not written yet.

@@ -1,6 +1,7 @@
 //! What compiled code, the stubs and the run time agree on: registers, frames and the layout of data.
 
 use core::mem::offset_of;
+use core::slice;
 use core::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, AtomicUsize};
 
 use bun_engine_asm::{Fpr, Gpr, Reg, abi};
@@ -22,7 +23,7 @@ pub const RESULT_GPRS: &[Gpr] = &abi::RETURN_GPRS;
 pub const RESULT_FPRS: &[Fpr] = abi::ARGUMENT_FPRS.split_at(2).0;
 
 /// Offsets from the frame pointer. The caller makes room for the two words above the return address, and the
-/// function fills them in.
+/// function fills them in. That goes for calls of operations too.
 pub mod frame {
     pub const INSTANCE: i32 = 16;
     pub const CALLEE: i32 = 24;
@@ -39,15 +40,23 @@ pub const fn callee_word(func: FuncIndex) -> u32 {
     func.0 << 2 | CALLEE_TAG
 }
 
-/// References are JavaScript values. An `i31ref` is an int32 whose sign is extended from 31 bits.
+/// In the frames of stubs, in place of a [`callee_word`].
+pub const STUB_CALLEE: u32 = i32::MAX as u32;
+
+/// References are JavaScript values. An `i31ref` is an int32 whose sign is extended from 31 bits, and below `any`
+/// there is no other int32.
 pub const NULL: i32 = 0x02;
 pub const INT32_TAG: u64 = 0xfffe_0000_0000_0000;
 
 pub const PAGE_SIZE_LOG2: u8 = 16;
 /// What follows the 4 GiB of a guarded memory. An access with `offset + size` up to this needs no check.
 pub const GUARD_SIZE: u64 = 1 << 31;
+/// What precedes a guarded memory. An access faults there too.
+pub const LOW_GUARD_SIZE: u64 = 1 << 21;
 /// A function that calls nothing and has a frame up to this size does not check the stack.
 pub const UNCHECKED_FRAME_SIZE: u32 = 256;
+/// How far the stack pointer may go below an address that was checked.
+pub const UNCHECKED_STACK_EXTENSION: u32 = 1024;
 
 /// How memory 0 is accessed. Other memories are always checked.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -73,18 +82,45 @@ pub struct Signature {
     pub stack_bytes: u32,
 }
 
+/// Those that are left for the arguments or the results of a function.
+pub struct Registers {
+    gprs: slice::Iter<'static, Gpr>,
+    fprs: slice::Iter<'static, Fpr>,
+}
+
+impl Registers {
+    #[inline]
+    pub fn for_arguments() -> Self {
+        Self {
+            gprs: ARGUMENT_GPRS.iter(),
+            fprs: ARGUMENT_FPRS.iter(),
+        }
+    }
+
+    #[inline]
+    pub fn for_results() -> Self {
+        Self {
+            gprs: RESULT_GPRS.iter(),
+            fprs: RESULT_FPRS.iter(),
+        }
+    }
+
+    #[inline]
+    pub fn next(&mut self, kind: ValKind) -> Option<Reg> {
+        match kind {
+            ValKind::F32 | ValKind::F64 | ValKind::V128 => self.fprs.next().map(|&reg| reg.into()),
+            _ => self.gprs.next().map(|&reg| reg.into()),
+        }
+    }
+}
+
 fn assign<A: smallvec::Array<Item = Place>>(
     types: &[ValType],
-    gprs: &[Gpr],
-    fprs: &[Fpr],
+    mut registers: Registers,
 ) -> (SmallVec<A>, u32) {
-    let (mut gprs, mut fprs, mut bytes) = (gprs.iter(), fprs.iter(), 0u32);
+    let mut bytes = 0u32;
     let places = types.iter().map(|ty| {
-        let register = match ty.kind() {
-            ValKind::F32 | ValKind::F64 | ValKind::V128 => fprs.next().map(|&reg| Reg::from(reg)),
-            _ => gprs.next().map(|&reg| Reg::from(reg)),
-        };
-        register.map_or_else(
+        registers.next(ty.kind()).map_or_else(
             || {
                 let size = ty.size_in_bytes().max(8);
                 let start = bytes.next_multiple_of(size);
@@ -99,9 +135,9 @@ fn assign<A: smallvec::Array<Item = Place>>(
 
 impl Signature {
     pub fn new(ty: FuncType<'_>) -> Self {
-        let (params, param_bytes) = assign(ty.params, ARGUMENT_GPRS, ARGUMENT_FPRS);
+        let (params, param_bytes) = assign(ty.params, Registers::for_arguments());
         let (mut results, result_bytes): (SmallVec<_>, _) =
-            assign(ty.results, RESULT_GPRS, RESULT_FPRS);
+            assign(ty.results, Registers::for_results());
         let stack_bytes = param_bytes.max(result_bytes);
         for place in &mut results {
             if let Place::Stack(offset) = place {
@@ -114,6 +150,19 @@ impl Signature {
             stack_bytes,
         }
     }
+
+    pub fn has_results_on_stack(&self) -> bool {
+        (self.results.iter()).any(|place| matches!(place, Place::Stack(_)))
+    }
+}
+
+/// Where the values are in the payload of an exception, and then its size. It is aligned to 8 bytes.
+pub fn payload_offsets(params: &[ValType]) -> impl Iterator<Item = u32> {
+    let ends = params.iter().scan(0, |end, ty| {
+        *end += ty.size_in_bytes().max(8);
+        Some(*end)
+    });
+    core::iter::once(0).chain(ends)
 }
 
 /// One for each function that a module defines and each [`MemoryMode`], shared by instances and threads.
@@ -121,7 +170,8 @@ impl Signature {
 pub struct FunctionSlot {
     /// The best code so far, or the stub that compiles some.
     pub entry: AtomicUsize,
-    /// Baseline code counts up, without synchronization, and asks for better code when this is no longer negative.
+    /// Baseline code counts up at its entry, without synchronization, and asks for better code when this is no longer
+    /// negative. Each loop has a countdown of its own.
     pub countdown: AtomicI32,
 }
 
@@ -170,6 +220,7 @@ impl Callable {
 #[derive(Clone, Copy)]
 pub struct FunctionElement {
     pub callable: Callable,
+    /// Zero until [`Operation::TableGet`] finds or makes it, whether the element is null or not.
     pub reference: u64,
 }
 
@@ -213,14 +264,14 @@ impl MemoryView {
 
 const _: () = assert!(size_of::<AtomicU64>() == 8);
 
-/// The start of a table, to which instances point.
+/// The instance's view of a table, brought up to date when the table grows.
 #[repr(C)]
-pub struct TableHeader {
+pub struct TableView {
     pub elements: usize,
     pub length: u64,
 }
 
-impl TableHeader {
+impl TableView {
     pub const ELEMENTS: i32 = offset_of!(Self, elements) as i32;
     pub const LENGTH: i32 = offset_of!(Self, length) as i32;
 }
@@ -236,17 +287,25 @@ pub struct HostLayout {
     /// One more than `struct_kind`.
     pub array_kind: u8,
     /// A byte of every cell. After a reference is stored in the cell, [`Operation::WriteBarrier`] is due if the byte
-    /// is not above `barrier_threshold`.
+    /// is not above the one at `barrier_threshold_address`.
     pub cell_state: i32,
-    pub barrier_threshold: u8,
+    /// While the byte there is not zero the collector may be reading objects. So a reference is stored at once, and
+    /// after the stores that initialize what it refers to. It becomes so only while a cell is allocated.
+    pub barrier_threshold_address: usize,
     /// The address of the `Rtt` of a struct or an array.
     pub object_rtt: i32,
     pub struct_fields: i32,
     /// 32 bits.
     pub array_length: i32,
     pub array_elements: i32,
-    /// The [`Callable`] in the object that a `funcref` is.
+    /// The [`Callable`] in the object that a `funcref` is. A word with [`Signature::stack_bytes`] follows.
     pub function_callable: i32,
+    /// In the object that an `exnref` is, the word that identifies its tag.
+    pub exception_tag: i32,
+    /// See [`payload_offsets`].
+    pub exception_payload: i32,
+    /// In the VM, the frame pointer of the stub that last called the host.
+    pub vm_top_frame: i32,
     /// An access to null plus an offset below this faults. Zero if faults are not handled.
     pub null_guard_size: u32,
 }
@@ -286,7 +345,7 @@ impl InstanceLayout {
         };
         // An instance without memory has a view too, for those who load the base without asking.
         let memories = take(module.memories().len().max(1), size_of::<MemoryView>());
-        let tables = take(module.tables().len(), 8);
+        let tables = take(module.tables().len(), size_of::<TableView>());
         let imported_globals = module.imported().globals as usize;
         let place = |(index, global): (usize, &bun_engine_wasm_format::Global)| {
             if global.mutable && (global.exported || index < imported_globals) {
@@ -344,9 +403,8 @@ impl InstanceLayout {
         self.memories + memory.0 as i32 * size_of::<MemoryView>() as i32
     }
 
-    /// The address of a [`TableHeader`].
     pub fn table(&self, table: TableIndex) -> i32 {
-        self.tables + table.0 as i32 * 8
+        self.tables + table.0 as i32 * size_of::<TableView>() as i32
     }
 
     pub fn import(&self, func: FuncIndex) -> i32 {
@@ -402,72 +460,110 @@ numbered! {
         IntegerOverflow,
         TruncationOutOfRange,
         StackOverflow,
+        /// An access to a struct or an array, and every fault at null.
         NullReference,
         NullExnref,
         NullI31,
-        NullStruct,
-        NullArray,
         NullFunction,
         NullAsNonNull,
+        NullArrayInitData,
+        NullArrayInitElem,
         CastFailure,
-        ArrayOutOfBounds,
+        ArrayGetOutOfBounds,
+        ArraySetOutOfBounds,
+        ArrayFillOutOfBounds,
+        ArrayCopyOutOfBounds,
+        ArrayInitDataOutOfBounds,
+        ArrayInitElemOutOfBounds,
+        StructNewFailure,
+        ArrayNewFailure,
+        ArrayNewDataFailure,
+        ArrayNewElemFailure,
         OutOfMemory,
     }
 }
 
 numbered! {
-    /// Functions of the run time. They follow the C calling convention and take the instance first, then the
-    /// immediates, then the operands, addresses and lengths as 64 bits. One that fails unwinds and does not return.
+    /// Functions of the run time. They follow the C calling convention, but for overwriting both [`RESULT_GPRS`], and
+    /// take the instance and then what is listed, all in general registers and extended to 64 bits with zeros. They
+    /// check bounds, alignment and null. One that fails unwinds and does not return.
     Operation {
+        /// `(memory, pages)`. The result has the width of an address of the memory.
         MemoryGrow,
+        /// `(memory, dst, value, count)`
         MemoryFill,
+        /// `(dst_memory, src_memory, dst, src, count)`
         MemoryCopy,
+        /// `(memory, data, dst, src, count)`
         MemoryInit,
+        /// `(data)`
         DataDrop,
+        /// `(memory, offset, address, expected, timeout)`
         AtomicWait32,
+        /// `(memory, offset, address, expected, timeout)`
         AtomicWait64,
+        /// `(memory, offset, address, count)`
         AtomicNotify,
+        /// `(table, index)`, for a [`FunctionElement`] without a reference.
+        TableGet,
+        /// `(table, index, value)`
         TableSet,
+        /// `(table, value, count)`. The result has the width of an index of the table.
         TableGrow,
+        /// `(table, dst, value, count)`
         TableFill,
+        /// `(dst_table, src_table, dst, src, count)`
         TableCopy,
+        /// `(table, elem, dst, src, count)`
         TableInit,
+        /// `(elem)`
         ElemDrop,
+        /// `(func)`
         RefFunc,
+        /// `(global, value)`
         GlobalSetReference,
-        /// Takes the cell.
+        /// `(cell)`
         WriteBarrier,
-        /// Gives a struct whose fields have their defaults.
+        /// `(type)`. The fields are zero or null.
         StructNew,
-        /// Gives an array whose elements have their default.
+        /// `(type, low, high, length)`, with the bits of the value in `low` and, for a `v128`, in `high`.
         ArrayNew,
+        /// `(type, length)`. The elements are zero or null.
+        ArrayNewDefault,
+        /// `(type, data, src, length)`
         ArrayNewData,
+        /// `(type, elem, src, length)`
         ArrayNewElem,
+        /// `(array, dst, low, high, count)`
         ArrayFill,
+        /// `(dst_array, dst, src_array, src, count)`
         ArrayCopy,
+        /// `(data, array, dst, src, count)`
         ArrayInitData,
+        /// `(elem, array, dst, src, count)`
         ArrayInitElem,
+        /// `(value)`
         AnyConvertExtern,
-        /// Takes the tag and the address of the payload, laid out like the fields of a struct.
+        /// `(tag, address of the payload)`
         Throw,
+        /// `(exnref)`
         ThrowRef,
-        /// For a handler. Gives the `exnref`.
+        /// `()`, for a handler. Gives the `exnref`, which is not null.
         TakeException,
-        /// Takes an `exnref`. Gives the word that identifies its tag, or zero.
-        ExceptionTag,
-        /// Takes an `exnref`. Gives the address of the payload.
-        ExceptionPayload,
     }
 }
 
 /// Addresses of code that is the same for all modules.
 pub struct Stubs {
     pub operations: [usize; Operation::COUNT],
-    /// Called, so that the return address tells where. The frame is entered and filled in.
+    /// Called, so that the return address tells where. The frame is entered and filled in, and the stack pointer is
+    /// anywhere in the stack.
     pub traps: [usize; Trap::COUNT],
-    /// Called from the prologue of baseline code. Keeps all registers.
+    /// Does [`Operation::WriteBarrier`] for the cell in [`SLOT`]. Keeps all registers that a jump keeps.
+    pub write_barrier: usize,
+    /// Called from the prologue of baseline code, once the stack is checked. Keeps all registers.
     pub tier_up_at_entry: usize,
-    /// Called from the start of a loop with its index in [`SLOT`], when all values are in the frame. Returns in
-    /// [`SLOT`] the address at which optimized code takes over the frame, or zero.
+    /// Called from the start of a loop with its index in [`SLOT`]. Returns in [`SLOT`] zero or the address at which
+    /// optimized code takes over the frame, for which there is room on the stack. Keeps all other registers.
     pub tier_up_in_loop: usize,
 }

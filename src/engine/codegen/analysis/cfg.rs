@@ -32,6 +32,8 @@ struct Search {
     depth: u32,
     /// Of the innermost loop around the block, not counting one that the block itself heads.
     header: Block,
+    /// If it has other entries: a header further out, up to which all have other entries.
+    beyond: Block,
     is_visited: bool,
     is_header: bool,
     has_other_entries: bool,
@@ -140,6 +142,7 @@ impl Cfg {
         let unseen = Search {
             depth: 0,
             header: Block::NONE,
+            beyond: Block::NONE,
             is_visited: false,
             is_header: false,
             has_other_entries: false,
@@ -182,14 +185,20 @@ impl Cfg {
             self.search[target].is_header = true;
             return self.add_header(block, target);
         }
-        let mut header = self.search[target].header;
-        while !header.is_none() {
-            if self.search[header].depth != 0 {
-                return self.add_header(block, header);
+        let innermost = self.search[target].header;
+        let mut header = innermost;
+        while !header.is_none() && self.search[header].depth == 0 {
+            let entered = &mut self.search[header];
+            if !core::mem::replace(&mut entered.has_other_entries, true) {
+                entered.beyond = entered.header;
             }
-            self.search[header].has_other_entries = true;
-            header = self.search[header].header;
+            header = entered.beyond;
         }
+        let mut passed = innermost;
+        while passed != header {
+            passed = core::mem::replace(&mut self.search[passed].beyond, header);
+        }
+        self.add_header(block, header);
     }
 
     fn add_header(&mut self, mut block: Block, mut header: Block) {

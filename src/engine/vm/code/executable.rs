@@ -3,7 +3,7 @@ use core::mem::offset_of;
 use std::rc::Rc;
 
 use bun_engine_bytecode::{
-    Code, Eval, FunctionKind, FunctionRef, Module, Origin, Script, Specialization, Visibility,
+    Code, Eval, FunctionInfo, FunctionKind, FunctionRef, Module, Origin, Script, Specialization, Visibility,
 };
 use bun_engine_macros::{Trace, cell};
 use bun_engine_text::{StringRef, Text};
@@ -12,7 +12,7 @@ use super::eval::EvalKey;
 use crate::heap::{OnceBox, Owned};
 use crate::{
     CellType, CodeBlock, Cx, Field, Gc, InlineWatchpointSet, Intrinsic, JsArray, JsCell,
-    JsFunction, JsResult, JsString, NativeFunction, Shape, SourceCode, SourceProviderRef,
+    JsFunction, JsResult, JsString, NativeFunction, RealmSlot, Shape, SourceCode, SourceProviderRef,
     TracedMap, TypeFlags, Vm, WatchpointState, WeakField, call,
 };
 
@@ -105,6 +105,7 @@ pub struct NativeExecutable {
     length: u32,
     intrinsic: Intrinsic,
     visibility: Visibility,
+    is_named_as_bound: Cell<bool>,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -142,6 +143,7 @@ impl NativeExecutable {
             length,
             intrinsic,
             visibility,
+            is_named_as_bound: Cell::new(false),
         })
     }
 
@@ -193,6 +195,11 @@ impl NativeExecutable {
 
     pub fn length(&self) -> u32 {
         self.length
+    }
+
+    /// Whether scripts see `bound ` in front of the name.
+    pub fn is_named_as_bound(&self) -> &Cell<bool> {
+        &self.is_named_as_bound
     }
 }
 
@@ -355,6 +362,7 @@ top_level_executables! {
 pub struct FunctionExecutable {
     base: ScriptExecutable,
     info: FunctionRef,
+    shape_slot: RealmSlot,
     /// Valid while at most one function has been made from this.
     singleton_watchpoints: InlineWatchpointSet,
     pub(self) first_function: WeakField<Option<Gc<JsFunction>>>,
@@ -374,12 +382,32 @@ impl FunctionExecutable {
     ) -> Gc<FunctionExecutable> {
         vm.allocate::<FunctionExecutable>(FunctionExecutableInit {
             base: ScriptExecutable::init(vm.shapes.function_executable(), provider, top_level),
+            shape_slot: Self::shape_slot_for(&info),
             info,
             singleton_watchpoints: InlineWatchpointSet::new(WatchpointState::Clear),
             first_function: None,
             cached_source_text: None,
             intrinsic: Cell::new(Intrinsic::None),
         })
+    }
+
+    fn shape_slot_for(info: &FunctionInfo) -> RealmSlot {
+        match (info.is_async(), info.is_generator()) {
+            (true, true) => RealmSlot::async_generator_function_shape,
+            (true, false) => RealmSlot::async_function_shape,
+            (false, true) => RealmSlot::generator_function_shape,
+            _ if info.origin().contains(Origin::BUILTIN) => RealmSlot::builtin_function_shape,
+            _ if info.kind() == FunctionKind::Normal || info.kind().is_class_constructor() => {
+                RealmSlot::function_shape
+            }
+            _ => RealmSlot::method_shape,
+        }
+    }
+
+    /// Where a realm has the shape of the functions that are made from this.
+    #[inline(always)]
+    pub fn shape_slot(&self) -> RealmSlot {
+        self.shape_slot
     }
 
     #[inline(always)]
@@ -406,6 +434,26 @@ impl FunctionExecutable {
         self.info.name_text(self.provider().text())
     }
 
+    fn is_default_constructor(&self) -> bool {
+        self.info.origin().contains(Origin::DEFAULT_CONSTRUCTOR)
+    }
+
+    /// The text that the positions in the code refer to.
+    pub fn code_provider(&self) -> SourceProviderRef {
+        if self.is_default_constructor() {
+            return self.heap().vm().default_constructor_provider(&self.info);
+        }
+        self.provider().clone()
+    }
+
+    /// In that text.
+    pub fn parameters_start(&self) -> u32 {
+        if self.is_default_constructor() {
+            return "(function ".len() as u32;
+        }
+        self.info.parameters_start()
+    }
+
     #[inline(always)]
     pub(crate) fn did_create(&self, vm: &Vm, function: Gc<JsFunction>) {
         if self.singleton_watchpoints.is_still_valid() {
@@ -424,6 +472,7 @@ impl FunctionExecutable {
         self.first_function()
     }
 
+    #[inline(always)]
     pub fn singleton_watchpoints(&self) -> &InlineWatchpointSet {
         &self.singleton_watchpoints
     }
@@ -444,7 +493,8 @@ impl FunctionExecutable {
     }
 }
 
-pub(crate) fn native_source_text(cx: &Cx, name: Text<'_>) -> JsResult<Gc<JsString>> {
+/// NativeFunction of ECMA-262.
+pub fn native_source_text(cx: &Cx, name: Text<'_>) -> JsResult<Gc<JsString>> {
     let (before, after) = ("function ", "() { [native code] }");
     cx.new_string_from_parts(&[Text::from_ascii(before), name, Text::from_ascii(after)])
 }

@@ -31,6 +31,7 @@ pub(crate) trait Isa: Instruction {
     fn emit_move(
         masm: &mut Self::Masm,
         function: &Function,
+        frame: &Frame,
         from: Location,
         to: Location,
         class: Class,
@@ -482,7 +483,14 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
         if step.kind == MoveKind::Swap {
             self.masm.swap(from.gpr(), to.gpr());
         } else if from != to {
-            I::emit_move(self.masm, self.places.function, from, to, step.class);
+            I::emit_move(
+                self.masm,
+                self.places.function,
+                self.frame,
+                from,
+                to,
+                step.class,
+            );
         }
     }
 
@@ -655,8 +663,11 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
         let (results, operands) = self.tables.locations.split_at(outputs.len());
 
         let own_scratch = I::lend_scratch(self.masm, data.clobbers_early & data.clobbers_late);
+        if data.action != Action::Custom {
+            self.client.before_call(self.masm, data.token, origin);
+        }
         match data.action {
-            Action::Custom => self.client.patchpoint(
+            Action::Custom | Action::CustomCall => self.client.patchpoint(
                 self.masm,
                 &PatchpointSite {
                     function,

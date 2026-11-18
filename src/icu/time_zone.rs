@@ -23,7 +23,6 @@ icu_functions! {
     ) -> i32;
     #[cfg(not(system_icucore))]
     fn ucal_getIanaTimeZoneID(id: *const u16, length: i32, out: *mut u16, capacity: i32, status: &mut Status) -> i32;
-    fn ucal_openTimeZones(status: &mut Status) -> *mut UEnumeration;
     fn ucal_openTimeZoneIDEnumeration(kind: i32, region: *const c_char, offset: *const i32, status: &mut Status) -> *mut UEnumeration;
 }
 
@@ -69,12 +68,6 @@ pub fn iana_id(id: &[u16]) -> Result<Buffer<u16>> {
 #[cfg(system_icucore)]
 pub fn iana_id(_: &[u16]) -> Result<Buffer<u16>> {
     Err(crate::Error::UNSUPPORTED)
-}
-
-/// Aliases included.
-pub fn all_ids() -> Result<Enumeration> {
-    // SAFETY: it takes nothing but the status.
-    Enumeration::open(|status| unsafe { ucal_openTimeZones(status) })
 }
 
 /// Those that are their own `canonical_id`, of one region or of all.

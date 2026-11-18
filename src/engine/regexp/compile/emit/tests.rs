@@ -28,7 +28,27 @@ impl Emitter<'_> {
             self.write_tests()?;
             self.tests_fail = fail;
         }
-        push(&mut self.tests, Test { offset, step })
+        match self.was_scanned(offset, step) {
+            true => Ok(()),
+            false => push(&mut self.tests, Test { offset, step }),
+        }
+    }
+
+    fn was_scanned(&self, offset: i32, step: Step) -> bool {
+        let Some((probe, epoch)) = self.scanned else {
+            return false;
+        };
+        if (i32::from(probe.offset), epoch) != (offset, self.state.epoch) {
+            return false;
+        }
+        let found = &self.graph[probe.class];
+        match step {
+            Step::Class(class) => found.is_subset_of(&self.graph[class]),
+            Step::Unit { value, mask } => {
+                let mut ranges = found.ranges();
+                ranges.all(|it| (it.first..=it.last).all(|c| c | u32::from(mask) == value.into()))
+            }
+        }
     }
 
     #[inline]

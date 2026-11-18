@@ -77,6 +77,8 @@ impl Location {
 pub enum Action {
     /// The client emits the code.
     Custom,
+    /// The client emits code that ends with a call instruction.
+    CustomCall,
     Call(Target),
     /// The first operand is the address to call, in a register or in the frame.
     CallIndirect,

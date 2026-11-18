@@ -1,11 +1,10 @@
 //! The values of the `co` key.
 
-use core::ffi::CStr;
-
 use bun_icu::Enumeration;
 use smallvec::SmallVec;
 
 use crate::language_tag::subtag::Subtag;
+use crate::locale_resolver::ResolvedLocale;
 
 fn bcp47_name(icu_name: &[u8]) -> &[u8] {
     match icu_name {
@@ -39,8 +38,8 @@ pub(crate) fn collect(mut icu_names: Enumeration) -> bun_icu::Result<SmallVec<[S
     Ok(collations)
 }
 
-pub(crate) fn supported(locale: &CStr, name: &[u8]) -> Option<Subtag> {
-    let name = Subtag::new(name)?;
-    let collations = bun_icu::collator::types_for_locale(locale).and_then(collect);
+pub(crate) fn supported(locale: &ResolvedLocale, name: &[u8]) -> Option<Subtag> {
+    let (locale, name) = (locale.icu_locale(&[]).ok()?, Subtag::new(name)?);
+    let collations = bun_icu::collator::types_for_locale(&locale).and_then(collect);
     collations.ok()?.contains(&name).then_some(name)
 }

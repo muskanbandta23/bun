@@ -2,7 +2,7 @@ use core::fmt::{Arguments, Write};
 
 use bun_engine_text::{StringBuilder, StringRef};
 
-use crate::{Cx, ErrorInstance, ErrorType, Exception, Gc, JsResult, Thrown, Value};
+use crate::{Cx, ErrorInstance, ErrorType, Exception, Gc, JsResult, Thrown, Value, errors};
 
 /// The text of an error.
 pub trait Message {
@@ -39,18 +39,29 @@ impl Message for Arguments<'_> {
 impl Cx {
     #[cold]
     pub fn throw_exception(&self, exception: Gc<Exception>) -> Thrown {
-        if !self.has_pending_termination_exception() {
-            self.set_exception(exception);
+        if self.has_pending_termination_exception() {
+            return Thrown::new();
         }
+        if self.is_async_context_tracked()
+            && exception.async_context().is_none()
+            && !self.is_termination_exception(exception)
+        {
+            exception.set_async_context(Some(self.current_async_context()));
+        }
+        self.set_exception(exception);
         Thrown::new()
     }
 
     #[cold]
     #[inline(never)]
     pub fn throw(&self, value: Value) -> Thrown {
-        let exception = value
-            .downcast::<Exception>()
-            .unwrap_or_else(|| Exception::create(self, value));
+        let exception = value.downcast::<Exception>().unwrap_or_else(|| {
+            if !self.has_debugger() && self.is_sure_to_catch() {
+                Exception::create_without_stack(self, value)
+            } else {
+                Exception::create(self, value)
+            }
+        });
         self.throw_exception(exception)
     }
 
@@ -87,9 +98,10 @@ impl Cx {
 
     #[cold]
     pub fn throw_out_of_memory(&self) -> Thrown {
-        self.throw_out_of_memory_with("Out of memory")
+        self.throw_out_of_memory_with(errors::OUT_OF_MEMORY)
     }
 
+    /// The whole message.
     #[cold]
     #[inline(never)]
     pub fn throw_out_of_memory_with(&self, message: &'static str) -> Thrown {
@@ -103,12 +115,6 @@ impl Cx {
         let thrown = self.throw(ErrorInstance::stack_overflow(self).into());
         self.replace_is_handling_error(was_handling_error);
         thrown
-    }
-
-    #[cold]
-    pub fn throw_termination(&self) -> Thrown {
-        self.set_exception(self.termination_exception());
-        Thrown::new()
     }
 
     /// For an internal method that fails: throws a TypeError or returns false.
@@ -137,7 +143,7 @@ impl Cx {
     pub fn discard_unless_termination(&self, thrown: Thrown) {
         if self.catch(thrown).is_err() {
             self.clear_exception();
-            self.traps().fire(crate::Trap::TERMINATION);
+            self.traps().request_termination();
         }
     }
 }

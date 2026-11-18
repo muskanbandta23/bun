@@ -45,7 +45,7 @@ pub use field::{
     TracedVec, WeakField,
 };
 pub(crate) use gc::keep_alive;
-pub use gc::{CellKind, Extends, Gc, GcFree};
+pub use gc::{CellKind, Extends, Gc, GcFree, Held};
 pub use once_box::OnceBox;
 pub use policy::{HeapKind, HeapSizes};
 pub use precise::{PRECISE_BIT, PreciseAllocation};
@@ -354,14 +354,44 @@ impl Heap {
     }
 
     #[inline(never)]
-    fn allocate_precisely(&self, size: usize, attributes: CellAttributes) -> usize {
+    fn allocate_precisely(
+        &self,
+        size: usize,
+        attributes: CellAttributes,
+        allocate: fn(usize) -> *mut c_void,
+    ) -> usize {
         self.collect_if_necessary();
-        let Some(allocation) = PreciseAllocation::try_create(self, size, attributes) else {
+        let Some(allocation) = PreciseAllocation::try_create(self, size, attributes, allocate)
+        else {
             return 0;
         };
-        self.precise.borrow_mut().push(allocation);
+        let mut precise = self.precise.borrow_mut();
+        allocation.index.set(precise.len() as u32);
+        precise.push(allocation);
         self.precise_bytes.update(|bytes| bytes + size);
         self.did_allocate(size);
+        allocation.cell()
+    }
+
+    /// Makes auxiliary memory that has `PRECISE_BIT` larger. The new address, or zero if it stays as it is. May
+    /// collect.
+    ///
+    /// # Safety
+    /// Its owner is alive and is all that has the address, which it replaces before the next allocation.
+    pub(crate) unsafe fn try_grow_precise(&self, cell: usize, size: usize) -> usize {
+        self.collect_if_necessary();
+        if barrier::is_fenced() || self.mutator_state() != MutatorState::Running {
+            return 0;
+        }
+        // SAFETY: the caller's.
+        let (old_size, resized) = unsafe {
+            let old_size = PreciseAllocation::of_cell(cell).cell_size();
+            (old_size, PreciseAllocation::try_resize(cell, size))
+        };
+        let Some(allocation) = resized else { return 0 };
+        self.precise.borrow_mut()[allocation.index.get() as usize] = allocation;
+        self.precise_bytes.update(|bytes| bytes + size - old_size);
+        self.did_allocate(size - old_size);
         allocation.cell()
     }
 

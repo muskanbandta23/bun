@@ -102,3 +102,59 @@ fn a_realm_can_have_its_own_language() {
         });
     }
 }
+
+#[test]
+fn dates_and_durations_survive_collection() {
+    with_realm(&HOOKS, |cx| {
+        let options = record(cx, &[(names::timeZone, "+0100"), (names::month, "long")]);
+        let format = construct(cx, names::DateTimeFormat, &[Value::UNDEFINED, options]).unwrap();
+        cx.heap.collect_and_sweep(Some(Scope::Full));
+        let range = invoke(cx, format, names::formatRange, &[0.into(), 3e9.into()]);
+        assert_eq!(text(cx, range), "January – February");
+        let resolved = invoke(cx, format, names::resolvedOptions, &[]);
+        let time_zone = resolved.get(cx, names::timeZone).unwrap();
+        assert_eq!(text(cx, time_zone), "+01:00");
+
+        let options = record(cx, &[(names::style, "digital")]);
+        let format = construct(cx, names::DurationFormat, &[Value::UNDEFINED, options]).unwrap();
+        cx.heap.collect_and_sweep(Some(Scope::Full));
+        let duration = record(cx, &[(names::hours, "1"), (names::milliseconds, "500")]);
+        let formatted = invoke(cx, format, names::format, &[duration]);
+        assert_eq!(text(cx, formatted), "1:00:00.5");
+    });
+}
+
+#[test]
+fn temporal_objects_are_formatted_by_their_type() {
+    with_realm(&HOOKS, |cx| {
+        let format = construct(cx, names::DateTimeFormat, &[]).unwrap();
+        for (class, source, options, expected) in [
+            (names::PlainDate, "2021-03-04", None, "3/4/2021"),
+            (names::PlainTime, "05:06:07", None, "5:06:07 AM"),
+            (names::Duration, "PT1H2M", None, "1 hr, 2 min"),
+            (
+                names::ZonedDateTime,
+                "2021-03-04T05:06[+01:00]",
+                None,
+                "3/4/2021, 5:06:00 AM GMT+1",
+            ),
+            (
+                names::Instant,
+                "2021-03-04T05:06Z",
+                Some((names::timeZone, "Asia/Tokyo")),
+                "3/4/2021, 2:06:00 PM",
+            ),
+        ] {
+            let constructor = cx.temporal_object().get(cx, class).unwrap();
+            let source = string(cx, source);
+            let object = invoke(cx, constructor, names::from, &[source]);
+            let arguments = [Value::UNDEFINED, record(cx, options.as_slice())];
+            let formatted = invoke(cx, object, names::toLocaleString, &arguments);
+            assert_eq!(text(cx, formatted), expected);
+            if class == names::PlainTime {
+                let range = invoke(cx, format, names::formatRange, &[object, object]);
+                assert_eq!(text(cx, range), expected);
+            }
+        }
+    });
+}

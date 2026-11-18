@@ -79,7 +79,7 @@ fn main() {
     let mut out = String::new();
     writeln!(
         out,
-        "pub(crate) static ATOMS: [StaticString; {}] = [",
+        "#[unsafe(export_name = \"engine_static_atoms\")] pub(crate) static ATOMS: [StaticString; {}] = [",
         atoms.len()
     )
     .unwrap();
@@ -112,7 +112,7 @@ fn main() {
     ] {
         writeln!(
             out,
-            "pub(crate) static {table}: [StaticSymbol; {}] = [",
+            "#[unsafe(export_name = \"engine_{module}\")] pub(crate) static {table}: [StaticSymbol; {}] = [",
             entries.len()
         )
         .unwrap();

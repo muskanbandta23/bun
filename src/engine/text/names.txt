@@ -800,6 +800,7 @@ intlNumberFormat = Intl.NumberFormat
 intlPluralRules = Intl.PluralRules
 intlRelativeTimeFormat = Intl.RelativeTimeFormat
 intlSegmenter = Intl.Segmenter
+invalidDate = Invalid Date
 negativeInfinity = -Infinity
 notEqual = not-equal
 objectArguments = [object Arguments]

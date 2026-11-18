@@ -78,9 +78,8 @@ handler! {
         } else if object.is_string()
             && let Some(string) = cell::<JsString>(base).try_resolved()
             && let Some(unit @ ..=0xff) = string.text().get(index)
-            && let Some(character) = m.vm.small_strings.existing_single_character(unit as u8)
         {
-            character.address() as u64
+            m.vm.small_strings.single_character(unit as u8).address() as u64
         } else {
             slow!(m, op::GetByVal)
         };

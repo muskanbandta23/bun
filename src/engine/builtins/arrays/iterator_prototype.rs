@@ -133,7 +133,7 @@ fn join(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let message = "Iterator.prototype.join requires that |this| be an Object.";
     let iterator = this_iterator(cx, frame, message)?;
     let separator = match frame.argument(0) {
-        Value::UNDEFINED => cx.small_strings.single_character(cx, b','),
+        Value::UNDEFINED => cx.small_strings.single_character(b','),
         separator => (separator.to_string(cx))
             .map_err(|thrown| iterator_close_on_throw(cx, iterator, thrown))?,
     };
@@ -148,5 +148,5 @@ fn join(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
         let string = value.to_string(cx)?;
         rope.push(cx, string)
     })?;
-    rope.finish(cx).map(Into::into)
+    Ok(rope.finish(cx).into())
 }

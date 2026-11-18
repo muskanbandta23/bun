@@ -39,15 +39,9 @@ impl SmallStrings {
     }
 
     #[inline(always)]
-    pub fn single_character(&self, _: &Vm, character: u8) -> Gc<JsString> {
+    pub fn single_character(&self, character: u8) -> Gc<JsString> {
         // SAFETY: as above.
         unsafe { Gc::from_address(self.of_static_atoms[usize::from(character)].get()) }
-    }
-
-    #[inline(always)]
-    pub fn existing_single_character(&self, character: u8) -> Option<Gc<JsString>> {
-        // SAFETY: as above.
-        Some(unsafe { Gc::from_address(self.of_static_atoms[usize::from(character)].get()) })
     }
 
     /// Panics unless the index is below `STATIC_ATOM_COUNT`.

@@ -4,7 +4,7 @@ use bun_engine_number::{
 };
 use bun_engine_text::{CodeUnit, Cursor, MAX_LENGTH, StringBuilder, StringRef, Text};
 
-use crate::{Cx, Gc, JsResult, JsString, RootVec, Value, root_vec};
+use crate::{ClampedU8, Cx, Float16, Gc, JsResult, JsString, RootVec, Value, root_vec};
 
 type NumberBuffer = [u8; NUMBER_TEXT_CAPACITY];
 
@@ -33,8 +33,16 @@ joinable_numbers! {
     u32 => write_u32,
     i64 => write_i64,
     u64 => write_u64,
+    Float16 => write_double,
     f32 => write_double,
     f64 => write_double,
+}
+
+impl JoinableNumber for ClampedU8 {
+    #[inline(always)]
+    fn write(self, out: &mut NumberBuffer) -> usize {
+        self.0.write(out)
+    }
 }
 
 #[inline(always)]

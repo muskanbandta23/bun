@@ -18,6 +18,7 @@ VM::~VM()
 
 RefPtr<VM> VM::tryCreate(HeapType heapType, RunLoop* runLoop)
 {
+    Options::freeze();
     void* memory = Engine::vm_create(heapType, Engine::StaticAtom::COUNT, Engine::RealmSlot::COUNT);
     return adoptRef(new (memory) VM(runLoop ? *runLoop : RunLoop::currentSingleton()));
 }
@@ -78,16 +79,9 @@ ExceptionScope::~ExceptionScope()
     m_vm.m_topExceptionScope = m_previous;
 }
 
-static bool isEnabledByEnvironment(const char* name)
-{
-    const char* value = getenv(name);
-    return value && (*value == '1' || *value == 't');
-}
-
 void ExceptionScope::verifyThatNoCheckIsOwed() const
 {
-    static const bool validates = isEnabledByEnvironment("BUN_JSC_validateExceptionChecks");
-    if (!validates || !m_vm.m_needsExceptionCheck) [[likely]]
+    if (!Options::validateExceptionChecks() || !m_vm.m_needsExceptionCheck) [[likely]]
         return;
     auto& thrown = m_vm.m_simulatedThrowLocation;
     fprintf(stderr, "ERROR: Unchecked JS exception:\n    This scope can throw a JS exception: %s @ %s:%u\n    But the exception was unchecked as of this scope: %s @ %s:%u\n", thrown.functionName, thrown.file, thrown.line, m_location.functionName, m_location.file, m_location.line);

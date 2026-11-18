@@ -533,26 +533,6 @@ void WorkerMessagingProxy::postErrorToWorkerObject(Zig::GlobalObject& workerGlob
     }
 }
 
-void WorkerMessagingProxy::postOutOfMemoryErrorToWorkerObject()
-{
-    ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }](ScriptExecutionContext& context) {
-        RefPtr workerObject = protectedThis->m_workerObject;
-        if (!workerObject)
-            return;
-        String limit = JSC::describeLimitOfMarkedBlockCage();
-        ErrorEvent::Init init;
-        switch (protectedThis->m_options.kind) {
-        case WorkerOptions::Kind::Web:
-            init.message = makeString("RangeError: Out of memory: "_s, limit);
-            break;
-        case WorkerOptions::Kind::Node:
-            init.error = JSC::createOutOfMemoryError(context.globalObject(), limit);
-            break;
-        }
-        workerObject->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
-    });
-}
-
 void WorkerMessagingProxy::postFailedToStartErrorToWorkerObject()
 {
     ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }](ScriptExecutionContext& context) {

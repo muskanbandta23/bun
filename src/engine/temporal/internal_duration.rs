@@ -1,3 +1,5 @@
+use core::ops::Neg;
+
 use crate::TimeDuration;
 
 /// A Date Duration Record. No two fields have opposite signs.
@@ -58,6 +60,23 @@ impl InternalDuration {
         match self.date.sign() {
             0 => self.time.sign(),
             sign => sign,
+        }
+    }
+}
+
+impl Neg for InternalDuration {
+    type Output = InternalDuration;
+
+    #[inline]
+    fn neg(self) -> InternalDuration {
+        InternalDuration {
+            date: DateDuration {
+                years: -self.date.years,
+                months: -self.date.months,
+                weeks: -self.date.weeks,
+                days: -self.date.days,
+            },
+            time: -self.time,
         }
     }
 }

@@ -57,6 +57,19 @@ impl TimeDuration {
         nearest_double(self.0, i128::from(unit.nanoseconds()))
     }
 
+    /// Whole seconds, and the nanoseconds that remain.
+    #[inline]
+    pub(crate) fn magnitude_in_seconds(self) -> (u64, u32) {
+        const SECOND: u64 = NANOSECONDS_PER_SECOND as u64;
+        let magnitude = self.0.unsigned_abs();
+        let seconds = match u64::try_from(magnitude) {
+            Ok(magnitude) => magnitude / SECOND,
+            Err(_) => (magnitude / u128::from(SECOND)) as u64,
+        };
+        let rest = (magnitude as u64).wrapping_sub(seconds.wrapping_mul(SECOND));
+        (seconds, rest as u32)
+    }
+
     /// Truncated.
     #[inline]
     pub(crate) fn whole_days(self) -> i64 {

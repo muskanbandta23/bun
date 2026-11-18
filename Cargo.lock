@@ -1175,6 +1175,7 @@ dependencies = [
 name = "bun_icu"
 version = "0.0.0"
 dependencies = [
+ "bun_alloc",
  "bun_engine_standalone",
  "bun_opaque",
  "libc",

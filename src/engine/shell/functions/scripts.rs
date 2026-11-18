@@ -30,7 +30,7 @@ fn milliseconds_since(start: Instant) -> Value {
 
 fn read_script(cx: &Cx, path: &str) -> JsResult<SourceCode> {
     match files::read_code(path) {
-        Some(bytes) => Ok(files::script(&bytes, path)),
+        Some(bytes) => Ok(files::source_at(path, &bytes, SourceType::Program)),
         None => Err(cx.throw_error(ErrorType::Error, "Could not open file.")),
     }
 }

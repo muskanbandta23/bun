@@ -20,7 +20,7 @@ pub struct InternalFunction {
     executable: Gc<Executable>,
     function: NativeFunction,
     constructor: NativeFunction,
-    pub(self) original_name: Field<Option<Gc<JsString>>>,
+    pub original_name: Field<Option<Gc<JsString>>>,
 }
 
 const _: () = {

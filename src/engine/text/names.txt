@@ -51,6 +51,7 @@ LOG10E
 LOG2E
 LinkError
 ListFormat
+Loader
 Locale
 MAX_SAFE_INTEGER
 MAX_VALUE
@@ -232,6 +233,7 @@ deleteProperty
 deref
 description
 detached
+detail
 difference
 direction
 disambiguation
@@ -255,6 +257,7 @@ epochNanoseconds
 equals
 era
 eraYear
+errno
 error
 errors
 escape
@@ -513,6 +516,7 @@ offsetNanoseconds
 ok
 omitPadding
 or
+origin
 originalColumn
 originalLine
 overflow
@@ -1159,6 +1163,7 @@ useStrict = use strict
 @toThis
 @typedArrayFromFast
 @typedArrayLength
+@typedArraySpeciesCreate
 @undefined
 @values
 @wrapForValidIteratorCreate
@@ -1239,3 +1244,24 @@ temporalPlainTime = Temporal.PlainTime
 temporalPlainYearMonth = Temporal.PlainYearMonth
 temporalZonedDateTime = Temporal.ZonedDateTime
 colonAndSpace = : 
+debug
+info
+warn
+dir
+dirxml
+table
+trace
+assert
+countReset
+profile
+profileEnd
+timeLog
+timeEnd
+timeStamp
+takeHeapSnapshot
+group
+groupCollapsed
+groupEnd
+record
+recordEnd
+screenshot

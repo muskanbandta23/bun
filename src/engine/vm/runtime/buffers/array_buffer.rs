@@ -485,6 +485,24 @@ impl ArrayBuffer {
         Ok(copy)
     }
 
+    /// The same for one that is resizable, into contents that are too and have that length.
+    pub fn transfer_resized(
+        &self,
+        cx: &mut Cx,
+        byte_length: usize,
+    ) -> Result<ArrayBufferContents, AllocError> {
+        if self.is_detachable() {
+            self.resize(cx, byte_length).map_err(|_| AllocError)?;
+            return Ok(self.detach(cx));
+        }
+        let max = self.max_byte_length().ok_or(AllocError)?;
+        let mut copy = ArrayBufferContents::try_resizable(byte_length, max)?;
+        let no_gc = cx.no_gc();
+        let source = self.bytes(&no_gc).clamped(0..byte_length);
+        source.copy_to_slice(&mut copy.as_mut_slice().ok_or(AllocError)?[..source.len()]);
+        Ok(copy)
+    }
+
     /// Of a buffer that is resizable, not shared and no memory of WebAssembly. May collect.
     pub fn resize(&self, cx: &mut Cx, byte_length: usize) -> Result<(), ResizeError> {
         /// What each costs in bytes, so that a collection comes around to those that are garbage.

@@ -1,5 +1,6 @@
 //! Spreads the mark stack over several threads.
 
+use core::cell::Cell;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use bun_threading::{Condition, Guarded};
@@ -170,6 +171,13 @@ fn drain_at_most(visitor: &mut Visitor, mut budget: usize) {
     }
 }
 
+#[thread_local]
+static IS_HELPER_THREAD: Cell<bool> = Cell::new(false);
+
+pub fn is_helper_thread() -> bool {
+    IS_HELPER_THREAD.get()
+}
+
 /// The helper threads of the process, which serve one collection at a time.
 mod pool {
     use bun_threading::{Condition, Guarded};
@@ -227,6 +235,7 @@ mod pool {
     }
 
     fn run() {
+        super::IS_HELPER_THREAD.set(true);
         loop {
             let mut state = STATE.lock();
             while state.openings == 0 {

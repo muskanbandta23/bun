@@ -559,6 +559,14 @@ impl Op {
         }
     }
 
+    #[inline]
+    pub fn node_mut(&mut self) -> Option<(&mut NodeKind, &mut u32)> {
+        match self {
+            Self::Node { kind, data, .. } | Self::WideNode { kind, data, .. } => Some((kind, data)),
+            _ => None,
+        }
+    }
+
     /// All operands but those of a patchpoint, wide node or return and those in a state.
     #[inline]
     pub fn inline_operands(&self) -> &[Value] {

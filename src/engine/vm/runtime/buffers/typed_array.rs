@@ -38,12 +38,10 @@ impl Key {
         if name.is_symbol() {
             return Key::Ordinary;
         }
-        match canonical_numeric_index(name.text()) {
+        match canonical_numeric_index(name.text()).map(JsTypedArray::index_for_number) {
             None => Key::Ordinary,
-            Some(number) if number > 0.0 && number < u64::MAX as f64 && number.fract() == 0.0 => {
-                Key::Index(number as usize)
-            }
-            Some(_) => Key::OtherNumber,
+            Some(usize::MAX) => Key::OtherNumber,
+            Some(index) => Key::Index(index),
         }
     }
 }
@@ -235,6 +233,32 @@ impl JsTypedArray {
         assert!(self.element_type() == T::TYPE);
         // SAFETY: checked.
         unsafe { self.typed_unchecked() }
+    }
+
+    /// # Safety
+    /// `T` has the size of the elements, and the index is below the known length.
+    #[inline(always)]
+    pub unsafe fn get_unchecked<T: Element>(&self, index: usize) -> T {
+        // SAFETY: the caller's.
+        unsafe { BufferSlice::new(self.vector(), self.known_length()).get_unchecked(index) }
+    }
+
+    /// # Safety
+    /// As above, and nothing borrows the elements.
+    #[inline(always)]
+    pub unsafe fn set_unchecked<T: Element>(&self, index: usize, value: T) {
+        // SAFETY: the caller's.
+        unsafe { BufferSlice::new(self.vector(), self.known_length()).set_unchecked(index, value) }
+    }
+
+    /// What a key that is this number comes to, unless it is an array index. No element has the highest index.
+    #[inline]
+    pub fn index_for_number(number: f64) -> usize {
+        if number > 0.0 && number < u64::MAX as f64 && number.fract() == 0.0 {
+            number as usize
+        } else {
+            usize::MAX
+        }
     }
 
     /// ValidateTypedArray. Returns the length.

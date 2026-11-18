@@ -167,6 +167,9 @@ impl<'a> Reaching<'a> {
             open_args: Vec::new(),
         };
         if unsolved.len() > u64::BITS as usize {
+            for &variable in &unsolved {
+                self.move_late_reads_up(&search.merges, variable);
+            }
             unsolved = self.solve_in_groups(function, &mut search, unsolved);
         }
         self.extend_to_outermost_loops(&unsolved);
@@ -210,6 +213,24 @@ impl<'a> Reaching<'a> {
             next = self.reads[read].earlier;
         }
         true
+    }
+
+    /// To the first of their dominators that comes after all definitions, each way from which passes through that.
+    fn move_late_reads_up(&mut self, merges: &Merges<'_>, variable: Variable) {
+        let data = &mut self.variables[variable];
+        let (mut last, mut definition) = (0, data.last_definition);
+        while !definition.is_none() {
+            last = last.max(self.definitions[definition].rank);
+            definition = self.definitions[definition].earlier;
+        }
+        data.ranks.end = last + 1;
+        let mut read = data.last_read;
+        while !read.is_none() {
+            let mention = &mut self.reads[read];
+            mention.rank = merges.first_dominator_after(last, mention.rank);
+            data.ranks.end = data.ranks.end.max(mention.rank + 1);
+            read = mention.earlier;
+        }
     }
 
     fn extend_to_outermost_loops(&mut self, variables: &[Variable]) {

@@ -201,7 +201,12 @@ impl Drop for RecGroup {
         let mut released = mem::take(&mut self.outside).into_vec();
         while let Some(ty) = released.pop() {
             if let Some(mut group) = Arc::into_inner(ty.group) {
-                released.extend(mem::take(&mut group.outside));
+                let more = mem::take(&mut group.outside);
+                if released.try_reserve(more.len()).is_ok() {
+                    released.extend(more);
+                } else {
+                    Box::leak(more);
+                }
             }
         }
     }
@@ -371,9 +376,15 @@ impl Registry {
         let mut entries = self.entries.lock();
         let entry = entries.find_entry(group.hash, |entry| entry.identity == group.identity());
         entry.ok().expect("a registered group").remove();
-        if entries.capacity() > 1024 && entries.len() < entries.capacity() / 8 {
-            let capacity = entries.len() * 2;
-            entries.shrink_to(capacity, |entry| entry.hash);
+        let mut smaller = HashTable::new();
+        let rehash = |entry: &Entry| entry.hash;
+        if entries.capacity() > 1024.max(entries.len() * 8)
+            && smaller.try_reserve(entries.len() * 2, rehash).is_ok()
+        {
+            for entry in mem::take(&mut *entries) {
+                smaller.insert_unique(entry.hash, entry, rehash);
+            }
+            *entries = smaller;
         }
     }
 }

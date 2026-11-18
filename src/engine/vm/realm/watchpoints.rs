@@ -3,8 +3,8 @@
 use core::cell::RefCell;
 
 use crate::{
-    Cx, ElementType, Gc, GlobalObject, InlineWatchpointSet, JsCell, PropertyCondition, Vm, Watchpoint,
-    WatchpointState, watch_condition,
+    Cx, ElementType, Gc, GlobalObject, InlineWatchpointSet, JsCell, PropertyCondition, Vm,
+    Watchpoint, WatchpointState, watch_condition,
 };
 
 macro_rules! realm_watchpoints {
@@ -17,7 +17,7 @@ macro_rules! realm_watchpoints {
 
         impl RealmWatchpoint {
             pub const COUNT: usize = [$(stringify!($name),)*].len();
-            const ALL: [RealmWatchpoint; Self::COUNT] = [$(RealmWatchpoint::$name,)*];
+            pub const ALL: [RealmWatchpoint; Self::COUNT] = [$(RealmWatchpoint::$name,)*];
         }
     };
 }
@@ -83,6 +83,7 @@ realm_watchpoints! {
     StringSymbolReplace,
     StringSymbolSearch,
     StringSymbolSplit,
+    StringSymbolToPrimitive,
     StringToString,
     StringValueOf,
     NumberToString,

@@ -14,6 +14,7 @@ pub struct JsWeakRef {
 
 impl JsWeakRef {
     pub fn create_with_shape(vm: &Vm, shape: Gc<Shape>, target: Gc<JsCell>) -> Gc<JsWeakRef> {
+        target.will_be_held_weakly();
         vm.allocate::<JsWeakRef>(JsWeakRefInit {
             base: JsObjectInit::new(vm, shape),
             last_used_in_job: AtomicU64::new(vm.current_job()),

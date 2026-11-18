@@ -103,13 +103,23 @@ pub struct SuspendPoint {
     pub(crate) registers: Range<u32>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum CoverageKind {
+    Plain,
+    /// The condition, the increment or the left side.
+    LoopHeader,
+    /// Of a function that suspends, which a call may never get to.
+    SuspendableBody,
+}
+
 /// A range of the source whose executions are counted.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct CoverageBlock {
     pub start: i32,
     /// Zero for the block that the code begins with, which is all that no other block or function takes.
     pub end: i32,
-    pub is_in_loop_header: bool,
+    pub kind: CoverageKind,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]

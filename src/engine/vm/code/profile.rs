@@ -3,7 +3,8 @@
 use core::cell::Cell;
 
 use crate::{
-    CellType, ElementKind, JsCell, JsObject, Shape, ShapeId, SpeculatedType, Value, heap::Survivors,
+    CellType, ElementKind, JsCell, JsObject, JsTypedArray, Shape, ShapeId, SpeculatedType, Value,
+    heap::Survivors,
 };
 
 /// The last value that an instruction produced. It is not kept alive.
@@ -164,7 +165,10 @@ impl ArrayModes {
         let cell_type = shape.instance_type();
         if CellType::TYPED_ARRAYS.contains(cell_type) {
             let distance = cell_type.0 - CellType::Int8Array.0;
-            return ArrayModes::from_bits_retain(Self::INT8_ARRAY.bits() << distance);
+            let mut modes = ArrayModes::from_bits_retain(Self::INT8_ARRAY.bits() << distance);
+            let is_resizable = crate::is_shape_of_resizable_view(shape);
+            modes.set(ArrayModes::RESIZABLE_TYPED_ARRAY, is_resizable);
+            return modes;
         }
         match cell_type {
             CellType::String => return ArrayModes::STRING,
@@ -225,6 +229,9 @@ impl ArrayProfile {
 
     /// For an access that the fast path did not take.
     pub fn record_index(&self, object: &JsObject, index: u32, is_store: bool) {
+        if let Some(array) = object.downcast::<JsTypedArray>() {
+            return self.record_typed_index(&array, index as usize);
+        }
         if !object.element_kind().is_dense() {
             return;
         }
@@ -241,6 +248,14 @@ impl ArrayProfile {
             } else {
                 ArrayModes::READ_HOLE
             });
+        }
+    }
+
+    pub fn record_typed_index(&self, array: &JsTypedArray, index: usize) {
+        if !array.is_valid_index(index) {
+            self.record(ArrayModes::OUT_OF_BOUNDS);
+        } else if index > i32::MAX as usize {
+            self.record(ArrayModes::LARGE_INDEX);
         }
     }
 

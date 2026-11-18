@@ -1,6 +1,8 @@
 use core::f64::consts;
 
-use bun_engine_number::math::{self, Hypot};
+use bun_engine_number::MAX_SAFE_INTEGER;
+use bun_engine_number::math::{self, Hypot, PreciseSum};
+use bun_engine_vm::{Elements, JsArray, for_each_in_iterable};
 
 use crate::prelude::*;
 
@@ -17,6 +19,7 @@ macro_rules! math_properties {
             StaticProperty::number(names::SQRT2, consts::SQRT_2),
             StaticProperty::string(symbols::toStringTag, names::Math),
             $(StaticProperty::function(names::$name, $name, $length).with_intrinsic(Intrinsic::$intrinsic),)*
+            StaticProperty::function(names::sumPrecise, sum_precise, 1),
         ]);
     };
 }
@@ -176,4 +179,58 @@ fn random(cx: &mut Cx, _: &CallFrame) -> JsResult<Value> {
     let result = state.next_f64();
     global.random_state().set(state);
     Ok(Value::double(result))
+}
+
+#[native_abi]
+fn sum_precise(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
+    let message = "Math.sumPrecise requires first argument not be null or undefined";
+    let iterable = frame.argument(0).require_object_coercible(cx, message)?;
+    if let Some(sum) = sum_of_array_of_numbers(cx, iterable) {
+        return Ok(sum.into());
+    }
+    let mut sum = PreciseSum::default();
+    let mut count = 0;
+    for_each_in_iterable(cx, iterable, |cx, value| {
+        if count >= MAX_SAFE_INTEGER as u64 {
+            return Err(cx.throw_range_error("Math.sumPrecise exceeded maximum iterations"));
+        }
+        let Some(number) = value.as_number() else {
+            return Err(cx.throw_type_error("Math.sumPrecise was passed a non-number"));
+        };
+        sum.add(number);
+        count += 1;
+        Ok(())
+    })?;
+    Ok(sum.result().into())
+}
+
+/// Nothing if iterating could be observed or would throw.
+fn sum_of_array_of_numbers(cx: &mut Cx, iterable: Value) -> Option<f64> {
+    let array = iterable.downcast::<JsArray>()?;
+    let no_gc = cx.no_gc();
+    if !array.is_iteration_pristine() {
+        return None;
+    }
+    match array.elements(&no_gc)? {
+        Elements::Int32([]) => Some(-0.0),
+        Elements::Int32(values) => values
+            .iter()
+            .try_fold(0, |sum: i64, value| {
+                Some(sum + i64::from((*value)?.as_int32()?))
+            })
+            .map(|sum| sum as f64),
+        // A hole reads as NaN.
+        Elements::Double(values) => Some(PreciseSum::of(values)).filter(|sum| !sum.is_nan()),
+        Elements::Contiguous(values) => {
+            let mut sum = PreciseSum::default();
+            let mut numbers = [0.0; 256];
+            for values in values.chunks(numbers.len()) {
+                for (number, value) in numbers.iter_mut().zip(values) {
+                    *number = (*value)?.as_number()?;
+                }
+                sum.add_all(&numbers[..values.len()]);
+            }
+            Some(sum.result())
+        }
+    }
 }

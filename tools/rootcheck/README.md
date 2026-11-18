@@ -33,9 +33,11 @@ References to a container are fine: whoever holds it is checked.
 
 **Passing through.** The state of a cell is made of such containers, so they have to get there. A value may be moved, dropped, matched on and asked for its size (`len`, `is_some`), provided that nothing may collect before it is moved on. It may not be borrowed, looked into, leaked or made a trait object. So `state.list = vec![value]`, `state.done.push(state.queue.pop_front()?)` and `root_vec.extend(mem::take(&mut state.list))` pass, and `for value in mem::take(&mut state.list)` does not.
 
-**Generic functions** are checked as declared and again with each set of types that they are called with, in whatever crate they are. Code from outside the repository is held to less: it may not make such a value a trait object or hold it while something may collect. That finds the scratch memory of `sort_by` and `splice` when the callback allocates.
+**Where `unsafe` is allowed** such a value may also be borrowed and looked into, for as long as nothing may collect. That is checked, which an opt-out would not be.
 
-**May collect** follows calls to `Heap::collect`. A call that cannot be followed may collect if it is given a `Vm`, `Cx`, `Heap`, trait object or `unsafe fn`.
+**Generic functions** are checked as declared and again with each set of types that they are called with, in whatever crate they are. Code from outside the repository may not make such a value a trait object or hold it while something may collect. That finds the scratch memory of `sort_by` and `splice` when the callback allocates.
+
+**May collect** follows calls to `Heap::collect`, except where a `DeferCollection` is alive in a local. A call that cannot be followed may collect if it goes to foreign code or is given a `Vm`, `Cx`, `Heap`, trait object or `unsafe fn`. A destructor may collect only if its value has one of these.
 
 `unsafe` code is out of scope: casts, `transmute`, addresses kept as integers.
 
@@ -45,7 +47,7 @@ References to a container are fine: whoever holds it is checked.
 #[cfg_attr(rootcheck, rootcheck::allow("collection is deferred"))]
 ```
 
-On a function (what is in it and what it instantiates), a static, a field or a type (it does not hide; a container of it still does). Only where the `unsafe_code` lint is allowed, and like `unsafe` it is a promise.
+On a function (what is in it and what it instantiates), a static, a field (of a cell: that of its `Init`) or a type (it does not hide; a container of it still does). Only where the `unsafe_code` lint is allowed, and like `unsafe` it is a promise.
 
 ## Tests
 

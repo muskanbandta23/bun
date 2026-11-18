@@ -1,3 +1,4 @@
+#[allow(dead_code)]
 #[path = "support/vectors.rs"]
 mod vectors;
 

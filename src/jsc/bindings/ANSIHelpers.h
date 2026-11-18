@@ -39,7 +39,7 @@ static inline bool isEscapeCharacter(Char c)
 // (C1 ST — a terminator, not an introducer) so callers tokenizing ANSI by
 // skipping to the next interesting byte will stop at standalone ST too.
 template<typename SIMDType>
-static auto exactEscapeMatch(std::conditional_t<sizeof(SIMDType) == 1, simde_uint8x16_t, simde_uint16x8_t> chunk)
+static auto exactEscapeMatch(SIMD::Vector<SIMDType> chunk)
 {
     if constexpr (sizeof(SIMDType) == 1)
         return SIMD::equal<0x1b, 0x90, 0x98, 0x9b, 0x9c, 0x9d, 0x9e, 0x9f>(chunk);

@@ -69,34 +69,6 @@ static constexpr int32_t kOwnedByDatabaseFlag = 1 << 3;
 #include "SqliteUserFunction.h"
 #include <wtf/SetForScope.h>
 
-#if !USE(SYSTEM_MALLOC)
-#include <bmalloc/BPlatform.h>
-#define ENABLE_SQLITE_FAST_MALLOC (BENABLE(MALLOC_SIZE) && BENABLE(MALLOC_GOOD_SIZE))
-#endif
-
-static void enableFastMallocForSQLite()
-{
-#if ENABLE(SQLITE_FAST_MALLOC)
-    int returnCode = sqlite3_config(SQLITE_CONFIG_LOOKASIDE, 0, 0);
-    ASSERT_WITH_MESSAGE(returnCode == SQLITE_OK, "Unable to reduce lookaside buffer size");
-
-    static sqlite3_mem_methods fastMallocMethods = {
-        [](int n) { return fastMalloc(n); },
-        [](void* p) { return fastFree(p); },
-        [](void* p, int n) { return fastRealloc(p, n); },
-        [](void* p) { return static_cast<int>(fastMallocSize(p)); },
-        [](int n) { return static_cast<int>(fastMallocGoodSize(n)); },
-        [](void*) { return SQLITE_OK; },
-        [](void*) {},
-        nullptr
-    };
-
-    returnCode = sqlite3_config(SQLITE_CONFIG_MALLOC, &fastMallocMethods);
-    ASSERT_WITH_MESSAGE(returnCode == SQLITE_OK, "Unable to replace SQLite malloc");
-
-#endif
-}
-
 class AutoDestructingSQLiteStatement {
 public:
     sqlite3_stmt* stmt { nullptr };
@@ -121,7 +93,6 @@ extern "C" void Bun__initializeSQLite()
         sqlite3_config(SQLITE_CONFIG_MEMSTATUS, 0);
         // A connection is only used by the thread that opened it, so it gets a mutex only with SQLITE_OPEN_FULLMUTEX.
         sqlite3_config(SQLITE_CONFIG_MULTITHREAD);
-        enableFastMallocForSQLite();
     });
 }
 

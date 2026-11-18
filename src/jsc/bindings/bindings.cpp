@@ -33,7 +33,6 @@
 #include "JavaScriptCore/AggregateError.h"
 #include "JavaScriptCore/ArrayBufferView.h"
 #include "JavaScriptCore/ArrayStorage.h"
-#include "JavaScriptCore/SourceProviderCache.h"
 #include "JavaScriptCore/SparseArrayValueMap.h"
 #include "JavaScriptCore/BytecodeIndex.h"
 #include "JavaScriptCore/CodeBlock.h"
@@ -5461,9 +5460,6 @@ size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
 #endif
 
     vm->finalizeSynchronousJSExecution();
-
-    // A full collection only drops the caches that nothing has used since the one before it.
-    vm->sourceProviderCacheMap.clear();
 
     if (sync) {
         vm->heap.deleteAllUnlinkedCodeBlocks(JSC::PreventCollectionAndDeleteAllCode);

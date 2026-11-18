@@ -261,7 +261,10 @@ Structure* createMemoryFootprintStructure(JSC::VM& vm, JSC::JSGlobalObject* glob
 
 static consteval unsigned getBytecodeCacheVersion()
 {
-    return WTF::SuperFastHash::computeHash(BUN_VERSION_ENGINE);
+    unsigned hash = 2166136261; // FNV-1a
+    for (char character : std::string_view(BUN_VERSION_ENGINE))
+        hash = (hash ^ character) * 16777619;
+    return hash;
 }
 
 // Declare fuzzilli function registration from FuzzilliREPRL.cpp

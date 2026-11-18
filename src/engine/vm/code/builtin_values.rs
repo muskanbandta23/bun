@@ -44,6 +44,11 @@ builtin_values! {
     GeneratorResumeModeNormal = Int32(ResumeMode::Normal as i32),
     GeneratorResumeModeReturn = Int32(ResumeMode::Return as i32),
     GeneratorResumeModeThrow = Int32(ResumeMode::Throw as i32),
+    GeneratorStateInit = Int32(crate::CoroutineState::SuspendedStart as i32),
+    GeneratorStateDelegate = Int32(crate::CoroutineState::SuspendedDelegate as i32),
+    GeneratorStateExecuting = Int32(crate::CoroutineState::Executing as i32),
+    GeneratorStateCompleted = Int32(crate::CoroutineState::Completed as i32),
+    generatorFieldState = Int32(crate::Coroutine::STATE_FIELD as i32),
 
     iterationKindKey = Int32(IterationKind::Keys as i32),
     iterationKindValue = Int32(IterationKind::Values as i32),

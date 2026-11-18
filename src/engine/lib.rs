@@ -21,6 +21,7 @@ fn hooks() -> Hooks {
         native_call_entry: |_, _| call::native_call_entry(),
         jettison: |_, _| {},
         debug: |_, _, _, _| Ok(()),
+        debug_await: |_, _, _, _| Ok(()),
         cover: |_, _, _, _| {},
         access_handler: |_, _, _| 0,
         tier_up: |_, code_block, _, _| {
@@ -33,7 +34,7 @@ fn hooks() -> Hooks {
         did_start_having_a_bad_time: |_, _| {},
         did_declare_global_lexical: |_, _, _| {},
         builtin_source: bun_engine_builtins::builtin_source,
-        temporal_to_locale_string: |cx, this, _, _| this.as_value().to_string(cx).map(Into::into),
+        temporal_to_locale_string: bun_engine_intl::temporal_to_locale_string,
         find_wasm_handler: |_, _| None,
         wasm_frame: |_, _, _, _| unreachable!(),
         wasm_names: |_, _| unreachable!(),

@@ -67,6 +67,8 @@ pub(super) const fn sf(width: Width) -> u32 {
 pub struct Assembler {
     pub(crate) buffer: CodeBuffer<SiteKind>,
     pub(crate) features: Arm64Features,
+    /// By the index of an external target, the jump after the code that leads there.
+    pub(super) routes: Vec<Option<Label>>,
 }
 
 impl Assembler {
@@ -74,6 +76,7 @@ impl Assembler {
         Self {
             buffer: CodeBuffer::new(MAX_CODE_SIZE),
             features,
+            routes: Vec::new(),
         }
     }
 
@@ -89,8 +92,30 @@ impl Assembler {
 
     #[inline(always)]
     fn emit_with_target(&mut self, word: u32, target: Label, kind: SiteKind) {
-        self.buffer.record(self.buffer.offset(), target, kind);
-        self.emit(word);
+        self.buffer
+            .put_with_site(word.to_le_bytes(), 4, 0, target, kind);
+    }
+
+    fn emit_short_branch(&mut self, word: u32, target: Label, kind: SiteKind) {
+        if target.is_external() {
+            return self.emit_branch_to_route(word, target, kind);
+        }
+        self.emit_with_target(word, target, kind);
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn emit_branch_to_route(&mut self, word: u32, external: Label, kind: SiteKind) {
+        let route = self.route_to(external);
+        self.emit_with_target(word, route, kind);
+    }
+
+    pub(super) fn route_to(&mut self, external: Label) -> Label {
+        let index = self.buffer.state(external).link as usize;
+        if index >= self.routes.len() {
+            self.routes.resize(index + 1, None);
+        }
+        *self.routes[index].get_or_insert_with(|| self.buffer.new_label())
     }
 
     #[inline]
@@ -112,7 +137,7 @@ impl Assembler {
     }
 
     pub fn replaceable_point(&mut self) -> Label {
-        self.buffer.replaceable_end = self.buffer.len + super::patch::REPLACEMENT_JUMP_SIZE;
+        self.buffer.replaceable_end = self.buffer.len + super::patch::REPLACEMENT_JUMP_SIZE as u32;
         self.buffer.mark()
     }
 
@@ -120,9 +145,9 @@ impl Assembler {
     pub(crate) fn pad(&mut self, log2: u8, max: u8) {
         self.leave_replaceable_bytes();
         self.buffer.require_alignment(1 << log2);
-        let size = padding(self.buffer.offset(), log2, max) as u8;
+        let size = padding(self.buffer.len, log2, max) as u8;
         self.buffer.record(
-            self.buffer.offset(),
+            self.buffer.len,
             Label(0),
             SiteKind::Padding { log2, max, size },
         );
@@ -143,40 +168,46 @@ impl Assembler {
         self.emit_with_target(0x9400_0000, target, SiteKind::Branch26);
     }
 
+    #[inline]
     pub fn b_cond(&mut self, cc: Cc, target: Label) {
-        self.emit_with_target(0x5400_0000 | cc as u32, target, SiteKind::Branch19);
+        self.emit_short_branch(0x5400_0000 | cc as u32, target, SiteKind::Branch19);
     }
 
+    #[inline]
     pub fn cbz(&mut self, width: Width, reg: Gpr, target: Label) {
-        self.emit_with_target(
+        self.emit_short_branch(
             0x3400_0000 | sf(width) | gpr(reg),
             target,
             SiteKind::Branch19,
         );
     }
 
+    #[inline]
     pub fn cbnz(&mut self, width: Width, reg: Gpr, target: Label) {
-        self.emit_with_target(
+        self.emit_short_branch(
             0x3500_0000 | sf(width) | gpr(reg),
             target,
             SiteKind::Branch19,
         );
     }
 
+    #[inline]
     fn test_bit_and_branch(&mut self, opcode: u32, reg: Gpr, bit: u8, target: Label) {
         assert!(bit < 64);
         let bit = u32::from(bit);
-        self.emit_with_target(
+        self.emit_short_branch(
             opcode | (bit >> 5) << 31 | (bit & 31) << 19 | gpr(reg),
             target,
             SiteKind::Branch14,
         );
     }
 
+    #[inline]
     pub fn tbz(&mut self, reg: Gpr, bit: u8, target: Label) {
         self.test_bit_and_branch(0x3600_0000, reg, bit, target);
     }
 
+    #[inline]
     pub fn tbnz(&mut self, reg: Gpr, bit: u8, target: Label) {
         self.test_bit_and_branch(0x3700_0000, reg, bit, target);
     }

@@ -3,6 +3,7 @@
 use core::ffi::{CStr, c_char, c_void};
 use core::ptr;
 
+use crate::argument::{locale_id, number_skeleton_length};
 use crate::error::Status;
 use crate::ffi::{adopt, call, length, open};
 use crate::formatted_value::{FormattedValue, UFormattedValue};
@@ -104,11 +105,12 @@ icu_handle! {
 
 impl NumberFormatter {
     pub fn open(skeleton: &[u16], locale: &CStr) -> Result<NumberFormatter> {
-        let length = length(skeleton)?;
+        let locale = locale_id(locale)?;
+        let length = number_skeleton_length(skeleton)?;
         adopt(
             // SAFETY: `skeleton` has `length` units and `locale` is terminated. Neither is kept.
             |status| unsafe {
-                unumf_openForSkeletonAndLocale(skeleton.as_ptr(), length, locale.as_ptr(), status)
+                unumf_openForSkeletonAndLocale(skeleton.as_ptr(), length, locale, status)
             },
             NumberFormatter,
         )
@@ -184,7 +186,8 @@ impl NumberRangeFormatter {
         collapse: Collapse,
         identity_fallback: IdentityFallback,
     ) -> Result<NumberRangeFormatter> {
-        let length = length(skeleton)?;
+        let locale = locale_id(locale)?;
+        let length = number_skeleton_length(skeleton)?;
         adopt(
             // SAFETY: `skeleton` has `length` units and `locale` is terminated. Neither is kept. The parse error is optional.
             |status| unsafe {
@@ -193,7 +196,7 @@ impl NumberRangeFormatter {
                     length,
                     collapse,
                     identity_fallback,
-                    locale.as_ptr(),
+                    locale,
                     ptr::null_mut(),
                     status,
                 )

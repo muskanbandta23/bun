@@ -1,20 +1,30 @@
-use core::mem::MaybeUninit;
+use core::mem::{ManuallyDrop, MaybeUninit};
+use core::ops::Range;
 use core::ptr::NonNull;
 
 use bun_alloc::AllocError;
 
-use crate::{CodeUnit, MAX_LENGTH, StringImpl, StringRef, Text, with_text};
+use crate::{CodeUnit, Cursor, MAX_LENGTH, StringImpl, StringRef, Text, ascii, copy};
 
 /// A string that grows in the allocation it ends up in. It is Latin-1 until a wider character arrives. Once it has
 /// run out of memory or of length it takes nothing more, and `finish` fails.
 pub struct StringBuilder {
-    /// Its length is the capacity.
-    buffer: StringRef,
+    /// Aligned for `u16`.
+    units: NonNull<u8>,
     length: usize,
-    capacity: usize,
+    /// The one for the other width is zero, so a push finds out about width and room in one comparison.
+    latin1_capacity: usize,
+    utf16_capacity: usize,
     is_latin1: bool,
     has_overflowed: bool,
+    /// `units` are the tail of a string to which the builder holds the only reference.
+    is_allocated: bool,
+    /// What `on_stack` lent, whether or not `units` are there.
+    scratch: *mut [MaybeUninit<u8>],
 }
+
+#[repr(align(2))]
+struct Scratch<const BYTES: usize>([MaybeUninit<u8>; BYTES]);
 
 impl Default for StringBuilder {
     fn default() -> StringBuilder {
@@ -22,17 +32,35 @@ impl Default for StringBuilder {
     }
 }
 
+impl Drop for StringBuilder {
+    #[inline]
+    fn drop(&mut self) {
+        drop(self.take_allocation());
+    }
+}
+
 impl StringBuilder {
+    /// The allocator would not move a string of any length out of a block for so many characters.
     const MINIMUM_CAPACITY: usize = 28;
 
     #[inline]
     pub const fn new() -> StringBuilder {
+        let nothing = NonNull::<u16>::dangling().cast();
+        Self::in_scratch(NonNull::slice_from_raw_parts(nothing, 0).as_ptr())
+    }
+
+    #[inline(always)]
+    const fn in_scratch(scratch: *mut [MaybeUninit<u8>]) -> StringBuilder {
         StringBuilder {
-            buffer: StringRef::empty(),
+            // SAFETY: from a reference or a `NonNull`.
+            units: unsafe { NonNull::new_unchecked(scratch.cast()) },
             length: 0,
-            capacity: 0,
+            latin1_capacity: scratch.len(),
+            utf16_capacity: 0,
             is_latin1: true,
             has_overflowed: false,
+            is_allocated: false,
+            scratch,
         }
     }
 
@@ -40,6 +68,32 @@ impl StringBuilder {
         let mut builder = StringBuilder::new();
         builder.reserve(capacity);
         builder
+    }
+
+    /// Lends a builder that allocates nothing while its text fits in `BYTES`. Ends the process if `build` puts
+    /// another one in its place.
+    #[inline(always)]
+    pub fn on_stack<const BYTES: usize, R>(build: impl FnOnce(&mut StringBuilder) -> R) -> R {
+        struct Lent {
+            builder: StringBuilder,
+            scratch: *mut [MaybeUninit<u8>],
+        }
+        impl Drop for Lent {
+            #[inline(always)]
+            fn drop(&mut self) {
+                if !core::ptr::eq(self.builder.scratch, self.scratch) {
+                    std::process::abort();
+                }
+            }
+        }
+        const { assert!(BYTES > 0 && BYTES <= MAX_LENGTH) };
+        let mut scratch = Scratch([MaybeUninit::uninit(); BYTES]);
+        let scratch = &raw mut scratch.0 as *mut [MaybeUninit<u8>];
+        let mut lent = Lent {
+            builder: Self::in_scratch(scratch),
+            scratch,
+        };
+        build(&mut lent.builder)
     }
 
     #[inline]
@@ -62,171 +116,302 @@ impl StringBuilder {
         self.has_overflowed
     }
 
+    #[inline]
     pub fn text(&self) -> Text<'_> {
-        if self.capacity == 0 {
-            return Text::EMPTY;
-        }
         // SAFETY: the first `length` units are written, in the width that the flag names.
         unsafe {
-            let units = self.buffer.as_ptr().byte_add(StringImpl::TAIL);
             if self.is_latin1 {
-                Text::Latin1(core::slice::from_raw_parts(
-                    units.cast().as_ptr(),
-                    self.length,
-                ))
+                Text::Latin1(NonNull::slice_from_raw_parts(self.units, self.length).as_ref())
             } else {
-                Text::Utf16(core::slice::from_raw_parts(
-                    units.cast().as_ptr(),
-                    self.length,
-                ))
+                Text::Utf16(NonNull::slice_from_raw_parts(self.units.cast(), self.length).as_ref())
             }
         }
     }
 
     pub fn clear(&mut self) {
-        *self = StringBuilder::new();
+        *self = Self::in_scratch(self.scratch);
     }
 
     pub fn truncate(&mut self, length: usize) {
         self.length = self.length.min(length);
     }
 
+    /// Room for exactly so many more units of the present width, unless there is more already.
+    #[inline]
     pub fn reserve(&mut self, additional: usize) {
-        if additional > self.capacity - self.length {
-            let capacity = self.length.saturating_add(additional);
-            if self.is_latin1 {
-                self.resize::<u8>(capacity);
-            } else {
-                self.resize::<u16>(capacity);
+        if additional > self.capacity() - self.length {
+            self.resize(self.length.saturating_add(additional));
+        }
+    }
+
+    #[inline(always)]
+    fn capacity(&self) -> usize {
+        self.latin1_capacity | self.utf16_capacity
+    }
+
+    /// Whether the units are of type `T` and `count` more fit, or else there are and will be none.
+    #[inline(always)]
+    pub(crate) fn has_room<T: CodeUnit>(&self, count: usize) -> bool {
+        let capacity = if T::IS_LATIN1 {
+            self.latin1_capacity
+        } else {
+            self.utf16_capacity
+        };
+        count <= MAX_LENGTH && self.length + count <= capacity
+    }
+
+    /// Lends `count` units if they are there and of type `T`.
+    #[inline(always)]
+    fn write_in_room<T: CodeUnit>(
+        &mut self,
+        count: usize,
+        write: impl FnOnce(&mut Cursor<'_, T>),
+    ) -> bool {
+        if !self.has_room::<T>(count) {
+            return false;
+        }
+        // SAFETY: inside the capacity, which is in units of `T`, and only the builder has the memory.
+        let room = unsafe {
+            let start = self.units.cast::<MaybeUninit<T>>().add(self.length);
+            NonNull::slice_from_raw_parts(start, count).as_mut()
+        };
+        self.length += Cursor::fill_uninit(room, write).len();
+        true
+    }
+
+    /// Lends all the room that there is, if the units are of type `T`.
+    #[inline(always)]
+    pub(crate) fn write_in_spare<T: CodeUnit>(&mut self, write: impl FnOnce(&mut Cursor<'_, T>)) {
+        self.write_in_room(self.capacity() - self.length, write);
+    }
+
+    /// Appends what `write` writes, `count` characters at most. Does not call it after an overflow.
+    #[inline(always)]
+    pub fn write_latin1(&mut self, count: usize, write: impl FnOnce(&mut Cursor<'_, u8>)) {
+        let offset = if self.has_room::<u8>(count) {
+            self.length
+        } else if let Some(offset) = self.make_room_for_latin1(count) {
+            offset
+        } else {
+            return;
+        };
+        // SAFETY: inside the capacity, behind what is written, and only the builder has the memory.
+        let room = unsafe {
+            let start = self.units.cast::<MaybeUninit<u8>>().add(offset);
+            NonNull::slice_from_raw_parts(start, count).as_mut()
+        };
+        let written = Cursor::fill_uninit(room, write).len();
+        if !self.is_latin1 {
+            // SAFETY: as `make_room_for_latin1` has arranged it.
+            unsafe { self.widen_from(offset, written) };
+        }
+        self.length += written;
+    }
+
+    /// The offset in bytes of room for `count` bytes: for wide units, the second half of the room for as many.
+    #[inline(never)]
+    fn make_room_for_latin1(&mut self, count: usize) -> Option<usize> {
+        self.grow(count);
+        if self.has_overflowed {
+            None
+        } else if self.is_latin1 {
+            Some(self.length)
+        } else {
+            Some(2 * self.length + count)
+        }
+    }
+
+    /// # Safety
+    /// The units are wide. `count` bytes at `offset` are written, in the room and `count` bytes or more into it.
+    #[inline(never)]
+    unsafe fn widen_from(&mut self, offset: usize, count: usize) {
+        for index in 0..count {
+            // SAFETY: the caller's. A unit covers no byte that is still to be read.
+            unsafe {
+                let character = self.units.add(offset + index).read();
+                let unit = self.units.cast::<u16>().add(self.length + index);
+                unit.write(u16::from(character));
             }
         }
+    }
+
+    /// Appends what `write` writes, `count` units at most, and makes the string wide. Does not call it after an
+    /// overflow.
+    #[inline(always)]
+    pub fn write_utf16(&mut self, count: usize, write: impl FnOnce(&mut Cursor<'_, u16>)) {
+        if !self.has_room::<u16>(count) {
+            self.widen(count);
+            if self.has_overflowed {
+                return;
+            }
+        }
+        self.write_in_room(count, write);
     }
 
     #[cold]
     fn overflow(&mut self) {
         self.clear();
+        self.latin1_capacity = 0;
         self.has_overflowed = true;
     }
 
-    fn resize<T: CodeUnit>(&mut self, capacity: usize) {
-        debug_assert!(T::IS_LATIN1 == self.is_latin1);
+    /// `units` dangle afterwards.
+    #[inline(always)]
+    fn take_allocation(&mut self) -> Option<StringRef> {
+        core::mem::take(&mut self.is_allocated).then(|| {
+            // SAFETY: takes over the count that the builder holds.
+            unsafe { StringRef::from_raw(self.units.byte_sub(StringImpl::TAIL).cast()) }
+        })
+    }
+
+    /// The old allocation, if any, is taken.
+    fn adopt<T: CodeUnit>(&mut self, string: NonNull<StringImpl>, capacity: usize) {
+        // SAFETY: the tail is inside the allocation.
+        self.units = unsafe { string.byte_add(StringImpl::TAIL).cast() };
+        self.is_allocated = true;
+        self.set_capacity::<T>(capacity);
+    }
+
+    fn set_capacity<T: CodeUnit>(&mut self, capacity: usize) {
+        self.is_latin1 = T::IS_LATIN1;
+        (self.latin1_capacity, self.utf16_capacity) = if T::IS_LATIN1 {
+            (capacity, 0)
+        } else {
+            (0, capacity)
+        };
+    }
+
+    #[inline(never)]
+    fn resize(&mut self, capacity: usize) {
         if self.has_overflowed {
             return;
         }
-        let resized = if self.capacity == 0 {
-            StringImpl::allocate::<T>(capacity)
+        let result = if self.is_latin1 {
+            self.try_resize::<u8>(capacity)
         } else {
-            // SAFETY: allocated for `T`, and the builder holds the only reference.
-            unsafe { StringImpl::reallocate::<T>(self.buffer.as_ptr(), capacity) }
+            self.try_resize::<u16>(capacity)
         };
-        match resized {
-            Ok(buffer) => self.adopt(buffer, capacity),
-            Err(AllocError) => self.overflow(),
+        if result.is_err() {
+            self.overflow();
         }
     }
 
-    /// The old buffer has moved into `buffer` or is the empty string.
-    fn adopt(&mut self, buffer: NonNull<StringImpl>, capacity: usize) {
-        // SAFETY: the reference that the allocation was made with.
-        let old = core::mem::replace(&mut self.buffer, unsafe { StringRef::from_raw(buffer) });
-        old.into_raw();
-        self.capacity = capacity;
+    fn try_resize<T: CodeUnit>(&mut self, capacity: usize) -> Result<(), AllocError> {
+        if !self.is_allocated {
+            return self.try_move::<T>(capacity);
+        }
+        // SAFETY: allocated for `T`, and the builder holds the only reference.
+        let string = unsafe {
+            StringImpl::reallocate::<T>(self.units.byte_sub(StringImpl::TAIL).cast(), capacity)?
+        };
+        self.adopt::<T>(string, capacity);
+        Ok(())
     }
 
-    fn grown_capacity(&self, additional: usize) -> usize {
-        let required = self.length.saturating_add(additional);
-        required
-            .max((self.capacity * 2).min(MAX_LENGTH))
+    /// To a new allocation.
+    fn try_move<T: CodeUnit>(&mut self, capacity: usize) -> Result<(), AllocError> {
+        let string = StringImpl::allocate::<T>(capacity)?;
+        // SAFETY: a new allocation for `T` that nothing else has.
+        let units = unsafe { StringImpl::tail::<T>(string) };
+        self.text().copy_to(&mut units[..self.length]);
+        drop(self.take_allocation());
+        self.adopt::<T>(string, capacity);
+        Ok(())
+    }
+
+    /// Twice the bytes, which keeps to the sizes of the allocator's blocks, or what is required if that is more.
+    fn grown_capacity<T: CodeUnit>(&self, additional: usize) -> usize {
+        let doubled = 2 * self.capacity() + StringImpl::TAIL / size_of::<T>();
+        (self.length.saturating_add(additional))
+            .max(doubled.min(longest(T::IS_LATIN1)))
             .max(Self::MINIMUM_CAPACITY)
     }
 
-    #[cold]
-    #[inline(never)]
-    fn grow<T: CodeUnit>(&mut self, additional: usize) -> bool {
-        self.resize::<T>(self.grown_capacity(additional));
-        !self.has_overflowed
+    /// `grow`, and by `slack` more as far as a string can be that long.
+    #[inline]
+    pub(crate) fn grow_with_slack(&mut self, additional: usize, slack: usize) {
+        let possible = longest(self.is_latin1) - self.length;
+        self.grow(additional.max(additional.saturating_add(slack).min(possible)));
     }
 
-    #[cold]
-    #[inline(never)]
-    fn widen(&mut self, additional: usize) {
-        if self.has_overflowed {
-            return;
+    /// Room for so many more units of the present width.
+    #[inline]
+    pub(crate) fn grow(&mut self, additional: usize) {
+        if additional > self.capacity() - self.length {
+            self.resize(if self.is_latin1 {
+                self.grown_capacity::<u8>(additional)
+            } else {
+                self.grown_capacity::<u16>(additional)
+            });
         }
-        let capacity = if additional > self.capacity - self.length {
-            self.grown_capacity(additional)
+    }
+
+    /// Room for so many more wide units.
+    #[inline(never)]
+    pub(crate) fn widen(&mut self, additional: usize) {
+        if !self.is_latin1 || self.has_overflowed {
+            return self.grow(additional);
+        }
+        let required = self.length.saturating_add(additional);
+        if !self.is_allocated && required <= self.latin1_capacity / 2 {
+            return self.widen_in_place();
+        }
+        let capacity = if required <= self.latin1_capacity {
+            self.latin1_capacity
         } else {
-            self.capacity
+            self.grown_capacity::<u16>(additional)
         };
-        let Ok(wide) = StringImpl::allocate::<u16>(capacity) else {
-            return self.overflow();
-        };
-        // SAFETY: a new allocation for `u16` that nothing else has.
-        let units = unsafe { StringImpl::tail::<u16>(wide) };
-        for (target, unit) in units.iter_mut().zip(self.text().code_units()) {
-            target.write(unit);
-        }
-        // SAFETY: the reference that the allocation was made with.
-        self.buffer = unsafe { StringRef::from_raw(wide) };
-        self.capacity = capacity;
-        self.is_latin1 = false;
-    }
-
-    /// The next `count` units, all of which the caller writes. Empty after an overflow.
-    #[inline(always)]
-    fn extend<T: CodeUnit>(&mut self, count: usize) -> &mut [MaybeUninit<T>] {
-        debug_assert!(T::IS_LATIN1 == self.is_latin1);
-        if count > self.capacity - self.length && !self.grow::<T>(count) {
-            return &mut [];
-        }
-        let start = self.length;
-        self.length += count;
-        // SAFETY: inside the capacity, which is in units of `T`, and only the builder has the buffer.
-        unsafe {
-            let units = self
-                .buffer
-                .as_ptr()
-                .byte_add(StringImpl::TAIL)
-                .cast::<MaybeUninit<T>>();
-            core::slice::from_raw_parts_mut(units.add(start).as_ptr(), count)
+        if self.try_move::<u16>(capacity).is_err() {
+            self.overflow();
         }
     }
 
-    #[inline(always)]
-    fn extend_mapped<S: Copy, T: CodeUnit>(&mut self, source: &[S], map: impl Fn(S) -> T) {
-        for (target, &unit) in self.extend(source.len()).iter_mut().zip(source) {
-            target.write(map(unit));
+    /// The text takes half of the scratch at most.
+    fn widen_in_place(&mut self) {
+        let mut end = self.length;
+        while end > 0 {
+            let start = end.div_ceil(2).min(end - 1);
+            // SAFETY: inside the capacity. What is read is written, and is apart from what is written over unless it
+            // is the first character, which is copied.
+            unsafe {
+                let first = [self.units.read()];
+                let source = match start {
+                    0 => &first,
+                    _ => NonNull::slice_from_raw_parts(self.units.add(start), end - start).as_ref(),
+                };
+                let target = self.units.cast::<MaybeUninit<u16>>().add(start);
+                let mut target = NonNull::slice_from_raw_parts(target, end - start);
+                copy::widen(target.as_mut(), source);
+            }
+            end = start;
         }
-    }
-
-    #[inline(always)]
-    fn extend_from_slice<T: CodeUnit>(&mut self, units: &[T]) {
-        let target = self.extend::<T>(units.len());
-        let count = target.len();
-        target.write_copy_of_slice(&units[..count]);
+        self.set_capacity::<u16>(self.latin1_capacity / 2);
     }
 
     #[inline]
     pub fn push_latin1(&mut self, character: u8) {
-        if self.is_latin1 {
-            self.extend_mapped(&[character], |character| character);
-        } else {
-            self.extend_mapped(&[character], u16::from);
+        if !self.write_in_room(1, |cursor| cursor.push(character)) {
+            self.push_unit_slow(u16::from(character));
         }
     }
 
     #[inline]
     pub fn push_unit(&mut self, unit: u16) {
-        if self.is_latin1 {
-            if let Ok(character) = u8::try_from(unit) {
-                return self.extend_mapped(&[character], |character| character);
-            }
-            self.widen(1);
-            if self.has_overflowed {
-                return;
-            }
+        if unit.is_latin1() && self.write_in_room(1, |cursor| cursor.push(unit as u8)) {
+            return;
         }
-        self.extend_mapped(&[unit], |unit| unit);
+        if !self.write_in_room(1, |cursor| cursor.push(unit)) {
+            self.push_unit_slow(unit);
+        }
+    }
+
+    #[inline(never)]
+    fn push_unit_slow(&mut self, unit: u16) {
+        if self.is_latin1 && unit.is_latin1() {
+            self.write_latin1(1, |cursor| cursor.push(unit as u8));
+        } else {
+            self.write_utf16(1, |cursor| cursor.push(unit));
+        }
     }
 
     /// `code_point` is at most 0x10FFFF.
@@ -234,23 +419,23 @@ impl StringBuilder {
     pub fn push_code_point(&mut self, code_point: u32) {
         match u16::try_from(code_point) {
             Ok(unit) => self.push_unit(unit),
-            Err(_) => {
-                let offset = code_point - 0x10000;
-                self.push_utf16(&[
-                    0xd800 | (offset >> 10) as u16,
-                    0xdc00 | (offset & 0x3ff) as u16,
-                ]);
-            }
+            Err(_) => self.write_utf16(2, |cursor| cursor.push_code_point(code_point)),
         }
     }
 
     #[inline]
     pub fn push_latin1_slice(&mut self, characters: &[u8]) {
-        if self.is_latin1 {
-            self.extend_from_slice(characters);
-        } else {
-            self.extend_mapped(characters, u16::from);
+        if !self.write_in_room(characters.len(), |cursor| cursor.push_slice(characters)) {
+            self.push_latin1_slice_slow(characters);
         }
+    }
+
+    #[inline(never)]
+    fn push_latin1_slice_slow(&mut self, characters: &[u8]) {
+        self.grow(characters.len());
+        let text = Text::Latin1(characters);
+        _ = self.write_in_room::<u16>(text.len(), |cursor| cursor.push_text(text))
+            || self.write_in_room::<u8>(text.len(), |cursor| cursor.push_text(text));
     }
 
     #[inline]
@@ -259,17 +444,20 @@ impl StringBuilder {
         self.push_latin1_slice(ascii.as_bytes());
     }
 
+    #[inline]
     pub fn push_utf16(&mut self, units: &[u16]) {
-        if self.is_latin1 {
-            if Text::Utf16(units).fits_latin1() {
-                return self.extend_mapped(units, |unit| unit as u8);
-            }
-            self.widen(units.len());
-            if self.has_overflowed {
-                return;
-            }
+        if !self.write_in_room(units.len(), |cursor| cursor.push_slice(units)) {
+            self.push_utf16_slow(units);
         }
-        self.extend_from_slice(units);
+    }
+
+    #[inline(never)]
+    fn push_utf16_slow(&mut self, units: &[u16]) {
+        if self.is_latin1 && ascii::fits_latin1(units) {
+            self.write_latin1(units.len(), |cursor| cursor.push_text(Text::Utf16(units)));
+        } else {
+            self.write_utf16(units.len(), |cursor| cursor.push_slice(units));
+        }
     }
 
     #[inline]
@@ -287,86 +475,106 @@ impl StringBuilder {
 
     pub fn push_repeated(&mut self, character: u8, count: usize) {
         if self.is_latin1 {
-            self.extend(count).write_filled(character);
+            self.write_latin1(count, |cursor| cursor.push_repeated(character, count));
         } else {
-            self.extend(count).write_filled(u16::from(character));
+            let unit = u16::from(character);
+            self.write_utf16(count, |cursor| cursor.push_repeated(unit, count));
         }
     }
 
-    /// QuoteJSONString of ECMA-262.
-    pub fn push_json_quoted(&mut self, text: Text<'_>) {
-        self.reserve(text.len().saturating_add(2));
-        self.push_latin1(b'"');
-        with_text!(text, |units| self.push_json_escaped(units));
-        self.push_latin1(b'"');
-    }
-
-    fn push_json_escaped<T: CodeUnit>(&mut self, units: &[T]) {
-        const HEX: &[u8; 16] = b"0123456789abcdef";
-        let needs_escape = |unit: T| {
-            let unit = unit.to_u16();
-            unit < 0x20 || unit == 0x22 || unit == 0x5c || unit & 0xf800 == 0xd800
-        };
-        let mut rest = units;
-        while let Some(index) = rest.iter().position(|&unit| needs_escape(unit)) {
-            self.push_units(&rest[..index]);
-            let unit = rest[index].to_u16();
-            let next = rest.get(index + 1).map(|next| next.to_u16());
-            rest = &rest[index + 1..];
-            let short = match unit {
-                0x08 => b'b',
-                0x09 => b't',
-                0x0a => b'n',
-                0x0c => b'f',
-                0x0d => b'r',
-                0x22 | 0x5c => unit as u8,
-                0xd800..=0xdbff if next.is_some_and(|next| next & 0xfc00 == 0xdc00) => {
-                    self.push_utf16(&[unit, next.unwrap_or_default()]);
-                    rest = &rest[1..];
-                    continue;
-                }
-                _ => {
-                    let digit = |shift: u32| HEX[usize::from(unit >> shift & 0xf)];
-                    self.push_latin1_slice(&[b'\\', b'u', digit(12), digit(8), digit(4), digit(0)]);
-                    continue;
-                }
+    /// Appends a copy of a part of the text. Panics if that is not inside it, unless after an overflow.
+    #[inline]
+    pub fn push_from_within(&mut self, range: Range<usize>) {
+        #[inline(always)]
+        fn push<T: CodeUnit>(builder: &mut StringBuilder, range: Range<usize>) {
+            // SAFETY: the first `length` units are written as `T`, and the room that is lent is behind them.
+            let text = unsafe {
+                NonNull::slice_from_raw_parts(builder.units.cast::<T>(), builder.length).as_ref()
             };
-            self.push_latin1_slice(&[b'\\', short]);
+            builder.write_in_room(range.len(), |cursor| cursor.push_slice(&text[range]));
         }
-        self.push_units(rest);
+        self.grow(range.len());
+        if self.has_overflowed {
+            return;
+        }
+        if self.is_latin1 {
+            push::<u8>(self, range);
+        } else {
+            push::<u16>(self, range);
+        }
     }
 
-    pub fn finish(mut self) -> Result<StringRef, AllocError> {
+    #[inline]
+    pub fn finish(self) -> Result<StringRef, AllocError> {
+        ManuallyDrop::new(self).take_string()
+    }
+
+    /// `finish` for a builder that is lent or used again. It is empty afterwards.
+    #[inline]
+    pub fn take(&mut self) -> Result<StringRef, AllocError> {
+        let string = self.take_string();
+        self.clear();
+        string
+    }
+
+    /// `units` may dangle afterwards.
+    fn take_string(&mut self) -> Result<StringRef, AllocError> {
         if self.has_overflowed {
             return Err(AllocError);
         }
-        match self.text() {
-            Text::Latin1([]) | Text::Utf16([]) => return Ok(StringRef::empty()),
-            Text::Latin1(&[character]) => return Ok(StringRef::single_character(character)),
-            _ => {}
+        if let Text::Latin1(&[character]) = self.text() {
+            drop(self.take_allocation());
+            return Ok(StringRef::single_character(character));
         }
-        if self.length != self.capacity {
+        let Some(string) = self.take_allocation() else {
+            return StringRef::try_copy(self.text());
+        };
+        // SAFETY: allocated for the width that the flag names, the only reference, and so many units are written.
+        Ok(unsafe {
             if self.is_latin1 {
-                self.resize::<u8>(self.length);
+                shorten::<u8>(string, self.length)
             } else {
-                self.resize::<u16>(self.length);
+                shorten::<u16>(string, self.length)
             }
-            if self.has_overflowed {
-                return Err(AllocError);
-            }
+        })
+    }
+}
+
+const fn longest(is_latin1: bool) -> usize {
+    if is_latin1 {
+        MAX_LENGTH
+    } else {
+        (u32::MAX as usize - StringImpl::TAIL) / 2
+    }
+}
+
+/// Ends `string` after `length` units. It moves only if that leaves more than half of the memory unused.
+///
+/// # Safety
+/// `string` is the only reference to what `StringImpl::allocate::<T>` made. It has `length` units or more, and so
+/// many are written.
+#[inline]
+pub(crate) unsafe fn shorten<T: CodeUnit>(string: StringRef, length: usize) -> StringRef {
+    if length == 0 {
+        return StringRef::empty();
+    }
+    let size = |length: usize| StringImpl::TAIL + length * size_of::<T>();
+    let is_wasteful = 2 * size(length) < size(string.len());
+    let string = string.into_raw();
+    // SAFETY: the caller's. The count moves to the result.
+    unsafe {
+        if is_wasteful && let Ok(moved) = StringImpl::reallocate::<T>(string, length) {
+            return StringRef::from_raw(moved);
         }
-        Ok(self.buffer)
+        let field = string.byte_add(StringImpl::OFFSET_OF_LENGTH);
+        field.cast::<u32>().write(length as u32);
+        StringRef::from_raw(string)
     }
 }
 
 impl core::fmt::Write for StringBuilder {
     fn write_str(&mut self, text: &str) -> core::fmt::Result {
-        if text.is_ascii() {
-            self.push_ascii(text);
-        } else {
-            text.chars()
-                .for_each(|character| self.push_code_point(u32::from(character)));
-        }
+        self.push_utf8_lossy(text.as_bytes());
         Ok(())
     }
 }

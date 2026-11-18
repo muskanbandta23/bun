@@ -2,6 +2,7 @@
 
 use core::ffi::{CStr, c_char};
 
+use crate::argument::locale_id;
 use crate::error::Status;
 use crate::ffi::{fill, length};
 use crate::{Buffer, Error, Result};
@@ -22,6 +23,7 @@ pub enum Case {
 
 impl Case {
     pub fn convert(self, text: &[u16], locale: &CStr) -> Result<Buffer<u16>> {
+        let locale = locale_id(locale)?;
         if text.len() > MAX_TEXT_LENGTH {
             return Err(Error::MEMORY_ALLOCATION);
         }
@@ -34,14 +36,7 @@ impl Case {
         (converted.try_reserve_exact(text.len())).map_err(|_| Error::MEMORY_ALLOCATION)?;
         // SAFETY: `text` has `length` units, `locale` is terminated, and `out` has room for `capacity`.
         fill(&mut converted, |out, capacity, status| unsafe {
-            function(
-                out,
-                capacity,
-                text.as_ptr(),
-                length,
-                locale.as_ptr(),
-                status,
-            )
+            function(out, capacity, text.as_ptr(), length, locale, status)
         })?;
         Ok(converted)
     }

@@ -11,9 +11,9 @@ mod vectors;
 use std::fmt::Debug;
 
 use bun_engine_asm::{
-    Address, FloatWidth, Fpr, Gpr, Options, Reuse, Scratch, ScratchNeeds, Size, TestCond,
-    VectorAssembly, VectorBinary, VectorReduce, VectorShift, VectorTernary, VectorUnary,
-    X64Features, lanes, x64,
+    Address, Arm64Features, FloatWidth, Fpr, Gpr, Options, Reuse, Scratch, ScratchNeeds, Size,
+    TestCond, VectorAssembly, VectorBinary, VectorReduce, VectorShift, VectorTernary, VectorUnary,
+    X64Features, arm64, lanes, x64,
 };
 
 struct Case<M> {
@@ -132,7 +132,8 @@ fn cases<M: VectorAssembly>(features: M::Features) -> Vec<Case<M>> {
         ));
     }
     for width in [FloatWidth::F32, FloatWidth::F64] {
-        for lane in 0..lanes::count(width.width().size()) {
+        // There may be an instruction that joins two halves.
+        for lane in 0..lanes::count(width.width().size()) - 1 {
             all.push(case(
                 width,
                 1,
@@ -280,4 +281,14 @@ fn x64_with_avx() {
 #[test]
 fn x64_with_everything() {
     check::<x64::MacroAssembler>(X64Features::all(), &X64, &[]);
+}
+
+#[test]
+fn arm64_with_nothing_more() {
+    check::<arm64::MacroAssembler>(Arm64Features::empty(), &support::ARM64, &["sdot"]);
+}
+
+#[test]
+fn arm64_with_everything() {
+    check::<arm64::MacroAssembler>(Arm64Features::all(), &support::ARM64, &[]);
 }

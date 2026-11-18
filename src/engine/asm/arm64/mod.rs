@@ -17,6 +17,9 @@ mod opcode;
 pub mod patch;
 mod registers;
 mod scalar_float;
+mod shuffle;
+mod vector;
+mod vector_arithmetic;
 
 pub use assembler::Assembler;
 pub use constant::ConstantMove;

@@ -1,5 +1,6 @@
 //! Module records, namespaces and the loader.
 
+mod environment;
 mod loader;
 
 pub use loader::{ModuleHooks, ModuleLoader};

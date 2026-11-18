@@ -8,7 +8,7 @@ use crate::{Cx, Thrown};
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Expected {
     Value,
-    /// After a comma.
+    /// In an array that is not empty.
     Element,
     /// After a comma.
     Key,

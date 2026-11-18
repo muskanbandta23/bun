@@ -9,6 +9,7 @@ pub(crate) mod iteration;
 pub(crate) mod operators;
 pub(crate) mod properties;
 pub(crate) mod scopes;
+pub(crate) mod suspension;
 
 use bun_engine_bytecode::Op;
 use bun_engine_vm::heap::barrier;

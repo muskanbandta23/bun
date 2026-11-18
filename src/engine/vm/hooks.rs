@@ -23,6 +23,7 @@ pub struct Hooks {
     pub tier_up: fn(&Vm, &CodeBlock, &CallFrame, Option<u32>) -> usize,
     /// The last argument is the scope.
     pub debug: fn(&mut Cx, &CallFrame, DebugHook, crate::Value) -> crate::JsResult<()>,
+    pub debug_await: fn(&mut Cx, &CallFrame, DebugHook, Gc<crate::Coroutine>) -> JsResult<()>,
     pub cover: fn(&Vm, &CodeBlock, CoverageBlockIndex, &crate::code::metadata::Word),
     /// Sets the eager slots but `global_this`.
     pub initialize_realm: fn(&Cx),

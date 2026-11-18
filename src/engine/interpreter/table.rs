@@ -4,7 +4,7 @@ use bun_engine_bytecode::{Narrow, Opcode, Wide16, Wide32, Width, op};
 
 use crate::fast::{
     allocation::*, calls::*, control::*, elements::*, frames::*, operators::*, properties::*,
-    scopes::*,
+    scopes::*, suspension::*,
 };
 use crate::machine::Handler;
 use crate::slow::calls::{FillVarargsFrame, PrepareFixedCall, SizeVarargsFrame};
@@ -60,12 +60,14 @@ macro_rules! fast_handlers {
             $(table[Opcode::$Op as usize] = $handler::<W>;)*
             $(table[Opcode::$Fixed as usize] = fixed_call::<op::$Fixed, W>;)*
             $(table[Opcode::$Varargs as usize] = varargs_call::<op::$Varargs, W>;)*
+            table[Opcode::ResumeGenerator as usize] = resume_generator::<W>;
             table
         }
 
         pub fn fixed_call_preparation(opcode: Opcode) -> Option<PrepareFixedCall> {
             match opcode {
                 $(Opcode::$Fixed => Some(slow::calls::prepare_fixed_call::<op::$Fixed>),)*
+                Opcode::ResumeGenerator => Some(slow::suspension::prepare_resumption),
                 _ => None,
             }
         }
@@ -84,6 +86,7 @@ macro_rules! fast_handlers {
             match opcode {
                 $(Opcode::$Fixed => Some(stubs::call::<op::$Fixed, W>),)*
                 $(Opcode::$Varargs => Some(stubs::call::<op::$Varargs, W>),)*
+                Opcode::ResumeGenerator => Some(stubs::call::<op::ResumeGenerator, W>),
                 _ => None,
             }
         }
@@ -221,6 +224,12 @@ fast_handlers! {
     RethrowIfAny rethrow_if_any,
     ThrowIfNotObject throw_if_not_object,
     ThrowIfNullish throw_if_nullish,
+    ResumeDispatch resume_dispatch,
+    Suspend suspend,
+    Resume resume,
+    ResumeAfterYield resume_after_yield,
+    ResumeAfterAwait resume_after_await,
+    GeneratorReturn generator_return,
     @fixed Call Call1 Call2 TailCall Construct SuperConstruct
     @varargs CallVarargs TailCallVarargs ConstructVarargs SuperConstructVarargs CallWithSpread
 }

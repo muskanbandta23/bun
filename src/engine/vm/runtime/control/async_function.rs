@@ -3,7 +3,7 @@ use core::mem::offset_of;
 use bun_engine_bytecode::ResumeMode;
 use bun_engine_macros::cell;
 
-use super::async_iteration::requeue_early_answer;
+use super::async_iteration::{REQUESTED_STEP, requeue_early_answer};
 use crate::{
     CallFrame, CellType, Coroutine, CoroutineInit, Cx, Gc, InternalMicrotask, InternalReaction,
     JsPromise, JsResult, PromiseStatus, Value,
@@ -48,7 +48,7 @@ impl JsAsyncFunctionGenerator {
     /// Arranges for the code to go on when `value` has settled. What it throws, the `await` throws.
     #[inline(always)]
     pub fn await_value(&self, cx: &mut Cx, value: Value) -> JsResult<()> {
-        if value == cx.async_iteration_sentinel().into() {
+        if value == REQUESTED_STEP {
             requeue_early_answer(cx, self);
             return Ok(());
         }

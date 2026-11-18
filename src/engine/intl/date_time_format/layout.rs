@@ -1,4 +1,5 @@
 use core::cell::OnceCell;
+use core::ops::Range;
 
 use bun_engine_text::StringRef;
 use bun_icu::calendar::Calendar;
@@ -6,7 +7,11 @@ use bun_icu::date_format::{DateFormat, field};
 use bun_icu::date_interval_format::DateIntervalFormat;
 use bun_icu::date_pattern::Pattern;
 
+use super::components::Component;
 use super::era::{EarlyEra, EarlyEraText};
+use super::locale_data::LocaleData;
+use super::pattern;
+use super::template::Template;
 use super::text::{DateText, PartSplitter, use_plain_spaces};
 use crate::error::IcuResult;
 use crate::parts::new_string;
@@ -18,11 +23,40 @@ pub(super) const FORMAT_FAILURE: &str = "failed to format date value";
 pub(super) struct Layout {
     pub(super) pattern: Pattern,
     /// Only if the pattern shows the era.
-    pub(super) early_era: Option<EarlyEra>,
+    early_era: Option<EarlyEra>,
+    time_zone_field: Option<Range<usize>>,
+    template: OnceCell<Option<Template>>,
     pub(super) range_format: OnceCell<DateIntervalFormat>,
 }
 
 impl Layout {
+    pub(super) fn new(pattern: Pattern, locale: &LocaleData) -> Result<Layout> {
+        let find = |component| {
+            pattern::fields(&pattern).find(|field| field.component() == Some(component))
+        };
+        Ok(Layout {
+            early_era: match find(Component::Era) {
+                Some(_) => EarlyEra::of(locale.calendar()?),
+                None => None,
+            },
+            time_zone_field: find(Component::TimeZoneName).map(|field| field.range),
+            pattern,
+            template: OnceCell::new(),
+            range_format: OnceCell::new(),
+        })
+    }
+
+    /// As a pattern of its own.
+    pub(super) fn time_zone_field(&self) -> Option<&[u16]> {
+        self.pattern.get(self.time_zone_field.clone()?)
+    }
+
+    pub(super) fn template(&self, locale: &LocaleData) -> Result<Option<&Template>> {
+        (self.template)
+            .get_or_try_init(|| Template::new(&self.pattern, locale))
+            .map(Option::as_ref)
+    }
+
     fn early_era_text(
         &self,
         format: &DateFormat,

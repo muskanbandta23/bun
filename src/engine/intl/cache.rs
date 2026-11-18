@@ -6,6 +6,7 @@ use crate::collator::Collator;
 use crate::date_time_format::DateCache;
 use crate::default_instances::DefaultInstances;
 use crate::display_names::DisplayNames;
+use crate::duration_format::DurationFormat;
 use crate::list_format::ListFormat;
 use crate::number_format::NumberFormat;
 use crate::plural_rules::PluralRules;
@@ -27,6 +28,7 @@ pub struct Cache {
     pub(crate) default_collators: DefaultInstances<Collator>,
     pub(crate) dates: DateCache,
     pub(crate) display_names: RecentSet<DisplayNames, 4>,
+    pub(crate) duration_formats: RecentSet<DurationFormat, 4>,
     pub(crate) list_formats: RecentSet<ListFormat, 4>,
     pub(crate) number_formats: RecentSet<NumberFormat, 8>,
     pub(crate) default_number_formats: DefaultInstances<NumberFormat>,

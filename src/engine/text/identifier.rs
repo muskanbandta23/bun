@@ -48,9 +48,15 @@ impl Atom {
 
     /// Does not copy the characters.
     pub fn from_literal(ascii: &'static str) -> Atom {
-        let text = Text::from_ascii(ascii);
+        debug_assert!(ascii.is_ascii());
+        Self::from_static_latin1(ascii.as_bytes())
+    }
+
+    /// Does not copy the characters.
+    pub fn from_static_latin1(characters: &'static [u8]) -> Atom {
+        let text = Text::Latin1(characters);
         Atom(atom_table::add(text, text.hash(), || {
-            StringRef::from_literal(ascii)
+            StringRef::from_static_units(characters)
         }))
     }
 
@@ -187,6 +193,20 @@ impl<'a> PropertyName<'a> {
 
     pub(crate) const fn from_static_symbol(symbol: &'static StaticSymbol) -> PropertyName<'static> {
         PropertyName(symbol.as_ptr(), PhantomData)
+    }
+
+    /// What `hash` returns, at compile time.
+    ///
+    /// # Safety
+    /// The pointer of one of `names`, `symbols` or `private_names`.
+    pub const unsafe fn hash_of_static(name: *const core::ffi::c_void) -> u32 {
+        // SAFETY: the field of a `StaticString`. The identity hash of a static symbol is that of its description.
+        unsafe {
+            name.byte_add(StringImpl::OFFSET_OF_FLAGS)
+                .cast::<u32>()
+                .read()
+                >> StringImpl::FLAG_COUNT
+        }
     }
 
     /// `None` unless the string is an atom or a symbol.
@@ -345,5 +365,12 @@ impl PartialEq<PropertyName<'_>> for Atom {
     #[inline(always)]
     fn eq(&self, other: &PropertyName<'_>) -> bool {
         self.name() == *other
+    }
+}
+
+impl hashbrown::Equivalent<Identifier> for PropertyName<'_> {
+    #[inline(always)]
+    fn equivalent(&self, key: &Identifier) -> bool {
+        *key == *self
     }
 }

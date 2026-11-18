@@ -240,7 +240,7 @@ impl Scope {
 /// The name of the code that has a scope, and where it starts.
 fn describe_owner(owner: Gc<ScriptExecutable>) -> (StringRef, u32) {
     if let Some(function) = owner.downcast::<FunctionExecutable>() {
-        return (function.display_name(), function.info().parameters_start());
+        return (function.name().clone(), function.info().parameters_start());
     }
     let name = if owner.is::<EvalExecutable>() {
         "<eval>"

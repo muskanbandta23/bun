@@ -106,7 +106,7 @@ fn caller_with_hooks(vm: &Vm, frame: &CallFrame) -> usize {
 
 fn function_name(code_block: &CodeBlock) -> Option<StringRef> {
     let function = code_block.executable().downcast::<FunctionExecutable>()?;
-    Some(function.display_name())
+    Some(function.name().clone())
 }
 
 impl Debugger {

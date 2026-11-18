@@ -37,7 +37,7 @@ use self::writes::Writes;
 use super::Analyses;
 use crate::analysis::{Cfg, Dominators};
 use crate::bitset::BitSet;
-use crate::ir::{Block, Edge, EffectFlags, Entity, Function, Heap, Op, State, Table, Type, Value};
+use crate::ir::{Block, Checked, Edge, EffectFlags, Function, Heap, Op, State, Table, Type, Value};
 use crate::target::Target;
 
 #[derive(Clone, Copy, Default)]
@@ -47,7 +47,14 @@ struct ValueInfo {
     facts: u32,
     /// The position of the walk up to which a branch or check has decided whether the value is zero.
     decided_until: u32,
+    /// For what depends on memory, the time according to [`Writes::now`]. For a parameter, see `params`.
+    mark: u32,
+    /// The position of the walk, plus one, at which it was last seen as an argument.
+    last_passed: u32,
     is_zero: bool,
+    is_in_state: bool,
+    /// A branch or check has decided a comparison that has this value on the left.
+    is_compared: bool,
     /// Can now be computed where the client did not expect it to be when it marked loads as `ALWAYS_READABLE`.
     is_set_free: bool,
 }
@@ -58,7 +65,6 @@ pub(super) struct Tables {
     values: Table<Value, ValueInfo>,
     facts: Vec<Facts>,
     state_users: Table<State, u32>,
-    resolved_states: BitSet,
     numbering: Numbering,
     writes: Writes,
     /// An edge from a block that can be reached leads here.
@@ -67,7 +73,7 @@ pub(super) struct Tables {
     doomed: Vec<Value>,
     edges: Vec<Edge>,
     list: Vec<Value>,
-    params: params::Tables,
+    signatures: Vec<(u32, u32)>,
     predecessor_counts: Table<Block, u32>,
     #[cfg(debug_assertions)]
     pub(super) fired_rules: Vec<&'static core::panic::Location<'static>>,
@@ -78,7 +84,7 @@ struct Simplifier<'a> {
     cfg: &'a Cfg,
     dominators: &'a Dominators,
     target: Target,
-    tables: &'a mut Tables,
+    tables: Tables,
     block: Block,
     /// Of the block in the walk.
     position: u32,
@@ -87,9 +93,14 @@ struct Simplifier<'a> {
     cursor: Value,
     /// How many more rules may be applied for the sake of the instruction at the cursor.
     budget: u32,
+    /// The copy of the operation at the cursor may differ from the original.
+    has_touched_operands: bool,
     changed_control: bool,
+    may_be_untidy: bool,
     /// A value has been replaced after some of its uses were visited.
     left_aliases: bool,
+    left_aliases_in_states: bool,
+    changed_args_in_loops: bool,
     would_find_more: bool,
     has_promises: bool,
     has_set_free: bool,
@@ -99,43 +110,37 @@ struct Simplifier<'a> {
 
 pub(super) fn run(function: &mut Function, analyses: &mut Analyses, target: Target) {
     const MOST_WALKS: usize = 3;
-    let mut tables = core::mem::take(&mut analyses.simplify);
     #[cfg(debug_assertions)]
-    tables.fired_rules.clear();
+    analyses.simplify.fired_rules.clear();
     for _ in 0..MOST_WALKS {
+        let tables = core::mem::take(&mut analyses.simplify);
         let (cfg, dominators) = analyses.dominators(function);
         let mut simplifier = Simplifier {
             function,
             cfg,
             dominators,
             target,
-            tables: &mut tables,
+            tables,
             block: Block::NONE,
             position: 0,
             end_of_subtree: 0,
             cursor: Value::NONE,
             budget: 0,
+            has_touched_operands: false,
             changed_control: false,
+            may_be_untidy: false,
             left_aliases: false,
+            left_aliases_in_states: false,
+            changed_args_in_loops: false,
             would_find_more: false,
             has_promises: false,
             has_set_free: false,
             withdraws_all_promises: false,
         };
-        simplifier.count_uses();
-        simplifier.walk();
-        simplifier.keep_promises();
-        simplifier.replace_cycles_of_params();
-        simplifier.tidy_blocks();
-        let Simplifier {
-            changed_control,
-            left_aliases,
-            would_find_more,
-            ..
-        } = simplifier;
-        if left_aliases {
-            function.resolve_aliases();
-        }
+        simplifier.run();
+        let (changed_control, would_find_more) =
+            (simplifier.changed_control, simplifier.would_find_more);
+        analyses.simplify = simplifier.tables;
         if changed_control {
             analyses.invalidate();
         }
@@ -143,68 +148,95 @@ pub(super) fn run(function: &mut Function, analyses: &mut Analyses, target: Targ
             break;
         }
     }
-    analyses.simplify = tables;
 }
 
 impl Simplifier<'_> {
+    fn run(&mut self) {
+        self.count_uses();
+        self.replace_cycles_of_params();
+        self.walk();
+        self.keep_promises();
+        if self.changed_args_in_loops && self.replace_cycles_of_params() {
+            (self.left_aliases, self.would_find_more) = (true, true);
+        }
+        if self.changed_control || self.may_be_untidy {
+            self.tidy_blocks();
+        }
+        if self.left_aliases {
+            self.function.resolve_aliases();
+        } else if self.left_aliases_in_states {
+            for state in self.tables.state_users.keys() {
+                if self.tables.state_users[state] != 0 {
+                    self.function.resolve_state(state);
+                }
+            }
+        }
+    }
+
     /// Also removes what is not used, so that it does not stand in for a later instruction that computes the same.
     fn count_uses(&mut self) {
-        let (function, tables, cfg) = (&mut *self.function, &mut *self.tables, self.cfg);
+        let (function, tables, cfg) = (&mut *self.function, &mut self.tables, self.cfg);
         tables
             .values
             .refill(function.value_count(), ValueInfo::default());
         tables.facts.clear();
+        tables.facts.extend(knowledge::COMMON);
         tables.state_users.refill(function.state_count(), 0);
-        tables.resolved_states.reset(function.state_count());
-        tables.numbering.reset();
         tables.writes.reset(function, cfg);
         tables.entered.reset(function.block_count());
+        let mut to_number = 0;
         for &block in cfg.order().iter().rev() {
             for edge in function.successors(block) {
-                for &arg in function.args(edge) {
-                    tables.values[arg].uses += 1;
-                }
+                tables.count(function.args(edge));
             }
             let mut next = function.last(block);
             while let Some(value) = next.expand() {
                 next = function.previous(value);
-                let (op, is_used) = (function.op(value), tables.values[value].uses != 0);
-                if is_expression(op) {
-                    if is_used {
-                        for &operand in op.inline_operands() {
-                            tables.values[operand].uses += 1;
-                        }
-                    } else {
-                        function.remove(value);
+                let is_used = tables.values[value].uses != 0;
+                match function.op(value) {
+                    Op::Binary(_, args) | Op::Compare(_, args) if is_used => tables.count(args),
+                    &Op::Unary(_, arg) if is_used => tables.count(&[arg]),
+                    &Op::Check(condition, exit) => {
+                        tables.count(&[condition]);
+                        tables.count_state(function, exit.state);
+                        continue;
                     }
-                    continue;
-                }
-                let effects = function.effects(value);
-                if !is_used && !effects.must_execute() {
-                    function.remove(value);
-                    continue;
-                }
-                if effects.writes_memory() {
-                    tables.writes.expect(function, effects.writes);
-                }
-                self.has_promises |= makes_promise(op);
-                for &operand in function.operands(value) {
-                    tables.values[operand].uses += 1;
-                }
-                if let Some(state) = function.state_of(value).expand() {
-                    tables.state_users[state] += 1;
-                    if tables.state_users[state] == 1 {
-                        for &kept in function.state(state) {
-                            tables.values[kept].uses += 1;
+                    &Op::Checked(_, args, exit) => {
+                        tables.count(&args);
+                        tables.count_state(function, exit.state);
+                    }
+                    &Op::Load {
+                        address, access, ..
+                    } if is_used && access.flags().is_empty() => {
+                        tables.count(&[address]);
+                    }
+                    &Op::Branch(condition) => {
+                        tables.count(&[condition]);
+                        continue;
+                    }
+                    Op::Jump => continue,
+                    op => {
+                        let effects = function.effects(value);
+                        if !is_used && !effects.must_execute() {
+                            function.remove(value);
+                            continue;
                         }
+                        if effects.writes_memory() {
+                            tables.writes.expect(function, effects.writes);
+                        }
+                        self.has_promises |= makes_promise(op);
+                        tables.count(function.operands(value));
+                        tables.count_state(function, function.state_of(value));
                     }
                 }
+                to_number += 1;
             }
             tables.writes.sum_up(cfg, self.dominators, block);
-            if cfg.loop_headed_by(block).is_none() {
+            if !function.params(block).is_empty() && cfg.loop_headed_by(block).is_none() {
                 drop_unused_params(function, tables, cfg, block);
             }
         }
+        tables.numbering.reset(to_number);
     }
 
     fn walk(&mut self) {
@@ -217,13 +249,9 @@ impl Simplifier<'_> {
                 self.position = self.end_of_subtree;
                 continue;
             }
-            self.tables
-                .numbering
-                .enter(self.position, self.end_of_subtree);
             let mut value = self.function.first(block);
-            while value != self.function.last(block) {
-                self.visit(value);
-                value = self.function.next(value);
+            while !self.function.next(value).is_none() {
+                value = self.visit(value);
             }
             self.visit_end(value);
             self.tables.writes.leave(block);
@@ -238,103 +266,159 @@ impl Simplifier<'_> {
         if self.has_set_free {
             self.follow_what_is_set_free(value);
         }
-        self.function.resolve_operands(value);
-        if let Some(state) = self.function.state_of(value).expand()
-            && self.tables.resolved_states.insert(state.index())
-        {
-            self.function.resolve_state(state);
+    }
+
+    #[inline(always)]
+    fn resolved(&mut self, value: Value) -> Value {
+        match *self.function.op(value) {
+            Op::Alias(replacement) => {
+                self.has_touched_operands = true;
+                self.function.resolve(replacement)
+            }
+            _ => value,
         }
     }
 
-    fn visit(&mut self, value: Value) {
+    /// Returns the next instruction. What is most frequent gets code in which the kind of operation is known.
+    #[inline]
+    fn visit(&mut self, value: Value) -> Value {
         self.point_at(value);
         // A loop may have asked before the operands were visited.
         self.tables.values[value].facts = 0;
-        let (mut op, ty) = (*self.function.op(value), self.type_of(value));
-        loop {
-            if self.order_operands(&mut op) {
-                *self.function.op_mut(value) = op;
+        let ty = self.type_of(value);
+        match *self.function.op(value) {
+            Op::Binary(op, [a, b]) => {
+                let op = Op::Binary(op, [self.resolved(a), self.resolved(b)]);
+                self.visit_resolved(value, op, ty);
             }
-            match self.step(op, ty) {
-                Step::Keep => break,
-                Step::Is(other) => return self.replace(value, other),
-                Step::To(new) => {
-                    self.change(value, new);
-                    op = new;
+            Op::Compare(cond, [a, b]) => {
+                let op = Op::Compare(cond, [self.resolved(a), self.resolved(b)]);
+                self.visit_resolved(value, op, ty);
+            }
+            Op::Unary(op, a) => {
+                let op = Op::Unary(op, self.resolved(a));
+                self.visit_resolved(value, op, ty);
+            }
+            Op::Check(condition, exit) => {
+                let op = Op::Check(self.resolved(condition), exit);
+                self.visit_resolved(value, op, ty);
+            }
+            Op::Checked(op, [a, b], exit) => {
+                let op = Op::Checked(op, [self.resolved(a), self.resolved(b)], exit);
+                self.visit_resolved(value, op, ty);
+            }
+            Op::Load {
+                kind,
+                address,
+                offset,
+                access,
+            } => {
+                let address = self.resolved(address);
+                self.visit_resolved(
+                    value,
+                    Op::Load {
+                        kind,
+                        address,
+                        offset,
+                        access,
+                    },
+                    ty,
+                );
+            }
+            _ => {
+                self.function.resolve_operands(value);
+                self.visit_resolved(value, self.op(value), ty);
+            }
+        }
+        self.remove_unused();
+        self.function.next(value)
+    }
+
+    #[inline(always)]
+    fn visit_resolved(&mut self, value: Value, mut op: Op, ty: Type) {
+        let step = self.apply_rule(&mut op, ty);
+        if self.has_touched_operands {
+            *self.function.op_mut(value) = op;
+            self.has_touched_operands = false;
+        }
+        if let Step::Keep = step {
+            self.number(value, op, ty);
+        } else {
+            self.follow_rules(value, step);
+        }
+    }
+
+    fn follow_rules(&mut self, value: Value, mut step: Step) {
+        let ty = self.type_of(value);
+        loop {
+            match step {
+                Step::Keep => return self.number(value, self.op(value), ty),
+                Step::To(mut op) => {
+                    self.change(value, op);
+                    step = self.step(&mut op, ty);
+                    *self.function.op_mut(value) = op;
                 }
+                Step::Is(other) => return self.replace(value, other),
                 Step::Gone => return self.discard(value),
                 Step::Exits(exit) => return self.end_block_at(value, exit),
             }
         }
-        if is_expression(&op) {
-            match self
-                .tables
-                .numbering
-                .find_expression(self.function, &op, ty)
-            {
-                Ok(known) => {
-                    self.hit();
-                    return self.replace(value, known);
-                }
-                Err(vacancy) => self.tables.numbering.add(&vacancy, value, 0),
-            }
-        } else {
-            self.number_other(value, op, ty);
-        }
-        self.remove_unused();
     }
 
-    fn number_other(&mut self, value: Value, op: Op, ty: Type) {
-        let Tables {
-            numbering, writes, ..
-        } = &mut *self.tables;
-        if let Op::Check(condition, _) = op {
-            self.decide(condition, true);
-        } else if let Some(key) = numbering::key(self.function, op) {
-            match numbering.find(self.function, writes, key, ty) {
-                Ok(_) if ty == Type::Void => {
-                    self.hit();
-                    self.discard(value);
-                }
-                Ok(known) => {
-                    self.hit();
-                    self.replace(value, known);
-                }
-                Err(vacancy) => {
-                    numbering.add(&vacancy, value, writes.now());
-                    if let Op::Checked(op, args, _) = op {
-                        let plain = Op::Binary(numbering::unchecked(op), args);
-                        if let Err(vacancy) = numbering.find_expression(self.function, &plain, ty) {
-                            numbering.add(&vacancy, value, 0);
-                        }
-                    }
-                }
+    #[inline(always)]
+    fn number(&mut self, value: Value, op: Op, ty: Type) {
+        let found = match op {
+            Op::Check(condition, _) => return self.decide(condition, true),
+            Op::Checked(..) => self.find_expression(&op, ty),
+            _ if is_expression(&op) => self.find_expression(&op, ty),
+            _ => return self.number_by_key(value, op, ty),
+        };
+        match found {
+            Ok(known) => {
+                self.hit();
+                self.replace(value, known);
             }
-        } else if let Some(load) = numbering::load_after(op) {
-            self.number_store(value, load);
-        } else {
-            self.note_writes(value);
+            Err(vacancy) => self.tables.numbering.add(&vacancy, value),
+        }
+    }
+
+    #[inline(always)]
+    fn number_by_key(&mut self, value: Value, op: Op, ty: Type) {
+        let Some(key) = numbering::key(self.function, op) else {
+            return match numbering::load_after(op) {
+                Some(load) => self.number_store(value, load),
+                None => self.note_writes(value),
+            };
+        };
+        match self.find_by_key(key, ty) {
+            Ok(_) if ty == Type::Void => {
+                self.hit();
+                self.discard(value);
+            }
+            Ok(known) => {
+                self.hit();
+                self.replace(value, known);
+            }
+            Err(vacancy) => self.add_with_time(&vacancy, value),
         }
     }
 
     fn number_store(&mut self, store: Value, load: (Op, Heap)) {
-        let Tables {
-            numbering, writes, ..
-        } = &mut *self.tables;
-        let (function, stored) = (&*self.function, self.function.operands(store)[0]);
-        let before = numbering.find(function, writes, load, function.type_of(stored));
-        if before.as_ref().ok() == Some(&stored) && !function.effects(store).has(EffectFlags::EXITS)
+        let stored = self.function.operands(store)[0];
+        let before = self.find_by_key(load, self.type_of(stored));
+        if before.as_ref().ok() == Some(&stored)
+            && !self.function.effects(store).has(EffectFlags::EXITS)
         {
             self.hit();
             return self.discard(store);
         }
-        writes.write(load.1);
+        self.tables.writes.write(load.1);
         let after = match before {
-            Ok(_) => numbering.find(function, writes, load, function.type_of(stored)),
+            Ok(_) => self.find_by_key(load, self.type_of(stored)),
             not_found => not_found,
         };
         if let Err(vacancy) = after {
-            numbering.add(&vacancy, store, writes.now());
+            self.add_with_time(&vacancy, store);
         }
     }
 
@@ -345,17 +429,60 @@ impl Simplifier<'_> {
         }
     }
 
-    /// Applies one rule. Operands are in their order.
-    fn step(&mut self, op: Op, ty: Type) -> Step {
+    fn step(&mut self, op: &mut Op, ty: Type) -> Step {
         if self.budget == 0 {
             return Step::Keep;
         }
         self.budget -= 1;
+        self.apply_rule(op, ty)
+    }
+
+    /// Puts the operands in their order first.
+    #[inline(always)]
+    fn apply_rule(&mut self, op: &mut Op, ty: Type) -> Step {
+        match op {
+            Op::Binary(op, args) => {
+                if op.is_commutative() {
+                    self.put_in_order(args);
+                }
+                self.binary(*op, ty, args[0], args[1])
+            }
+            Op::Compare(cond, args) => {
+                if self.put_in_order(args) {
+                    *cond = cond.commuted();
+                }
+                self.compare(*cond, args[0], args[1])
+            }
+            Op::FloatCompare(cond, args) => {
+                if self.put_in_order(args) {
+                    *cond = cond.commuted();
+                }
+                self.float_compare(*cond, args[0], args[1])
+            }
+            Op::Checked(op, args, exit) => {
+                if *op != Checked::Sub {
+                    self.put_in_order(args);
+                }
+                self.checked(*op, ty, args[0], args[1], *exit)
+            }
+            Op::VectorBinary(op, args) => {
+                if op.is_commutative() {
+                    self.put_in_order(args);
+                }
+                self.vector_binary(*op, args[0], args[1])
+            }
+            Op::MulWide(_, args) => {
+                self.put_in_order(args);
+                Step::Keep
+            }
+            _ => self.step_without_order(*op, ty),
+        }
+    }
+
+    #[inline(always)]
+    fn step_without_order(&mut self, op: Op, ty: Type) -> Step {
         match op {
             Op::Unary(op, a) => self.unary(op, ty, a),
-            Op::Binary(op, [a, b]) => self.binary(op, ty, a, b),
-            Op::Compare(cond, [a, b]) => self.compare(cond, a, b),
-            Op::FloatCompare(cond, [a, b]) => self.float_compare(cond, a, b),
             Op::Select([condition, then, or]) => self.select(ty, condition, then, or),
             Op::Extract(tuple, position) => self.extract(tuple, position),
             Op::Load { .. }
@@ -365,9 +492,7 @@ impl Simplifier<'_> {
             | Op::AtomicUpdate { .. }
             | Op::AtomicCompareExchange { .. } => self.access(op),
             Op::Check(condition, exit) => self.check(condition, exit),
-            Op::Checked(op, [a, b], exit) => self.checked(op, ty, a, b, exit),
             Op::VectorUnary(op, a) => self.vector_unary(op, a),
-            Op::VectorBinary(op, [a, b]) => self.vector_binary(op, a, b),
             Op::VectorTernary(op, args) => self.vector_ternary(op, args),
             Op::VectorShift(op, [a, amount]) => self.vector_shift(op, a, amount),
             Op::VectorReduce(op, a) => self.vector_reduce(op, a),
@@ -385,6 +510,29 @@ impl Simplifier<'_> {
                 args: [vector, scalar],
             } => self.replace_lane(lanes, lane, vector, scalar),
             _ => Step::Keep,
+        }
+    }
+}
+
+impl Tables {
+    #[inline(always)]
+    fn count(&mut self, used: &[Value]) {
+        for &value in used {
+            self.values[value].uses += 1;
+        }
+    }
+
+    #[inline]
+    fn count_state(&mut self, function: &Function, state: State) {
+        if state.is_none() {
+            return;
+        }
+        self.state_users[state] += 1;
+        if self.state_users[state] == 1 {
+            for &value in function.state(state) {
+                let info = &mut self.values[value];
+                (info.uses, info.is_in_state) = (info.uses + 1, true);
+            }
         }
     }
 }

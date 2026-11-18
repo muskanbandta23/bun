@@ -4,6 +4,21 @@ use super::Simplifier;
 use crate::ir::{Block, Edge, Entity, Op, Value};
 
 impl Simplifier<'_> {
+    /// While control flows as it did.
+    pub(super) fn looks_untidy(&self, block: Block) -> bool {
+        let mut targets = self
+            .function
+            .successors(block)
+            .map(|edge| self.function.target(edge));
+        match (targets.next(), targets.next()) {
+            (Some(first), None) => {
+                self.function.first(block) == self.function.last(block)
+                    || self.cfg.predecessors(first).len() == 1
+            }
+            (first, second) => first.is_some() && first == second,
+        }
+    }
+
     pub(super) fn tidy_blocks(&mut self) {
         let order = self.cfg.order();
         self.tables

@@ -1,15 +1,10 @@
 //! Parameters that always get the same value.
 
 use super::Simplifier;
-use crate::ir::{Block, Edge, Op, Table, Value};
+use crate::ir::{Block, Edge, Op, Value};
 
-#[derive(Default)]
-pub(super) struct Tables {
-    candidates: Vec<Value>,
-    /// For a candidate: the value that it stands for, or `NONE` as long as none has reached it.
-    source: Table<Value, Value>,
-    signatures: Vec<(u32, u32)>,
-}
+/// The marks of parameters: zero is for one that stands for itself, and the others are values plus one.
+const NOT_REACHED: u32 = u32::MAX;
 
 impl Simplifier<'_> {
     fn arg(&self, edge: Edge, position: usize) -> Value {
@@ -41,9 +36,10 @@ impl Simplifier<'_> {
     }
 
     /// On entering the block. Unless it `is_entered`, it may be part of a cycle that nothing reaches.
-    pub(super) fn simplify_params(&mut self, edges: &[Edge], is_entered: bool) {
+    pub(super) fn simplify_params(&mut self, is_entered: bool) {
         let block = self.block;
-        let mut has_dead = false;
+        let attached = self.take_attached_edges(block);
+        let (edges, mut has_dead) = (&attached[..], false);
         for position in 0..self.function.params(block).len() {
             let param = self.function.params(block)[position];
             if self.tables.values[param].uses == 0 {
@@ -67,18 +63,36 @@ impl Simplifier<'_> {
         if has_dead {
             self.drop_dead_params(block, edges);
         }
+        self.tables.edges = attached;
+    }
+
+    fn take_attached_edges(&mut self, block: Block) -> Vec<Edge> {
+        let mut edges = core::mem::take(&mut self.tables.edges);
+        edges.clear();
+        let incoming = self.cfg.predecessors(block).iter();
+        edges.extend(incoming.filter(|&&edge| self.function.is_attached(edge)));
+        edges
+    }
+
+    /// Whether two parameters get the same argument along the edge.
+    fn repeats_arg(&mut self, edge: Edge) -> bool {
+        let this_time = self.position + 1;
+        self.function.args(edge).iter().any(|&arg| {
+            let seen = &mut self.tables.values[self.function.resolve(arg)].last_passed;
+            core::mem::replace(seen, this_time) == this_time
+        })
     }
 
     /// Parameters that get the same arguments, or each itself.
     fn replace_twins(&mut self, block: Block, edges: &[Edge]) -> bool {
-        if self.function.params(block).len() < 2 {
+        if self.function.params(block).len() < 2 || !self.repeats_arg(edges[0]) {
             return false;
         }
         let input = |this: &Self, edge: Edge, position: u32| {
             let arg = this.arg(edge, position as usize);
             (arg != this.function.params(block)[position as usize]).then_some(arg)
         };
-        let mut signatures = core::mem::take(&mut self.tables.params.signatures);
+        let mut signatures = core::mem::take(&mut self.tables.signatures);
         signatures.clear();
         for (position, &param) in (0..).zip(self.function.params(block)) {
             if let Op::Param(_) = self.op(param) {
@@ -107,31 +121,34 @@ impl Simplifier<'_> {
                 }
             }
         }
-        self.tables.params.signatures = signatures;
+        self.tables.signatures = signatures;
         found
     }
 
     /// The one value that reaches the parameter as far as is known, the parameter itself if several do, and whether
     /// that can change.
-    fn source_of(&self, param: Value, sources: &Table<Value, Value>) -> (Value, bool) {
+    fn source_of(&self, param: Value) -> (Value, bool) {
         let Op::Param(position) = self.op(param) else {
             unreachable!("not a parameter")
         };
-        let (mut found, mut found_directly) = (Value::NONE, Value::NONE);
+        let (mut found, mut found_for_good) = (Value::NONE, Value::NONE);
         for &edge in self.cfg.predecessors(self.function.block_of(param)) {
             if !self.function.is_attached(edge) {
                 continue;
             }
             let arg = self.arg(edge, position as usize);
-            let is_param = matches!(self.op(arg), Op::Param(_));
-            let source = if is_param { sources[arg] } else { arg };
-            if !is_param {
-                if !found_directly.is_none() && found_directly != arg {
+            let mark = match self.op(arg) {
+                Op::Param(_) => self.tables.values[arg].mark,
+                _ => 0,
+            };
+            if mark == 0 {
+                if !found_for_good.is_none() && found_for_good != arg {
                     return (param, false);
                 }
-                found_directly = arg;
+                found_for_good = arg;
             }
-            if arg != param && source != param && !source.is_none() && source != found {
+            let source = mark.checked_sub(1).map_or(arg, Value);
+            if mark != NOT_REACHED && arg != param && source != param && source != found {
                 found = if found.is_none() { source } else { param };
             }
         }
@@ -139,58 +156,54 @@ impl Simplifier<'_> {
     }
 
     /// Parameters that pass one value around among themselves. It assumes that all do until it finds otherwise.
-    pub(super) fn replace_cycles_of_params(&mut self) {
+    /// Returns whether there are any.
+    pub(super) fn replace_cycles_of_params(&mut self) -> bool {
         const MOST_SWEEPS: usize = 8;
-        if self.cfg.loops().len() == 0 {
-            return;
-        }
-        let Tables {
-            mut candidates,
-            mut source,
-            signatures,
-        } = core::mem::take(&mut self.tables.params);
+        let mut candidates = core::mem::take(&mut self.tables.list);
         candidates.clear();
-        source.refill(self.function.value_count(), Value::NONE);
-        for &block in self.cfg.order() {
-            for &param in self.function.params(block) {
-                if self.cfg.predecessors(block).is_empty() {
-                    source[param] = param;
-                } else {
-                    candidates.push(param);
+        for outermost in self.cfg.loops().keys() {
+            if self.cfg.loops()[outermost].parent.is_none() {
+                for &block in self.cfg.blocks_of(outermost) {
+                    candidates.extend(self.function.params(block));
                 }
             }
+        }
+        for &param in &candidates {
+            self.tables.values[param].mark = NOT_REACHED;
         }
         let has_settled = (0..MOST_SWEEPS).any(|_| {
             let mut is_unchanged = true;
             candidates.retain(|&param| {
-                let (found, may_change) = self.source_of(param, &source);
-                is_unchanged &= core::mem::replace(&mut source[param], found) == found;
+                let (found, may_change) = self.source_of(param);
+                let mark = match found.expand() {
+                    _ if !may_change => 0,
+                    Some(found) => found.0 + 1,
+                    None => NOT_REACHED,
+                };
+                is_unchanged &=
+                    core::mem::replace(&mut self.tables.values[param].mark, mark) == mark;
                 may_change
             });
             is_unchanged
         });
-        if has_settled {
-            candidates.retain(|&param| !source[param].is_none() && source[param] != param);
-            for &param in &candidates {
+        candidates.retain(|&param| {
+            let mark = core::mem::take(&mut self.tables.values[param].mark);
+            let is_redundant = has_settled && mark != NOT_REACHED && mark - 1 != param.0;
+            if is_redundant {
                 self.hit();
-                self.replace_param(param, source[param]);
-                (self.left_aliases, self.would_find_more) = (true, true);
+                self.replace_param(param, Value(mark - 1));
             }
-            let mut edges = core::mem::take(&mut self.tables.edges);
-            candidates.dedup_by_key(|param| self.function.block_of(*param));
-            for &param in &candidates {
-                let block = self.function.block_of(param);
-                edges.clear();
-                let incoming = self.cfg.predecessors(block).iter();
-                edges.extend(incoming.filter(|&&edge| self.function.is_attached(edge)));
-                self.drop_dead_params(block, &edges);
-            }
+            is_redundant
+        });
+        candidates.dedup_by_key(|param| self.function.block_of(*param));
+        for &param in &candidates {
+            let block = self.function.block_of(param);
+            let edges = self.take_attached_edges(block);
+            self.drop_dead_params(block, &edges);
             self.tables.edges = edges;
         }
-        self.tables.params = Tables {
-            candidates,
-            source,
-            signatures,
-        };
+        let found_any = !candidates.is_empty();
+        self.tables.list = candidates;
+        found_any
     }
 }

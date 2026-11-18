@@ -257,6 +257,9 @@ fn nanoseconds_per_value() {
 }
 
 fn measure_passes(title: &str, functions: &[Function]) {
+    if std::env::var("ONLY").is_ok_and(|only| only != title) {
+        return;
+    }
     let seconds: f64 = std::env::var("SECONDS").map_or(0.5, |text| text.parse().unwrap());
     let chosen = setting("PASSES").map(|names| names.split(',').map(pass_named).collect());
     let passes: Vec<&Pass> = chosen.unwrap_or_else(|| Pass::pipeline(Level::Full).iter().collect());
@@ -264,14 +267,17 @@ fn measure_passes(title: &str, functions: &[Function]) {
         let of_block = |block| function.params(block).len() + function.instructions(block).count();
         function.blocks().map(of_block).sum()
     };
-    let (mut totals, mut analyses) = (vec![(0.0, 0.0, 0, 0); passes.len()], Analyses::default());
-    let (start, mut rounds) = (Instant::now(), 0);
+    let (mut best, mut analyses) = (vec![[f64::INFINITY; 2]; passes.len()], Analyses::default());
+    let (start, mut sizes) = (Instant::now(), Vec::new());
     while start.elapsed().as_secs_f64() < seconds {
+        let mut times = vec![[0.0; 2]; passes.len()];
+        sizes = vec![[0; 2]; passes.len()];
         for function in functions {
             let mut function = function.clone();
+            function.reserve_values(function.value_count());
             analyses.invalidate();
-            for (pass, (analysing, running, before, after)) in passes.iter().zip(&mut totals) {
-                *before += size(&function);
+            for ((pass, time), sizes) in passes.iter().zip(&mut times).zip(&mut sizes) {
+                sizes[0] += size(&function);
                 let first = Instant::now();
                 analyses.dominators(&mut function);
                 let second = Instant::now();
@@ -280,17 +286,19 @@ fn measure_passes(title: &str, functions: &[Function]) {
                     &mut analyses,
                     bun_engine_codegen::Target::host(),
                 );
-                *running += second.elapsed().as_secs_f64();
-                *analysing += (second - first).as_secs_f64();
-                *after += size(&function);
+                time[1] += second.elapsed().as_secs_f64();
+                time[0] += (second - first).as_secs_f64();
+                sizes[1] += size(&function);
             }
         }
-        rounds += 1;
+        for (best, time) in best.iter_mut().flatten().zip(times.into_iter().flatten()) {
+            *best = best.min(time);
+        }
     }
     println!("{title}, nanoseconds per value for dominators and the pass, values before and after");
-    for (pass, (analysing, running, before, after)) in passes.iter().zip(totals) {
-        let [analysing, running] = [analysing, running].map(|time| time * 1e9 / before as f64);
-        let (name, before, after) = (pass.name, before / rounds, after / rounds);
+    for ((pass, best), [before, after]) in passes.iter().zip(best).zip(sizes) {
+        let [analysing, running] = best.map(|time| time * 1e9 / before as f64);
+        let name = pass.name;
         println!("    {name:28} {analysing:6.1} {running:6.1} {before:8} {after:8}");
     }
 }

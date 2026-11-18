@@ -9,8 +9,15 @@ use crate::ir::{Binary, Checked, Lanes, Load, Op, Type, Unary, Value};
 
 const DEPTH: u32 = 6;
 
+/// At the start of `Tables::facts`.
+pub(super) const COMMON: [Facts; 3] = [
+    Facts::none(Width::W32),
+    Facts::none(Width::W64),
+    Facts::BOOLEAN,
+];
+
 impl Simplifier<'_> {
-    #[inline]
+    #[inline(always)]
     pub(super) fn facts(&mut self, value: Value) -> Facts {
         self.facts_within(value, DEPTH)
     }
@@ -28,7 +35,7 @@ impl Simplifier<'_> {
         self.facts(value).min >= 0
     }
 
-    #[inline]
+    #[inline(always)]
     fn facts_within(&mut self, value: Value, depth: u32) -> Facts {
         match self.tables.values[value].facts.checked_sub(1) {
             Some(index) => self.tables.facts[index as usize],
@@ -36,26 +43,31 @@ impl Simplifier<'_> {
         }
     }
 
-    fn remember(&mut self, value: Value, facts: Facts) {
-        self.tables.facts.push(facts);
-        self.tables.values[value].facts = self.tables.facts.len() as u32;
-    }
-
     fn learn(&mut self, value: Value, depth: u32) -> Facts {
         let width = self.type_of(value).width();
+        let nothing = width as u32 + 1;
         let facts = match self.op(value) {
-            Op::Const32(constant) => return Facts::constant(width, constant.into()),
-            Op::Const64(constant) => return Facts::constant(width, constant.get() as i64),
+            Op::Const32(constant) => Facts::constant(width, constant.into()),
+            Op::Const64(constant) => Facts::constant(width, constant.get() as i64),
             Op::Alias(other) => return self.facts_within(self.function.resolve(other), depth),
+            Op::Compare(..) | Op::FloatCompare(..) => {
+                self.tables.values[value].facts = COMMON.len() as u32;
+                return Facts::BOOLEAN;
+            }
             _ if depth == 0 => return Facts::none(width),
             Op::Param(position) => {
                 // This is what a cycle finds when it comes back here.
-                self.remember(value, Facts::none(width));
+                self.tables.values[value].facts = nothing;
                 self.work_out_param(value, position as usize, width, depth - 1)
             }
             op => self.work_out(op, width, depth - 1),
         };
-        self.remember(value, facts);
+        self.tables.values[value].facts = if facts == Facts::none(width) {
+            nothing
+        } else {
+            self.tables.facts.push(facts);
+            self.tables.facts.len() as u32
+        };
         facts
     }
 

@@ -4,7 +4,7 @@ use bun_engine_asm::{Cond, FloatCond, Sign};
 
 use super::numbering::is_expression;
 use super::{Simplifier, ValueInfo};
-use crate::ir::{Binary, Checked, Exit, Op, State, Type, Unary, Value};
+use crate::ir::{Binary, Exit, Op, State, Type, Unary, Value};
 
 pub(super) enum Step {
     Keep,
@@ -234,55 +234,34 @@ impl Simplifier<'_> {
     }
 
     /// Constants go to the right, and otherwise the older value to the left. Returns whether they changed places.
-    #[inline]
-    pub(super) fn order_operands(&self, op: &mut Op) -> bool {
-        let is_reversed =
-            |[a, b]: [Value; 2]| !self.is_constant(b) && (a > b || self.is_constant(a));
-        let args = match op {
-            Op::Binary(op, args) if op.is_commutative() && is_reversed(*args) => args,
-            Op::Compare(cond, args) if is_reversed(*args) => {
-                *cond = cond.commuted();
-                args
-            }
-            Op::FloatCompare(cond, args) if is_reversed(*args) => {
-                *cond = cond.commuted();
-                args
-            }
-            Op::Checked(Checked::Add | Checked::Mul, args, _) | Op::MulWide(_, args)
-                if is_reversed(*args) =>
-            {
-                args
-            }
-            Op::VectorBinary(op, args) if op.is_commutative() && is_reversed(*args) => args,
-            _ => return false,
-        };
-        args.swap(0, 1);
-        true
+    #[inline(always)]
+    pub(super) fn put_in_order(&mut self, args: &mut [Value; 2]) -> bool {
+        let [a, b] = *args;
+        let is_reversed = !self.is_constant(b) && (a > b || self.is_constant(a));
+        if is_reversed {
+            *args = [b, a];
+            self.has_touched_operands = true;
+        }
+        is_reversed
     }
 
     /// A value for an operation without effects.
     pub(super) fn make(&mut self, mut op: Op, ty: Type) -> Value {
         loop {
-            self.order_operands(&mut op);
-            match self.step(op, ty) {
+            match self.step(&mut op, ty) {
                 Step::Is(value) => return value,
                 Step::To(new) => op = new,
-                _ => break,
+                _ => return self.make_as_it_is(op, ty),
             }
         }
-        self.make_as_it_is(op, ty)
     }
 
     pub(super) fn make_as_it_is(&mut self, op: Op, ty: Type) -> Value {
-        match self
-            .tables
-            .numbering
-            .find_expression(self.function, &op, ty)
-        {
+        match self.find_expression(&op, ty) {
             Ok(known) => known,
             Err(vacancy) => {
                 let value = self.insert_before(self.cursor, op, ty);
-                self.tables.numbering.add(&vacancy, value, 0);
+                self.tables.numbering.add(&vacancy, value);
                 value
             }
         }
@@ -296,14 +275,6 @@ impl Simplifier<'_> {
         self.retain_all(op.inline_operands());
         self.tables.doomed.push(value);
         value
-    }
-
-    pub(super) fn find(&self, op: Op, ty: Type) -> Option<Value> {
-        let found = self
-            .tables
-            .numbering
-            .find_expression(self.function, &op, ty);
-        found.ok()
     }
 
     pub(super) fn make_unary(&mut self, op: Unary, to: Type, a: Value) -> Value {
@@ -410,6 +381,12 @@ impl Simplifier<'_> {
     pub(super) fn pass_uses_on(&mut self, from: Value, to: Value) {
         let uses = core::mem::take(&mut self.tables.values[from].uses);
         self.tables.values[to].uses += uses;
+        if self.tables.values[from].is_in_state {
+            (
+                self.tables.values[to].is_in_state,
+                self.left_aliases_in_states,
+            ) = (true, true);
+        }
         if uses == 0 {
             self.tables.doomed.push(to);
         }

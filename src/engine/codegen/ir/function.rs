@@ -600,15 +600,21 @@ impl Function {
         }
     }
 
-    fn resolve_span(&mut self, span: Span<Value>) {
-        for index in 0..span.len() {
-            let resolved = self.resolve(self.value_lists[span][index]);
-            self.value_lists[span][index] = resolved;
+    #[inline]
+    fn resolve_span(&mut self, span: Span<Value>) -> bool {
+        let mut found_alias = false;
+        for value in &mut self.value_lists[span] {
+            while let Op::Alias(replacement) = self.values[*value].op {
+                (*value, found_alias) = (replacement, true);
+            }
         }
+        found_alias
     }
 
-    pub fn resolve_args(&mut self, edge: Edge) {
-        self.resolve_span(self.edges[edge].args.span);
+    /// Returns whether there was an alias among them.
+    #[inline]
+    pub fn resolve_args(&mut self, edge: Edge) -> bool {
+        self.resolve_span(self.edges[edge].args.span)
     }
 
     pub fn resolve_state(&mut self, state: State) {

@@ -2,11 +2,10 @@
 
 use core::hash::{Hash, Hasher};
 
-use super::writes::Writes;
-use crate::hash::FastHasher;
+use super::{Simplifier, Tables};
 use crate::ir::{
-    Access, AccessFlags, Binary, Checked, EffectFlags, Exit, Function, Heap, Load, Op, State,
-    Store, Token, Type, Value,
+    Access, AccessFlags, Binary, Checked, EffectFlags, Function, Heap, Load, Op, State, Store,
+    Type, Value,
 };
 
 #[derive(Clone, Copy)]
@@ -14,26 +13,66 @@ struct Entry {
     /// For a load it may be a store to the same bytes.
     value: Value,
     hash: u32,
-    /// The position of the walk from which on the value is not available.
-    end: u32,
-    /// For what depends on memory, see [`Writes::now`].
-    time: u32,
 }
 
 const EMPTY: Entry = Entry {
     value: Value::NONE,
     hash: 0,
-    end: 0,
-    time: 0,
 };
 
-/// An open hash table. The walk never comes back to a subtree, so entries expire instead of being removed.
+/// An open hash table. The walk never comes back to a subtree, so what is defined there can be overwritten.
 #[derive(Default)]
 pub(super) struct Numbering {
     entries: Vec<Entry>,
     occupied: usize,
-    position: u32,
-    end_of_subtree: u32,
+}
+
+/// Mixes at the end only.
+#[derive(Default)]
+struct Words(u64);
+
+impl Words {
+    #[inline(always)]
+    fn add(&mut self, word: u64) {
+        self.0 = self.0.rotate_left(21).wrapping_add(word);
+    }
+
+    #[inline(always)]
+    fn with_type(mut self, ty: Type) -> u32 {
+        self.add(ty as u64);
+        self.finish() as u32
+    }
+}
+
+impl Hasher for Words {
+    #[inline(always)]
+    fn finish(&self) -> u64 {
+        (self.0 ^ self.0 >> 29).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 32
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        bytes.iter().for_each(|&byte| self.add(byte.into()));
+    }
+
+    #[inline(always)]
+    fn write_u8(&mut self, value: u8) {
+        self.add(value.into());
+    }
+
+    #[inline(always)]
+    fn write_u16(&mut self, value: u16) {
+        self.add(value.into());
+    }
+
+    #[inline(always)]
+    fn write_u32(&mut self, value: u32) {
+        self.add(value.into());
+    }
+
+    #[inline(always)]
+    fn write_usize(&mut self, value: usize) {
+        self.add(value as u64);
+    }
 }
 
 /// Where an entry can go.
@@ -76,18 +115,12 @@ pub(super) fn is_expression(op: &Op) -> bool {
 }
 
 /// For what is no expression: the operation without what does not decide its outcome, and the heap that does.
+#[inline(always)]
 pub(super) fn key(function: &Function, mut op: Op) -> Option<(Op, Heap)> {
     const UNREPEATABLE: EffectFlags = EffectFlags::EXITS
         .union(EffectFlags::CONTROL_DEPENDENT)
         .complement();
     let reads = match &mut op {
-        Op::Checked(_, _, exit) => {
-            *exit = Exit {
-                token: Token(0),
-                state: State::NONE,
-            };
-            Heap::NOTHING
-        }
         Op::Load { access, .. } | Op::LoadLane { access, .. }
             if !access.has(AccessFlags::ATOMIC) =>
         {
@@ -107,6 +140,7 @@ pub(super) fn key(function: &Function, mut op: Op) -> Option<(Op, Heap)> {
 }
 
 /// The key of the load that finds what a store has left.
+#[inline(always)]
 pub(super) fn load_after(store: Op) -> Option<(Op, Heap)> {
     match store {
         Op::Store {
@@ -127,17 +161,19 @@ pub(super) fn load_after(store: Op) -> Option<(Op, Heap)> {
     }
 }
 
-/// The value that `known` has to offer for a key.
-fn offer(function: &Function, known: Value, wanted: &Op) -> Option<Value> {
+/// The value that `known` has to offer for a key, or else whether it is gone.
+fn offer(function: &Function, known: Value, wanted: &Op, ty: Type) -> Result<Value, bool> {
     let op = *function.op(known);
-    if let Some((load, _)) = load_after(op) {
-        return (load == *wanted).then(|| function.operands(known)[0]);
-    }
-    let matches = match (key(function, op)?.0, *wanted) {
+    let offered = match (load_after(op), key(function, op), *wanted) {
+        (Some((load, _)), ..) => (load == *wanted).then(|| function.operands(known)[0]),
         (
-            Op::WideNode {
-                kind, args, data, ..
-            },
+            _,
+            Some((
+                Op::WideNode {
+                    kind, args, data, ..
+                },
+                _,
+            )),
             Op::WideNode {
                 kind: same_kind,
                 args: same_args,
@@ -145,24 +181,24 @@ fn offer(function: &Function, known: Value, wanted: &Op) -> Option<Value> {
                 ..
             },
         ) => {
-            (kind, data) == (same_kind, same_data)
-                && function.values_in(args) == function.values_in(same_args)
+            let matches = (kind, data) == (same_kind, same_data)
+                && function.values_in(args) == function.values_in(same_args);
+            matches.then_some(known)
         }
-        (key, wanted) => key == wanted,
+        (_, Some((key, _)), wanted) => (key == wanted).then_some(known),
+        _ => return Err(matches!(op, Op::Removed | Op::Alias(_))),
     };
-    matches.then_some(known)
+    offered
+        .filter(|&value| function.type_of(value) == ty)
+        .ok_or(false)
 }
 
 impl Numbering {
-    pub(super) fn reset(&mut self) {
-        const INITIAL_CAPACITY: usize = 256;
+    pub(super) fn reset(&mut self, expected: usize) {
         self.entries.clear();
-        self.entries.resize(INITIAL_CAPACITY, EMPTY);
+        self.entries
+            .resize((2 * expected + 16).next_power_of_two(), EMPTY);
         self.occupied = 0;
-    }
-
-    pub(super) fn enter(&mut self, position: u32, end_of_subtree: u32) {
-        (self.position, self.end_of_subtree) = (position, end_of_subtree);
     }
 
     /// `accept` gives the result, or whether the entry is of no more use.
@@ -170,20 +206,18 @@ impl Numbering {
     fn probe(
         &self,
         hash: u32,
-        mut accept: impl FnMut(&Entry) -> Result<Value, bool>,
+        mut accept: impl FnMut(Value) -> Result<Value, bool>,
     ) -> Result<Value, Vacancy> {
         let mask = self.entries.len() - 1;
         let (mut slot, mut free) = (hash as usize & mask, None);
         loop {
-            let entry = &self.entries[slot];
+            let entry = self.entries[slot];
             if entry.value.is_none() {
                 let slot = free.unwrap_or(slot);
                 return Err(Vacancy { slot, hash });
             }
-            if entry.end <= self.position {
-                free.get_or_insert(slot);
-            } else if entry.hash == hash {
-                match accept(entry) {
+            if entry.hash == hash {
+                match accept(entry.value) {
                     Ok(value) => return Ok(value),
                     Err(true) => free = Some(slot),
                     Err(false) => {}
@@ -193,94 +227,128 @@ impl Numbering {
         }
     }
 
-    #[inline]
-    pub(super) fn find_expression(
-        &self,
-        function: &Function,
-        wanted: &Op,
-        ty: Type,
-    ) -> Result<Value, Vacancy> {
-        let mut hasher = FastHasher::default();
-        wanted.hash(&mut hasher);
-        self.probe(hasher.finish() as u32 ^ ty as u32, |entry| {
-            let known = function.op(entry.value);
-            let matches = known == wanted
-                || matches!((*known, *wanted), (Op::Checked(checked, args, _), Op::Binary(op, same))
-                    if unchecked(checked) == op && args == same);
-            let matches = matches && function.type_of(entry.value) == ty;
-            matches.then_some(entry.value).ok_or(false)
-        })
-    }
-
-    pub(super) fn find(
-        &self,
-        function: &Function,
-        writes: &mut Writes,
-        (wanted, reads): (Op, Heap),
-        ty: Type,
-    ) -> Result<Value, Vacancy> {
-        /// Outdated entries stay for the sake of other subtrees, where they may still hold.
-        const MOST_OUTDATED: u32 = 3;
-        let mut hasher = FastHasher::default();
-        match wanted {
-            Op::WideNode {
-                kind, args, data, ..
-            } => {
-                (kind, data, function.values_in(args)).hash(&mut hasher);
-            }
-            _ => wanted.hash(&mut hasher),
-        }
-        let mut outdated = 0;
-        self.probe(hasher.finish() as u32 ^ ty as u32, |entry| {
-            let offered = offer(function, entry.value, &wanted);
-            let offered = offered
-                .filter(|&value| function.type_of(value) == ty)
-                .ok_or(false)?;
-            let access = function.op(entry.value).access();
-            if access.is_some_and(|access| access.has(AccessFlags::IMMUTABLE))
-                || !writes.may_have_changed(function, reads, entry.time)
-            {
-                return Ok(offered);
-            }
-            outdated += 1;
-            Err(entry.end == self.end_of_subtree || outdated == MOST_OUTDATED)
-        })
-    }
-
     /// Nothing has been added since the vacancy was found.
     #[inline]
-    pub(super) fn add(&mut self, vacancy: &Vacancy, value: Value, time: u32) {
-        let entry = &mut self.entries[vacancy.slot];
+    pub(super) fn add(&mut self, vacancy: &Vacancy, value: Value) {
+        let (entry, hash) = (&mut self.entries[vacancy.slot], vacancy.hash);
         self.occupied += usize::from(entry.value.is_none());
-        *entry = Entry {
-            value,
-            hash: vacancy.hash,
-            end: self.end_of_subtree,
-            time,
-        };
-        if self.occupied * 2 > self.entries.len() {
-            self.rebuild();
+        *entry = Entry { value, hash };
+        if self.occupied * 3 > self.entries.len() * 2 {
+            self.grow();
         }
     }
 
     #[cold]
-    fn rebuild(&mut self) {
-        let position = self.position;
-        let is_current = |entry: &Entry| entry.end > position;
-        self.occupied = self
-            .entries
-            .iter()
-            .filter(|&entry| is_current(entry))
-            .count();
-        let grows = self.occupied * 4 > self.entries.len();
-        let capacity = self.entries.len() << usize::from(grows);
+    fn grow(&mut self) {
+        let capacity = self.entries.len() * 2;
         let old = core::mem::replace(&mut self.entries, vec![EMPTY; capacity]);
-        for entry in old.into_iter().filter(is_current) {
+        for entry in old.into_iter().filter(|entry| !entry.value.is_none()) {
             let mut slot = entry.hash as usize & (capacity - 1);
             while !self.entries[slot].value.is_none() {
                 slot = (slot + 1) & (capacity - 1);
             }
             self.entries[slot] = entry;
         }
+    }
+}
+
+impl Simplifier<'_> {
+    /// The position of the walk from which on the value is not available.
+    #[inline]
+    fn end_of_scope(&self, value: Value) -> u32 {
+        self.dominators
+            .end_of_subtree(self.function.block_of(value))
+    }
+
+    /// Also for arithmetic that exits on overflow, which can stand in for the usual kind.
+    #[inline(always)]
+    pub(super) fn find_expression(&self, wanted: &Op, ty: Type) -> Result<Value, Vacancy> {
+        let mut words = Words::default();
+        match *wanted {
+            Op::Binary(op, [a, b]) => (op, a, b).hash(&mut words),
+            Op::Checked(op, [a, b], _) => (unchecked(op), a, b).hash(&mut words),
+            Op::Compare(cond, [a, b]) => (a, b, cond).hash(&mut words),
+            Op::Unary(op, a) => (op, a).hash(&mut words),
+            _ => wanted.hash(&mut words),
+        }
+        self.tables.numbering.probe(words.with_type(ty), |known| {
+            self.accept_expression(known, wanted, ty)
+        })
+    }
+
+    fn accept_expression(&self, known: Value, wanted: &Op, ty: Type) -> Result<Value, bool> {
+        if self.end_of_scope(known) <= self.position {
+            return Err(true);
+        }
+        let matches = match (self.op(known), *wanted) {
+            (Op::Checked(op, args, _), Op::Checked(same, others, _)) => {
+                (op, args) == (same, others)
+            }
+            (Op::Checked(op, args, _), wanted) => Op::Binary(unchecked(op), args) == wanted,
+            (Op::Removed | Op::Alias(_), _) => return Err(true),
+            (op, wanted) => op == wanted,
+        };
+        (matches && self.type_of(known) == ty)
+            .then_some(known)
+            .ok_or(false)
+    }
+
+    #[inline(always)]
+    pub(super) fn find_by_key(
+        &mut self,
+        (wanted, reads): (Op, Heap),
+        ty: Type,
+    ) -> Result<Value, Vacancy> {
+        /// Outdated entries stay for the sake of other subtrees, where they may still hold.
+        const MOST_OUTDATED: u32 = 3;
+        let mut words = Words::default();
+        match wanted {
+            Op::Load {
+                kind,
+                address,
+                offset,
+                ..
+            } => (kind, address, offset).hash(&mut words),
+            Op::WideNode {
+                kind, args, data, ..
+            } => {
+                (kind, data).hash(&mut words);
+                for arg in self.function.values_in(args) {
+                    words.0 = words.finish();
+                    arg.hash(&mut words);
+                }
+            }
+            _ => wanted.hash(&mut words),
+        }
+        let mut outdated = 0;
+        let Tables {
+            numbering,
+            writes,
+            values,
+            ..
+        } = &mut self.tables;
+        numbering.probe(words.with_type(ty), |known| {
+            let end = self
+                .dominators
+                .end_of_subtree(self.function.block_of(known));
+            if end <= self.position {
+                return Err(true);
+            }
+            let offered = offer(self.function, known, &wanted, ty)?;
+            let access = self.function.op(known).access();
+            if access.is_some_and(|access| access.has(AccessFlags::IMMUTABLE))
+                || !writes.may_have_changed(self.function, reads, values[known].mark)
+            {
+                return Ok(offered);
+            }
+            outdated += 1;
+            Err(end == self.end_of_subtree || outdated == MOST_OUTDATED)
+        })
+    }
+
+    #[inline]
+    pub(super) fn add_with_time(&mut self, vacancy: &Vacancy, value: Value) {
+        self.tables.values[value].mark = self.tables.writes.now();
+        self.tables.numbering.add(vacancy, value);
     }
 }

@@ -17,36 +17,32 @@ impl Simplifier<'_> {
                 .enter(self.cfg, self.dominators, block, None);
             return true;
         }
-        let mut edges = core::mem::take(&mut self.tables.edges);
-        edges.clear();
-        edges.extend(
-            incoming
-                .iter()
-                .filter(|&&edge| self.function.is_attached(edge)),
-        );
         let is_entered = self.tables.entered.contains(block.index());
-        let comes_from_outside =
-            |&&edge: &&Edge| !self.dominators.dominates(block, self.function.source(edge));
-        let mut from_outside = edges.iter().filter(comes_from_outside);
-        let (first, second) = (from_outside.next().copied(), from_outside.next());
-        if let (Some(edge), None, true) = (first, second, is_entered) {
-            let source = self.function.source(edge);
-            if let Op::Branch(condition) = self.op(self.function.last(source)) {
-                self.decide(condition, edge != self.function.successor(source, 0));
-            }
+        let mut from_outside = incoming.iter().filter(|&&edge| {
+            self.function.is_attached(edge)
+                && !self.dominators.dominates(block, self.function.source(edge))
+        });
+        let Some(&first) = from_outside.next() else {
+            return false;
+        };
+        let source = from_outside
+            .next()
+            .is_none()
+            .then(|| self.function.source(first));
+        if let Some(source) = source
+            && let Op::Branch(condition) = self.op(self.function.last(source))
+            && is_entered
+        {
+            self.decide(condition, first != self.function.successor(source, 0));
         }
-        if first.is_some() {
-            let source = first
-                .filter(|_| second.is_none())
-                .map(|edge| self.function.source(edge));
-            self.tables
-                .writes
-                .enter(self.cfg, self.dominators, block, source);
-            self.would_find_more |= !is_entered;
-            self.simplify_params(&edges, is_entered);
+        self.tables
+            .writes
+            .enter(self.cfg, self.dominators, block, source);
+        self.would_find_more |= !is_entered;
+        if !self.function.params(block).is_empty() {
+            self.simplify_params(is_entered);
         }
-        self.tables.edges = edges;
-        first.is_some()
+        true
     }
 
     fn release_args(&mut self, edge: Edge) {
@@ -57,7 +53,7 @@ impl Simplifier<'_> {
 
     fn note_loss_of(&mut self, edge: Edge) {
         self.release_args(edge);
-        self.changed_control = true;
+        (self.changed_control, self.changed_args_in_loops) = (true, true);
         let target = self.function.target(edge);
         let is_passed = self.dominators.dominates(target, self.block)
             && self.tables.entered.contains(target.index());
@@ -117,16 +113,21 @@ impl Simplifier<'_> {
 
     pub(super) fn visit_end(&mut self, last: Value) {
         self.point_at(last);
-        self.note_writes(last);
+        if self.op(last) != Op::Jump {
+            self.function.resolve_operands(last);
+            self.note_writes(last);
+            if let Some(position) = self.simplify_end(last) {
+                self.jump_along(self.function.successor(self.block, position));
+            }
+            self.remove_unused();
+        }
+        self.may_be_untidy = self.may_be_untidy || self.looks_untidy(self.block);
+        let is_entered = self.tables.entered.contains(self.block.index());
         for edge in self.function.successors(self.block) {
-            self.function.resolve_args(edge);
-        }
-        if let Some(position) = self.simplify_end(last) {
-            self.jump_along(self.function.successor(self.block, position));
-        }
-        self.remove_unused();
-        if self.tables.entered.contains(self.block.index()) {
-            for edge in self.function.successors(self.block) {
+            if self.function.resolve_args(edge) {
+                self.changed_args_in_loops |= !self.cfg.loop_of(self.block).is_none();
+            }
+            if is_entered {
                 self.tables
                     .entered
                     .insert(self.function.target(edge).index());
@@ -231,6 +232,9 @@ impl Simplifier<'_> {
             return;
         }
         (info.decided_until, info.is_zero) = (self.end_of_subtree, is_zero);
+        if let Op::Compare(_, [a, _]) | Op::FloatCompare(_, [a, _]) = self.op(condition) {
+            self.tables.values[a].is_compared = true;
+        }
         let Some(depth) = depth.checked_sub(1) else {
             return;
         };
@@ -275,23 +279,27 @@ impl Simplifier<'_> {
                 self.hit();
                 return recorded(self, inner).map(|is_zero| is_zero == (cond == Cond::Ne));
             }
+            Op::Compare(_, [a, _]) | Op::FloatCompare(_, [a, _])
+                if !self.tables.values[a].is_compared =>
+            {
+                return None;
+            }
             Op::Compare(cond, args) => Op::Compare(cond.inverted(), args),
             Op::FloatCompare(cond, args) => Op::FloatCompare(cond.inverted(), args),
             _ => return None,
         };
-        let is_zero = recorded(self, self.find(opposite, Type::I32)?)?;
+        let is_zero = recorded(self, self.find_expression(&opposite, Type::I32).ok()?)?;
         self.hit();
         Some(!is_zero)
     }
 
     fn is_known_zero(&mut self, condition: Value) -> Option<bool> {
-        let facts = self.facts(condition);
-        if facts.is_not_zero() {
-            Some(false)
-        } else if facts.possible() == 0 {
-            Some(true)
-        } else {
-            self.decision(condition)
+        if !matches!(self.op(condition), Op::Compare(..) | Op::FloatCompare(..)) {
+            let facts = self.facts(condition);
+            if facts.is_not_zero() || facts.possible() == 0 {
+                return Some(facts.possible() == 0);
+            }
         }
+        self.decision(condition)
     }
 }

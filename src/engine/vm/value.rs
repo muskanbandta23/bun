@@ -21,8 +21,6 @@ impl Value {
     /// In the callee slot of a frame: not a cell but the description of native code.
     pub const NATIVE_CALLEE_TAG: u64 = 0x3;
     pub const PURE_NAN_BITS: u64 = 0x7ff8_0000_0000_0000;
-    /// From here on, the encoding of a NaN would read as another kind of value.
-    const FIRST_IMPURE_NAN: u64 = Self::NUMBER_TAG - Self::DOUBLE_OFFSET;
 
     pub const NULL: Value = Value::constant(Self::OTHER_TAG);
     pub const UNDEFINED: Value = Value::constant(Self::OTHER_TAG | Self::UNDEFINED_TAG);
@@ -81,11 +79,10 @@ impl Value {
     /// Stays a double even if it is an integer.
     #[inline(always)]
     pub const fn double(value: f64) -> Value {
-        let bits = value.to_bits();
-        let bits = if bits >= Self::FIRST_IMPURE_NAN {
+        let bits = if value.is_nan() {
             Self::PURE_NAN_BITS
         } else {
-            bits
+            value.to_bits()
         };
         // SAFETY: at least 2^49 and below the tag of an int32.
         unsafe { Value::from_bits(bits + Self::DOUBLE_OFFSET) }

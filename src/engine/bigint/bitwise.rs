@@ -2,10 +2,14 @@
 
 use core::marker::PhantomData;
 
-use crate::{BigIntRef, Error, Fill, Filled, Outcome, Poll, digits};
+use crate::digits::{self, array, for_short_length, unroll};
+use crate::{BigIntRef, Error, Fill, Filled, Outcome, Poll};
 
-#[inline]
+#[inline(always)]
 pub fn bitwise_and<'a>(x: BigIntRef<'a>, y: BigIntRef<'a>) -> Outcome<impl Fill + 'a> {
+    if let (&[a, ..], &[b], false) = (x.digits, y.digits, x.is_negative | y.is_negative) {
+        return Outcome::small(false, u128::from(a & b));
+    }
     if let (false, Some(mask)) = (y.is_negative, digits::to_u128(y.digits)) {
         return Outcome::small(false, low_bits(x) & mask);
     }
@@ -15,12 +19,12 @@ pub fn bitwise_and<'a>(x: BigIntRef<'a>, y: BigIntRef<'a>) -> Outcome<impl Fill 
     combine::<And>(x, y)
 }
 
-#[inline]
+#[inline(always)]
 pub fn bitwise_or<'a>(x: BigIntRef<'a>, y: BigIntRef<'a>) -> Outcome<impl Fill + 'a> {
     combine_unless_zero::<Or>(x, y)
 }
 
-#[inline]
+#[inline(always)]
 pub fn bitwise_xor<'a>(x: BigIntRef<'a>, y: BigIntRef<'a>) -> Outcome<impl Fill + 'a> {
     combine_unless_zero::<Xor>(x, y)
 }
@@ -137,14 +141,29 @@ fn length_without_signs<O: Operator>(long: &[u64], short: &[u64]) -> usize {
 }
 
 /// The length of the result, or one more.
+#[inline(always)]
 fn length_with_signs<O: Operator>(long: BigIntRef<'_>, short: BigIntRef<'_>) -> usize {
-    let (a, b) = (TwosComplement::new(long), TwosComplement::new(short));
-    let result_extension = O::apply(a.extension, b.extension);
-    let end = if O::is_settled_by(b.extension) {
+    let (a, b) = (extension(long.is_negative), extension(short.is_negative));
+    let result_extension = O::apply(a, b);
+    let end = if O::is_settled_by(b) {
         short.digits.len()
     } else {
         long.digits.len()
     };
+    // The carry of a negation stops at the first digit that is not zero.
+    if end > 1 && long.digits[0] != 0 && short.digits[0] != 0 {
+        let short_top = digits::digit_or_zero(short.digits, end - 1);
+        let top = O::apply(long.digits[end - 1] ^ a, short_top ^ b) ^ result_extension;
+        if top.wrapping_add(1) > 1 {
+            return end;
+        }
+    }
+    length_by_search::<O>(long, short, end)
+}
+
+fn length_by_search<O: Operator>(long: BigIntRef<'_>, short: BigIntRef<'_>, end: usize) -> usize {
+    let (a, b) = (TwosComplement::new(long), TwosComplement::new(short));
+    let result_extension = O::apply(a.extension, b.extension);
     // For a negative result this is its magnitude less one.
     let top = (0..end)
         .rev()
@@ -200,20 +219,34 @@ impl<O: Operator> Fill for Combination<'_, O> {
         self.length
     }
 
-    #[inline]
+    #[inline(always)]
     fn fill(self, out: &mut [u64], _: Poll<'_>) -> Result<Filled, Error> {
         let out = &mut out[..self.length];
         if self.long.is_negative | self.short.is_negative {
             return fill_with_signs::<O>(out, self.long, self.short);
         }
-        let (long, short) = (&self.long.digits[..out.len()], self.short.digits);
-        for ((out, &a), &b) in out.iter_mut().zip(long).zip(short) {
-            *out = O::apply(a, b);
-        }
-        if short.len() < out.len() {
-            out[short.len()..].copy_from_slice(&long[short.len()..]);
-        }
+        let (long, short) = (self.long.digits, self.short.digits);
+        let paired = if out.len() <= short.len() {
+            out.len()
+        } else {
+            0
+        };
+        for_short_length!(paired, |N| {
+            let (long, short) = (array::<N>(long), array::<N>(short));
+            unroll!(i in 0, N => {
+                out[i] = O::apply(long[i], short[i]);
+            });
+        }, _ => fill_without_signs::<O>(out, long, short));
         Ok(Filled::whole(false, out))
+    }
+}
+
+fn fill_without_signs<O: Operator>(out: &mut [u64], long: &[u64], short: &[u64]) {
+    for ((out, &a), &b) in out.iter_mut().zip(long).zip(short) {
+        *out = O::apply(a, b);
+    }
+    if short.len() < out.len() {
+        out[short.len()..].copy_from_slice(&long[short.len()..]);
     }
 }
 
@@ -224,26 +257,27 @@ fn fill_with_signs<O: Operator>(
 ) -> Result<Filled, Error> {
     let (a, b) = (TwosComplement::new(long), TwosComplement::new(short));
     let result_extension = O::apply(a.extension, b.extension);
-    let complemented = |a_digit: u64, b_digit: u64| {
-        O::apply(a_digit ^ a.extension, b_digit ^ b.extension) ^ result_extension
-    };
-
-    let carry_end = a.carry_end.max(b.carry_end).min(out.len());
-    let short_end = short.digits.len().clamp(carry_end, out.len());
-    let long_end = long.digits.len().clamp(short_end, out.len());
-    for (index, out) in out[..carry_end].iter_mut().enumerate() {
+    let pairs = long.digits.iter().zip(short.digits);
+    for (out, (&long, &short)) in out.iter_mut().zip(pairs) {
+        *out = O::apply(long ^ a.extension, short ^ b.extension) ^ result_extension;
+    }
+    if let Some(above) = out.get_mut(short.digits.len()..) {
+        let rest = &long.digits[short.digits.len()..];
+        let (middle, top) = above.split_at_mut(rest.len().min(above.len()));
+        for (out, &long) in middle.iter_mut().zip(rest) {
+            *out = O::apply(long ^ a.extension, b.extension) ^ result_extension;
+        }
+        if let [top] = top {
+            *top = 0;
+        }
+    }
+    for (index, out) in out
+        .iter_mut()
+        .enumerate()
+        .take(a.carry_end.max(b.carry_end))
+    {
         *out = O::apply(a.digit(index), b.digit(index)) ^ result_extension;
     }
-    let pairs = long.digits.iter().zip(short.digits).skip(carry_end);
-    for (out, (&a, &b)) in out[carry_end..short_end].iter_mut().zip(pairs) {
-        *out = complemented(a, b);
-    }
-    let rest = long.digits.iter().skip(short_end);
-    for (out, &a) in out[short_end..long_end].iter_mut().zip(rest) {
-        *out = complemented(a, 0);
-    }
-    out[long_end..].fill(0);
-
     let is_negative = result_extension != 0;
     if is_negative {
         digits::increment(out);

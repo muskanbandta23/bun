@@ -1,10 +1,13 @@
 use bun_engine_text::AllocError;
-use bun_engine_vm::{Bits, BufferSlice, Element, JsTypedArray, TypedArray, with_element_type};
+use bun_engine_vm::{
+    Bits, BufferSlice, Element, JsTypedArray, NumberElement, RepeatedCall, TypedArray,
+    with_element_type,
+};
 
 use super::copy::default_shape;
 use super::prototype::this_array;
 use crate::arrays::merge_sort;
-use crate::arrays::sort::means_less;
+use crate::arrays::sort::{MIN_LENGTH_TO_AVOID_CALLS, means_less, orders_numbers_descending};
 use crate::prelude::*;
 
 /// An unsigned integer whose order is that of the elements. All NaNs have the same.
@@ -168,9 +171,10 @@ fn sort_by<T: Element>(cx: &mut Cx, array: &TypedArray<T>, comparator: Value) ->
     let items = array.elements(&cx.no_gc()).bits().try_to_vec();
     let mut items = cx.or_out_of_memory(items)?;
     let mut scratch = cx.or_out_of_memory(T::Bits::try_zeroed_vec(items.len()))?;
+    let comparator = RepeatedCall::new(cx, comparator)?;
     merge_sort::sort(&mut items, &mut scratch, |a, b| {
         let arguments = [T::from_bits(a).to_value(cx), T::from_bits(b).to_value(cx)];
-        let result = cx.call(comparator, Value::UNDEFINED, &arguments)?;
+        let result = comparator.call(cx, Value::UNDEFINED, arguments)?;
         means_less(cx, result)
     })?;
     let no_gc = cx.no_gc();
@@ -179,12 +183,33 @@ fn sort_by<T: Element>(cx: &mut Cx, array: &TypedArray<T>, comparator: Value) ->
     Ok(())
 }
 
+/// Whether arithmetic puts the elements in the order of `sort_numerically`, and tells apart those that differ.
+fn has_only_ordinary_numbers(cx: &mut Cx, array: &JsTypedArray) -> bool {
+    let is_ordinary = |number: f64| !number.is_nan() && number.to_bits() != (-0.0f64).to_bits();
+    with_element_type!(array.element_type(),
+        T => array.typed::<T>().elements(&cx.no_gc()).iter().all(|it| is_ordinary(it.convert())),
+        bigint => false
+    )
+}
+
 fn sort_in_place(cx: &mut Cx, array: &JsTypedArray, comparator: Value) -> JsResult<()> {
+    let is_descending = if comparator.is_undefined() {
+        Some(false)
+    } else if array.length() >= MIN_LENGTH_TO_AVOID_CALLS {
+        orders_numbers_descending(cx, comparator)?.filter(|_| has_only_ordinary_numbers(cx, array))
+    } else {
+        None
+    };
     with_element_type!(array.element_type(), T => {
-        if !comparator.is_undefined() {
+        let Some(is_descending) = is_descending else {
             return sort_by(cx, array.typed::<T>(), comparator);
+        };
+        let no_gc = cx.no_gc();
+        let elements = array.typed::<T>().elements(&no_gc);
+        let result = sort_numerically(elements);
+        if is_descending {
+            elements.reverse();
         }
-        let result = sort_numerically(array.typed::<T>().elements(&cx.no_gc()));
         cx.or_out_of_memory(result)
     })
 }

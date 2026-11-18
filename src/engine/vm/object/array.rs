@@ -5,7 +5,7 @@ use bun_engine_text::{PropertyName, names, symbols};
 use super::elements::{MIN_SPARSE_INDEX, is_dense_enough};
 use crate::{
     Attributes, CellKind, CellType, Cx, DeletePropertySlot, DontEnumMode, Elements, Gc,
-    GlobalObject, IndexingMode, JsObject, JsObjectInit, JsResult, PropertyDescriptor,
+    GlobalObject, IndexingMode, JsCell, JsObject, JsObjectInit, JsResult, PropertyDescriptor,
     PropertyNameList, PropertySlot, PutPropertySlot, Shape, ShapeFlags, ShapeSpec, Storage,
     TransitionKind, TypeFlags, Value, Vm, errors,
 };
@@ -118,6 +118,22 @@ impl JsArray {
             self.non_property_transition(cx, TransitionKind::MakeLengthReadOnly);
         }
         result
+    }
+}
+
+impl JsCell {
+    /// Unless it is of a class that extends `JsArray`, which may have other internal methods.
+    #[inline(always)]
+    pub fn as_exact_array(&self) -> Option<Gc<JsArray>> {
+        // SAFETY: the type means that class.
+        (self.cell_type() == CellType::Array).then(|| unsafe { Gc::from(self).cast_unchecked() })
+    }
+}
+
+impl Value {
+    #[inline(always)]
+    pub fn as_exact_array(self) -> Option<Gc<JsArray>> {
+        self.as_cell()?.as_exact_array()
     }
 }
 

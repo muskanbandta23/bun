@@ -617,10 +617,10 @@ impl Function {
     /// Of the operands other than those in a state.
     #[inline]
     pub fn resolve_operands(&mut self, value: Value) {
-        for index in 0..self.operands(value).len() {
-            let operand = self.operands(value)[index];
-            if let Op::Alias(replacement) = self.values[operand].op {
-                let resolved = self.resolve(replacement);
+        let is_alias = |&operand: &Value| matches!(self.values[operand].op, Op::Alias(_));
+        if self.operands(value).iter().any(is_alias) {
+            for index in 0..self.operands(value).len() {
+                let resolved = self.resolve(self.operands(value)[index]);
                 self.operands_mut(value)[index] = resolved;
             }
         }

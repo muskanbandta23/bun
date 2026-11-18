@@ -6,8 +6,8 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, mpsc};
 
 use bun_engine_text::SharedString;
 use bun_engine_vm::{
-    ArrayBufferContents, JsArrayBuffer, JsBigInt, JsTypedArray, SharedArrayBufferContents,
-    SourceType, evaluate_script, waiter_count,
+    ArrayBufferContents, ElementType, JsArrayBuffer, JsBigInt, JsTypedArray,
+    SharedArrayBufferContents, SourceType, evaluate_script, waiter_count,
 };
 
 use super::tasks::{monotonic_now, sleep_milliseconds};
@@ -186,10 +186,20 @@ fn wait_for_report(cx: &mut Cx, _: &CallFrame) -> JsResult<Value> {
 #[native_abi]
 fn waiter_list_size(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let (array, length) = JsTypedArray::validate_value(cx, frame.argument(0))?;
+    if !matches!(
+        array.element_type(),
+        ElementType::Int32 | ElementType::BigInt64
+    ) {
+        let message = "Typed array argument must be an Int32Array or BigInt64Array.";
+        return Err(cx.throw_type_error(message));
+    }
+    if !array.is_shared() {
+        let message = "Typed array for waiterListSize must wrap a SharedArrayBuffer.";
+        return Err(cx.throw_type_error(message));
+    }
     let index = frame.argument(1).to_index(cx, "accessIndex")? as usize;
     if index >= length {
         return Err(cx.throw_range_error("Access index out of bounds for atomic access."));
     }
-    let address = array.vector().addr() + (index << array.size_shift());
-    Ok(waiter_count(Some(address)).into())
+    Ok(waiter_count(Some(array.address_of_shared_element(index))).into())
 }

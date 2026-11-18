@@ -181,6 +181,31 @@ mirror  TemporalType embed/api/temporal.rs
 value   TemporalType JSC::TemporalType
 
 # Modules, scopes and cached bytecode
+mirror  ModuleType vm/runtime/modules/request.rs
+mirror  ModuleStatus vm/runtime/modules/cyclic.rs
+mirror  RegistryStatus vm/runtime/modules/registry.rs
+mirror  ImportKind vm/runtime/modules/entries.rs
+cell    ModuleLoader class JSC::JSModuleLoader
+cell    ModuleRegistryEntry class JSC::ModuleRegistryEntry
+cell    AbstractModuleRecord class JSC::AbstractModuleRecord
+cell    CyclicModuleRecord class JSC::CyclicModuleRecord
+cell    SourceTextModuleRecord class JSC::JSModuleRecord
+cell    SyntheticModuleRecord class JSC::SyntheticModuleRecord
+cell    ModuleNamespace class JSC::JSModuleNamespaceObject
+cell    ModuleExecutable class JSC::ModuleProgramExecutable
+cell    JsSourceCode class JSC::JSSourceCode
+cell    Environment class JSC::JSLexicalEnvironment
+cell    ModuleEnvironment class JSC::JSModuleEnvironment
+cell    ScopeTemplate class JSC::ScopeTemplate
+opaque  FetchParameters class JSC::ScriptFetchParameters
+opaque  SyntheticExports class Engine::SyntheticExports
+opaque  CompiledScript class JSC::UnlinkedProgramCodeBlock
+counted FetchParametersRef JSC::ScriptFetchParameters
+counted CompiledScriptRef JSC::UnlinkedProgramCodeBlock
+value   ModuleType JSC::ScriptFetchParametersType
+value   ModuleStatus uint8_t
+value   RegistryStatus uint8_t
+value   ImportKind uint8_t
 
 # Inspector, profilers and options
 opaque  Options struct Engine::Options

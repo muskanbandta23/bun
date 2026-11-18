@@ -65,7 +65,6 @@ public:
         return offsets;
     }
 };
-ENGINE_CLASS_HAS_TYPE(RegExp, RegExpType);
 
 class RegExpObject final : public JSNonFinalObject {
 public:

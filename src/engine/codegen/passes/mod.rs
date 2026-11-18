@@ -1,5 +1,8 @@
 //! Transformations of functions. Each leaves a valid function without aliases.
 
+mod eliminate_dead_code;
+mod lower_total_division;
+
 use crate::analysis::{Cfg, Dominators, Frequencies};
 use crate::ir::{Function, validate};
 use crate::target::Target;
@@ -62,8 +65,14 @@ pub struct Pass {
     run: fn(&mut Function, &mut Analyses, Target),
 }
 
-const QUICK: &[Pass] = &[];
-const FULL: &[Pass] = &[];
+macro_rules! passes {
+    ($($name:ident),* $(,)?) => {
+        &[$(Pass { name: stringify!($name), run: $name::run }),*]
+    };
+}
+
+const QUICK: &[Pass] = passes![lower_total_division];
+const FULL: &[Pass] = passes![eliminate_dead_code, lower_total_division];
 
 impl Pass {
     pub fn pipeline(level: Level) -> &'static [Pass] {

@@ -82,6 +82,8 @@ bitflags::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
     #[repr(transparent)]
     pub struct Attributes: u32 {
+        /// Of an element of `MappedArguments`: the value is that of the parameter.
+        const MAPPED = 1 << 0;
         const READ_ONLY = 1 << 1;
         const DONT_ENUM = 1 << 2;
         const DONT_DELETE = 1 << 3;

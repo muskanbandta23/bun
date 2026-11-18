@@ -22,7 +22,7 @@ pub enum ScriptExecutionStatus {
 /// What a realm asks of its embedder.
 pub struct RealmHooks {
     pub modules: ModuleHooks,
-    pub promise_rejection_tracker: fn(&mut Cx, Gc<JsPromise>, PromiseRejectionOperation),
+    pub promise_rejection_tracker: fn(&Cx, Gc<JsPromise>, PromiseRejectionOperation),
     pub report_uncaught_exception: fn(&mut Cx, Gc<Exception>),
     pub current_script_execution_owner: fn(&Cx) -> Gc<JsObject>,
     pub script_execution_status: fn(&Cx, Gc<JsObject>) -> ScriptExecutionStatus,

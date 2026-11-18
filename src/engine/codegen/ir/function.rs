@@ -3,6 +3,7 @@
 use core::hash::{Hash, Hasher};
 
 use bun_engine_asm::{Gpr, RegisterSet};
+use smallvec::SmallVec;
 
 use super::effects::{EffectFlags, HeapRange};
 use super::entities::{
@@ -152,6 +153,7 @@ pub struct Function {
     floating_count: usize,
     /// Never allocated, and kept by everything that is called.
     pub pinned: RegisterSet,
+    pinned_values: SmallVec<[(Gpr, u64); 2]>,
     /// The bytes just below the frame pointer that are the client's.
     pub reserved_frame_bytes: u32,
     /// The least size of the area at the stack pointer. Operands and results of patchpoints extend it as they need.
@@ -187,6 +189,7 @@ impl Function {
             floating: Vec::new(),
             floating_count: 0,
             pinned,
+            pinned_values: SmallVec::new(),
             reserved_frame_bytes: 0,
             outgoing_bytes: 0,
             quiets_nans: false,
@@ -221,6 +224,7 @@ impl Function {
         self.floating.resize(INITIAL_FLOATING_CAPACITY, Value::NONE);
         self.floating_count = 0;
         self.pinned = pinned;
+        self.pinned_values.clear();
         self.reserved_frame_bytes = 0;
         self.outgoing_bytes = 0;
         self.quiets_nans = false;
@@ -462,6 +466,28 @@ impl Function {
     /// One of `pinned`, or the frame pointer.
     pub fn pinned(&mut self, register: Gpr) -> Value {
         self.intern(Op::Pinned(register), Type::I64)
+    }
+
+    /// Constants that are equal or close to what the register holds are taken from it.
+    pub fn set_pinned_value(&mut self, register: Gpr, value: u64) {
+        assert!(self.pinned.contains(register));
+        self.pinned_values.push((register, value));
+    }
+
+    /// A pinned register and what has to be added to it to get `value`, if that is within `reach`.
+    #[inline]
+    pub fn pinned_near(
+        &self,
+        value: u64,
+        reach: core::ops::RangeInclusive<i64>,
+    ) -> Option<(Gpr, i64)> {
+        let distances = self
+            .pinned_values
+            .iter()
+            .map(|&(register, held)| (register, value.wrapping_sub(held) as i64));
+        distances
+            .filter(|(_, distance)| reach.contains(distance))
+            .min_by_key(|&(_, distance)| distance.unsigned_abs())
     }
 
     pub fn slot_address(&mut self, slot: Slot) -> Value {

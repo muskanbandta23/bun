@@ -62,6 +62,7 @@ impl Vm {
             .code_cache
             .borrow_mut()
             .clear();
+        self.forget_static_builtins();
     }
 
     pub fn clear_source_caches(&self) {

@@ -3,10 +3,12 @@
 #[macro_use]
 mod ffi;
 mod c_text;
+pub mod calendar;
 mod enumeration;
 mod error;
 pub mod locale;
 pub mod normalizer;
+pub mod time_zone;
 mod version;
 
 pub use c_text::CText;

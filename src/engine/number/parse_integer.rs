@@ -5,6 +5,7 @@ use crate::decimal_scanner::scan_sign;
 
 /// What may surround the integer. White space is tab, line feed, line tabulation, form feed, carriage return and space.
 #[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub enum Surroundings {
     Nothing,
     WhiteSpace,

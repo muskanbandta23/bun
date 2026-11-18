@@ -56,13 +56,13 @@ fn in_units(size: AccessSize, offset: i64) -> Option<i64> {
     (offset & ((1 << size.log2_bytes()) - 1) == 0).then_some(offset >> size.log2_bytes())
 }
 
-const LOAD: u32 = 1 << 22;
-const VECTOR: u32 = 1 << 26;
+pub(super) const LOAD: u32 = 1 << 22;
+pub(super) const VECTOR: u32 = 1 << 26;
 const BASE_FIELD: u32 = 31 << 5;
 
 /// The address and size of a load or store of one register. The base may be `sp`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct Mem(u32);
+pub struct Mem(pub(super) u32);
 
 impl Mem {
     const SCALED: u32 = 1 << 24;
@@ -175,7 +175,7 @@ fn is_base(word: u32, reg: Gpr) -> bool {
 
 /// The address and size of a load or store of two registers of 4, 8 or 16 bytes each. The base may be `sp`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct PairMem(u32);
+pub struct PairMem(pub(super) u32);
 
 impl PairMem {
     const POST_INDEX: u32 = 1 << 23;

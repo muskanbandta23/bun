@@ -6,7 +6,6 @@ use bun_engine_syntax::ast::{CallFlags, Expr, ExprId, ExprKind, List};
 use bun_engine_syntax::{EvalContext, Name, NameKind};
 
 use super::intrinsic::Builtin;
-use super::scope::Place;
 use super::{Dest, Generator, Tail, This};
 use crate::code::CodeFlags;
 use crate::constant::{Constant, LinkTimeConstant, TemplateSite};
@@ -479,7 +478,7 @@ impl Generator<'_> {
         }
         let done = self.asm().label();
         if let Some(function) = function.as_register() {
-            if self.resolve(name, node.start).place != Place::Global {
+            if self.resolve(name, node.start).register().is_some() {
                 return otherwise(self);
             }
             let (expected, allocate) = (self.link_time(expected), self.asm().label());

@@ -59,6 +59,9 @@ pub unsafe fn unwind(vm: &Vm, frame: &CallFrame) {
         if vm.has_debugger() {
             (vm.hooks().debugger_did_unwind_frame)(vm, frame);
         }
+        if let Some(coroutine) = crate::Coroutine::of_frame(frame) {
+            coroutine.complete();
+        }
         if frame.caller_address() == entry_frame {
             let address = super::return_to_native_code_with_exception();
             return vm.set_catch_target(entry_frame, address, 0);

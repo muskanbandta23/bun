@@ -109,6 +109,9 @@ vm_shapes! {
     regexp: crate::RegExp,
     property_name_enumerator: crate::PropertyNameEnumerator,
     sentinel: crate::Sentinel,
+    slim_promise_reaction: crate::PromiseReaction,
+    full_promise_reaction: crate::FullPromiseReaction,
+    promise_combinator: crate::PromiseCombinator,
 }
 
 impl VmShapes {
@@ -134,6 +137,7 @@ pub struct Embedder {
     /// After the last cell.
     pub destroy_members: Cell<Option<fn(&Vm)>>,
     pub errors: crate::ErrorHooks,
+    pub microtasks: crate::MicrotaskHooks,
 }
 
 /// All that the scripts of one thread share.
@@ -148,8 +152,8 @@ pub struct Vm {
     catch_frame: Cell<usize>,
     catch_address: Cell<usize>,
     catch_bytecode_offset: Cell<u32>,
-    /// Changes when a property of a prototype does.
-    prototype_chain_epoch: Cell<u32>,
+    /// Changes when a property of a prototype does, and with each collection. The low 31 bits are never zero.
+    prototype_chain_epoch: Cell<u64>,
     pub client_data: Cell<*mut c_void>,
     entry_global: Root<GlobalObject>,
     termination_exception: Root<Exception>,
@@ -161,6 +165,7 @@ pub struct Vm {
     pub did_enter: Cell<bool>,
     is_execution_forbidden: Cell<bool>,
     deletes_unconfigurable_properties: Cell<bool>,
+    pub(crate) is_async_context_tracked: Cell<bool>,
     /// Members of the class that C++ sees.
     embedder_members: UnsafeCell<MaybeUninit<[usize; 48]>>,
     pub heap: Heap,
@@ -185,6 +190,7 @@ pub struct Vm {
     shapes_by_class: RefCell<FastHashMap<usize, usize>>,
     extensions: RefCell<FastHashMap<TypeId, Rc<dyn Any>>>,
     default_microtask_queue: MicrotaskQueueRef,
+    divisor_cache: bun_engine_bigint::DivisorCache,
     pub(crate) string_caches: StringCaches,
     pub(crate) shape_cache: ShapeCache,
     pub(crate) symbols: WeakValueMap<usize, JsSymbol>,
@@ -236,6 +242,7 @@ impl VmRef {
             did_defer_termination: Cell::new(false),
             is_execution_forbidden: Cell::new(false),
             deletes_unconfigurable_properties: Cell::new(false),
+            is_async_context_tracked: Cell::new(false),
             debugger_count: Cell::new(0),
             did_enter: Cell::new(false),
             seed: Cell::new(seed.rotate_left(32) | 1),
@@ -246,7 +253,8 @@ impl VmRef {
             spaces_by_class: RefCell::default(),
             shapes_by_class: RefCell::default(),
             extensions: RefCell::default(),
-            default_microtask_queue: MicrotaskQueueRef::default(),
+            default_microtask_queue: MicrotaskQueueRef::unregistered(),
+            divisor_cache: Default::default(),
             string_caches: StringCaches::new(),
             shape_cache: ShapeCache::default(),
             symbols: WeakValueMap::default(),
@@ -321,7 +329,12 @@ impl Vm {
     pub const OFFSET_OF_CATCH_ADDRESS: usize = offset_of!(Vm, catch_address);
     pub const OFFSET_OF_CATCH_BYTECODE_OFFSET: usize = offset_of!(Vm, catch_bytecode_offset);
     pub const OFFSET_OF_PROTOTYPE_CHAIN_EPOCH: usize = offset_of!(Vm, prototype_chain_epoch);
+    /// Of a pointer to the `LookupTables`.
+    pub const OFFSET_OF_LOOKUP_TABLES: usize =
+        offset_of!(Vm, services.caches) + crate::caches::State::OFFSET_OF_TABLES;
     pub const OFFSET_OF_SCRATCH: usize = offset_of!(Vm, scratch);
+    pub const OFFSET_OF_IS_ASYNC_CONTEXT_TRACKED: usize = offset_of!(Vm, is_async_context_tracked);
+    pub const OFFSET_OF_DEBUGGER_COUNT: usize = offset_of!(Vm, debugger_count);
     pub const OFFSET_OF_HEAP: usize = offset_of!(Vm, heap);
     pub const OFFSET_OF_SMALL_STRINGS: usize = offset_of!(Vm, small_strings);
 
@@ -466,6 +479,11 @@ impl Vm {
             self.bound_function_executable.set(Some(executable));
             executable
         })
+    }
+
+    #[inline(always)]
+    pub fn divisor_cache(&self) -> &bun_engine_bigint::DivisorCache {
+        &self.divisor_cache
     }
 
     pub fn default_microtask_queue(&self) -> &MicrotaskQueueRef {
@@ -631,6 +649,11 @@ impl Vm {
         self.entry_global.get()
     }
 
+    #[inline(always)]
+    pub(crate) fn set_entry_global(&self, global: Gc<GlobalObject>) {
+        self.entry_global.set(Some(global));
+    }
+
     pub(crate) fn will_enter(&self, global: Gc<GlobalObject>) {
         self.entry_global.set(Some(global));
         self.did_enter.set(true);
@@ -705,16 +728,21 @@ impl Vm {
 
     #[inline(always)]
     pub fn prototype_chain_epoch(&self) -> u32 {
+        self.prototype_chain_epoch.get() as u32
+    }
+
+    /// For what is not cleared when the other starts over.
+    #[inline(always)]
+    pub fn full_prototype_chain_epoch(&self) -> u64 {
         self.prototype_chain_epoch.get()
     }
 
     #[inline]
     pub fn invalidate_prototype_chain_caches(&self) {
-        let epoch = self.prototype_chain_epoch.get().wrapping_add(1);
-        self.prototype_chain_epoch.set(epoch);
-        if epoch == 0 {
+        self.prototype_chain_epoch.update(|epoch| epoch + 1);
+        if self.prototype_chain_epoch() << 1 == 0 {
             self.services.caches.did_wrap_epoch();
-            self.prototype_chain_epoch.set(1);
+            self.prototype_chain_epoch.update(|epoch| epoch + 1);
         }
     }
 
@@ -770,7 +798,9 @@ impl Vm {
         (self.hooks.visit_code_on_stack)(self, addresses, visitor);
     }
 
-    pub(crate) fn visit_output_constraints(&self, _: &mut Visitor) {}
+    pub(crate) fn visit_output_constraints(&self, visitor: &mut Visitor) {
+        self.services.visit_output_constraints(visitor);
+    }
 
     pub(crate) fn reconcile_weak_references(&self, survivors: &Survivors) {
         self.shape_cache.prune(survivors);

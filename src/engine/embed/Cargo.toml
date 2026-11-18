@@ -18,11 +18,16 @@ workspace = true
 
 [dependencies]
 bun_engine.workspace = true
+bun_engine_date.workspace = true
+bun_engine_number.workspace = true
 bun_engine_text.workspace = true
+bun_engine_unicode.workspace = true
 bun_engine_vm.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
+bun_icu.workspace = true
 bun_threading.workspace = true
+bun_url_whatwg.workspace = true
 libc.workspace = true
 
 [dev-dependencies]

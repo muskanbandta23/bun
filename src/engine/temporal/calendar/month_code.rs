@@ -1,4 +1,4 @@
-use bun_engine_text::{CodeUnit, Text};
+use bun_engine_text::{CodeUnit, PropertyName, Text, names};
 
 use crate::{CalendarId, Error, Result};
 
@@ -38,10 +38,14 @@ impl MonthCode {
     }
 
     /// Of a code that some calendar has.
-    pub(crate) fn as_str(self) -> &'static str {
-        const CODES: &str = "M00LM01LM02LM03LM04LM05LM06LM07LM08LM09LM10LM11LM12LM13L";
-        let start = 4 * usize::from(self.number());
-        &CODES[start..start + 3 + usize::from(self.is_leap_month())]
+    #[inline]
+    pub(crate) fn name(self) -> PropertyName<'static> {
+        use names::*;
+        const NAMES: [PropertyName<'static>; 25] = [
+            M01, M01L, M02, M02L, M03, M03L, M04, M04L, M05, M05L, M06, M06L, M07, M07L, M08, M08L,
+            M09, M09L, M10, M10L, M11, M11L, M12, M12L, M13,
+        ];
+        NAMES[usize::from(self.0 - MonthCode::new(1, false).0)]
     }
 }
 

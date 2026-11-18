@@ -157,7 +157,7 @@ impl Generator<'_> {
         self.asm().put_by_id(base, name, value, flags);
     }
 
-    fn put_member(&mut self, start: u32, member: &Member, value: Operand) {
+    pub(super) fn put_member(&mut self, start: u32, member: &Member, value: Operand) {
         let Member { base, this, key } = *member;
         let strict = self.is_strict;
         match (key, this) {

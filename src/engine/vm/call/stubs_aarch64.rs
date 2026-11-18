@@ -11,21 +11,29 @@ use crate::{
     NativeExecutable, Shape, Value, Vm,
 };
 
+/// With the `Vm` in `x21`.
+macro_rules! open_entry_frame {
+    ($context:literal) => {
+        concat!(
+            "stp x29, x30, [sp, #-16]!\n",
+            "mov x29, sp\n",
+            "ldr x9, [x21, #{top_entry_frame}]\n",
+            "ldr x10, [x21, #{top_call_frame}]\n",
+            "stp x9, x10, [sp, #-16]!\n",
+            "stp xzr, ",
+            $context,
+            ", [sp, #-16]!\n",
+            "str x29, [x21, #{top_entry_frame}]",
+        )
+    };
+}
+
 macro_rules! leave_entry_frame {
     () => {
         concat!(
             "ldp x9, x10, [x29, #-16]\n",
             "str x9, [x21, #{top_entry_frame}]\n",
             "str x10, [x21, #{top_call_frame}]\n",
-            "ldp x19, x20, [x29, #-32]\n",
-            "ldp x21, x22, [x29, #-48]\n",
-            "ldp x23, x24, [x29, #-64]\n",
-            "ldp x25, x26, [x29, #-80]\n",
-            "ldp x27, x28, [x29, #-96]\n",
-            "ldp d8, d9, [x29, #-112]\n",
-            "ldp d10, d11, [x29, #-128]\n",
-            "ldp d12, d13, [x29, #-144]\n",
-            "ldp d14, d15, [x29, #-160]\n",
             "mov sp, x29\n",
             "ldp x29, x30, [sp], #16\n",
             "ret",
@@ -33,36 +41,24 @@ macro_rules! leave_entry_frame {
     };
 }
 
+/// The arguments are in x20 to x22.
 #[unsafe(naked)]
-pub(super) unsafe extern "C" fn enter(
+pub(super) unsafe extern "rust-preserve-none" fn enter(
     entry: usize,
     vm: &Vm,
     frame: &ProtoFrame,
 ) -> JsResult<Value> {
     naked_asm!(
-        "stp x29, x30, [sp, #-16]!",
-        "mov x29, sp",
-        "sub sp, sp, #160",
-        "ldr x9, [x1, #{top_entry_frame}]",
-        "ldr x10, [x1, #{top_call_frame}]",
-        "stp x9, x10, [x29, #-16]",
-        "stp x19, x20, [x29, #-32]",
-        "stp x21, x22, [x29, #-48]",
-        "stp x23, x24, [x29, #-64]",
-        "stp x25, x26, [x29, #-80]",
-        "stp x27, x28, [x29, #-96]",
-        "stp d8, d9, [x29, #-112]",
-        "stp d10, d11, [x29, #-128]",
-        "stp d12, d13, [x29, #-144]",
-        "stp d14, d15, [x29, #-160]",
-        "mov x21, x1",
-        "str x29, [x21, #{top_entry_frame}]",
-        "ldr w10, [x2, #{copied}]",
-        "add x11, x10, #5",
+        open_entry_frame!("xzr"),
+        "ldr w10, [x22, #{argument_count}]",
+        "add x11, x10, #4",
         "and x11, x11, #-2",
         "sub sp, sp, x11, lsl #3",
-        "ldr x11, [x2, #{arguments}]",
+        "ldr x11, [x22, #{this_value}]",
+        "stp x10, x11, [sp, #16]",
+        "ldr x11, [x22, #{arguments}]",
         "add x12, sp, #32",
+        "sub w10, w10, #1",
         "cbz w10, 3f",
         "2:",
         "sub w10, w10, #1",
@@ -70,24 +66,51 @@ pub(super) unsafe extern "C" fn enter(
         "str x13, [x12, x10, lsl #3]",
         "cbnz w10, 2b",
         "3:",
-        "ldr w10, [x2, #{argument_count}]",
-        "ldr x11, [x2, #{this_value}]",
-        "stp x10, x11, [sp, #16]",
-        "ldp x10, x11, [x2, #{code_block}]",
+        "ldp x10, x11, [x22, #{code_block}]",
         "stp x10, x11, [sp]",
-        "ldr x9, [x2, #{executable}]",
+        "ldr x9, [x22, #{executable}]",
         "mov x22, #{number_tag}",
         "add x23, x22, #{other_tag}",
-        "blr x0",
+        "blr x20",
         leave_entry_frame!(),
         top_call_frame = const Vm::OFFSET_OF_TOP_CALL_FRAME,
         top_entry_frame = const Vm::OFFSET_OF_TOP_ENTRY_FRAME,
         code_block = const offset_of!(ProtoFrame, code_block),
         argument_count = const offset_of!(ProtoFrame, argument_count_including_this),
-        copied = const offset_of!(ProtoFrame, copied),
         this_value = const offset_of!(ProtoFrame, this_value),
         arguments = const offset_of!(ProtoFrame, arguments),
         executable = const offset_of!(ProtoFrame, executable),
+        number_tag = const Value::NUMBER_TAG,
+        other_tag = const Value::OTHER_TAG,
+    )
+}
+
+/// The arguments are in x20 to x28 and x0.
+#[unsafe(naked)]
+pub(super) unsafe extern "rust-preserve-none" fn enter_short(
+    entry: usize,
+    vm: &Vm,
+    code_block: usize,
+    callee: u64,
+    argument_count_including_this: u64,
+    this_value: u64,
+    context: u64,
+    executable: usize,
+    first: u64,
+    second: u64,
+) -> JsResult<Value> {
+    naked_asm!(
+        open_entry_frame!("x26"),
+        "stp x28, x0, [sp, #-16]!",
+        "stp x24, x25, [sp, #-16]!",
+        "stp x22, x23, [sp, #-16]!",
+        "mov x9, x27",
+        "mov x22, #{number_tag}",
+        "add x23, x22, #{other_tag}",
+        "blr x20",
+        leave_entry_frame!(),
+        top_call_frame = const Vm::OFFSET_OF_TOP_CALL_FRAME,
+        top_entry_frame = const Vm::OFFSET_OF_TOP_ENTRY_FRAME,
         number_tag = const Value::NUMBER_TAG,
         other_tag = const Value::OTHER_TAG,
     )

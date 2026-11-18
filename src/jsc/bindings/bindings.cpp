@@ -33,7 +33,6 @@
 #include "JavaScriptCore/AggregateError.h"
 #include "JavaScriptCore/ArrayBufferView.h"
 #include "JavaScriptCore/ArrayStorage.h"
-#include "JavaScriptCore/SourceProviderCache.h"
 #include "JavaScriptCore/SparseArrayValueMap.h"
 #include "JavaScriptCore/BytecodeIndex.h"
 #include "JavaScriptCore/CodeBlock.h"
@@ -5462,9 +5461,6 @@ size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
 
     vm->finalizeSynchronousJSExecution();
 
-    // A full collection only drops the caches that nothing has used since the one before it.
-    vm->sourceProviderCacheMap.clear();
-
     if (sync) {
         vm->heap.deleteAllUnlinkedCodeBlocks(JSC::PreventCollectionAndDeleteAllCode);
         // What the call above left on the stack must not be scanned by the collection below; see the helper's comment.
@@ -6185,7 +6181,7 @@ restart:
             }
 
             // reuse memory
-            properties.data()->propertyNameVector().shrink(0);
+            properties.clear();
             if (iterating->isCallable())
                 break;
             if (iterating == globalObject || isOtherGlobal)
@@ -6267,7 +6263,7 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
         RETURN_IF_EXCEPTION(scope, );
     }
 
-    auto vector = properties.data()->propertyNameVector();
+    auto vector = properties.releaseData()->propertyNameVector();
     std::sort(vector.begin(), vector.end(), [](const Identifier& a, const Identifier& b) { return codePointCompare(a.impl(), b.impl()) < 0; });
     auto clientData = WebCore::clientData(vm);
 

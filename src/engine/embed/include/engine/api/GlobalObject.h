@@ -286,9 +286,12 @@ public:
 private:
     Engine::Opaque<(Engine::RealmSlot::COUNT - namedSlotCount) * sizeof(JSCell*) + Engine::Layout::globalObjectSizeAfterSlots> m_rest;
 
+public:
     // From here on, what only C++ has.
     // For a class that wants another than the default.
     LazyProperty<JSGlobalObject, Structure> m_moduleNamespaceObjectStructure;
+
+private:
     std::unique_ptr<Inspector::JSGlobalObjectInspectorController> m_inspectorController;
     bool m_isInspectable { false };
 };

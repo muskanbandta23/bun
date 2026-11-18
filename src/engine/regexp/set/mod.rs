@@ -1,6 +1,7 @@
 //! Sets of characters.
 
 mod builder;
+mod find;
 mod latin1;
 mod ranges;
 mod shared;
@@ -10,6 +11,7 @@ use bun_engine_text::AllocError;
 use bun_engine_unicode::MAX_CODE_POINT;
 
 pub use builder::SetBuilder;
+pub use find::{find_member, find_non_member};
 pub use latin1::Latin1Set;
 pub use shared::SharedSet;
 pub use table::LookupTable;

@@ -46,7 +46,7 @@ impl ErrorType {
 
 bitflags::bitflags! {
     #[derive(Clone, Copy)]
-    pub(super) struct Flags: u16 {
+    pub(super) struct ErrorFlags: u16 {
         const IS_STACK_OVERFLOW = 1 << 0;
         const IS_OUT_OF_MEMORY = 1 << 1;
         const IS_NATIVE_GETTER_TYPE_ERROR = 1 << 2;
@@ -252,14 +252,14 @@ impl ErrorInstance {
 
     pub fn out_of_memory(cx: &Cx, message: StringRef) -> Gc<ErrorInstance> {
         let error = Self::new(cx, ErrorType::RangeError, Some(message));
-        error.set(Flags::IS_OUT_OF_MEMORY | Flags::PASSES_WASM_HANDLERS);
+        error.set(ErrorFlags::IS_OUT_OF_MEMORY | ErrorFlags::PASSES_WASM_HANDLERS);
         error
     }
 
     pub fn stack_overflow(cx: &Cx) -> Gc<ErrorInstance> {
         let message = "Maximum call stack size exceeded.".into_string();
         let error = Self::new(cx, ErrorType::RangeError, Some(message));
-        error.set(Flags::IS_STACK_OVERFLOW | Flags::PASSES_WASM_HANDLERS);
+        error.set(ErrorFlags::IS_STACK_OVERFLOW | ErrorFlags::PASSES_WASM_HANDLERS);
         error
     }
 
@@ -297,18 +297,18 @@ impl ErrorInstance {
     }
 
     #[inline(always)]
-    pub(super) fn has(&self, flags: Flags) -> bool {
+    pub(super) fn has(&self, flags: ErrorFlags) -> bool {
         self.flags.load(Ordering::Relaxed) & flags.bits() != 0
     }
 
     #[inline(always)]
-    pub(super) fn set(&self, flags: Flags) {
+    pub(super) fn set(&self, flags: ErrorFlags) {
         let old = self.flags.load(Ordering::Relaxed);
         self.flags.store(old | flags.bits(), Ordering::Relaxed);
     }
 
     #[inline(always)]
-    pub(super) fn set_to(&self, flags: Flags, value: bool) {
+    pub(super) fn set_to(&self, flags: ErrorFlags, value: bool) {
         let others = self.flags.load(Ordering::Relaxed) & !flags.bits();
         let bits = if value { flags.bits() } else { 0 };
         self.flags.store(others | bits, Ordering::Relaxed);
@@ -320,35 +320,35 @@ impl ErrorInstance {
     }
 
     pub fn is_stack_overflow(&self) -> bool {
-        self.has(Flags::IS_STACK_OVERFLOW)
+        self.has(ErrorFlags::IS_STACK_OVERFLOW)
     }
 
     pub fn is_out_of_memory(&self) -> bool {
-        self.has(Flags::IS_OUT_OF_MEMORY)
+        self.has(ErrorFlags::IS_OUT_OF_MEMORY)
     }
 
     pub fn is_native_getter_type_error(&self) -> bool {
-        self.has(Flags::IS_NATIVE_GETTER_TYPE_ERROR)
+        self.has(ErrorFlags::IS_NATIVE_GETTER_TYPE_ERROR)
     }
 
     pub fn set_native_getter_type_error(&self) {
-        self.set(Flags::IS_NATIVE_GETTER_TYPE_ERROR);
+        self.set(ErrorFlags::IS_NATIVE_GETTER_TYPE_ERROR);
     }
 
     pub fn is_parse_error(&self) -> bool {
-        self.has(Flags::IS_PARSE_ERROR)
+        self.has(ErrorFlags::IS_PARSE_ERROR)
     }
 
     pub fn set_parse_error(&self) {
-        self.set(Flags::IS_PARSE_ERROR);
+        self.set(ErrorFlags::IS_PARSE_ERROR);
     }
 
     pub fn is_catchable_from_wasm(&self) -> bool {
-        !self.has(Flags::PASSES_WASM_HANDLERS)
+        !self.has(ErrorFlags::PASSES_WASM_HANDLERS)
     }
 
     pub fn set_not_catchable_from_wasm(&self) {
-        self.set(Flags::PASSES_WASM_HANDLERS);
+        self.set(ErrorFlags::PASSES_WASM_HANDLERS);
     }
 
     pub fn position(&self) -> LineColumn {
@@ -387,7 +387,7 @@ impl ErrorInstance {
     }
 
     fn replace_frames(&self, frames: Option<StackTrace>) {
-        self.set_to(Flags::HAS_FRAMES, frames.is_some());
+        self.set_to(ErrorFlags::HAS_FRAMES, frames.is_some());
         // SAFETY: as above.
         unsafe { *self.frames.0.get() = frames.unwrap_or(StackTrace::EMPTY) };
         if self.has_any_frame() {
@@ -396,7 +396,7 @@ impl ErrorInstance {
     }
 
     fn replace_captured_frames(&self, frames: Option<Box<StackTrace>>) -> Option<Box<StackTrace>> {
-        self.set_to(Flags::HAS_CAPTURED_FRAMES, frames.is_some());
+        self.set_to(ErrorFlags::HAS_CAPTURED_FRAMES, frames.is_some());
         // SAFETY: nothing else makes a reference to it.
         let old = unsafe { self.captured_frames.0.get().replace(frames) };
         self.write_barrier_for_cell();
@@ -439,7 +439,7 @@ impl ErrorInstance {
     /// something that it refers to has died.
     pub fn stack_trace_ptr(&self) -> Option<NonNull<StackTrace>> {
         self.write_barrier_for_cell();
-        NonNull::new(self.frames.0.get()).filter(|_| self.has(Flags::HAS_FRAMES))
+        NonNull::new(self.frames.0.get()).filter(|_| self.has(ErrorFlags::HAS_FRAMES))
     }
 
     pub fn set_stack_frames(&self, vm: &Vm, frames: &[StackFrame]) {
@@ -452,7 +452,7 @@ impl ErrorInstance {
     pub unsafe fn set_stack_trace(&self, vm: &Vm, frames: StackTrace) {
         self.replace_frames(Some(frames));
         self.stack_text.take();
-        self.set_to(Flags::HAS_INFO | Flags::TEXT_LACKS_HEADER, false);
+        self.set_to(ErrorFlags::HAS_INFO | ErrorFlags::TEXT_LACKS_HEADER, false);
         self.report_memory(vm);
     }
 
@@ -467,8 +467,8 @@ impl ErrorInstance {
         self.replace_frames(None);
         self.position.set(position);
         self.source_url.set(source_url);
-        self.set_to(Flags::HAS_INFO, stack.is_some());
-        self.set_to(Flags::TEXT_LACKS_HEADER, false);
+        self.set_to(ErrorFlags::HAS_INFO, stack.is_some());
+        self.set_to(ErrorFlags::TEXT_LACKS_HEADER, false);
         self.stack_text.set(stack);
         self.report_memory(vm);
     }
@@ -495,7 +495,7 @@ impl ErrorInstance {
         if !self.has_any_frame() {
             return;
         }
-        let needs_text = !self.has(Flags::STACK_IS_PROVIDED);
+        let needs_text = !self.has(ErrorFlags::STACK_IS_PROVIDED);
         let _defer = vm.heap.defer_collection();
         // SAFETY: nothing else makes a reference to the list meanwhile.
         let frames = unsafe { &mut *self.frames.0.get() }.take();
@@ -505,7 +505,7 @@ impl ErrorInstance {
                 self.stack_text
                     .set(Some(format(vm, &frames, &mut location)));
                 self.set_location(location);
-                self.set(Flags::TEXT_LACKS_HEADER);
+                self.set(ErrorFlags::TEXT_LACKS_HEADER);
             }
             Some(_) => {}
             None => {
@@ -515,8 +515,8 @@ impl ErrorInstance {
                 }
             }
         }
-        self.set(Flags::HAS_INFO);
-        self.set_to(Flags::HAS_FRAMES, false);
+        self.set(ErrorFlags::HAS_INFO);
+        self.set_to(ErrorFlags::HAS_FRAMES, false);
         self.update_reported_memory();
     }
 
@@ -548,7 +548,7 @@ impl ErrorInstance {
     fn visit_children(&self, visitor: &mut Visitor) {
         let kilobytes = self.reported_kilobytes.load(Ordering::Relaxed);
         visitor.report_extra_memory(usize::from(kilobytes) * 1024);
-        if self.has(Flags::HAS_FRAMES | Flags::HAS_CAPTURED_FRAMES) {
+        if self.has(ErrorFlags::HAS_FRAMES | ErrorFlags::HAS_CAPTURED_FRAMES) {
             visitor.reconcile_current_cell_later();
         }
     }
@@ -567,7 +567,7 @@ impl ErrorInstance {
         if self.with_frames(is_whole) {
             return;
         }
-        if self.has(Flags::IS_MATERIALIZED) {
+        if self.has(ErrorFlags::IS_MATERIALIZED) {
             // SAFETY: as in `with_frames`.
             unsafe { &mut *self.frames.0.get() }.clear();
         } else {

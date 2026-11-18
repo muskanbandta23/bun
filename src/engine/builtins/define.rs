@@ -10,8 +10,8 @@ pub(crate) fn species_getter(_: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 
 /// `define_object!(Name, "ClassName", TABLE)` declares the type. `Name::create(cx, prototype)` makes the object.
 macro_rules! define_object {
-    ($name:ident, $class_name:literal, $table:ident) => {
-        #[bun_engine_macros::cell(name = $class_name, static_table = $table)]
+    ($name:ident, $class_name:literal, $table:ident $(, export = $export:literal)?) => {
+        #[bun_engine_macros::cell(name = $class_name, static_table = $table $(, export = $export)?)]
         pub(crate) struct $name {
             base: bun_engine_vm::JsObject,
         }

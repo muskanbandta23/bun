@@ -1,8 +1,8 @@
 use bun_engine_bytecode::op;
 use bun_engine_vm::code::metadata::{ArrayAccess, GetByVal};
 use bun_engine_vm::{
-    ArrayModes, ClampedU8, ElementKind, ElementType, Float16, IndexingMode, JsCell, JsObject,
-    JsString, JsTypedArray, NumberElement, Value,
+    ArrayModes, CellType, ClampedU8, ElementKind, ElementType, Float16, IndexingMode, JsCell,
+    JsObject, JsString, JsTypedArray, MappedArguments, NumberElement, Value,
 };
 
 use super::barrier_and_next;
@@ -81,6 +81,10 @@ handler! {
             && let Some(character) = m.vm.small_strings.existing_single_character(unit as u8)
         {
             character.address() as u64
+        } else if object.cell_type() == CellType::DirectArguments
+            && let Some(value) = cell::<MappedArguments>(base).try_get_direct(index)
+        {
+            value.to_bits()
         } else {
             slow!(m, op::GetByVal)
         };

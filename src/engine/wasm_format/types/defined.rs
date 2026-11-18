@@ -9,7 +9,7 @@ use super::canonical::{
 };
 use super::layout::StructLayout;
 use super::value::{BlockType, FieldType, HeapType, StorageType, TypeKind, ValType};
-use crate::alloc::{OutOfMemory, TryPush};
+use crate::alloc::{OutOfMemory, TryPush, shrink};
 use crate::index::TypeIndex;
 use crate::limits::MAX_SUBTYPE_DEPTH;
 
@@ -182,6 +182,9 @@ impl Types {
     }
 
     fn is_defined_subtype(&self, mut sub: TypeIndex, sup: TypeIndex) -> bool {
+        if sub == sup {
+            return true;
+        }
         let has_rtt = |index| (self.definition(index).group as usize) < self.groups.len();
         if self.depth(sub) > self.depth(sup) + SHORT_WALK && has_rtt(sub) && has_rtt(sup) {
             return self.rtt(sub).is_subtype_of(self.rtt(sup));
@@ -421,10 +424,10 @@ impl TypesBuilder {
     }
 
     pub(crate) fn finish(mut self) -> Types {
-        self.types.definitions.shrink_to_fit();
-        self.types.values.shrink_to_fit();
-        self.types.fields.shrink_to_fit();
-        self.types.groups.shrink_to_fit();
+        shrink(&mut self.types.definitions);
+        shrink(&mut self.types.values);
+        shrink(&mut self.types.fields);
+        shrink(&mut self.types.groups);
         self.types
     }
 

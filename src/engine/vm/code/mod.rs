@@ -5,6 +5,7 @@ mod builtin_values;
 mod cache;
 mod code_block;
 mod compile;
+mod discard;
 mod dynamic_function;
 mod eval;
 mod executable;
@@ -53,7 +54,7 @@ pub(crate) struct State {
 impl crate::services::Service for State {
     fn did_collect(&self, vm: &Vm, scope: Scope) {
         if scope == Scope::Full {
-            vm.clear_source_caches();
+            vm.prune_compilation_caches();
         }
     }
 }

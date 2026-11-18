@@ -2,8 +2,9 @@
 
 // Names and small types that the other headers share.
 
-#include "EngineConstants.h"
 #include "engine/Support.h"
+
+#include "EngineConstants.h"
 #include "engine/api/Layout.h"
 
 #define ENGINE_STRINGIFY_EXPANDED(text) #text
@@ -254,6 +255,8 @@ enum class SourceProviderSourceType : uint8_t {
     Synthetic = Engine::SourceType::Synthetic,
     BunTranspiledModule = Engine::SourceType::AnalyzedModule,
 };
+
+enum class InternalMicrotask : uint8_t;
 
 enum class SubspaceAccess { OnMainThread,
     Concurrently };

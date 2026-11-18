@@ -3,7 +3,7 @@
 use bun_engine_bytecode::Specialization;
 use bun_engine_vm::{CodeBlock, FunctionExecutable, JsFunction, options};
 
-use super::{return_false, return_undefined, return_zero};
+use super::{put, return_false, return_undefined, return_zero};
 use crate::prelude::*;
 
 pub(super) const FUNCTIONS: Functions = &[
@@ -16,6 +16,7 @@ pub(super) const FUNCTIONS: Functions = &[
     ("optimizeNextInvocation", optimize_next_invocation, 1),
     ("reoptimizationRetryCount", return_zero, 1),
     ("totalCompileTime", return_zero, 0),
+    ("engineOptions", engine_options, 0),
     ("OSRExit", return_undefined, 0),
     ("isFinalTier", return_false, 0),
     ("predictInt32", return_undefined, 0),
@@ -53,11 +54,11 @@ pub(super) fn loop_counts() -> (i32, i32) {
     (script, wasm)
 }
 
-fn executable_of(function: Value) -> Option<Gc<FunctionExecutable>> {
+pub(super) fn executable_of(function: Value) -> Option<Gc<FunctionExecutable>> {
     function.downcast::<JsFunction>()?.script_executable()
 }
 
-fn code_block_of(function: Value) -> Option<Gc<CodeBlock>> {
+pub(super) fn code_block_of(function: Value) -> Option<Gc<CodeBlock>> {
     let executable = executable_of(function)?;
     (executable.code_block(Specialization::Call))
         .or_else(|| executable.code_block(Specialization::Construct))
@@ -119,4 +120,13 @@ fn identity(_: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 #[native_abi]
 fn effectful_42(_: &mut Cx, _: &CallFrame) -> JsResult<Value> {
     Ok(42.into())
+}
+
+#[native_abi]
+fn engine_options(cx: &mut Cx, _: &CallFrame) -> JsResult<Value> {
+    let object = cx.new_object();
+    for (name, value) in options().all() {
+        put(cx, &object, name, value);
+    }
+    Ok(object.into())
 }

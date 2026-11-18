@@ -663,6 +663,9 @@ impl<'a, I: Isa, C: Client<I::Masm>> Emitter<'a, I, C> {
         let (results, operands) = self.tables.locations.split_at(outputs.len());
 
         let own_scratch = I::lend_scratch(self.masm, data.clobbers_early & data.clobbers_late);
+        if data.action != Action::Custom {
+            self.client.before_call(self.masm, data.token, origin);
+        }
         match data.action {
             Action::Custom => self.client.patchpoint(
                 self.masm,

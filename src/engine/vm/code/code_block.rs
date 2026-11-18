@@ -13,6 +13,7 @@ use bun_engine_macros::cell;
 use bun_engine_text::{Identifier, PropertyName, names};
 
 use super::metadata;
+use super::optimization::Optimization;
 use super::profile::ValueProfile;
 use crate::heap::Survivors;
 use crate::{
@@ -128,6 +129,7 @@ pub struct CodeBlock {
     words: Words,
     compiled: RefCell<Option<Rc<dyn CompiledCode>>>,
     pub(crate) caches: metadata::SideTables,
+    pub(super) optimization: Optimization,
 }
 
 impl CodeBlock {
@@ -174,6 +176,7 @@ impl CodeBlock {
             words,
             compiled: RefCell::new(None),
             caches: metadata::SideTables::default(),
+            optimization: Optimization::default(),
         });
         for (slot, constant) in code_block.fields().iter().zip(&code_block.code.constants) {
             let value = code_block.link_constant(cx, constant)?;
@@ -207,6 +210,7 @@ impl CodeBlock {
             words: Words::zeroed(0).unwrap_or_else(|| bun_alloc::out_of_memory()),
             compiled: RefCell::new(None),
             caches: metadata::SideTables::default(),
+            optimization: Optimization::default(),
         })
     }
 

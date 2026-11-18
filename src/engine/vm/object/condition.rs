@@ -7,8 +7,8 @@ use smallvec::SmallVec;
 
 use crate::heap::Survivors;
 use crate::{
-    Attributes, CellType, DeferredFire, Gc, GcFree, GlobalObject, JsCell, JsObject, PropertyOffset, Shape,
-    ShapeFlags, ShapeId, TypeFlags, Value, Vm, Watcher, Watchpoint,
+    Attributes, CellType, DeferredFire, Gc, GcFree, GlobalObject, JsCell, JsObject, PropertyOffset,
+    Shape, ShapeFlags, ShapeId, TypeFlags, Value, Vm, Watcher, Watchpoint,
 };
 
 /// A value is kept as its bits.

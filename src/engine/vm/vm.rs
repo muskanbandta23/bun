@@ -19,9 +19,9 @@ use crate::primitive::StringCaches;
 use crate::services::Service;
 use crate::{
     CallFrame, CellKind, CellType, Cx, ElementKind, EntryRecord, Exception, Executable,
-    FastHashMap, Gc, GcFree, GlobalObject, Hooks, IndexingMode,
-    JsBoundFunction, JsCell, JsFunction, JsSymbol, MicrotaskQueueRef, NativeExecutable, Shape,
-    ShapeSpec, SmallStrings, Traps, TypeFlags, Value, Visitor, call, options,
+    FastHashMap, Gc, GcFree, GlobalObject, Hooks, IndexingMode, JsBoundFunction, JsCell,
+    JsFunction, JsSymbol, MicrotaskQueueRef, NativeExecutable, Shape, ShapeSpec, SmallStrings,
+    Traps, TypeFlags, Value, Visitor, call, options,
 };
 
 /// A cell that the `Vm` keeps alive.

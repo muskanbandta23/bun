@@ -130,6 +130,13 @@ impl SpeculatedType {
         }
     }
 
+    /// Of the bits of a value, unless it is a cell.
+    pub fn of_immediate(bits: u64) -> Option<SpeculatedType> {
+        let is_cell = bits != 0 && bits & Value::NOT_CELL_MASK == 0;
+        // SAFETY: no cell, so there is nothing that the bits have to refer to.
+        (!is_cell).then(|| Self::of(unsafe { Value::from_bits_or_empty(bits) }))
+    }
+
     pub fn of(value: Option<Value>) -> SpeculatedType {
         let Some(value) = value else {
             return Self::EMPTY;

@@ -49,7 +49,8 @@ impl StackVisitor {
         let mut next = Some(match &compiled {
             Some(compiled) => compiled.origin_of_call_site(frame.call_site()),
             None => CodeOrigin {
-                bytecode_offset: code_block.map_or(0, |it| it.bytecode_offset_of(frame.call_site())),
+                bytecode_offset: code_block
+                    .map_or(0, |it| it.bytecode_offset_of(frame.call_site())),
                 inline_frame: None,
             },
         });

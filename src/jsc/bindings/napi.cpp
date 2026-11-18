@@ -2566,7 +2566,7 @@ extern "C" napi_status napi_get_value_int64(napi_env env, napi_value value, int6
     NAPI_RETURN_EARLY_IF_FALSE(env, jsValue.isNumber(), napi_number_expected);
 
     double js_number = jsValue.asNumber();
-    if (isfinite(js_number)) {
+    if (std::isfinite(js_number)) {
         // upper is 2^63 exactly, not 2^63-1, as the latter can't be represented exactly
         constexpr double lower = std::numeric_limits<int64_t>::min(), upper = 1ull << 63;
         if (js_number >= upper) {

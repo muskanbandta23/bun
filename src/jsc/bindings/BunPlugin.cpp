@@ -4869,13 +4869,13 @@ JSC::JSPromise* evaluateCompiledOriginalBeforeFactory(Zig::GlobalObject* globalO
         return underWay;
     String key = dependencyKeyOfModuleMock(globalObject, mock);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    JSC::VM::SynchronousModuleQueue queue;
-    queue.prev = vm.m_synchronousModuleQueue;
-    vm.m_synchronousModuleQueue = &queue;
-    JSC::JSPromise* evaluation = importModuleKey(globalObject, key);
-    if (!scope.exception())
-        JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
-    vm.m_synchronousModuleQueue = queue.prev;
+    JSC::JSPromise* evaluation = nullptr;
+    {
+        JSC::VM::SynchronousModuleQueueScope queue(vm);
+        evaluation = importModuleKey(globalObject, key);
+        if (!scope.exception())
+            JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
+    }
     RETURN_IF_EXCEPTION(scope, nullptr);
     mock->earlyOriginalLoad.setMayBeNull(vm, mock, evaluation);
     mock->wouldBeInRegistry = true;
@@ -8834,7 +8834,7 @@ bool isModuleMockInUse(Zig::GlobalObject* globalObject, JSC::JSObject* moduleMoc
 
 void evictModulesThatHaveLoaded(Zig::GlobalObject* globalObject)
 {
-    if (globalObject->onLoadPlugins.modulesToEvictOnceLoaded.isEmpty() || globalObject->vm().m_synchronousModuleQueue) [[likely]]
+    if (globalObject->onLoadPlugins.modulesToEvictOnceLoaded.isEmpty() || globalObject->vm().synchronousModuleQueue()) [[likely]]
         return;
     Zig::ModulesToEvict evict;
     evict.hasLoadSettled = true;

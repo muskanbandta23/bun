@@ -27,7 +27,11 @@ impl Generator<'_> {
     pub(super) fn float(&mut self, ty: Type) -> (Value, Class) {
         match self.random.below(100) {
             0..15 => (self.float_constant(ty), Class::Data(ty)),
-            15..45 if self.may_nest() => self.fresh_float(ty),
+            15..45 if self.may_nest() => {
+                let fresh = self.fresh_float(ty);
+                self.count_as_used();
+                fresh
+            }
             _ => match self.find(|known| known.satisfies(Class::Loose(ty))) {
                 Some(found) => found,
                 None if self.may_nest() => self.fresh_float(ty),

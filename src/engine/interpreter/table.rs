@@ -109,6 +109,7 @@ fast_handlers! {
     GetArgument get_argument,
     GetArgumentsLength get_arguments_length,
     GetArgumentByVal get_argument_by_val,
+    CreateDirectArguments create_direct_arguments,
     GetFromArguments get_from_arguments,
     PutToArguments put_to_arguments,
     EnsureArguments ensure_arguments,

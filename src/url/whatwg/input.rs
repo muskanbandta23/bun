@@ -1,9 +1,8 @@
-use core::io::BorrowedBuf;
 use core::mem::MaybeUninit;
 
-use bun_engine_text::{AllocError, MAX_LENGTH, StringImpl, StringRef, Text};
+use bun_engine_text::{AllocError, Cursor, MAX_LENGTH, StringImpl, StringRef, Text};
 use bun_highway::url::narrow_to_latin1;
-use bun_simdutf_sys::simdutf::{self, WithUtf8Len};
+use bun_simdutf_sys::simdutf;
 
 use crate::Error;
 use crate::buffer::Buffer;
@@ -141,34 +140,29 @@ impl Transcoder {
         }
     }
 
-    fn storage(&mut self, capacity: usize) -> Result<BorrowedBuf<'_, u8>, AllocError> {
-        if capacity <= Transcoder::INLINE_CAPACITY {
-            return Ok(BorrowedBuf::from(&mut self.inline[..]));
-        }
-        if capacity > MAX_LENGTH || self.heap.try_reserve_exact(capacity).is_err() {
-            return Err(AllocError);
-        }
-        Ok(BorrowedBuf::from(self.heap.spare_capacity_mut()))
-    }
-
     /// A lone surrogate becomes U+FFFD.
+    #[inline(never)]
     fn encode(&mut self, units: &[u16]) -> Result<Source<'_>, AllocError> {
         if let Some(characters) = narrow_to_latin1(units, &mut self.inline) {
             return Ok(Source::new(characters, Encoding::Latin1));
         }
-        let measured = WithUtf8Len::utf16_worst_case(units, Transcoder::INLINE_CAPACITY)
-            .unwrap_or_else(|| WithUtf8Len::utf16_with_replacement(units));
-        let mut out = self.storage(measured.utf8_len())?;
-        if !simdutf::convert::utf16::to::utf8::with_errors::le(measured, out.unfilled())
-            .is_successful()
-        {
-            for character in char::decode_utf16(units.iter().copied()) {
-                let character = character.unwrap_or(char::REPLACEMENT_CHARACTER);
-                out.unfilled()
-                    .append(character.encode_utf8(&mut [0; 4]).as_bytes());
-            }
+        let text = Text::Utf16(units);
+        let bytes = if text.len() <= Transcoder::INLINE_CAPACITY / 3 {
+            Cursor::fill_uninit(&mut self.inline, |cursor| {
+                text.write_utf8(cursor);
+            })
+        } else {
+            self.heap = text.try_to_utf8()?;
+            self.converted_on_heap()?
+        };
+        Ok(Source::new(bytes, Encoding::Utf8))
+    }
+
+    fn converted_on_heap(&self) -> Result<&[u8], AllocError> {
+        if self.heap.len() > MAX_LENGTH {
+            return Err(AllocError);
         }
-        Ok(Source::new(out.into_filled(), Encoding::Utf8))
+        Ok(&self.heap)
     }
 
     /// Each maximal invalid sequence becomes U+FFFD.
@@ -176,21 +170,12 @@ impl Transcoder {
         &'a mut self,
         source: Source<'a>,
     ) -> Result<Source<'a>, AllocError> {
-        const REPLACEMENT: &[u8] = "\u{fffd}".as_bytes();
         if source.is_well_formed() {
             return Ok(source);
         }
-        let pieces = || {
-            source.bytes.utf8_chunks().flat_map(|chunk| {
-                let is_valid = chunk.invalid().is_empty();
-                [
-                    chunk.valid().as_bytes(),
-                    if is_valid { b"" } else { REPLACEMENT },
-                ]
-            })
-        };
-        let mut out = self.storage(pieces().map(<[u8]>::len).sum())?;
-        pieces().for_each(|piece| out.unfilled().append(piece));
-        Ok(Source::new(out.into_filled(), Encoding::Utf8))
+        self.heap = StringRef::try_from_utf8_lossy(source.bytes)?
+            .text()
+            .try_to_utf8()?;
+        Ok(Source::new(self.converted_on_heap()?, Encoding::Utf8))
     }
 }

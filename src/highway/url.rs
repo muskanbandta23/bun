@@ -131,23 +131,16 @@ impl PlainBytes {
     }
 
     /// The first block from `at` on that has a stop, or the last block. `at` is inside `text`.
-    #[inline(always)]
-    fn next_block(&self, text: &[u8], at: usize) -> Block {
+    #[inline(never)]
+    fn next_block(text: &[u8], at: usize, set: &PlainBytes) -> Block {
         if cfg!(miri) || text.len() <= 16 {
-            return self.block_at(text, at);
+            let (end, stops) = (at + 64, set.stops_in_64(text, at));
+            return Block { end, stops };
         }
         // SAFETY: text.ptr/len are a readable range of at least 17 bytes, and `at` is inside it.
-        let block = unsafe { highway_url_next_block(text.as_ptr(), text.len(), at, self) };
-        debug_assert_eq!(block.stops, self.scalar_stops(text, block.end - 64, 64));
+        let block = unsafe { highway_url_next_block(text.as_ptr(), text.len(), at, set) };
+        debug_assert_eq!(block.stops, set.scalar_stops(text, block.end - 64, 64));
         block
-    }
-
-    #[inline(never)]
-    fn block_at(&self, text: &[u8], at: usize) -> Block {
-        Block {
-            end: at + 64,
-            stops: self.stops_in_64(text, at),
-        }
     }
 }
 
@@ -201,7 +194,7 @@ impl Iterator for Scan<'_> {
             Block {
                 end: self.end,
                 stops: self.stops,
-            } = self.set.next_block(self.text, self.end);
+            } = PlainBytes::next_block(self.text, self.end, self.set);
         }
         let at = self.end + self.stops.trailing_zeros() as usize - 64;
         self.stops &= self.stops - 1;

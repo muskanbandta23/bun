@@ -37,12 +37,12 @@ pub(super) fn run(function: &mut Function, analyses: &mut Analyses, _: Target) {
         return;
     }
     let (cfg, frequencies) = analyses.frequencies(function);
-    let mut found = Vec::new();
+    let (mut found, mut copier) = (Vec::new(), Copier::new(function));
     for &block in cfg.order() {
         // From the end, so that no instruction moves to a new block again and again.
         let mut value = function.last(block);
         while !value.is_none() && !frequencies.is_cold(block) {
-            if let Some(specialization) = plan(function, value) {
+            if let Some(specialization) = plan(function, &mut copier, value) {
                 value = specialization.select;
                 found.push(specialization);
             }
@@ -54,14 +54,13 @@ pub(super) fn run(function: &mut Function, analyses: &mut Analyses, _: Target) {
     }
     let selects: Vec<Value> = found.iter().map(|found| found.select).collect();
     withdraw_promises(function, cfg, &selects);
-    let mut copier = Copier::new(function);
     for specialization in &found {
         specialize(function, &mut copier, specialization);
     }
     copier.repair_uses(function, analyses);
 }
 
-fn plan(function: &Function, last: Value) -> Option<Specialization> {
+fn plan(function: &mut Function, copier: &mut Copier, last: Value) -> Option<Specialization> {
     let tested = match *function.op(last) {
         Op::Check(tested, _) | Op::Branch(tested) => tested,
         Op::Switch(tested, _) | Op::JumpTable(tested, _)
@@ -74,27 +73,37 @@ fn plan(function: &Function, last: Value) -> Option<Specialization> {
     if function.block_of(tested) != function.block_of(last) {
         return None;
     }
-    let earlier = |&value: &Value| function.previous(value).expand();
-    core::iter::successors(earlier(&last), earlier)
-        .take(GREATEST_DISTANCE)
-        .filter(|&value| selects_constant(function, value))
-        .find_map(|select| plan_for(function, select, last))
+    let mut value = last;
+    for _ in 0..GREATEST_DISTANCE {
+        value = function.previous(value).expand()?;
+        if selects_constant(function, value)
+            && let Some(found) = plan_for(function, copier, value, last)
+        {
+            return Some(found);
+        }
+    }
+    None
 }
 
-fn plan_for(function: &Function, select: Value, last: Value) -> Option<Specialization> {
+fn plan_for(
+    function: &mut Function,
+    copier: &mut Copier,
+    select: Value,
+    last: Value,
+) -> Option<Specialization> {
     let Op::Select([condition, then, or]) = *function.op(select) else {
         unreachable!("not a selection")
     };
-    let preview = |selected: Value| {
-        Preview::of(function, function.next(select), last, |value| {
-            function.constant_bits(if value == select { selected } else { value })
-        })
-        .filter(|preview| preview.cost <= GREATEST_COST)
-    };
+    let [as_it_is, for_then, for_or] = [select, then, or].map(|selected| {
+        copier.set_stand_in(select, selected);
+        let preview = copier.preview(function, function.next(select), last);
+        copier.forget_stand_ins();
+        preview.filter(|preview| preview.cost <= GREATEST_COST)
+    });
     let is_settled =
         |preview: &Preview| preview.taken.is_some() || preview.settled_check_fails.is_some();
-    let previews = [preview(then)?, preview(or)?];
-    if is_settled(&preview(select)?) || !previews.iter().any(is_settled) {
+    let previews = [for_then?, for_or?];
+    if is_settled(&as_it_is?) || !previews.iter().any(is_settled) {
         return None;
     }
     let arm = |value, preview: &Preview| Arm {

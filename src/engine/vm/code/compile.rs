@@ -5,8 +5,8 @@ use std::io::Write;
 use std::rc::Rc;
 
 use bun_engine_bytecode::{
-    Code, CodeFlags, Compiler, Dump, Eval, EvalContext, FunctionRef, Instrumentation, Module,
-    Origin, Request, Script, Specialization, StaticScope, verify,
+    Code, CodeFlags, Compiler, Dump, Eval, EvalContext, FunctionInfo, FunctionRef, Instrumentation,
+    Module, Origin, Request, Script, Specialization, StaticScope, verify,
 };
 use bun_engine_syntax::{PausePosition, SourceCache};
 pub use bun_engine_syntax::{
@@ -24,9 +24,15 @@ use crate::{
 pub(super) struct Compilation {
     compiler: RefCell<Compiler>,
     /// By the address of the text.
-    source_caches: RefCell<FastHashMap<usize, (StringRef, SourceCache)>>,
+    source_caches: RefCell<FastHashMap<usize, KeptSourceCache>>,
     code_cache: RefCell<CodeCache>,
     covers: Cell<bool>,
+}
+
+struct KeptSourceCache {
+    _source: StringRef,
+    cache: SourceCache,
+    was_used: bool,
 }
 
 type Outer<'a> = Option<&'a Rc<StaticScope>>;
@@ -62,6 +68,14 @@ impl Vm {
         self.services.code.compilation.source_caches.take();
     }
 
+    /// Of what has not been used for a while.
+    pub(super) fn prune_compilation_caches(&self) {
+        let state = &self.services.code.compilation;
+        let mut caches = state.source_caches.borrow_mut();
+        caches.retain(|_, kept| core::mem::take(&mut kept.was_used));
+        state.code_cache.borrow_mut().prune();
+    }
+
     pub fn code_cache_max_entries(&self) -> usize {
         let cache = self.services.code.compilation.code_cache.borrow();
         cache.max_entries()
@@ -73,9 +87,9 @@ impl Vm {
         cache.set_max_entries(count);
     }
 
-    pub(crate) fn forget_compiled_module(&self, provider: &SourceProvider, module: &Rc<Module>) {
-        let mut cache = self.services.code.compilation.code_cache.borrow_mut();
-        cache.remove_module(provider, module);
+    pub(super) fn cached_function_tables(&self) -> Vec<Rc<[FunctionInfo]>> {
+        let cache = self.services.code.compilation.code_cache.borrow();
+        cache.function_tables()
     }
 
     fn with_compiler<T>(
@@ -91,7 +105,10 @@ impl Vm {
         let request = Request {
             source,
             cache: Some(match caches.get_mut(&source.address()) {
-                Some((_, cache)) => cache,
+                Some(kept) => {
+                    kept.was_used = true;
+                    &mut kept.cache
+                }
                 None => &mut new_cache,
             }),
             host: self,
@@ -100,7 +117,12 @@ impl Vm {
         };
         let result = compile(&mut state.compiler.borrow_mut(), request);
         if !new_cache.is_empty() {
-            caches.insert(source.address(), (source.clone(), new_cache));
+            let kept = KeptSourceCache {
+                _source: source.clone(),
+                cache: new_cache,
+                was_used: true,
+            };
+            caches.insert(source.address(), kept);
         }
         result
     }

@@ -2,8 +2,8 @@ use bun_engine_bytecode::{Width, op};
 use bun_engine_vm::code::metadata::{ArrayAccess, GetById, GetByVal, GetLength};
 use bun_engine_vm::ic::{self, AccessCases, AccessKind, StoreCache};
 use bun_engine_vm::{
-    IndexingMode, JsCell, JsObject, JsString, JsSymbol, OFFSET_OF_INTERNAL_FIELDS, TypeFlags, Value,
-    ValueProfile,
+    IndexingMode, JsCell, JsObject, JsString, JsSymbol, MappedArguments, OFFSET_OF_INTERNAL_FIELDS,
+    TypeFlags, Value, ValueProfile,
 };
 
 use super::barrier_and_next;
@@ -71,6 +71,8 @@ handler! {
             object.storage().public_length()
         } else if object.is_string() {
             cell::<JsString>(base).len()
+        } else if let Some(length) = object.downcast::<MappedArguments>().and_then(|it| it.original_length()) {
+            length
         } else {
             go!(m, get_length_property::<W>)
         };
@@ -204,8 +206,8 @@ handler! {
     fn in_by_id(m, op: op::InById) {
         let Some(object) = m.as_cell(m.get(op.base)) else { slow!(m, op::InById) };
         let case = m.entry::<AccessCases>(op.metadata).find(object.shape_id(), 0);
-        let Some(case) = case.filter(|it| it.is_valid()) else { slow!(m, op::InById) };
-        m.set(op.dst, boolean(case.kind() != AccessKind::HasNot));
+        let Some(answer) = case.and_then(|it| it.try_has()) else { slow!(m, op::InById) };
+        m.set(op.dst, boolean(answer));
         next!(m, op)
     }
 
@@ -221,8 +223,8 @@ handler! {
             next!(m, op)
         }
         let case = m.name_of_key(key).and_then(|name| entry.cases.find(object.shape_id(), name));
-        let Some(case) = case.filter(|it| it.is_valid()) else { slow!(m, op::InByVal) };
-        m.set(op.dst, boolean(case.kind() != AccessKind::HasNot));
+        let Some(answer) = case.and_then(|it| it.try_has()) else { slow!(m, op::InByVal) };
+        m.set(op.dst, boolean(answer));
         next!(m, op)
     }
 

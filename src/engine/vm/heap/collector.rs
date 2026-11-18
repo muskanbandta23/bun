@@ -5,8 +5,8 @@ use super::conservative::ConservativeRoots;
 use super::marking::Marking;
 use super::visitor::{Findings, REVISIT};
 use super::{
-    BLOCK_SIZE, Gc, Heap, HeapAnalyzer, JsCell, MutatorState, RootReason, Scope, Survivors,
-    Visitor, container, root_alloc, stack,
+    BLOCK_SIZE, DeferCollection, Gc, Heap, HeapAnalyzer, HeapGraphSink, JsCell, MutatorState,
+    RootReason, Scope, Survivors, Visitor, container, root_alloc, stack,
 };
 use crate::options;
 
@@ -19,6 +19,10 @@ impl Heap {
         if self.is_deferred() {
             return self.did_defer_collection.set(true);
         }
+        self.collect_now(scope);
+    }
+
+    fn collect_now(&self, scope: Option<Scope>) {
         self.vm().clear_dead_stack();
         stack::with_registers_on_stack(|stack_top| self.run_collection(scope, stack_top));
         self.vm().clear_dead_stack();
@@ -32,11 +36,19 @@ impl Heap {
         }
     }
 
-    /// A full collection that reports what it finds.
-    pub fn collect_and_analyze(&self, analyzer: &mut HeapAnalyzer) {
-        self.analyzer.set(analyzer);
-        self.collect(Some(Scope::Full));
-        self.analyzer.set(core::ptr::null_mut());
+    /// A full collection that reports what it finds, which is there for as long as the result is. Reports nothing
+    /// where a collection cannot run.
+    pub fn collect_and_analyze(&self, sink: &mut dyn HeapGraphSink) -> DeferCollection<'_> {
+        let can_collect = self.can_collect() && !self.is_deferred();
+        let deferral = self.defer_collection();
+        if can_collect {
+            // SAFETY: a local.
+            let mut analyzer = unsafe { HeapAnalyzer::new(sink) };
+            self.analyzer.set(&raw mut analyzer);
+            self.collect_now(Some(Scope::Full));
+            self.sweep_synchronously();
+        }
+        deferral
     }
 
     #[inline(never)]
@@ -61,6 +73,11 @@ impl Heap {
         let findings = core::mem::take(&mut visitor.findings);
         self.spare_mark_stack
             .set(core::mem::take(&mut visitor.stack));
+
+        // SAFETY: it outlives the collection, and the visitor is done with it.
+        if let Some(analyzer) = unsafe { self.analyzer.take().as_mut() } {
+            self.for_each_live_cell(|cell| analyzer.analyze(cell));
+        }
 
         let survivors = Survivors { scope, vm };
         self.clear_weak_references(&survivors, &findings);
@@ -138,21 +155,21 @@ impl Heap {
             // SAFETY: live.
             unsafe { visitor.mark_auxiliary(base) };
         }
+        visitor.replace_root_reason(RootReason::ExecutingCode);
         vm.visit_code_on_stack(&roots.code_addresses, visitor);
         roots.cells
     }
 
     fn mark_roots(&self, visitor: &mut Visitor) {
-        set_root_reason(visitor, RootReason::StrongHandles);
-        self.strong_set.visit(visitor);
-        set_root_reason(visitor, RootReason::ProtectedValues);
+        visitor.replace_root_reason(RootReason::ProtectedValues);
         for &cell in self.protected.borrow().keys() {
             // SAFETY: kept alive so far.
             unsafe { visitor.append_word(cell as u64) };
         }
-        set_root_reason(visitor, RootReason::StrongReferences);
+        visitor.replace_root_reason(RootReason::StrongHandles);
+        self.strong_set.visit(visitor);
         self.vm().visit_roots(visitor);
-        set_root_reason(visitor, RootReason::None);
+        visitor.replace_root_reason(RootReason::None);
     }
 
     fn mark_to_fixpoint(&self, marking: &Marking, visitor: &mut Visitor) {
@@ -166,9 +183,9 @@ impl Heap {
             marking.drain(visitor);
 
             let visits = visitor.findings.visit_count;
-            set_root_reason(visitor, RootReason::WeakSets);
+            visitor.replace_root_reason(RootReason::WeakSets);
             self.weak_set.visit(visitor);
-            set_root_reason(visitor, RootReason::Output);
+            visitor.replace_root_reason(RootReason::Output);
             for index in 0..visitor.findings.output_constraints.len() {
                 let cell = visitor.findings.output_constraints[index];
                 // SAFETY: visited by this collection.
@@ -179,7 +196,7 @@ impl Heap {
                 });
             }
             self.vm().visit_output_constraints(visitor);
-            set_root_reason(visitor, RootReason::Embedder);
+            visitor.replace_root_reason(RootReason::Embedder);
             if is_first_round {
                 for space in self.spaces_with_output_constraints.borrow().iter() {
                     self.for_each_marked_cell_in(space, |cell| {
@@ -190,12 +207,12 @@ impl Heap {
                     });
                 }
             }
+            visitor.replace_root_reason(RootReason::None);
             for constraint in self.constraints.borrow().iter() {
                 if is_first_round || constraint.depends_on_marking {
                     constraint.execute(visitor);
                 }
             }
-            set_root_reason(visitor, RootReason::None);
             is_first_round = false;
 
             if visitor.stack.is_empty()
@@ -265,11 +282,5 @@ impl Heap {
             // SAFETY: dead, and out of the list.
             unsafe { allocation.destroy() };
         }
-    }
-}
-
-fn set_root_reason(visitor: &mut Visitor, reason: RootReason) {
-    if let Some(analyzer) = visitor.analyzer() {
-        analyzer.root_reason = reason;
     }
 }

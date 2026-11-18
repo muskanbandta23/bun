@@ -150,6 +150,7 @@ impl Formats {
     }
 
     /// HandleDateTimeValue, but for the check that a number is a time value.
+    #[inline]
     pub(super) fn handle(&self, cache: &Cache, value: DateTimeValue) -> Result<(&Layout, Moment)> {
         let moment = value.moment()?;
         if let Some(calendar) = moment.calendar

@@ -32,6 +32,7 @@ impl Generator<'_> {
             return (self.function.const_v128(bits), DATA);
         }
         let (value, class) = self.fresh_vector();
+        self.count_as_used();
         if class.satisfies(wanted) {
             (value, class)
         } else {
@@ -58,7 +59,7 @@ impl Generator<'_> {
         }
     }
 
-    fn lane(&mut self, lanes: Lanes) -> u8 {
+    pub(super) fn lane(&mut self, lanes: Lanes) -> u8 {
         if self.random.one_in(3) {
             0
         } else {
@@ -66,7 +67,7 @@ impl Generator<'_> {
         }
     }
 
-    fn shuffle_pattern(&mut self) -> [u8; 16] {
+    pub(super) fn shuffle_pattern(&mut self) -> [u8; 16] {
         let unit = self.random.pick(&[1u8, 2, 4, 8]);
         let (count, kind) = (16 / unit, self.random.below(12));
         let start = self.random.below(usize::from(count) * 2) as u8;

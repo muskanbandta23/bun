@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 
 use bun_engine_macros::export;
 use bun_engine_text::{PropertyName, STATIC_ATOM_COUNT};
-use bun_engine_vm::heap::{HeapKind, Scope};
+use bun_engine_vm::heap::HeapKind;
 use bun_engine_vm::{
     AfterDeferral, Cx, Exception, Gc, RealmSlot, SourceProvider, Trap, Value, Vm, VmRef,
 };
@@ -11,7 +11,6 @@ use bun_engine_vm::{
 unsafe extern "C" {
     safe fn engine_host_destroy_vm_members(vm: &Vm);
     fn engine_host_delete_source_provider(provider: *mut SourceProvider);
-    safe fn engine_host_reconcile_weak_references(vm: &Vm, scope: Scope);
 }
 
 /// With one reference. The counts are what the generated headers say.
@@ -24,9 +23,6 @@ fn vm_create(kind: HeapKind, static_atom_count: usize, realm_slot_count: usize) 
     // SAFETY: nothing else has it.
     let embedder = unsafe { vm.get() }.embedder();
     (embedder.destroy_members).set(Some(|vm| engine_host_destroy_vm_members(vm)));
-    (embedder.reconcile_weak_references).set(Some(|vm, survivors| {
-        engine_host_reconcile_weak_references(vm, survivors.scope());
-    }));
     vm.into_raw().as_ptr()
 }
 
@@ -71,8 +67,7 @@ fn vm_delete_unlinked_code(vm: &Vm) {
 
 #[export]
 fn vm_delete_all_code(vm: &Vm) {
-    vm.clear_code_cache();
-    vm.clear_source_caches();
+    vm.discard_all_code();
 }
 
 #[export]

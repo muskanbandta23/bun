@@ -62,7 +62,7 @@ pub use hooks::{BuiltinSource, Hooks};
 pub use intrinsic::{BuiltinId, Intrinsic};
 pub use object::*;
 pub use operations::*;
-pub use options::{Options, options, set_options};
+pub use options::{Options, options, parse_flag, parse_number, set_options};
 pub use primitive::*;
 pub use realm::*;
 pub use runtime::*;

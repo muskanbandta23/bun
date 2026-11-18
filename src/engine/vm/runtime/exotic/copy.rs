@@ -5,7 +5,7 @@ use core::cell::Cell;
 use bun_engine_text::{Identifier, PropertyName};
 use smallvec::SmallVec;
 
-use crate::caches::Move;
+use crate::caches::{Move, put_megamorphic};
 use crate::{
     Attributes, CellType, Cx, DeferredFire, DontEnumMode, ElementKind, Gc, GlobalObject,
     IndexingMode, InternalMethod, JsFinalObject, JsObject, JsResult, PropertyNameMode,
@@ -90,6 +90,12 @@ impl JsObject {
         cx: &mut Cx,
         name: PropertyName<'_>,
     ) -> JsResult<Option<Value>> {
+        if self.cell_type() == CellType::FinalObject
+            && let Some((value, attributes)) = self.get_direct_with_attributes(name)
+            && !attributes.intersects(Attributes::ANY_ACCESSOR)
+        {
+            return Ok(attributes.is_enumerable().then_some(value));
+        }
         let mut slot = PropertySlot::new(self.as_value(), InternalMethod::GetOwnProperty);
         if !self.get_own_property_slot(cx, name, &mut slot)? || !slot.attributes().is_enumerable() {
             return Ok(None);
@@ -174,8 +180,8 @@ impl JsObject {
         source: &JsObject,
         is_excluded: impl Fn(PropertyName<'_>) -> bool,
     ) {
-        source.shape().copied_properties(is_excluded, |name, _| {
-            self.put_direct(vm, name, source.get_direct(name)?, Attributes::NONE);
+        source.shape().copied_properties(is_excluded, |name, from| {
+            self.put_direct(vm, name, source.get_direct_at(from), Attributes::NONE);
             Some(())
         });
     }
@@ -201,8 +207,8 @@ impl JsObject {
         is_excluded: impl Fn(PropertyName<'_>) -> bool,
     ) -> JsResult<()> {
         let kinds = PropertyNameMode::StringsAndSymbols;
-        for name in source.own_keys(cx, kinds, DontEnumMode::Include)?.iter() {
-            let name = name.name();
+        let keys = source.snapshot_own_keys(cx, kinds, DontEnumMode::Include)?;
+        for name in keys.iter() {
             if !is_excluded(name)
                 && let Some(value) = source.get_if_own_and_enumerable(cx, name)?
             {
@@ -246,9 +252,10 @@ impl JsObject {
             return Ok(());
         }
         let kinds = PropertyNameMode::StringsAndSymbols;
-        for name in source.own_keys(cx, kinds, DontEnumMode::Include)?.iter() {
-            if let Some(value) = source.get_if_own_and_enumerable(cx, name.name())? {
-                self.set(cx, name.name(), value, true)?;
+        let keys = source.snapshot_own_keys(cx, kinds, DontEnumMode::Include)?;
+        for name in keys.iter() {
+            if let Some(value) = source.get_if_own_and_enumerable(cx, name)? {
+                put_megamorphic(cx, self.as_object(), name, value, true)?;
             }
         }
         Ok(())
@@ -280,6 +287,7 @@ fn copy_of_named_properties(
     let deferred = &mut DeferredFire::new(cx);
     let Some((shape, moves)) = plan(cx, empty, &source_shape, is_excluded, deferred) else {
         let object = cx.new_object();
+        object.convert_to_dictionary(cx);
         object.put_named_properties(cx, source, is_excluded);
         return object;
     };

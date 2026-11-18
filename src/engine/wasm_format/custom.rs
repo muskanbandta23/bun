@@ -50,8 +50,10 @@ impl Names {
             funcs: Vec::new(),
         };
         let mut reader = Reader::new(module.bytes(payload), 0);
+        let mut least_kind = 0;
         while reader.remaining() != 0 {
-            let kind = reader.u7()?;
+            let kind = reader.u7().filter(|&kind| kind >= least_kind)?;
+            least_kind = kind + 1;
             let size = reader.u32()? as usize;
             let end = reader.position().checked_add(size)?;
             match kind {

@@ -52,7 +52,7 @@ pub(crate) struct State {
 impl crate::services::Service for State {
     fn did_collect(&self, vm: &Vm, scope: Scope) {
         if scope == Scope::Full {
-            vm.clear_source_caches();
+            vm.prune_compilation_caches();
         }
     }
 }

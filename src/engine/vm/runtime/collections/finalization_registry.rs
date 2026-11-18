@@ -181,6 +181,8 @@ impl JsFinalizationRegistry {
         held: Value,
         token: Option<Gc<JsCell>>,
     ) -> JsResult<()> {
+        target.will_be_held_weakly();
+        token.inspect(|token| token.will_be_held_weakly());
         let target = target.address();
         let live = Live { target, held };
         let mut registrations = self.registrations().borrow_mut(cx);

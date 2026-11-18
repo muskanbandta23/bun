@@ -242,9 +242,8 @@ impl Template {
         let icu_text =
             |pattern| (locale.text_in_utc(pattern, TIME as f64)).or_type_error(FORMAT_FAILURE);
         let zone_name = icu_text(self.time_zone_field().unwrap_or_default())?;
-        let mut text = DateText::new();
-        self.write(TIME, &zone_name, &mut text, |_, _| Ok(()))?;
-        Ok(*text == *icu_text(pattern)?)
+        let compare = |text: &[u16]| Ok(*text == *icu_text(pattern)?);
+        self.write(TIME, &zone_name, |_, _| Ok(()), compare)
     }
 
     /// As a pattern of its own.
@@ -254,22 +253,26 @@ impl Template {
 
     /// `local_time` is what a clock shows, in milliseconds since it showed the epoch.
     #[inline]
-    pub(super) fn write(
+    pub(super) fn write<T>(
         &self,
         local_time: i64,
         time_zone_name: &[u16],
-        text: &mut DateText,
         mut each_part: impl FnMut(PartKind, &[u16]) -> Result<()>,
-    ) -> Result<()> {
+        whole: impl FnOnce(&[u16]) -> Result<T>,
+    ) -> Result<T> {
         let days = local_time.div_euclid(MS_PER_DAY) as i32;
         let time = LocalTime {
             days,
             date: civil_from_days(days),
             millisecond_of_day: local_time.rem_euclid(MS_PER_DAY) as u32,
         };
-        text.resize(self.capacity + time_zone_name.len(), 0);
+        let mut buffer = DateText::from_buf([0; _]);
+        let capacity = self.capacity + time_zone_name.len();
+        if capacity > buffer.len() {
+            buffer.resize(capacity, 0);
+        }
         let mut out = Cursor {
-            units: text,
+            units: &mut buffer,
             length: 0,
         };
         for (kind, item) in &self.items {
@@ -284,9 +287,7 @@ impl Template {
             }
             each_part(*kind, &out.units[start..out.length])?;
         }
-        let length = out.length;
-        text.truncate(length);
-        Ok(())
+        whole(&out.units[..out.length])
     }
 
     #[inline(always)]

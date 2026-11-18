@@ -116,7 +116,7 @@ JSValue createDOMExceptionObject(JSGlobalObject* lexicalGlobalObject, ExceptionC
     JSValue errorObject = toJSNewlyCreated(lexicalGlobalObject, globalObject, DOMException::create(ec, message));
 
     ASSERT(errorObject);
-    addErrorInfo(lexicalGlobalObject, asObject(errorObject), true);
+    addErrorInfo(lexicalGlobalObject, asObject(errorObject));
     return errorObject;
 }
 

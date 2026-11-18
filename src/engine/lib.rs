@@ -29,6 +29,7 @@ fn hooks() -> Hooks {
         did_start_having_a_bad_time: |_, _| {},
         did_declare_global_lexical: |_, _, _| {},
         builtin_source: bun_engine_builtins::builtin_source,
+        temporal_to_locale_string: |cx, this, _, _| this.as_value().to_string(cx).map(Into::into),
         find_wasm_handler: |_, _| None,
         debugger_will_unwind: |_, _| {},
         debugger_did_unwind_frame: |_, _| {},

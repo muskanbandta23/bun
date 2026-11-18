@@ -39,7 +39,7 @@ impl DigitDivisor {
 
     /// By the shifted divisor, which is more than `high`.
     #[inline(always)]
-    pub(crate) fn step(self, high: u64, low: u64) -> (u64, u64) {
+    fn step(self, high: u64, low: u64) -> (u64, u64) {
         let estimate = (u128::from(self.reciprocal) * u128::from(high))
             .wrapping_add(join(low, high.wrapping_add(1)));
         let (fraction, quotient) = (estimate as u64, (estimate >> 64) as u64);
@@ -52,6 +52,26 @@ impl DigitDivisor {
             return (quotient.wrapping_add(1), left - self.shifted);
         }
         (quotient, left)
+    }
+
+    /// For a run of divisions that starts with `left` at zero. It stays shifted.
+    #[inline(always)]
+    pub(crate) fn divide_next(self, left: &mut u64, next: u64) -> u64 {
+        let quotient;
+        let high = *left | 0u64.funnel_shl(next, self.shift);
+        (quotient, *left) = self.step(high, next << self.shift);
+        quotient
+    }
+
+    /// The quotient and the remainder of two digits.
+    #[inline(always)]
+    pub(crate) fn divide_pair(self, low: u64, high: u64) -> (u128, u64) {
+        let (mut quotient_high, mut left) = (0, high.funnel_shl(low, self.shift));
+        if high >= self.shifted >> self.shift {
+            (quotient_high, left) = self.step(0u64.funnel_shl(high, self.shift), left);
+        }
+        let (quotient_low, left) = self.step(left, low << self.shift);
+        (join(quotient_low, quotient_high), left >> self.shift)
     }
 
     /// `out = (above, a) / self`, where `above` is less than the divisor. Returns the remainder.
@@ -125,7 +145,7 @@ impl DigitDivisor {
 }
 
 /// Up to this length the division instruction takes no longer than finding the reciprocal.
-const MAX_DIRECT_LENGTH: usize = 3;
+const MAX_DIRECT_LENGTH: usize = if cfg!(target_arch = "x86_64") { 6 } else { 1 };
 
 /// `out = a / divisor`. `out` is as long as `a`, or one digit shorter if the quotient fits. Returns the remainder.
 #[inline]
@@ -134,8 +154,14 @@ pub(crate) fn divide_by_digit(out: &mut [u64], a: &[u64], divisor: u64) -> u64 {
         return DigitDivisor::new(divisor).divide(out, a);
     }
     let (a, top) = a.split_at(out.len());
-    let mut left = top.first().copied().unwrap_or(0);
-    for (out, &a) in out.iter_mut().zip(a).rev() {
+    let mut pairs = out.iter_mut().zip(a).rev();
+    let mut left = 0;
+    if let [top] = *top {
+        left = top;
+    } else if let Some((out, &a)) = pairs.next() {
+        (*out, left) = (a / divisor, a % divisor);
+    }
+    for (out, &a) in pairs {
         (*out, left) = divide_pair(left, a, divisor);
     }
     left
@@ -146,7 +172,10 @@ pub(crate) fn remainder_by_digit(a: &[u64], divisor: u64) -> u64 {
     if a.len() > MAX_DIRECT_LENGTH {
         return DigitDivisor::new(divisor).remainder(a);
     }
-    a.iter()
-        .rev()
-        .fold(0, |left, &a| (join(a, left) % u128::from(divisor)) as u64)
+    let [rest @ .., top] = a else {
+        return 0;
+    };
+    rest.iter().rev().fold(top % divisor, |left, &a| {
+        (join(a, left) % u128::from(divisor)) as u64
+    })
 }

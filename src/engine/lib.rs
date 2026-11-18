@@ -18,14 +18,18 @@ fn hooks() -> Hooks {
         catch_address: |_, _| bun_engine_interpreter::catch_entry(),
         native_call_entry: |_, _| call::native_call_entry(),
         jettison: |_, _| {},
+        access_handler: |_, _, _| 0,
+        tier_up: |_, code_block, _, _| {
+            code_block.execution_counter().set(i32::MIN);
+            0
+        },
         initialize_realm: bun_engine_builtins::initialize_realm,
         initialize_realm_slot,
         realm_watchpoint_conditions: bun_engine_builtins::watchpoint_conditions,
         did_start_having_a_bad_time: |_, _| {},
         did_declare_global_lexical: |_, _, _| {},
-        builtins_text: bun_engine_builtins::BUILTINS_TEXT,
         builtin_source: bun_engine_builtins::builtin_source,
-        private_builtins: bun_engine_builtins::private_builtins,
+        temporal_to_locale_string: |cx, this, _, _| this.as_value().to_string(cx).map(Into::into),
         find_wasm_handler: |_, _| None,
         debugger_did_parse: |_, _, _| {},
         debugger_will_unwind: |_, _| {},

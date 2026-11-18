@@ -96,7 +96,7 @@ impl Executable {
     }
 }
 
-#[cell(cell_type = NativeExecutable)]
+#[cell(cell_type = NativeExecutable, export = "engine_class_NativeExecutable")]
 pub struct NativeExecutable {
     base: Executable,
     function: NativeFunction,
@@ -351,7 +351,7 @@ top_level_executables! {
     EvalExecutable, EvalExecutableInit, eval_executable, Eval;
 }
 
-#[cell(cell_type = FunctionExecutable)]
+#[cell(cell_type = FunctionExecutable, export = "engine_class_FunctionExecutable")]
 pub struct FunctionExecutable {
     base: ScriptExecutable,
     info: FunctionRef,

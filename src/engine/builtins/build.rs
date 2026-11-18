@@ -1,11 +1,4 @@
-//! Cuts `js/*.js` into functions. A function starts with `function`, `async function` or `function*` in the first
-//! column and ends with `}` in the first column. The lines before it can say more:
-//!
-//! - `// @intrinsic Name`: its `Intrinsic`.
-//! - `// @name text`: what its `name` is, if that is not what it is declared as.
-//! - `// @private`: other built-ins call it as `@name`, which is in `names.txt`. Stack traces do not show it.
-//! - `// @visibility PrivateRecursive`: its `Visibility`.
-//! - `// @nakedConstructor`: `new` calls it with no `this`.
+//! Cuts `js/*.js` into functions. See `js.rs` for what a file looks like.
 
 #![allow(
     clippy::disallowed_methods,
@@ -34,20 +27,56 @@ struct Annotations<'a> {
     name: Option<&'a str>,
     visibility: Option<&'a str>,
     is_private: bool,
-    is_naked_constructor: bool,
+    is_constructor: bool,
+    is_always_inlined: bool,
 }
 
 impl<'a> Annotations<'a> {
     fn add(&mut self, annotation: &'a str) {
-        match annotation.split_once(' ').unwrap_or((annotation, "")) {
-            ("intrinsic", name) => self.intrinsic = Some(name),
-            ("name", name) => self.name = Some(name),
-            ("visibility", name) => self.visibility = Some(name),
-            ("private", "") => self.is_private = true,
-            ("nakedConstructor", "") => self.is_naked_constructor = true,
+        match annotation.split_once(' ') {
+            Some(("intrinsic", value)) => self.intrinsic = Some(value),
+            Some(("name", value)) => self.name = Some(value),
+            Some(("visibility", value)) => self.visibility = Some(value),
+            None if annotation == "private" => self.is_private = true,
+            None if annotation == "constructor" => self.is_constructor = true,
+            None if annotation == "alwaysInline" => self.is_always_inlined = true,
             _ => panic!("unknown annotation @{annotation}"),
         }
     }
+}
+
+struct Header<'a> {
+    is_async: bool,
+    is_generator: bool,
+    name: &'a str,
+    /// What is between the parentheses.
+    parameters: &'a str,
+}
+
+fn parse_header(line: &str) -> Option<Header<'_>> {
+    let after_async = line.strip_prefix("async ");
+    let rest = after_async.unwrap_or(line).strip_prefix("function")?;
+    let after_star = rest.strip_prefix('*');
+    let (name, rest) = after_star.unwrap_or(rest).split_once('(').expect(line);
+    Some(Header {
+        is_async: after_async.is_some(),
+        is_generator: after_star.is_some(),
+        name: name.trim(),
+        parameters: rest.strip_suffix(") {").expect(line),
+    })
+}
+
+fn parameter_names(parameters: &str) -> Vec<&str> {
+    let declared = parameters.split("/*").next().unwrap();
+    let names: Vec<&str> = (declared.split(',').map(str::trim))
+        .filter(|name| !name.is_empty())
+        .collect();
+    let is_name = |name: &str| name.bytes().all(|it| it.is_ascii_alphanumeric());
+    assert!(
+        (names.iter()).all(|name| is_name(name.trim_start_matches("..."))),
+        "{parameters}"
+    );
+    names
 }
 
 fn main() {
@@ -60,12 +89,11 @@ fn main() {
         .collect();
     files.sort();
 
-    let (mut ids, mut arms, mut private, mut text) =
-        (String::new(), String::new(), String::new(), String::new());
+    let (mut ids, mut sources, mut slots) = (String::new(), String::new(), String::new());
     let mut count = 0;
     for file in files {
         let module = snake_case(file.file_stem().unwrap().to_str().unwrap());
-        writeln!(ids, "pub(crate) mod {module} {{ use super::*;").unwrap();
+        writeln!(ids, "pub(crate) mod {module} {{ use super::BuiltinId;").unwrap();
         let source = fs::read_to_string(&file).unwrap();
         let mut lines = source.lines();
         let mut annotations = Annotations::default();
@@ -73,18 +101,22 @@ fn main() {
             if let Some(annotation) = line.strip_prefix("// @") {
                 annotations.add(annotation);
             }
-            let header = line.strip_prefix("async ").unwrap_or(line);
-            let Some(rest) = header.strip_prefix("function") else {
+            let Some(header) = parse_header(line) else {
                 continue;
             };
-            let declared = rest
-                .trim_start_matches(['*', ' '])
-                .split('(')
-                .next()
-                .unwrap();
-            let (before, after) = line.split_once('(').unwrap();
-            let start = text.len();
-            write!(text, "({}({after}", before.strip_suffix(declared).unwrap()).unwrap();
+            let Header {
+                is_async,
+                is_generator,
+                name,
+                ..
+            } = header;
+            let parameters = parameter_names(header.parameters);
+            let prefix = format!(
+                "({}function{} ",
+                if is_async { "async " } else { "" },
+                if is_generator { "*" } else { "" }
+            );
+            let mut text = format!("{prefix}({}) {{", parameters.join(", "));
             for line in lines.by_ref() {
                 let trimmed = line.trim();
                 if !trimmed.is_empty() && !trimmed.starts_with("//") {
@@ -96,39 +128,45 @@ fn main() {
                 }
             }
             text.push(')');
-            assert!(text.is_ascii(), "{declared}");
-            writeln!(
-                ids,
-                "pub(crate) const r#{declared}: BuiltinId = BuiltinId({count});"
-            )
-            .unwrap();
+            assert!(text.is_ascii(), "{name}");
+
             let annotations = std::mem::take(&mut annotations);
-            if annotations.is_private {
-                writeln!(
-                    private,
-                    "(private_names::r#{declared}, BuiltinId({count})),"
-                )
-                .unwrap();
-            }
+            let is_hidden = annotations.is_private || is_async;
             writeln!(
-                arms,
-                "{count} => BuiltinSource {{ name: {:?}, range: {start}..{}, kind: FunctionKind::{}, visibility: Visibility::{}, intrinsic: Intrinsic::{} }},",
-                annotations.name.unwrap_or(declared),
-                text.len(),
-                if annotations.is_naked_constructor { "NakedConstructor" } else { "Method" },
-                annotations.visibility.unwrap_or(if annotations.is_private { "Private" } else { "Public" }),
+                sources,
+                "BuiltinSource {{ name: {:?}, text: {text:?}, parameters_start: {}, length: {}, \
+                 is_async: {is_async}, is_generator: {is_generator}, is_constructor: {}, is_always_inlined: {}, \
+                 visibility: Visibility::{}, intrinsic: Intrinsic::{} }},",
+                annotations.name.unwrap_or(name),
+                prefix.len(),
+                parameters.iter().filter(|it| !it.starts_with("...")).count(),
+                annotations.is_constructor,
+                annotations.is_always_inlined,
+                (annotations.visibility).unwrap_or(if is_hidden { "Private" } else { "Public" }),
                 annotations.intrinsic.unwrap_or("None"),
             )
             .unwrap();
+            writeln!(
+                ids,
+                "pub(crate) const r#{name}: BuiltinId = BuiltinId({count});"
+            )
+            .unwrap();
+            if annotations.is_private {
+                let slot = format!("private_{}", snake_case(name));
+                writeln!(
+                    slots,
+                    "RealmSlot::{slot} => cx.global().init_{slot}(function(cx, {module}::r#{name})),"
+                )
+                .unwrap();
+            }
             count += 1;
         }
         writeln!(ids, "}}").unwrap();
     }
     let out = format!(
-        "{ids}
-pub static BUILTINS_TEXT: &str = {text:?};
-pub fn builtin_source(id: BuiltinId) -> BuiltinSource {{ match id.0 {{ {arms} _ => unreachable!() }} }}
-pub fn private_builtins() -> &'static [(PropertyName<'static>, BuiltinId)] {{ const {{ &[{private}] }} }}"
+        "{ids}static SOURCES: [BuiltinSource; {count}] = [{sources}];\n\
+         pub(crate) fn initialize_slot(cx: &Cx, slot: RealmSlot) -> bool {{ \
+         match slot {{ {slots} _ => return false }} true }}"
     );
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     fs::write(out_dir.join("js.rs"), out).unwrap();

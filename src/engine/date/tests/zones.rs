@@ -1,6 +1,6 @@
 use bun_engine_date::{
-    LocalOffsets, TimeZone, TimeZoneId, days_from_civil, set_time_zone_override, system_time_zone,
-    time_zone_generation,
+    DateFields, LocalOffsets, TimeZone, TimeZoneId, days_from_civil, make_date_from_integers,
+    set_time_zone_override, system_time_zone, time_zone_generation,
 };
 use bun_engine_standalone as _;
 use bun_engine_text::Text;
@@ -126,6 +126,20 @@ fn transitions() {
     assert_eq!(zone("Asia/Tokyo").rules().next_transition(0), None);
     assert_eq!(TimeZoneId::UTC.rules().previous_transition(i64::MAX), None);
     assert_eq!(new_york.next_transition(i64::MAX), None);
+}
+
+#[test]
+fn time_values_in_any_zone() {
+    let lord_howe = zone("Australia/Lord_Howe");
+    let time = seconds(2024, 10, 5, 16) as f64 * 1000.0;
+    let fields = DateFields::in_zone(time, lord_howe).unwrap();
+    assert_eq!((fields.day(), fields.hour(), fields.minute()), (6, 3, 0));
+    assert_eq!((fields.offset_minutes(), fields.is_daylight()), (660, true));
+    assert_eq!(DateFields::in_zone(8.64e15 + 1.0, lord_howe), None);
+
+    let skipped = make_date_from_integers([2024, 9, 6, 2, 15, 0, 0]);
+    assert_eq!(lord_howe.utc(skipped), time - 15.0 * 60_000.0);
+    assert!(lord_howe.utc(f64::NAN).is_nan());
 }
 
 #[test]

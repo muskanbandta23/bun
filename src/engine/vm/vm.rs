@@ -1,13 +1,14 @@
 use core::any::{Any, TypeId};
-use core::cell::{Cell, RefCell};
+use core::cell::{Cell, RefCell, UnsafeCell};
 use core::ffi::c_void;
-use core::mem::{needs_drop, offset_of};
+use core::mem::{MaybeUninit, needs_drop, offset_of};
 use core::ops::Range;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::rc::Rc;
 
 use bun_engine_bytecode::Specialization;
+use bun_engine_macros::FieldOffsets;
 
 use crate::code::NativeExecutableKey;
 use crate::function::CustomAccessorKey;
@@ -130,17 +131,19 @@ pub struct Embedder {
     pub debugger_break: Cell<Option<fn(&mut Cx)>>,
     pub shell_timeout_check: Cell<Option<fn(&mut Cx)>>,
     pub reconcile_weak_references: Cell<Option<fn(&Vm, &Survivors)>>,
-    pub destroy_client_data: Cell<Option<unsafe extern "C" fn(*mut c_void)>>,
+    /// After the last cell.
+    pub destroy_members: Cell<Option<fn(&Vm)>>,
     pub errors: crate::ErrorHooks,
 }
 
 /// All that the scripts of one thread share.
+#[derive(FieldOffsets)]
 #[repr(C)]
 pub struct Vm {
     exception: Root<Exception>,
+    traps: Traps,
     top_call_frame: Cell<usize>,
     top_entry_frame: Cell<usize>,
-    traps: Traps,
     shape_base: usize,
     catch_frame: Cell<usize>,
     catch_address: Cell<usize>,
@@ -153,11 +156,19 @@ pub struct Vm {
     last_exception: Root<Exception>,
     /// For generated code to pass values through.
     scratch: [Cell<u64>; 4],
-    pub shapes: VmShapes,
+    internal_function_executable: Root<Executable>,
+    ref_count: AtomicU32,
+    pub did_enter: Cell<bool>,
+    is_execution_forbidden: Cell<bool>,
+    deletes_unconfigurable_properties: Cell<bool>,
+    /// Members of the class that C++ sees.
+    embedder_members: UnsafeCell<MaybeUninit<[usize; 48]>>,
     pub heap: Heap,
+    heap_padding: MaybeUninit<[u8; Heap::SIZE_LIMIT - size_of::<Heap>()]>,
+    /// The last field whose offset C++ knows.
     pub small_strings: SmallStrings,
 
-    ref_count: AtomicU32,
+    pub shapes: VmShapes,
     hooks: &'static Hooks,
     embedder: Embedder,
     stack_bounds: StackBounds,
@@ -165,14 +176,10 @@ pub struct Vm {
     is_handling_error: Cell<bool>,
     termination_deferral_depth: Cell<u32>,
     did_defer_termination: Cell<bool>,
-    is_execution_forbidden: Cell<bool>,
-    deletes_unconfigurable_properties: Cell<bool>,
     debugger_count: Cell<u32>,
-    pub did_enter: Cell<bool>,
     seed: Cell<u64>,
     when_idle: RefCell<Vec<Box<dyn FnOnce(&Vm) + GcFree>>>,
     conservative_ranges: RefCell<Vec<Range<usize>>>,
-    internal_function_executable: Root<Executable>,
     bound_function_executable: Root<NativeExecutable>,
     spaces_by_class: RefCell<FastHashMap<usize, &'static IsoSpace>>,
     shapes_by_class: RefCell<FastHashMap<usize, usize>>,
@@ -215,7 +222,9 @@ impl VmRef {
             last_exception: Root::new(),
             scratch: Default::default(),
             shapes: VmShapes::new(),
+            embedder_members: UnsafeCell::new(MaybeUninit::zeroed()),
             heap,
+            heap_padding: MaybeUninit::uninit(),
             small_strings: SmallStrings::new(),
             ref_count: AtomicU32::new(1),
             hooks,
@@ -281,8 +290,8 @@ impl Drop for VmRef {
             if vm.ref_count.fetch_sub(1, Ordering::AcqRel) == 1 {
                 vm.services.will_destroy(vm);
                 vm.heap.tear_down();
-                if let Some(destroy) = vm.embedder.destroy_client_data.get() {
-                    destroy(vm.client_data.get());
+                if let Some(destroy) = vm.embedder.destroy_members.get() {
+                    destroy(vm);
                 }
                 drop(Box::from_raw(self.0.as_ptr()));
             }

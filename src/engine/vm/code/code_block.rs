@@ -13,10 +13,11 @@ use bun_engine_macros::cell;
 use bun_engine_text::{Identifier, PropertyName, names};
 
 use super::metadata;
+use super::profile::ValueProfile;
 use crate::heap::Survivors;
 use crate::{
     Attributes, Cx, Field, FunctionExecutable, Gc, GcFree, GlobalObject, ImmutableArray,
-    IntegrityLevel, JsArray, JsBigInt, JsCell, JsResult, JsString, LineColumn, RegExp,
+    IntegrityLevel, JsArray, JsBigInt, JsCell, JsResult, JsString, LineColumn, RealmSlot, RegExp,
     ScopeTemplate, ScriptExecutable, TypeFlags, Value, ValueVec, Visitor, Vm,
 };
 
@@ -76,7 +77,8 @@ pub trait CompiledCode: GcFree + Any {
     fn size(&self) -> usize;
 }
 
-/// The constants, the executables of inner functions, the scope templates and the metadata.
+/// The constants, the executables of inner functions, the scope templates, the profiles of the arguments and the
+/// metadata.
 struct Words {
     first: *mut u64,
     count: usize,
@@ -104,7 +106,7 @@ impl Drop for Words {
 
 /// Code linked to a realm. Optimized code has one of its own, whose `alternative` has the profiles.
 #[cell(cell_type = CodeBlock, flags = TypeFlags::SHAPE_IS_IMMORTAL,
-    visit_children, reconcile_weak_references, estimated_size)]
+    visit_children, visit_output_constraints, reconcile_weak_references, estimated_size)]
 pub struct CodeBlock {
     base: JsCell,
     instructions: *const u8,
@@ -148,7 +150,7 @@ impl CodeBlock {
     ) -> JsResult<Gc<CodeBlock>> {
         let functions = code.constants.len();
         let scopes = functions + code.functions.len();
-        let metadata = scopes + code.scopes.len();
+        let metadata = scopes + code.scopes.len() + code.body.parameters() as usize;
         let count = metadata + code.body.metadata().words() as usize;
         let words = Words::zeroed(count).ok_or_else(|| cx.throw_out_of_memory())?;
         let at = |index| words.first.wrapping_add(index);
@@ -235,7 +237,7 @@ impl CodeBlock {
             }
             Constant::Template(site) => self.template_object(cx, site)?.into(),
             Constant::Array(literal) => self.link_array(cx, literal)?.into(),
-            &Constant::LinkTime(id) => cx.global().link_time_constant(cx, id).into(),
+            &Constant::LinkTime(id) => cx.global().slot(cx, RealmSlot::for_constant(id)).into(),
         }))
     }
 
@@ -282,12 +284,32 @@ impl CodeBlock {
         Ok(object)
     }
 
-    /// All words before the metadata. None for optimized code.
+    /// They end where the metadata begins. The first is that of `this`.
+    pub fn argument_profiles(&self) -> &[ValueProfile] {
+        let count = self.parameters as usize;
+        // SAFETY: allocated with that many.
+        unsafe { core::slice::from_raw_parts(self.metadata.sub(count).cast(), count) }
+    }
+
+    /// The offset of the instruction that the call site of a frame stands for, unless its code is optimized.
+    #[inline(always)]
+    pub fn bytecode_offset_of(&self, call_site: u32) -> u32 {
+        call_site.wrapping_sub(self.instructions.addr() as u32)
+    }
+
+    /// The low bits of the address of the instruction.
+    #[inline(always)]
+    pub fn call_site_of(&self, bytecode_offset: u32) -> u32 {
+        bytecode_offset.wrapping_add(self.instructions.addr() as u32)
+    }
+
+    /// All words before the profiles. None for optimized code.
     fn fields(&self) -> &[Field<Option<Value>>] {
         if self.alternative.is_some() {
             return &[];
         }
-        let count = (self.metadata.addr() - self.constants.addr()) / size_of::<u64>();
+        let count = (self.metadata.addr() - self.constants.addr()) / size_of::<u64>()
+            - self.parameters as usize;
         // SAFETY: each is zero or a value.
         unsafe { core::slice::from_raw_parts(self.constants.cast(), count) }
     }
@@ -454,6 +476,10 @@ impl CodeBlock {
             compiled.visit(self, visitor);
         }
         visitor.reconcile_current_cell_later();
+    }
+
+    fn visit_output_constraints(&self, visitor: &mut Visitor) {
+        metadata::visit_transitions(self, visitor);
     }
 
     fn reconcile_weak_references(&self, survivors: &Survivors) {

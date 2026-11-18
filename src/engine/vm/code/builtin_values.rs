@@ -1,5 +1,5 @@
-//! What an `@name` means in the source of a built-in, besides the intrinsics of the bytecode generator, the slots of
-//! the realm and the private functions in `builtins/js`.
+//! What an `@name` means in the source of a built-in, besides the intrinsics of the bytecode generator and the slots
+//! of the realm.
 
 use bun_engine_bytecode::BuiltinValue::{self, Double, Int32};
 use bun_engine_bytecode::ResumeMode;

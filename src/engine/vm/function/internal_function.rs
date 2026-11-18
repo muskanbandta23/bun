@@ -28,7 +28,7 @@ const _: () = {
     assert!(offset_of!(InternalFunction, executable) == JsFunction::OFFSET_OF_EXECUTABLE);
 };
 
-#[object_ops]
+#[object_ops(export = "engine_InternalFunction")]
 impl InternalFunction {
     fn call_data(&self) -> CallData {
         CallData::native(self.function)
@@ -68,7 +68,7 @@ impl InternalFunction {
         self.put_direct(vm, names::name, name.into(), attributes);
     }
 
-    /// Defines `length`, `name` and `prototype`, and `constructor` on the prototype.
+    /// Defines `length` and `name`, and links it with the prototype.
     pub fn finish_constructor(
         &self,
         cx: &Cx,
@@ -77,9 +77,7 @@ impl InternalFunction {
         prototype: &JsObject,
     ) {
         self.define_length_and_name(cx, length, JsString::from_name(cx, name));
-        self.put_direct(cx, names::prototype, prototype.into(), Attributes::CONSTANT);
-        let this = self.as_value();
-        prototype.put_direct(cx, names::constructor, this, Attributes::DONT_ENUM);
+        self.link_with_prototype(cx, prototype);
     }
 
     pub fn global(&self) -> Gc<GlobalObject> {

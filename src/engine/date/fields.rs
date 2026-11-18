@@ -2,7 +2,7 @@ use core::num::NonZeroU64;
 
 use crate::civil::{week_day, year_month_day};
 use crate::time_value::{TIME_VALUES, make_date, make_day, make_time};
-use crate::zone::Offset;
+use crate::zone::{Offset, TimeZoneId};
 
 /// Where a field is in the bits of `DateFields`.
 #[derive(Clone, Copy)]
@@ -90,6 +90,14 @@ impl DateFields {
         let time = (time.to_int_checked()).filter(|time| TIME_VALUES.contains(time))?;
         let (days, since_midnight) = split_at_midnight(time);
         Some(DateFields::at_midnight(days, OffsetBits::UTC).later(since_midnight))
+    }
+
+    /// `None` if `time` is not in the range of time values.
+    pub fn in_zone(time: f64, zone: TimeZoneId) -> Option<DateFields> {
+        let time = (time.to_int_checked()).filter(|time| TIME_VALUES.contains(time))?;
+        let offset = zone.rules().span_at(time.div_euclid(1000)).offset;
+        let (days, since_midnight) = split_at_midnight(time + i64::from(offset.seconds) * 1000);
+        Some(DateFields::at_midnight(days, OffsetBits::new(offset)).later(since_midnight))
     }
 
     #[inline(always)]
@@ -180,24 +188,24 @@ impl DateFields {
 
     /// What a setter of `Date.prototype` passes to UTC or TimeClip: the time on the same clock that has `values` for the
     /// components from `first` on.
+    #[inline]
     pub fn with_components(self, millisecond: u16, first: Component, values: &[f64]) -> f64 {
-        let mut components = [
-            self.year().into(),
-            self.month().into(),
-            self.day().into(),
-            self.hour().into(),
-            self.minute().into(),
-            self.second().into(),
-            millisecond.into(),
-        ];
-        for (component, &value) in components[first as usize..].iter_mut().zip(values) {
-            *component = value;
-        }
-        let [year, month, day, hour, minute, second, millisecond] = components;
-        make_date(
-            make_day(year, month, day),
-            make_time(hour, minute, second, millisecond),
-        )
+        let value = |component: Component, current: i32| {
+            let index = (component as usize).wrapping_sub(first as usize);
+            values.get(index).copied().unwrap_or_else(|| current.into())
+        };
+        let day = make_day(
+            value(Component::Year, self.year()),
+            value(Component::Month, self.month().into()),
+            value(Component::Day, self.day().into()),
+        );
+        let time = make_time(
+            value(Component::Hour, self.hour().into()),
+            value(Component::Minute, self.minute().into()),
+            value(Component::Second, self.second().into()),
+            value(Component::Millisecond, millisecond.into()),
+        );
+        make_date(day, time)
     }
 }
 

@@ -6,7 +6,7 @@ mod stubs;
 mod unwind;
 
 use bun_engine_bytecode::Specialization;
-use bun_engine_macros::native_abi;
+use bun_engine_macros::{FieldOffsets, native_abi};
 
 pub use unwind::unwind;
 
@@ -62,7 +62,7 @@ enum CallKind {
 }
 
 /// How an object is called.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, FieldOffsets)]
 #[repr(C)]
 pub struct CallData {
     kind: CallKind,

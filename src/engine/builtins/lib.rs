@@ -17,7 +17,7 @@ mod realm;
 mod text;
 mod watchpoints;
 
-pub use js::{BUILTINS_TEXT, builtin_source, private_builtins};
+pub use js::builtin_source;
 pub use realm::{initialize_realm, initialize_slot};
 pub use watchpoints::watchpoint_conditions;
 

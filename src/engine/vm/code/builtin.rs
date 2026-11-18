@@ -1,29 +1,25 @@
 //! Functions that are written in JavaScript with `@names`: those of the standard library, and those of the embedder.
 
 use core::cell::{OnceCell, RefCell};
-use core::ops::Range;
 
 use bun_engine_bytecode::{
-    BuiltinFunction, BuiltinValue, FunctionKind, FunctionRef, Host, LinkTimeConstant, Visibility,
+    BuiltinFunction, BuiltinValue, FunctionKind, FunctionRef, Host, Visibility,
 };
 use bun_engine_text::{Atom, Identifier, PropertyName, StringRef, Text};
 
 use super::builtin_values::BUILTIN_VALUES;
 use crate::{
-    BuiltinId, Cx, FastHashMap, FunctionExecutable, Gc, GlobalObject, JsCell, JsFunction,
-    RealmSlot, SourceCode, SourceProvider, SourceProviderRef, SourceType, Vm,
+    BuiltinId, FastHashMap, FunctionExecutable, Gc, RealmSlot, SourceCode, SourceProvider,
+    SourceProviderRef, SourceType, Vm,
 };
 
 #[derive(Default)]
 pub(super) struct Builtins {
-    provider: OnceCell<SourceProviderRef>,
-    functions: RefCell<FastHashMap<u16, FunctionRef>>,
+    functions: RefCell<FastHashMap<u16, (SourceProviderRef, FunctionRef)>>,
     /// By the address of the symbol.
     values: OnceCell<FastHashMap<usize, BuiltinValue>>,
     embedder_names: RefCell<FastHashMap<Identifier, Identifier>>,
 }
-
-const FIRST_PRIVATE_FUNCTION: u16 = LinkTimeConstant::FIRST_OF_HOST.0 + RealmSlot::COUNT as u16;
 
 impl Host for Vm {
     fn private_name(&self, name: Text<'_>) -> Option<Identifier> {
@@ -33,13 +29,8 @@ impl Host for Vm {
 
     fn builtin_value(&self, name: PropertyName<'_>) -> Option<BuiltinValue> {
         let values = self.services.code.builtins.values.get_or_init(|| {
-            let slots =
-                (RealmSlot::PRIVATE_NAMES.iter()).map(|&(name, slot)| (name, slot.as_constant()));
-            let functions = (self.hooks().private_builtins)().iter();
-            let functions = functions
-                .map(|&(name, id)| (name, LinkTimeConstant(FIRST_PRIVATE_FUNCTION + id.0)));
-            (slots.chain(functions))
-                .map(|(name, constant)| (name, BuiltinValue::LinkTime(constant)))
+            (RealmSlot::PRIVATE_NAMES.iter())
+                .map(|&(name, slot)| (name, BuiltinValue::LinkTime(slot.as_constant())))
                 .chain(BUILTIN_VALUES.iter().copied())
                 .map(|(name, value)| (name.address(), value))
                 .collect()
@@ -138,67 +129,31 @@ impl Vm {
         names.insert(name.into(), symbol);
     }
 
-    fn builtins_provider(&self) -> &SourceProviderRef {
-        self.services.code.builtins.provider.get_or_init(|| {
-            let text = StringRef::from_literal(self.hooks().builtins_text);
-            SourceProvider::build(text, None, SourceType::Program).finish()
-        })
-    }
-
-    fn builtin_function(&self, id: BuiltinId) -> FunctionRef {
+    fn builtin_function(&self, id: BuiltinId) -> (SourceProviderRef, FunctionRef) {
         let mut functions = self.services.code.builtins.functions.borrow_mut();
         let function = functions.entry(id.0).or_insert_with(|| {
             let builtin = (self.hooks().builtin_source)(id);
-            let Range { start, end } = builtin.range;
-            let text = &self.hooks().builtins_text.as_bytes()[start as usize..end as usize];
-            let source = SourceCode {
-                provider: self.builtins_provider().clone(),
-                start,
-                end,
-            };
-            let (outline, name) = (
-                BuiltinOutline::of(text),
-                Identifier::from_literal(builtin.name),
-            );
-            describe_builtin(&source, &outline, name, builtin.kind, builtin.visibility)
+            let text = StringRef::from_literal(builtin.text);
+            let provider = SourceProvider::build(text, None, SourceType::Program);
+            (provider.finish(), builtin.to_function())
         });
         function.clone()
+    }
+
+    /// A new one, whose code is linked to the realm that calls it first.
+    pub fn builtin_executable(&self, id: BuiltinId) -> Gc<FunctionExecutable> {
+        let (provider, function) = self.builtin_function(id);
+        let executable = FunctionExecutable::create(self, provider, None, function);
+        executable.set_intrinsic((self.hooks().builtin_source)(id).intrinsic);
+        executable
     }
 }
 
 impl FunctionExecutable {
-    /// A new one, whose code is linked to the realm that calls it first.
-    pub fn for_builtin(vm: &Vm, id: BuiltinId) -> Gc<FunctionExecutable> {
-        let provider = vm.builtins_provider().clone();
-        let executable = Self::create(vm, provider, None, vm.builtin_function(id));
-        executable.set_intrinsic((vm.hooks().builtin_source)(id).intrinsic);
-        executable
-    }
-
     pub fn is_for_builtin(&self, vm: &Vm, id: BuiltinId) -> bool {
         core::ptr::eq(
             &raw const **self.info(),
-            &raw const *vm.builtin_function(id),
+            &raw const *vm.builtin_function(id).1,
         )
-    }
-}
-
-impl GlobalObject {
-    /// The function that the realm has for one that only built-ins and the engine call.
-    pub fn private_builtin(&self, vm: &Vm, id: BuiltinId) -> Gc<JsFunction> {
-        self.private_builtins().get(&id.0).unwrap_or_else(|| {
-            // SAFETY: the `Vm` is borrowed from the one that is in use, and this is a shared borrow too.
-            let cx: &Cx = unsafe { Cx::from_global(self.into()) };
-            let function = JsFunction::builtin(cx, FunctionExecutable::for_builtin(vm, id));
-            self.private_builtins().insert(id.0, function);
-            function
-        })
-    }
-
-    pub fn link_time_constant(&self, vm: &Vm, constant: LinkTimeConstant) -> Gc<JsCell> {
-        match constant.0.checked_sub(FIRST_PRIVATE_FUNCTION) {
-            Some(id) => self.private_builtin(vm, BuiltinId(id)).cell(),
-            None => self.slot(vm, RealmSlot::for_constant(constant)),
-        }
     }
 }

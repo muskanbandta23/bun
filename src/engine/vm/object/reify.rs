@@ -129,7 +129,7 @@ impl JsObject {
                 GetterSetter::create(cx, Some(getter.upcast()), None).into()
             }
             StaticValue::EngineBuiltin(id) => {
-                JsFunction::builtin(cx, crate::FunctionExecutable::for_builtin(cx, id)).into()
+                JsFunction::builtin(cx, cx.builtin_executable(id)).into()
             }
             StaticValue::Constant(value) => value,
             StaticValue::String(string) => JsString::from_name(cx, string).into(),

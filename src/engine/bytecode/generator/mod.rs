@@ -18,7 +18,7 @@ mod statement;
 use std::rc::Rc;
 
 use bun_engine_number::exact_int32;
-use bun_engine_syntax::ast::{Ast, ExprId, ExprKind, StmtId};
+use bun_engine_syntax::ast::{Ast, ExprId, ExprKind};
 use bun_engine_syntax::{EvalContext, FunctionFlags, FunctionKind, Name, NameKind};
 use bun_engine_text::{
     Atom, Identifier, PropertyName, StringRef, Text, find_private_name, find_well_known_symbol,
@@ -488,7 +488,13 @@ impl<'a> Generator<'a> {
 
     #[inline]
     fn position_of_name(&mut self, name: Name, start: u32) {
-        let end = start + self.name_length(name);
+        let is_written = name != Name::DEFAULT_EXPORT;
+        let end = start
+            + if is_written {
+                self.name_length(name)
+            } else {
+                0
+            };
         self.position(end, start, end);
     }
 

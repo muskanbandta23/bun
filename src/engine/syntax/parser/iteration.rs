@@ -191,12 +191,12 @@ impl Session<'_> {
             Declared::Name(token) => {
                 let name = token.name();
                 if !is_lexical {
-                    self.scopes.rewrite(name, token.start);
+                    self.scopes.rewrite(name, token.start());
                 }
                 let declaration = Some(kind);
                 let kind = PatternKind::Binding { name, declaration };
-                let pattern = self.pattern_node::<BUILD>(token.start, token.end, kind);
-                (token.start, pattern)
+                let pattern = self.pattern_node::<BUILD>(token.start(), token.end(), kind);
+                (token.start(), pattern)
             }
         };
         let (subject, end) = self.subject::<BUILD>(is_of)?;
@@ -345,10 +345,10 @@ impl Session<'_> {
     #[inline(never)]
     fn for_with_expression<const BUILD: bool>(&mut self, head: Head) -> Parsed<Statement> {
         let first = self.token();
-        if matches!(first.kind, TokenKind::OpenBrace | TokenKind::OpenBracket)
+        if matches!(first.kind(), TokenKind::OpenBrace | TokenKind::OpenBracket)
             && let Some(pattern) = self.pattern_before_in_or_of::<BUILD>()?
         {
-            let start = first.start;
+            let start = first.start();
             let target = ForTarget::Pattern { pattern, start };
             return self.rest_of_enumeration::<BUILD>(head, target, true);
         }
@@ -373,7 +373,7 @@ impl Session<'_> {
         }
         if !self.at(TokenKind::In) {
             self.require_of()?;
-            if first.kind == TokenKind::Let {
+            if first.kind() == TokenKind::Let {
                 return Err(
                     self.fail("The left hand side of a for-of statement cannot start with 'let'")
                 );
@@ -386,7 +386,7 @@ impl Session<'_> {
             return Err(self.reject_modification::<BUILD>(init));
         }
         self.scopes.enter_loop();
-        self.note_write::<BUILD>(first.start, init);
+        self.note_write::<BUILD>(first.start(), init);
         self.scopes.leave_loop();
         let target = ForTarget::Expression(init.id());
         self.rest_of_enumeration::<BUILD>(head, target, self.is_assignable(init))

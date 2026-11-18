@@ -1,4 +1,5 @@
 /// The pattern, the flags, the subject, where to start, and the offsets of the match and of its groups.
+#[rustfmt::skip]
 const CASES: &[(&str, &str, &str, u32, &[i32])] = &[
     ("a|ab", "", "abc", 0, &[0, 1]),
     ("((a)|(ab))((c)|(bc))", "", "abc", 0, &[0, 3, 0, 1, 0, 1, -1, -1, 1, 3, -1, -1, 1, 3]),
@@ -26,6 +27,7 @@ const CASES: &[(&str, &str, &str, u32, &[i32])] = &[
     ("(?:AA|A){2,}", "", "AA", 0, &[0, 2]),
     ("(a|ab)+?c", "", "aabc", 0, &[0, 4, 1, 3]),
     ("(?:ab){2,3}?c", "", "ababababc", 0, &[2, 9]),
+    (r"(?:(b)(?:q\1/|.+c)+.){2,}b", "", "bbcq/abycb.zbx", 0, &[]),
     ("a{20}", "", "aaaaaaaaaaaaaaaaaaab", 0, &[]),
     ("(?:){4294967295}a", "", "ba", 0, &[1, 2]),
     ("a{2147483648}|b", "", "ab", 0, &[1, 2]),

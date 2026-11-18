@@ -1,12 +1,10 @@
-use core::ops::Range;
-
-use bun_engine_bytecode::{FunctionKind, Visibility};
-use bun_engine_text::PropertyName;
+use bun_engine_bytecode::{BuiltinFunction, FunctionKind, FunctionRef, Visibility};
+use bun_engine_text::{Identifier, PropertyName};
 
 use crate::heap::{Scope, Survivors};
 use crate::{
-    BuiltinId, CallFrame, CodeBlock, CompileError, Cx, GlobalObject, Intrinsic, PropertyCondition,
-    RealmSlot, RealmWatchpoint, SourceProvider, Visitor, Vm,
+    BuiltinId, CallFrame, CodeBlock, CompileError, Cx, Gc, GlobalObject, Intrinsic, JsObject,
+    JsResult, PropertyCondition, RealmSlot, RealmWatchpoint, SourceProvider, Value, Visitor, Vm,
 };
 
 /// What this crate needs from those above it.
@@ -17,6 +15,10 @@ pub struct Hooks {
     pub catch_address: fn(&CodeBlock, u32) -> usize,
     pub native_call_entry: fn(&Vm, Intrinsic) -> usize,
     pub jettison: fn(&Vm, &CodeBlock),
+    /// The code that baseline code jumps to for the case, or zero if there is no such tier.
+    pub access_handler: fn(&Vm, &crate::ic::AccessCase, crate::ic::Key) -> usize,
+    /// The counter of the code block has run out at that instruction. Returns where to go on in the same frame, or zero.
+    pub tier_up: fn(&Vm, &CodeBlock, &CallFrame, u32) -> usize,
     /// Sets the eager slots but `global_this`.
     pub initialize_realm: fn(&Cx),
     pub initialize_realm_slot: fn(&Cx, RealmSlot),
@@ -24,11 +26,9 @@ pub struct Hooks {
     pub realm_watchpoint_conditions: fn(&Cx, RealmWatchpoint) -> Option<Vec<PropertyCondition>>,
     pub did_start_having_a_bad_time: fn(&Vm, &GlobalObject),
     pub did_declare_global_lexical: fn(&Vm, &GlobalObject, PropertyName<'_>),
-    /// The sources of all built-ins, one after the other.
-    pub builtins_text: &'static str,
-    pub builtin_source: fn(BuiltinId) -> BuiltinSource,
-    /// The built-ins that others refer to as `@name`.
-    pub private_builtins: fn() -> &'static [(PropertyName<'static>, BuiltinId)],
+    pub builtin_source: fn(BuiltinId) -> &'static BuiltinSource,
+    /// `toLocaleString` of an instance of a class of `Temporal`, with the locales and the options.
+    pub temporal_to_locale_string: fn(&mut Cx, Gc<JsObject>, Value, Value) -> JsResult<Value>,
     pub find_wasm_handler: fn(&Vm, &CallFrame) -> Option<(usize, u32)>,
     pub debugger_did_parse: fn(&Cx, &SourceProvider, Option<&CompileError>),
     pub debugger_will_unwind: fn(&Vm, &CallFrame),
@@ -43,9 +43,36 @@ pub struct Hooks {
 /// A function of the standard library that is written in JavaScript.
 pub struct BuiltinSource {
     pub name: &'static str,
-    /// Of a function expression in parentheses, in `Hooks::builtins_text`.
-    pub range: Range<u32>,
-    pub kind: FunctionKind,
+    /// A strict function expression without a name, in parentheses.
+    pub text: &'static str,
+    pub parameters_start: u32,
+    pub length: u32,
+    pub is_async: bool,
+    pub is_generator: bool,
+    pub is_constructor: bool,
+    pub is_always_inlined: bool,
     pub visibility: Visibility,
     pub intrinsic: Intrinsic,
+}
+
+impl BuiltinSource {
+    pub(crate) fn to_function(&self) -> FunctionRef {
+        BuiltinFunction {
+            name: Identifier::from_literal(self.name),
+            range: 1..self.text.len() as u32 - 1,
+            parameters_start: self.parameters_start,
+            length: self.length,
+            kind: if self.is_constructor {
+                FunctionKind::NakedConstructor
+            } else {
+                FunctionKind::Method
+            },
+            is_strict: true,
+            is_async: self.is_async,
+            is_generator: self.is_generator,
+            visibility: self.visibility,
+            has_positions: false,
+        }
+        .into_function()
+    }
 }

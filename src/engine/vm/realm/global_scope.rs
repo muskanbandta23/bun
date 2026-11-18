@@ -4,9 +4,9 @@ use bun_engine_bytecode::{Declarations, Unresolved};
 use bun_engine_text::PropertyName;
 
 use crate::{
-    Attributes, CellKind, CellType, Cx, Environment, ErrorType, Gc, GlobalBinding, GlobalObject,
+    Attributes, CellType, Cx, Environment, ErrorType, Gc, GlobalBinding, GlobalObject,
     InternalMethod, JsResult, PropertyOffset, PropertySlot, PutPropertySlot, Shape, ShapeFlags,
-    Value, errors,
+    TypeFlags, Value, errors,
 };
 
 /// What `eval` code declares can be deleted.
@@ -29,21 +29,14 @@ pub enum GlobalPlace<'a> {
 }
 
 impl GlobalObject {
-    /// Whether the class has a say in what becomes of its variables.
-    fn intercepts_variables(&self) -> bool {
-        let (own, base) = (self.class().ops(), GlobalObject::CLASS.ops());
-        !core::ptr::fn_addr_eq(own.get_own_property_slot, base.get_own_property_slot)
-            || !core::ptr::fn_addr_eq(own.put, base.put)
-    }
-
     pub fn place_for_load(&self, name: PropertyName<'_>) -> GlobalPlace<'_> {
         if let Some(binding) = self.lexicals().find(name) {
             return GlobalPlace::Lexical(binding);
         }
-        if self.intercepts_variables() {
+        let shape = self.shape();
+        if (shape.type_flags()).contains(TypeFlags::PROHIBITS_PROPERTY_CACHING) {
             return GlobalPlace::Unknown;
         }
-        let shape = self.shape();
         if let Some((offset, attributes)) = shape.get(name) {
             if attributes.intersects(Attributes::ANY_ACCESSOR)
                 || !shape.property_accesses_are_cacheable()

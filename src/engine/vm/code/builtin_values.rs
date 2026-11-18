@@ -5,7 +5,10 @@ use bun_engine_bytecode::BuiltinValue::{self, Double, Int32};
 use bun_engine_bytecode::ResumeMode;
 use bun_engine_text::{MAX_ARRAY_INDEX, MAX_LENGTH, PropertyName, private_names};
 
-use crate::{CellType, MAX_SAFE_INTEGER};
+use crate::{
+    CellType, IterationKind, JsArrayIterator, JsIteratorHelper, JsWrapForValidIterator,
+    MAX_SAFE_INTEGER,
+};
 
 const fn is(cell_type: CellType) -> BuiltinValue {
     BuiltinValue::CellTest(bun_engine_bytecode::CellType(cell_type.0))
@@ -41,6 +44,17 @@ builtin_values! {
     GeneratorResumeModeNormal = Int32(ResumeMode::Normal as i32),
     GeneratorResumeModeReturn = Int32(ResumeMode::Return as i32),
     GeneratorResumeModeThrow = Int32(ResumeMode::Throw as i32),
+
+    iterationKindKey = Int32(IterationKind::Keys as i32),
+    iterationKindValue = Int32(IterationKind::Values as i32),
+    iterationKindEntries = Int32(IterationKind::Entries as i32),
+    arrayIteratorFieldIndex = Int32(JsArrayIterator::INDEX as i32),
+    arrayIteratorFieldIteratedObject = Int32(JsArrayIterator::ITERATED_OBJECT as i32),
+    arrayIteratorFieldKind = Int32(JsArrayIterator::KIND as i32),
+    iteratorHelperFieldGenerator = Int32(JsIteratorHelper::GENERATOR as i32),
+    iteratorHelperFieldUnderlyingIterator = Int32(JsIteratorHelper::UNDERLYING_ITERATOR as i32),
+    wrapForValidIteratorFieldIteratedIterator = Int32(JsWrapForValidIterator::ITERATOR as i32),
+    wrapForValidIteratorFieldIteratedNextMethod = Int32(JsWrapForValidIterator::NEXT_METHOD as i32),
 
     proxyFieldTarget = Int32(0),
     proxyFieldHandler = Int32(1),

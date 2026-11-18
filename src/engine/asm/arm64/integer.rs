@@ -250,7 +250,7 @@ impl MacroAssembly for MacroAssembler {
         if self.asm.buffer.overflowed {
             usize::MAX
         } else {
-            self.asm.buffer.len
+            self.asm.buffer.len as usize
         }
     }
 

@@ -11,17 +11,15 @@ const LOG2_PAGE: u32 = 12;
 
 impl Assembler {
     pub fn finish(mut self) -> Result<Code, CodeTooLarge> {
-        let here = self.new_label();
-        self.bind(here);
-        self.buffer.check_size()?;
-        self.route_short_branches_that_leave();
+        self.leave_replaceable_bytes();
+        self.put_routes();
         let end = self.buffer.mark();
         if self.buffer.has_data() {
             self.pad(4, 12);
             self.buffer.put_data(|table| SiteKind::TableEntry { table });
         }
         self.buffer.check_size()?;
-        if self.buffer.len > reach(SiteKind::Branch14) as usize {
+        if self.buffer.len > reach(SiteKind::Branch14) {
             widen_what_does_not_reach(&mut self.buffer)?;
         }
         let relocations = fill_distances(&mut self.buffer);
@@ -32,7 +30,7 @@ impl Assembler {
             alignment,
             ..
         } = self.buffer;
-        bytes.truncate(len);
+        bytes.truncate(len as usize);
         let instructions_end = labels[end.0 as usize].offset;
         Ok(Code {
             bytes,
@@ -43,24 +41,26 @@ impl Assembler {
         })
     }
 
-    fn route_short_branches_that_leave(&mut self) {
-        let mut routes: Vec<Option<Label>> = Vec::new();
+    fn put_routes(&mut self) {
+        if self.buffer.aliases_external {
+            self.route_branches_to_aliases();
+        }
+        for (index, route) in (0..).zip(core::mem::take(&mut self.routes)) {
+            if let Some(route) = route {
+                self.buffer.bind(route);
+                self.b(Label(Label::EXTERNAL | index));
+            }
+        }
+    }
+
+    fn route_branches_to_aliases(&mut self) {
         for index in 0..self.buffer.sites.len() {
             let site = self.buffer.sites[index];
-            if !matches!(site.kind, SiteKind::Branch19 | SiteKind::Branch14) {
-                continue;
+            if matches!(site.kind, SiteKind::Branch19 | SiteKind::Branch14)
+                && self.buffer.state(site.label).offset == LabelState::EXTERNAL
+            {
+                self.buffer.sites[index].label = self.route_to(site.label);
             }
-            let target = self.buffer.state(site.label);
-            if target.offset != LabelState::EXTERNAL {
-                continue;
-            }
-            routes.resize(self.buffer.externals.len(), None);
-            self.buffer.sites[index].label =
-                *routes[target.link as usize].get_or_insert_with(|| {
-                    let route = self.buffer.mark();
-                    self.b(site.label);
-                    route
-                });
         }
     }
 }
@@ -138,14 +138,12 @@ fn rewrite(
     widened: &[bool],
     added: &[i32],
 ) -> Result<(), CodeTooLarge> {
-    let len = buffer
-        .len
-        .wrapping_add_signed(added[buffer.sites.len()] as isize);
-    if len > buffer.limit {
+    let len = buffer.len.wrapping_add_signed(added[buffer.sites.len()]);
+    if len as usize > buffer.limit {
         return Err(CodeTooLarge);
     }
-    let old = &buffer.bytes[..buffer.len];
-    let mut new = Vec::with_capacity(len);
+    let old = &buffer.bytes[..buffer.len as usize];
+    let mut new = Vec::with_capacity(len as usize);
     let mut sites = Vec::with_capacity(buffer.sites.len());
     let mut copied = 0;
     for (index, site) in buffer.sites.iter().enumerate() {
@@ -200,7 +198,7 @@ fn rewrite(
         }
     }
     new.extend_from_slice(&old[copied..]);
-    assert!(new.len() == len);
+    assert!(new.len() == len as usize);
     for label in buffer.labels.iter_mut().filter(|label| label.is_bound()) {
         label.offset = label.offset.wrapping_add_signed(added[label.link as usize]);
     }
@@ -221,17 +219,18 @@ fn read_word(bytes: &[u8], at: usize) -> u32 {
     u32::from_le_bytes(*bytes[at..].first_chunk().unwrap())
 }
 
-/// The field for the distance in `word` is clear.
+/// The field for the distance in `word` is clear. Only `adrp`, which counts pages, has low bits to put.
+#[inline]
 fn with_distance(kind: SiteKind, word: u32, distance: i32) -> u32 {
-    let words = (distance >> 2) as u32;
-    match kind {
-        SiteKind::Branch26 => word | words & 0x03ff_ffff,
-        SiteKind::Branch19 | SiteKind::Literal19 { .. } => word | (words & 0x7_ffff) << 5,
-        SiteKind::Branch14 => word | (words & 0x3fff) << 5,
-        SiteKind::Address21 => word | (distance as u32 & 3) << 29 | (words & 0x7_ffff) << 5,
-        SiteKind::TableEntry { .. } => distance as u32,
-        SiteKind::Padding { .. } => unreachable!("padding has no target"),
-    }
+    let (mask, first_bit) = match kind {
+        SiteKind::Branch26 => (0x03ff_ffff, 0),
+        SiteKind::Branch19 | SiteKind::Literal19 { .. } | SiteKind::Address21 => (0x7_ffff, 5),
+        SiteKind::Branch14 => (0x3fff, 5),
+        SiteKind::TableEntry { .. } => (0x3fff_ffff, 2),
+        SiteKind::Padding { .. } => (0, 0),
+    };
+    let distance = distance as u32;
+    word | (distance >> 2 & mask) << first_bit | (distance & 3) << 29
 }
 
 fn fill_distances(buffer: &mut CodeBuffer<SiteKind>) -> Vec<Relocation> {

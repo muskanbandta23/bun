@@ -21,17 +21,19 @@ It works in `target/rootcheck` and is incremental like `cargo check`.
 
 ## Rules
 
-| Rule     | Reports                                                                                                                          |
-| -------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `hidden` | a local, parameter or temporary whose type hides, unless it is only passing through (below)                                      |
-| `hidden` | a field whose type hides, unless the type around it is a cell, `Trace`, a `Service`, `GcFree` by hand, or a part of one of these |
-| `hidden` | the `Init` of a cell that hides: `Vm::allocate` may collect                                                                      |
-| `hidden` | a safe function of a crate below `vm` that lends out a type which refers from memory whose type does not, as an arena does       |
-| `borrow` | a loose borrow (below) that is alive while something may collect, or that leaves a function whose callers cannot tell            |
-| `static` | a static or thread-local whose type refers                                                                                       |
-| `erased` | `&Cell` made `&dyn Trait`                                                                                                        |
-| `guard`  | `ManuallyDrop` around a guard such as `StringView`                                                                               |
-| `allow`  | an opt-out that is misplaced, has no reason or allows nothing                                                                    |
+| Rule        | Reports                                                                                                                          |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `hidden`    | a local, parameter or temporary whose type hides, unless it is only passing through (below)                                      |
+| `hidden`    | a field whose type hides, unless the type around it is a cell, `Trace`, a `Service`, `GcFree` by hand, or a part of one of these |
+| `hidden`    | the `Init` of a cell that hides: `Vm::allocate` may collect                                                                      |
+| `hidden`    | a safe function of a crate below `vm` that lends out a type which refers from memory whose type does not, as an arena does       |
+| `borrow`    | a loose borrow (below) that is alive while something may collect, or that leaves a function whose callers cannot tell            |
+| `no_gc`     | a call that may collect while a `NoGc` or `GcRefMut`, or what is borrowed under one, is alive                                    |
+| `signature` | a safe function that other crates can call with a cell but no `Vm`, `Cx` or `Heap`, and that may collect or returns one          |
+| `static`    | a static or thread-local whose type refers                                                                                       |
+| `erased`    | `&Cell` made `&dyn Trait`                                                                                                        |
+| `guard`     | `ManuallyDrop` around a guard such as `StringView`                                                                               |
+| `allow`     | an opt-out that is misplaced, has no reason or allows nothing                                                                    |
 
 References to a container are fine: whoever holds it is checked.
 
@@ -41,7 +43,7 @@ References to a container are fine: whoever holds it is checked.
 
 **Generic functions** are checked as declared and again with each set of types that they are called with, in whatever crate they are. Code from outside the repository may not make such a value a trait object or hold it while something may collect. That finds the scratch memory of `sort_by` and `splice` when the callback allocates.
 
-**May collect** follows calls to `Heap::collect`, except where a `DeferCollection` is alive in a local. A call that cannot be followed may collect if it goes to foreign code or is given a `Vm`, `Cx`, `Heap`, trait object or `unsafe fn`. A destructor may collect only if its value has one of these.
+**May collect** follows calls to `Heap::collect`, except where a `DeferCollection` is alive in a local. A call that cannot be followed may collect if it goes to foreign code or is given a `Vm`, `Cx`, `Heap`, trait object or `unsafe fn`. A destructor may collect only if its value has one of these, and what is given a `Visitor` or `Survivors` runs inside a collection. `no_gc` and `signature` look for code that gets at the `Vm` by the back door, so they take what cannot be followed at its signature.
 
 **Loose borrows.** `symbol.name()` points into a string that the symbol releases when it dies, and nothing keeps `symbol` in a register once the name has been read, not even a later use: the optimizer may have no need for it. A borrow is loose if it is made through a `&` of a cell and
 

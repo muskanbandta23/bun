@@ -31,6 +31,7 @@ pub struct Types<'tcx> {
     refers: Cache<'tcx, bool>,
     points_to_references: Cache<'tcx, bool>,
     lends: Cache<'tcx, bool>,
+    has_capability: Cache<'tcx, bool>,
     can_allocate: Cache<'tcx, bool>,
     has_unknown_code: Cache<'tcx, bool>,
     has_callback: Cache<'tcx, bool>,
@@ -82,6 +83,7 @@ impl<'tcx> Types<'tcx> {
             refers: Default::default(),
             points_to_references: Default::default(),
             lends: Default::default(),
+            has_capability: Default::default(),
             can_allocate: Default::default(),
             has_unknown_code: Default::default(),
             has_callback: Default::default(),
@@ -260,17 +262,43 @@ impl<'tcx> Types<'tcx> {
                     .any(|it| self.contains_inline(env, it, part)))
     }
 
-    /// Whether code that is given such a value can allocate in the heap.
-    pub fn can_allocate(&self, env: TypingEnv<'tcx>, ty: Ty<'tcx>) -> bool {
-        self.reaches(&self.can_allocate, env, ty, |ty| match *ty.kind() {
+    /// Whether it has a `Vm`, a `Cx` or a `Heap` in it.
+    pub fn has_capability(&self, env: TypingEnv<'tcx>, ty: Ty<'tcx>) -> bool {
+        self.reaches(&self.has_capability, env, ty, |ty| match *ty.kind() {
             ty::Adt(def, _) if self.engine.capabilities.contains(&def.did()) => Some(true),
-            ty::Adt(def, _) if def.is_phantom_data() => Some(false),
-            _ if self.declared_polarity(ty) == Some(ImplPolarity::Negative) => Some(false),
-            _ if self.is_upper(ty) => (self.constituents(env, ty).into_iter())
-                .any(|it| self.has_unknown_code(env, it))
-                .then_some(true),
-            _ => None,
+            _ => self.gives_no_access(ty).then_some(false),
         })
+    }
+
+    /// As `&Vm` and `Option<&Heap>` do.
+    pub fn names_capability(&self, ty: Ty<'tcx>) -> bool {
+        let mut walker = ty.walk();
+        while let Some(argument) = walker.next() {
+            match argument.as_type().map(|it| it.kind()) {
+                Some(ty::Adt(def, _)) if self.engine.capabilities.contains(&def.did()) => {
+                    return true;
+                }
+                Some(ty::FnPtr(..) | ty::Dynamic(..)) => walker.skip_current_subtree(),
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// Whether code that is given such a value may be able to allocate in the heap.
+    pub fn can_allocate(&self, env: TypingEnv<'tcx>, ty: Ty<'tcx>) -> bool {
+        self.has_capability(env, ty)
+            || self.reaches(&self.can_allocate, env, ty, |ty| {
+                if self.gives_no_access(ty) {
+                    return Some(false);
+                }
+                let mut inside = self.is_upper(ty).then(|| self.constituents(env, ty))?.into_iter();
+                inside.any(|it| self.has_unknown_code(env, it)).then_some(true)
+            })
+    }
+
+    fn gives_no_access(&self, ty: Ty<'tcx>) -> bool {
+        ty.is_phantom_data() || self.declared_polarity(ty) == Some(ImplPolarity::Negative)
     }
 
     /// Whether code that knows nothing of the engine finds something in it to call, of which the type does not say

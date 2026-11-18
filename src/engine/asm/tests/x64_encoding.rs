@@ -598,3 +598,47 @@ fn constants_are_addressed_from_the_end_of_the_instruction() {
     });
     listing.check();
 }
+
+fn ymm(reg: Fpr) -> String {
+    format!("ymm{}", reg.number())
+}
+
+#[test]
+fn long_vectors() {
+    let mut listing = Listing::new(X64Features::all());
+    for dst in some_fprs() {
+        for src in some_fprs() {
+            listing.add(
+                format!("vpand {}, {}, {}", ymm(dst), ymm(src), ymm(dst)),
+                |asm| {
+                    asm.with_long_vectors(|asm| asm.sse(Sse::Pand, dst, src, dst));
+                },
+            );
+            listing.add(format!("vpsrlw {}, {}, 3", ymm(dst), ymm(src)), |asm| {
+                asm.with_long_vectors(|asm| asm.sse_shift_imm(SseShiftImm::Psrlw, dst, src, 3));
+            });
+            listing.add(
+                format!("vpmovmskb {}, {}", name(RAX, Size::S32), ymm(src)),
+                |asm| {
+                    asm.with_long_vectors(|asm| asm.move_mask(MoveMask::Pmovmskb, RAX, src));
+                },
+            );
+        }
+        let address = Address::new(RBX, 32);
+        listing.add(
+            format!("vbroadcasti128 {}, {}", ymm(dst), pointer(16, address)),
+            |asm| {
+                asm.broadcast_vector(dst, address);
+            },
+        );
+        // The mode is left behind.
+        listing.add(
+            format!("vpand {}, {}, {}", xmm(dst), xmm(dst), xmm(dst)),
+            |asm| {
+                asm.sse(Sse::Pand, dst, dst, dst);
+            },
+        );
+    }
+    listing.add("vzeroupper".into(), Assembler::vzeroupper);
+    listing.check();
+}

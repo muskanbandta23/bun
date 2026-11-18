@@ -13,6 +13,8 @@ use crate::{CodeBlock, GcFree};
 #[repr(u8)]
 pub enum ExitKind {
     BadType,
+    /// Of a variable that is kept without its tag.
+    BadRepresentation,
     BadShape,
     BadElements,
     BadIdentity,
@@ -46,6 +48,7 @@ impl ExitKind {
         use ExitKind::*;
         [
             BadType,
+            BadRepresentation,
             BadShape,
             BadElements,
             BadIdentity,

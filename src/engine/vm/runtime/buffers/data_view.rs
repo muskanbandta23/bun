@@ -4,7 +4,7 @@ use super::element::{Bits, Element};
 use super::slice::BufferSlice;
 use crate::{Cx, JsArrayBufferView, JsResult, NoGc};
 
-#[cell(name = "DataView", cell_type = DataView)]
+#[cell(name = "DataView", cell_type = DataView, export = "engine_class_DataView")]
 pub struct JsDataView {
     base: JsArrayBufferView,
 }

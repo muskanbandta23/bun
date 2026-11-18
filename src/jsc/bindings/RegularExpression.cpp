@@ -1,6 +1,5 @@
 #include "root.h"
 #include "headers-handwritten.h"
-#include <JavaScriptCore/Options.h>
 #include <JavaScriptCore/YarrInterpreter.h>
 #include <wtf/BumpPointerAllocator.h>
 
@@ -21,11 +20,6 @@ struct RegularExpression {
 
     RegularExpression(WTF::StringView source, uint16_t flags)
     {
-        // TODO: Remove this, we technically are accessing options before we finalize them.
-        // This means you cannot use BUN_JSC_dumpCompiledRegExpPatterns on the flag passed to `bun test -t`
-        // NOLINTBEGIN
-        JSC::Options::AllowUnfinalizedAccessScope scope {};
-        // NOLINTEND
         JSC::Yarr::YarrPattern pattern(source, OptionSet<JSC::Yarr::Flags>::fromRaw(flags), error);
         if (!JSC::Yarr::hasError(error))
             bytecode = JSC::Yarr::byteCompile(pattern, &allocator, error);

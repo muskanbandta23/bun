@@ -71,12 +71,9 @@ pub(super) fn run(function: &mut Function, analyses: &mut Analyses, _: Target) {
 
 impl Sinking<'_> {
     fn visit(&mut self, function: &mut Function, block: Block) {
-        let can_split = !matches!(
-            function.op(function.last(block)),
-            Op::Jump | Op::Patchpoint(_)
-        );
+        let has_choice = function.successors(block).len() > 1;
         for edge in function.successors(block) {
-            let place = if can_split && function.is_rare(edge) {
+            let place = if has_choice && function.is_rare(edge) {
                 Needed::Along(edge)
             } else {
                 Needed::In(block)
@@ -104,7 +101,10 @@ impl Sinking<'_> {
             }
             if effects.must_execute() {
                 rest.writes = rest.writes.hull(function.heap_range(effects.writes));
-                rest.calls |= matches!(function.op(value), Op::Patchpoint(_));
+                rest.calls |= matches!(
+                    function.op(value),
+                    Op::Patchpoint(_) | Op::Node { .. } | Op::WideNode { .. }
+                );
             }
             value = previous;
         }
@@ -150,6 +150,7 @@ impl Sinking<'_> {
         if needed == Needed::In(home)
             || effects.must_execute()
             || !function.type_of(value).is_data()
+            || !function.state_of(value).is_none()
             || matches!(function.op(value), Op::Extract(..) | Op::Patchpoint(_))
         {
             return None;

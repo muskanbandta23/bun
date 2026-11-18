@@ -252,7 +252,7 @@ unsafe impl<K: TableKind> CellKind for OrderedTable<K> {
     fn trace_fields(&self, visitor: &mut Visitor) {
         let forward = self.forward.load(Ordering::Relaxed);
         // SAFETY: zero, or a cell that the table keeps alive.
-        unsafe { visitor.append_hidden_word((forward & !Self::IS_CURRENT) as u64) };
+        unsafe { visitor.append_word((forward & !Self::IS_CURRENT) as u64) };
         if forward & Self::IS_CURRENT == 0 {
             return;
         }

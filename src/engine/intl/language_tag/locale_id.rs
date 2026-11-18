@@ -140,7 +140,7 @@ impl<'a> LocaleId<'a> {
             self.language_id.variants = Variants::default();
             self.add_keyword(Key::VARIANT, b"posix");
         }
-        Ok(LanguageTag(self.write()?))
+        Ok(LanguageTag::new(self.write()?))
     }
 
     fn write(&self) -> Result<StringRef> {

@@ -145,7 +145,6 @@ impl JsObject {
                 // SAFETY: as above.
                 #[cfg(not(windows))]
                 let result = unsafe { callback(cx, self) };
-                // SAFETY: as above.
                 #[cfg(windows)]
                 let result = unsafe { *callback(&mut None, cx, self) };
                 cx.check_exception()?;

@@ -209,10 +209,7 @@ fn find_target<O: AnyCall>(op: O, cx: &mut Cx, f: Frame<'_>) -> JsResult<(Value,
         &f.entry::<metadata::Call>(op.metadata()).profile,
     );
     let Some(target) = CallTarget::find(callee, O::SPECIALIZATION) else {
-        return Err(match O::SPECIALIZATION {
-            Specialization::Call => errors::throw_not_a_function(cx, callee),
-            Specialization::Construct => errors::throw_not_a_constructor(cx, callee),
-        });
+        return Err(errors::throw_failed_call(cx, callee, O::SPECIALIZATION));
     };
     let address = callee.to_bits() as usize;
     if profile.callee().bits() != address

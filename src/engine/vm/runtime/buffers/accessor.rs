@@ -5,7 +5,8 @@ use bun_threading::Guarded;
 
 use crate::NativeFunction;
 
-/// `read(offset)` returns the number, and `write(value, offset)` the offset after it.
+/// `read(offset)` returns the number, and `write(value, offset)` the offset after it. An offset that is missing is zero,
+/// unless the size is an argument. They throw for an offset or an integer that is out of range.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, FieldOffsets)]
 #[repr(C)]
 pub struct BufferAccessor {

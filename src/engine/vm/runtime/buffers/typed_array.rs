@@ -200,6 +200,10 @@ impl GlobalObject {
         unsafe { self.slot(vm, slot).cast_unchecked() }
     }
 
+    pub fn prototype_of_typed_array(&self, vm: &Vm, of: ElementType) -> Gc<JsObject> {
+        self.typed_array_shape(vm, of, false).prototype().cast()
+    }
+
     /// The type whose constructor in this realm is `constructor`.
     pub fn element_type_constructed_by(&self, constructor: Value) -> Option<ElementType> {
         ElementType::ALL.into_iter().find(|&it| {

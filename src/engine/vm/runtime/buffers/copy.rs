@@ -6,8 +6,8 @@ use super::create::Filler;
 use super::element::{Element, ElementType, NumberElement};
 use super::slice::BufferSlice;
 use crate::{
-    Cx, Elements, Gc, JsArrayBufferView, JsObject, JsResult, JsTypedArray, NoGc,
-    Shape, TypeFlags, TypedArray, Value, errors, with_element_type,
+    Cx, Elements, Gc, JsArrayBufferView, JsObject, JsResult, JsTypedArray, NoGc, Shape, TypeFlags,
+    TypedArray, Value, errors, with_element_type,
 };
 
 /// What counts if the source and the target overlap.
@@ -201,8 +201,7 @@ impl JsTypedArray {
         Self::check_range(cx, self.length(), offset, count)?;
         let (to, from) = (self.element_type(), source.element_type());
         if to.is_bigint() != from.is_bigint() {
-            let message = "Content types of source and destination typed arrays are different";
-            return Err(cx.throw_type_error(message));
+            return Err(cx.throw_type_error(errors::CONTENT_TYPES_DIFFER));
         }
         let no_gc = cx.no_gc();
         let (to_shift, from_shift) = (self.size_shift(), source.size_shift());

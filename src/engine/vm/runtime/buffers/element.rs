@@ -1,5 +1,6 @@
 //! The types of the elements of typed arrays.
 
+use bun_alloc::AllocError;
 use bun_engine_number::{float16_from_f64, float16_to_f64, to_int32, to_uint8_clamp};
 use bun_engine_text::{PropertyName, names};
 use bun_highway::elements::Lane;
@@ -112,6 +113,15 @@ impl ElementType {
         )
     }
 
+    /// An integer that can be negative.
+    #[inline(always)]
+    pub const fn is_signed(self) -> bool {
+        matches!(
+            self,
+            ElementType::Int8 | ElementType::Int16 | ElementType::Int32 | ElementType::BigInt64
+        )
+    }
+
     /// The highest bit.
     #[inline(always)]
     pub const fn sign_bit(self) -> u64 {
@@ -127,6 +137,12 @@ impl ElementType {
             ElementType::Float64 => f64::INFINITY.to_bits(),
             _ => 0,
         }
+    }
+
+    /// The highest bit of the fraction is set, and no other.
+    #[inline(always)]
+    pub const fn bits_of_nan(self) -> u64 {
+        self.bits_of_infinity() | self.bits_of_infinity() >> 1
     }
 
     /// Whether converting an element of `source` to this type leaves its bits as they are.
@@ -213,6 +229,12 @@ pub trait Bits: Element + Ord + Into<u64> + AtomicBits + Lane {
     fn truncate(wide: u64) -> Self;
 
     fn swap_bytes(self) -> Self;
+
+    fn try_zeroed_vec(length: usize) -> Result<Vec<Self>, AllocError> {
+        let zeroed = Box::try_new_zeroed_slice(length).map_err(|_| AllocError)?;
+        // SAFETY: any bits are a value.
+        Ok(unsafe { zeroed.assume_init() }.into_vec())
+    }
 }
 
 macro_rules! bits {
@@ -420,8 +442,7 @@ macro_rules! float_elements {
 
             #[inline(always)]
             fn to_number_value(self) -> Value {
-                let number = f64::from(self);
-                if number.is_nan() { Value::NAN } else { Value::double(number) }
+                Value::double(self.into())
             }
         }
     )*};

@@ -9,7 +9,7 @@ use crate::js::{array_iterator_prototype, array_prototype as js};
 use crate::prelude::*;
 
 static_table!(static PROTOTYPE_PROPERTIES = [
-    StaticProperty::function(names::toString, join::to_string, 0),
+    StaticProperty::realm_slot(names::toString, RealmSlot::array_prototype_to_string),
     StaticProperty::realm_slot(names::values, RealmSlot::array_prototype_values),
     StaticProperty::function(names::toLocaleString, join::to_locale_string, 0),
     StaticProperty::function(names::concat, copy::concat, 1).with_intrinsic(Intrinsic::ArrayConcat),
@@ -140,4 +140,10 @@ fn values(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
 #[native_abi]
 fn entries(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     create_iterator(cx, frame, IterationKind::Entries)
+}
+
+pub(super) fn initialize_to_string(cx: &Cx) {
+    let name = names::toString.to_identifier().into_string();
+    let function = JsFunction::native(cx, 0, &name, join::to_string);
+    cx.global().init_array_prototype_to_string(function);
 }

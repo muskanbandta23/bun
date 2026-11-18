@@ -35,6 +35,8 @@ pub struct Hooks {
     pub builtin_source: fn(BuiltinId) -> &'static BuiltinSource,
     /// `toLocaleString` of an instance of a class of `Temporal`, with the locales and the options.
     pub temporal_to_locale_string: fn(&mut Cx, Gc<JsObject>, Value, Value) -> JsResult<Value>,
+    /// Of a `WebAssembly.Memory`, by so many pages. Returns whether it has grown.
+    pub grow_wasm_memory: fn(&mut Cx, Gc<JsObject>, usize) -> bool,
     pub find_wasm_handler: fn(&Vm, &CallFrame) -> Option<(usize, u32)>,
     /// With the address that the callee returns to, or zero if the frame has called an operation, and the number of
     /// inlined functions that have been visited.

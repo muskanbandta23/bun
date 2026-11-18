@@ -1,10 +1,11 @@
 use bun_engine_vm::{
-    CellKind, ClampedU8, Element, Float16, IteratorRecord, JsArray, JsArrayBuffer, JsArrayBufferView,
-    JsTypedArray, RealmSlot, TypedArray, ValueVec, errors, throw_not_iterable, with_element_type,
+    CellKind, ClampedU8, Element, Float16, IteratorRecord, JsArray, JsArrayBuffer,
+    JsArrayBufferView, JsTypedArray, RealmSlot, TypedArray, ValueVec, errors, throw_not_iterable,
+    with_element_type,
 };
 
-use super::prototype::TypedArrayPrototype;
 use super::create_view_shapes;
+use super::prototype::TypedArrayPrototype;
 use super::uint8_array::{from_base64, from_hex, set_from_base64, set_from_hex, to_base64, to_hex};
 use crate::define::species_getter;
 use crate::js;
@@ -267,7 +268,11 @@ fn iterator_to_list(cx: &mut Cx, iterable: Value, method: Value) -> JsResult<Val
 fn of(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     let (this, values) = (frame.this_value(), frame.arguments());
     let result = if let Some(of) = cx.global().element_type_constructed_by(this) {
-        JsTypedArray::create(cx, cx.global().typed_array_shape(cx, of, false), values.len())?
+        JsTypedArray::create(
+            cx,
+            cx.global().typed_array_shape(cx, of, false),
+            values.len(),
+        )?
     } else {
         if !this.is_constructor() {
             return Err(cx.throw_type_error("TypedArray.of requires |this| to be a constructor"));

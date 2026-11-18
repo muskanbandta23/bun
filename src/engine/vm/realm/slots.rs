@@ -188,6 +188,7 @@ realm_slots! {
 
         // Arrays and iteration
         array_constructor: JsObject = @Array,
+        array_prototype_to_string: JsFunction,
         array_iterator_shape: Shape,
         iterator_constructor: JsObject = @Iterator,
         iterator_prototype_iterator: JsFunction = @iteratorPrototypeSymbolIterator,

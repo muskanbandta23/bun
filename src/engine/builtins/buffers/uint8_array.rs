@@ -8,7 +8,9 @@ use crate::prelude::*;
 
 fn this_array(cx: &Cx, frame: &CallFrame, method: &str) -> JsResult<Gc<JsUint8Array>> {
     frame.this_value().downcast().ok_or_else(|| {
-        cx.throw_type_error(format_args!("{method} requires that |this| be a Uint8Array"))
+        cx.throw_type_error(format_args!(
+            "{method} requires that |this| be a Uint8Array"
+        ))
     })
 }
 
@@ -75,7 +77,12 @@ fn decoding_options(
 fn progress_object(cx: &Cx, progress: Progress) -> Value {
     let object = cx.new_object();
     object.put_direct(cx, names::read, progress.read.into(), Attributes::NONE);
-    object.put_direct(cx, names::written, progress.written.into(), Attributes::NONE);
+    object.put_direct(
+        cx,
+        names::written,
+        progress.written.into(),
+        Attributes::NONE,
+    );
     object.into()
 }
 

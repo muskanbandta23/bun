@@ -239,7 +239,12 @@ fn slice<const IS_SHARED: bool>(cx: &mut Cx, frame: &CallFrame) -> JsResult<Valu
     let start = relative_index(cx, frame.argument(0), length, 0)?;
     let end = relative_index(cx, frame.argument(1), length, length)?.max(start);
     let new = match species_constructor::<IS_SHARED>(cx, &this)? {
-        Some(species) => Some(construct_for_slice::<IS_SHARED>(cx, species, &this, end - start)?),
+        Some(species) => Some(construct_for_slice::<IS_SHARED>(
+            cx,
+            species,
+            &this,
+            end - start,
+        )?),
         None => None,
     };
     check_attached(cx, &this)?;
@@ -299,9 +304,7 @@ fn grow(cx: &mut Cx, frame: &CallFrame) -> JsResult<Value> {
     }
     let length = frame.argument(0).to_index(cx, "newLength")? as usize;
     if this.buffer().grow(cx, length).is_err() {
-        return Err(cx.throw_range_error(format_args!(
-            "grow failed with new byte length {length}"
-        )));
+        return Err(cx.throw_range_error(format_args!("grow failed with new byte length {length}")));
     }
     Ok(Value::UNDEFINED)
 }

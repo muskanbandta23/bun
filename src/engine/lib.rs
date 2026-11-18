@@ -34,6 +34,7 @@ fn hooks() -> Hooks {
         did_declare_global_lexical: |_, _, _| {},
         builtin_source: bun_engine_builtins::builtin_source,
         temporal_to_locale_string: |cx, this, _, _| this.as_value().to_string(cx).map(Into::into),
+        grow_wasm_memory: |_, _, _| false,
         find_wasm_handler: |_, _| None,
         wasm_frame: |_, _, _, _| unreachable!(),
         wasm_names: |_, _| unreachable!(),

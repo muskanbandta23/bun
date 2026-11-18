@@ -108,7 +108,7 @@ impl<'a, M: Mode> Decoder<'a, M> {
     }
 
     #[inline(always)]
-    pub(super) fn block_type(&mut self, op: u8) -> Result<BlockType, M::Error> {
+    pub(crate) fn block_type(&mut self, op: u8) -> Result<BlockType, M::Error> {
         let ty = match self.reader.peek() {
             Some(EMPTY) => BlockType::Empty,
             Some(I32) => BlockType::Value(ValType::I32),

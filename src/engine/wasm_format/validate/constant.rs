@@ -2,7 +2,7 @@
 
 use bun_engine_asm::Width;
 
-use super::{Checked, Scratch, Validator};
+use super::{Checked, FrameKind, Scratch, Validator};
 use crate::alloc::TryPush;
 use crate::decode::{Check, Decoder, NO_OPCODE, Progress};
 use crate::error::Error;
@@ -45,7 +45,10 @@ pub(crate) fn validate_const_expr(
         match (result, rejected) {
             (Ok(()), _) if has_nop => Err(not_constant()),
             (Ok(()), _) => Ok(end),
-            (Err(error), None) => Err(error),
+            (Err(mut error), None) => {
+                error.take_missing();
+                Err(validator.error_anywhere(bytes, expected).unwrap_or(error))
+            }
             (Err(_), Some(Rejected::MutableGlobal(index))) => Err(Error::parse(
                 offset + end,
                 format_args!("get_global import kind index {index} is mutable "),
@@ -62,9 +65,8 @@ impl<'a> Validator<'a> {
     where
         'a: 'b,
     {
-        self.may_name_any_func = true;
         self.locals.start(&[], 0);
-        self.enter_body(BlockType::Value(expected));
+        self.enter(FrameKind::Constant, BlockType::Value(expected));
         Decoder::new(self.header, Reader::new(bytes, 0), Progress::START)
     }
 

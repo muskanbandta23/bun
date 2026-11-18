@@ -45,8 +45,9 @@ use core::marker::PhantomData;
 
 use bun_engine_asm::{Cond, FloatCond, FloatWidth, Rounding, Shift, Sign, Size, Width};
 
+pub(crate) use self::gc::STRUCT_SET;
 use self::immediates::Access;
-pub(crate) use self::vector::V128_CONST;
+pub(crate) use self::vector::{V128_CONST, VectorOp};
 use crate::error::{Error, Missing};
 use crate::module::{FunctionFlags, ModuleHeader};
 use crate::opcode::{self, *};
@@ -83,7 +84,7 @@ impl Mode for Check {
     #[cold]
     #[inline(never)]
     fn error(make: impl FnOnce() -> Error) -> Error {
-        make()
+        make().lacking(Missing::InstructionStart)
     }
 
     #[cold]
@@ -91,17 +92,27 @@ impl Mode for Check {
         let Some(missing) = error.take_missing() else {
             return error;
         };
-        let mut reader = Reader::new(bytes, start + 1);
-        let second = (bytes[start] >= GC_PREFIX).then(|| reader.u32()).flatten();
+        let after_opcode = || opcodes_at(bytes, start);
         match missing {
             Missing::OffsetAfterInstruction => error.set_offset(end),
-            Missing::OffsetAfterOpcode => error.set_offset(reader.position()),
+            Missing::OffsetAfterOpcode => error.set_offset(after_opcode().2),
             Missing::OffsetOfLastByte => error.set_offset(end - 1),
-            Missing::OpcodeName => error.prefix_reason(opcode::name(bytes[start])),
-            Missing::SecondOpcodeNumber => error.prefix_reason(&second.unwrap_or(0).to_string()),
+            Missing::OpcodeName => error.prefix_reason(opcode::name(after_opcode().0)),
+            Missing::SecondOpcodeNumber => error.prefix_reason(&after_opcode().1.to_string()),
+            Missing::InstructionStart | Missing::OperandCheck(_) => {
+                return error.lacking(Missing::OperandCheck(start));
+            }
         }
         error
     }
+}
+
+/// The first byte, the number after a prefix, and the offset after them.
+pub(crate) fn opcodes_at(bytes: &[u8], start: usize) -> (u8, u32, usize) {
+    let mut reader = Reader::new(bytes, start);
+    let first = reader.u8().unwrap_or(UNREACHABLE);
+    let second = (first >= GC_PREFIX).then(|| reader.u32()).flatten();
+    (first, second.unwrap_or(u32::MAX), reader.position())
 }
 
 pub(crate) struct Run<E>(PhantomData<E>);

@@ -259,6 +259,11 @@ impl ShapeSpec {
         self
     }
 
+    pub(crate) const fn with_mutable_prototype(mut self) -> ShapeSpec {
+        self.flags = (self.flags).difference(TypeFlags::IS_IMMUTABLE_PROTOTYPE_EXOTIC_OBJECT);
+        self
+    }
+
     /// For `Array.prototype`.
     pub const fn array_without_elements(self) -> ShapeSpec {
         self.with_indexing_mode(IndexingMode::array(ElementKind::None))

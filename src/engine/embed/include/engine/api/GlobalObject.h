@@ -121,6 +121,7 @@ public:
     };
 
     static void destroy(JSCell* cell) { static_cast<JSGlobalObject*>(cell)->~JSGlobalObject(); }
+    static void analyzeHeap(JSCell*, HeapAnalyzer&) ENGINE_SYMBOL(engine_GlobalObject_analyze_heap);
     static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&) ENGINE_SYMBOL(engine_GlobalObject_put);
     static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&) ENGINE_SYMBOL(engine_GlobalObject_delete_property);
     using JSObject::deleteProperty;

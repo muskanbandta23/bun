@@ -405,7 +405,7 @@ unsafe impl Entry for AccessCases {
     fn visit(&self, visitor: &mut Visitor) {
         for case in self.iter() {
             // SAFETY: zero, or a cell that has been kept alive so far.
-            unsafe { visitor.append_hidden_word(case.lookup as u64) };
+            unsafe { visitor.append_word(case.lookup as u64) };
         }
     }
 

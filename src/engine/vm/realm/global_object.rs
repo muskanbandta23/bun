@@ -103,7 +103,7 @@ fn array_shape_index(mode: IndexingMode) -> usize {
     usize::from(mode.bits() >> 1) % ARRAY_SHAPE_COUNT
 }
 
-#[cell(name = "GlobalObject", cell_type = GlobalObject, ops, static_table = GLOBAL_PROPERTIES,
+#[cell(name = "GlobalObject", cell_type = GlobalObject, ops, analyze_heap, static_table = GLOBAL_PROPERTIES,
     export = "engine_class_GlobalObject", flags = TypeFlags::IS_IMMUTABLE_PROTOTYPE_EXOTIC_OBJECT)]
 pub struct GlobalObject {
     base: JsDestructibleObject,
@@ -358,6 +358,12 @@ impl GlobalObject {
     #[inline(always)]
     pub(super) fn realm_watchpoints(&self) -> &RealmWatchpoints {
         &self.watchpoints
+    }
+
+    fn analyze_heap(&self, analyzer: &mut crate::heap::HeapAnalyzer) {
+        self.analyze_properties(analyzer);
+        self.variables.analyze(self, analyzer);
+        self.lexicals.analyze(self, analyzer);
     }
 
     pub fn variables(&self) -> &GlobalBindings {

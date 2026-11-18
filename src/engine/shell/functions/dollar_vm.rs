@@ -2,7 +2,9 @@
 
 use bun_engine_vm::options;
 
-use super::{coverage, define_functions, heap, io, object_with, scripts, tiers};
+use super::{
+    coverage, define_functions, heap, heap_profiler, io, object_with, put, scripts, tiers,
+};
 use crate::prelude::*;
 
 const FUNCTIONS: Functions = &[
@@ -21,7 +23,11 @@ const FUNCTIONS: Functions = &[
 
 pub(super) fn create(cx: &Cx) -> Gc<JsObject> {
     let object = object_with(cx, FUNCTIONS, Attributes::NONE);
-    define_functions(cx, &object, coverage::VM_FUNCTIONS, Attributes::NONE);
+    for functions in [coverage::VM_FUNCTIONS, heap_profiler::VM_FUNCTIONS] {
+        define_functions(cx, &object, functions, Attributes::NONE);
+    }
+    let constructor = heap_profiler::simple_object_constructor(cx);
+    put(cx, &object, "SimpleObject", constructor);
     object
 }
 

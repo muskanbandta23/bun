@@ -441,14 +441,9 @@ impl Harness {
             }
             let [start, end] = ends.map(|label| code.offset_of(label));
             let kept = usize::from(case.keeps_first_scratch);
-            let gprs = scratch.gprs[kept..].iter().flatten().map(|&reg| reg.into());
-            let fprs = scratch.fprs[kept..].iter().flatten().map(|&reg| reg.into());
-            self.free = gprs
-                .chain::<_>(fprs)
-                .collect::<Vec<Reg>>()
-                .into_iter()
-                .collect();
-            self.free |= case.clobbers | RegisterSet::of(host::UNCHECKED, &[]);
+            let gprs: RegisterSet = scratch.gprs[kept..].iter().flatten().copied().collect();
+            let fprs: RegisterSet = scratch.fprs[kept..].iter().flatten().copied().collect();
+            self.free = gprs | fprs | case.clobbers | RegisterSet::of(host::UNCHECKED, &[]);
             if let Err(difference) = self.run_case(case, handle.address(start)) {
                 let bytes = &code.bytes()[start as usize..end as usize];
                 let listing = crate::support::disassemble(&host::LLVM_ARGUMENTS, bytes);

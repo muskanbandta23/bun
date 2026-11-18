@@ -151,8 +151,8 @@ fn addresses() {
             => "ldrb w16, [x2, #1]; and w16, w16, #0x81818181; strb w16, [x2, #1]",
         transfer64(at(8), at(16)) => "ldr x16, [x2, #16]; str x16, [x2, #8]",
         prefetch(at(-8)) => "prfum pldl1keep, [x2, #-8]",
-        store_registers(RegisterSet::of(&[X19, X20, X24], &[V8, V9, V10]), 8, Address::new(SP, 0))
-            => "stp x19, x20, [sp]; str x24, [sp, #16]; stp d8, d9, [sp, #24]; str d10, [sp, #40]",
+        store_registers(RegisterSet::of(&[X19, X20, X24], &[V9, V10, V11]), 8, Address::new(SP, 0))
+            => "stp x19, x20, [sp]; str x24, [sp, #16]; stp d9, d10, [sp, #24]; str d11, [sp, #40]",
         enter_frame() => "stp x29, x30, [sp, #-16]!; mov x29, sp",
         leave_frame() => "mov sp, x29; ldp x29, x30, [sp], #16",
     }

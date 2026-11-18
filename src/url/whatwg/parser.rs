@@ -32,8 +32,8 @@ pub(crate) struct Parser<'a> {
     pub(crate) punycode: Punycode,
     pub(crate) out: Output<'a>,
     pub(crate) parts: Components,
-    /// It has failed for that, and would without tabs and newlines too.
-    pub(crate) lacks_scheme: bool,
+    /// If it has failed, it would have without tabs and newlines too.
+    pub(crate) failure_is_final: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -44,7 +44,7 @@ impl<'a> Parser<'a> {
             punycode,
             out: Output::new(source.bytes),
             parts,
-            lacks_scheme: false,
+            failure_is_final: false,
         }
     }
 
@@ -90,7 +90,7 @@ impl<'a> Parser<'a> {
             (Some(b'\t' | b'\n' | b'\r'), _) => return Err(Error::Invalid),
             (_, Some(base)) => return self.no_scheme(base),
             (_, None) => {
-                self.lacks_scheme = true;
+                self.failure_is_final = true;
                 return Err(Error::Invalid);
             }
         }

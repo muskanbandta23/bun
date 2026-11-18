@@ -56,7 +56,7 @@ impl Buffer {
 
     /// The next `count` bytes, for the caller to write.
     #[inline(always)]
-    fn append(&mut self, count: usize) -> Result<&mut [u8], AllocError> {
+    pub(crate) fn append(&mut self, count: usize) -> Result<&mut [u8], AllocError> {
         let start = self.length;
         if count > self.storage().len() - start {
             self.grow(count)?;

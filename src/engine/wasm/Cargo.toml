@@ -17,6 +17,7 @@ bun_engine_asm.workspace = true
 bun_engine_exec_memory.workspace = true
 bun_engine_wasm_format.workspace = true
 bun_engine_wasm_compiler.workspace = true
+bun_engine_wasm_runtime.workspace = true
 bun_engine_heap.workspace = true
 bun_engine_vm.workspace = true
 bun_threading.workspace = true

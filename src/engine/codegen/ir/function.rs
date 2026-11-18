@@ -148,6 +148,8 @@ pub struct Function {
     pub outgoing_bytes: u32,
     /// Arithmetic has to turn a signaling NaN into a quiet one.
     pub quiets_nans: bool,
+    /// The upper half of the register in which an I32 arrives is clear.
+    pub params_are_extended: bool,
 }
 
 impl Function {
@@ -176,6 +178,7 @@ impl Function {
             reserved_frame_bytes: 0,
             outgoing_bytes: 0,
             quiets_nans: false,
+            params_are_extended: false,
         };
         function.clear(pinned);
         function
@@ -208,6 +211,7 @@ impl Function {
         self.reserved_frame_bytes = 0;
         self.outgoing_bytes = 0;
         self.quiets_nans = false;
+        self.params_are_extended = false;
         let predefined = [HeapRange::ALL, HeapRange::EMPTY].map(|range| self.heaps.push(range));
         debug_assert!(predefined == [Heap::EVERYTHING, Heap::NOTHING]);
     }

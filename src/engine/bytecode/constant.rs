@@ -29,6 +29,8 @@ pub enum Constant {
     /// Stays a double if it is a whole number: it was written as one.
     Double(f64),
     String(Atom),
+    /// Too long to be worth an atom.
+    LongString(StringRef),
     BigInt(Rc<BigIntLiteral>),
     RegExp(Rc<RegExpLiteral>),
     Template(Rc<TemplateSite>),

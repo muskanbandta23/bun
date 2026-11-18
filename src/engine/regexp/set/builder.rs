@@ -1,5 +1,6 @@
 use bun_engine_text::AllocError;
 use bun_engine_unicode::IgnoreCase;
+use smallvec::SmallVec;
 
 use super::{Above, CharRange, Latin1Set, Set, SharedSet, ranges};
 
@@ -10,7 +11,8 @@ pub struct SetBuilder {
     /// Not yet closed over case.
     open: Vec<CharRange>,
     closed: Vec<CharRange>,
-    shared: Option<&'static SharedSet>,
+    /// By address.
+    shared: SmallVec<[&'static SharedSet; 2]>,
 }
 
 /// One of each group of equal characters that has members on both sides of U+00FF.
@@ -41,55 +43,64 @@ impl SetBuilder {
     /// If the result is to be closed over case, `set` is so already.
     pub fn add_set(&mut self, set: &Set) -> Result<(), AllocError> {
         self.latin1 |= set.latin1;
-        match (set.shared(), self.shared) {
-            (Some(shared), None) => self.shared = Some(shared),
-            (Some(shared), Some(held)) if core::ptr::eq(shared, held) => {}
-            _ => {
-                let above = set.above();
-                self.closed
-                    .try_reserve(above.len())
-                    .map_err(|_| AllocError)?;
-                self.closed.extend_from_slice(above);
+        if let Some(shared) = set.shared() {
+            let address = |&shared: &&SharedSet| core::ptr::from_ref(shared);
+            if let Err(index) = self.shared.binary_search_by_key(&address(&shared), address) {
+                self.shared.insert(index, shared);
             }
+            return Ok(());
         }
+        let above = set.above();
+        self.closed
+            .try_reserve(above.len())
+            .map_err(|_| AllocError)?;
+        self.closed.extend_from_slice(above);
         Ok(())
     }
 
-    /// The number of ranges that `finish` has to go through.
+    /// About the number of steps that `finish` takes.
     #[inline]
-    pub(crate) fn pending_ranges(&self) -> usize {
-        self.open.len() + self.closed.len()
+    pub(crate) fn cost(&self) -> usize {
+        let own = self.open.len() + self.closed.len();
+        match (own, &self.shared[..]) {
+            (_, []) | (0, [_]) => own,
+            (_, shared) => shared.iter().map(|it| own + it.above().len()).sum(),
+        }
     }
 
+    #[inline]
     pub fn finish(&mut self, ignore_case: Option<IgnoreCase>) -> Result<Set, AllocError> {
         if let Some(ignore_case) = ignore_case {
             self.close_over_case(ignore_case)?;
         }
-        let (latin1, shared) = (core::mem::take(&mut self.latin1), self.shared.take());
-        if self.pending_ranges() == 0 {
-            return Ok(match shared {
-                Some(shared) => Set::with_shared(latin1, shared),
-                None => Set::from_latin1(latin1),
-            });
-        }
+        let above = match self.open.len() + self.closed.len() + self.shared.len() {
+            0 => Above::NONE,
+            _ => self.finish_above()?,
+        };
+        let latin1 = core::mem::take(&mut self.latin1);
+        Ok(Set { latin1, above })
+    }
+
+    fn finish_above(&mut self) -> Result<Above, AllocError> {
         self.open
             .try_reserve(self.closed.len())
             .map_err(|_| AllocError)?;
         self.open.append(&mut self.closed);
         ranges::normalize(&mut self.open);
-        let above = match shared {
-            None => Above::from_slice(&self.open),
-            Some(shared) if ranges::is_subset(&self.open, shared.above()) => {
-                Ok(Above::from_shared(shared))
+        let above = match self.shared[..] {
+            [] => Above::from_slice(&self.open),
+            [only] if ranges::is_subset(&self.open, only.above()) => Ok(Above::from_shared(only)),
+            [first, ref rest @ ..] => {
+                let mut union = ranges::union(&self.open, first.above())?;
+                for shared in rest {
+                    union = ranges::union(union.as_slice(), shared.above())?;
+                }
+                Above::from_slice(union.as_slice())
             }
-            Some(shared) => ranges::union(&self.open, shared.above())
-                .and_then(|union| Above::from_slice(union.as_slice())),
         };
         self.open.clear();
-        Ok(Set {
-            latin1,
-            above: above?,
-        })
+        self.shared.clear();
+        above
     }
 
     fn close_over_case(&mut self, ignore_case: IgnoreCase) -> Result<(), AllocError> {

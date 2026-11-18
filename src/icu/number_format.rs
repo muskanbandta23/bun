@@ -3,10 +3,10 @@
 use core::ffi::{CStr, c_char, c_void};
 use core::ptr;
 
-use crate::Result;
 use crate::error::Status;
 use crate::ffi::{adopt, call, length, open};
 use crate::formatted_value::{FormattedValue, UFormattedValue};
+use crate::{Error, Result};
 
 bun_opaque::opaque_ffi! {
     struct UNumberFormatter;
@@ -60,6 +60,21 @@ icu_functions! {
     fn unumrf_resultAsValue(result: *const UFormattedNumberRange, status: &mut Status) -> *const UFormattedValue;
 }
 
+/// Of a numeric string, whose exponent has at most five characters.
+pub const MAX_DECIMAL_LENGTH: usize = 1_000_000;
+
+fn decimal_length(value: &[u8]) -> Result<i32> {
+    const MAX_EXPONENT_LENGTH: usize = "-9999".len();
+
+    let exponent = value
+        .iter()
+        .skip_while(|byte| !byte.eq_ignore_ascii_case(&b'e'));
+    if value.len() > MAX_DECIMAL_LENGTH || exponent.skip(1).count() > MAX_EXPONENT_LENGTH {
+        return Err(Error::ILLEGAL_ARGUMENT);
+    }
+    length(value)
+}
+
 /// The fields of `Category::NUMBER`.
 pub mod field {
     pub const INTEGER: i32 = 0;
@@ -108,7 +123,7 @@ impl NumberFormatter {
 
     /// `value` is a numeric string of the General Decimal Arithmetic Specification.
     pub fn format_decimal(&self, value: &[u8], result: &mut FormattedNumber) -> Result<()> {
-        let length = length(value)?;
+        let length = decimal_length(value)?;
         // SAFETY: both objects are open, and `value`, which is copied, has `length` bytes.
         call(|status| unsafe {
             unumf_formatDecimal(
@@ -126,6 +141,10 @@ impl FormattedNumber {
     pub fn open() -> Result<FormattedNumber> {
         // SAFETY: it takes nothing but the status.
         open(|status| unsafe { unumf_openResult(status) }).map(FormattedNumber)
+    }
+
+    pub(crate) fn as_ptr(&self) -> *const UFormattedNumber {
+        self.0.as_ptr()
     }
 
     pub fn value(&self) -> Result<FormattedValue<'_>> {
@@ -194,7 +213,7 @@ impl NumberRangeFormatter {
 
     /// As in `NumberFormatter::format_decimal`.
     pub fn format_decimals(&self, start: &[u8], end: &[u8]) -> Result<FormattedNumberRange> {
-        let (start_length, end_length) = (length(start)?, length(end)?);
+        let (start_length, end_length) = (decimal_length(start)?, decimal_length(end)?);
         let result = FormattedNumberRange::open()?;
         // SAFETY: both objects are open, and the strings, which are copied, have these lengths.
         call(|status| unsafe {
@@ -216,6 +235,10 @@ impl FormattedNumberRange {
     fn open() -> Result<FormattedNumberRange> {
         // SAFETY: it takes nothing but the status.
         open(|status| unsafe { unumrf_openResult(status) }).map(FormattedNumberRange)
+    }
+
+    pub(crate) fn as_ptr(&self) -> *const UFormattedNumberRange {
+        self.0.as_ptr()
     }
 
     pub fn value(&self) -> Result<FormattedValue<'_>> {

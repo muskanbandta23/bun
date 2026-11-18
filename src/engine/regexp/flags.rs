@@ -18,6 +18,11 @@ bitflags::bitflags! {
 const LETTERS: [u8; 8] = *b"dgimsuvy";
 
 impl Flags {
+    /// Those that a group can set and clear.
+    pub(crate) const MODIFIABLE: Flags = Flags::IGNORE_CASE
+        .union(Flags::MULTILINE)
+        .union(Flags::DOT_ALL);
+
     pub(crate) const fn from_letter(letter: u16) -> Option<Flags> {
         Some(match letter {
             0x64 => Flags::HAS_INDICES,

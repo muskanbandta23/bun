@@ -6,6 +6,9 @@ use super::CharRange;
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub struct Latin1Set([u64; 4]);
 
+/// In the second word.
+const ASCII_UPPER_CASE: u64 = 0x07ff_fffe;
+
 impl Latin1Set {
     pub const EMPTY: Latin1Set = Latin1Set([0; 4]);
     pub const ALL: Latin1Set = Latin1Set([u64::MAX; 4]);
@@ -65,7 +68,16 @@ impl Latin1Set {
             word | (word & upper) << 32 | word >> 32 & upper
         }
         let [a, b, c, d] = self.0;
-        Latin1Set([a, pair(b, 0x07ff_fffe), c, pair(d, 0x7f7f_ffff)])
+        Latin1Set([a, pair(b, ASCII_UPPER_CASE), c, pair(d, 0x7f7f_ffff)])
+    }
+
+    /// In lower case, if the set is both cases of one.
+    #[inline]
+    pub(crate) fn only_ascii_letter(&self) -> Option<u8> {
+        let [a, b, c, d] = self.0;
+        let upper = b & ASCII_UPPER_CASE;
+        (a | c | d == 0 && upper.is_power_of_two() && b == upper | upper << 32)
+            .then(|| 0x60 + upper.trailing_zeros() as u8)
     }
 
     #[inline]

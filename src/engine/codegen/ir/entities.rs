@@ -13,8 +13,10 @@ macro_rules! entities {
     ($($(#[$meta:meta])* $name:ident = $prefix:literal;)*) => {
         $($(#[$meta])*
         #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        #[allow(unreachable_pub)]
         pub struct $name(pub(crate) u32);
 
+        #[allow(unreachable_pub)]
         impl $name {
             /// Stands where there is none. It is no valid index.
             pub const NONE: Self = Self(u32::MAX);
@@ -319,6 +321,28 @@ impl<T: Copy> Pool<T> {
 
     pub(crate) fn clear(&mut self) {
         self.items.clear();
+    }
+
+    /// At a position in the range of a span.
+    #[inline]
+    pub(crate) fn item(&self, position: usize) -> T {
+        self.items[position]
+    }
+
+    /// Adds to the span that `span_from` gives.
+    #[inline]
+    pub(crate) fn append(&mut self, item: T) {
+        self.items.push(item);
+    }
+
+    #[inline]
+    pub(crate) fn end(&self) -> usize {
+        self.items.len()
+    }
+
+    #[inline]
+    pub(crate) fn span_from(&self, start: usize) -> Span<T> {
+        Span::new(start, self.items.len() - start)
     }
 }
 

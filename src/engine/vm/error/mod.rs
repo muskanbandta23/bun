@@ -12,3 +12,8 @@ pub use exception::Exception;
 pub use source_appender::SourceAppender;
 pub use stack_trace::{StackFrame, StackVisitor, VisitedFrame, capture_stack_trace};
 pub use throw::Message;
+
+#[derive(Default)]
+pub(crate) struct State {}
+
+impl crate::services::Service for State {}

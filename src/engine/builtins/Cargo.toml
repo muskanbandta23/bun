@@ -2,6 +2,7 @@
 name = "bun_engine_builtins"
 version.workspace = true
 edition.workspace = true
+build = "build.rs"
 
 [lib]
 path = "lib.rs"

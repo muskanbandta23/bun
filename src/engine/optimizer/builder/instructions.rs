@@ -166,10 +166,10 @@ impl Builder<'_> {
 
             I::CreateScope(op) => self.create_scope(op),
             I::GetScoped(op) => {
-                drop(self.get_scoped(op.dst, op.scope, 0, op.slot, Some(op.metadata)))
+                self.get_scoped(op.dst, op.scope, 0, op.slot, Some(op.metadata));
             }
             I::GetOuter(op) => {
-                drop(self.get_scoped(op.dst, op.scope, op.depth, op.slot, Some(op.metadata)))
+                self.get_scoped(op.dst, op.scope, op.depth, op.slot, Some(op.metadata));
             }
             I::GetScopedChecked(op) => {
                 attempt!(self.get_scoped_checked(op.dst, op.scope, 0, op.slot, op.metadata))
@@ -177,7 +177,9 @@ impl Builder<'_> {
             I::GetOuterChecked(op) => {
                 attempt!(self.get_scoped_checked(op.dst, op.scope, op.depth, op.slot, op.metadata))
             }
-            I::GetInternal(op) => drop(self.get_scoped(op.dst, op.scope, op.depth, op.slot, None)),
+            I::GetInternal(op) => {
+                self.get_scoped(op.dst, op.scope, op.depth, op.slot, None);
+            }
             I::PutScoped(op) => self.put_scoped(op.scope, 0, op.slot, op.value),
             I::PutOuter(op) => self.put_scoped(op.scope, op.depth, op.slot, op.value),
             I::GetImport(op) => self.get_import(op),

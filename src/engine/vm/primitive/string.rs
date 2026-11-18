@@ -144,7 +144,7 @@ impl JsString {
         }
         match text.get(0) {
             None => Some(vm.small_strings.empty()),
-            Some(unit) => Some(vm.small_strings.single_character(vm, unit.try_into().ok()?)),
+            Some(unit) => Some(vm.small_strings.single_character(unit.try_into().ok()?)),
         }
     }
 
@@ -168,7 +168,7 @@ impl JsString {
     #[inline(always)]
     pub fn from_unit(vm: &Vm, unit: u16) -> Gc<JsString> {
         match u8::try_from(unit) {
-            Ok(character) => vm.small_strings.single_character(vm, character),
+            Ok(character) => vm.small_strings.single_character(character),
             Err(_) => Self::from_wide_units(vm, &[unit]),
         }
     }
@@ -218,6 +218,11 @@ impl JsString {
     #[inline(always)]
     pub fn is_rope(&self) -> bool {
         self.fiber() & Self::IS_ROPE != 0
+    }
+
+    /// A rope that stands for a part of another string.
+    pub fn is_unresolved_substring(&self) -> bool {
+        self.is_rope() && self.fiber() & JsRopeString::IS_SUBSTRING != 0
     }
 
     #[inline(always)]

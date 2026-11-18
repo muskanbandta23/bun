@@ -1,7 +1,8 @@
 use bun_engine_text::AllocError;
 
-/// Why a pattern has no matcher.
+/// Why a pattern has no matcher. As wide as a character, so that a `Result` of one is a pair of registers.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u32)]
 pub enum Error {
     PatternTooLarge,
     QuantifierOutOfOrder,

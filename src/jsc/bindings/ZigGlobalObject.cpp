@@ -613,9 +613,6 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(int32_t executionConte
         Bun__reported_memory_size = WTF::ramSize();
     }
 
-    // Every JS VM's RunLoop should use Bun's RunLoop implementation
-    ASSERT(vmPtr->runLoop().kind() == WTF::RunLoop::Kind::Bun);
-
     WebCore::JSVMClientData::create(&vm, Bun__getVM(), static_cast<WebCore::WorkerMessagingProxy*>(worker_ptr));
 
     const auto createGlobalObject = [&]() -> Zig::GlobalObject* {
@@ -4999,8 +4996,7 @@ static NEVER_INLINE void handleResponseOnStreamingAction(JSGlobalObject* lexical
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSLockHolder locker(vm);
 
-    auto sourceCode = makeSource("[wasm code]"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
-    auto compiler = JSC::Wasm::StreamingCompiler::create(vm, mode, globalObject, promise, importObject, WTF::move(compileOptions), sourceCode);
+    auto compiler = JSC::Wasm::StreamingCompiler::create(mode, globalObject, promise, importObject, WTF::move(compileOptions));
 
     // The streaming hook used to return a freshly created promise; the caller
     // (webAssemblyCompileStreamingFunc) was a host function that propagated
@@ -5293,7 +5289,6 @@ extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObjec
     ASSERT(globalObject->scriptExecutionContext()->activeDOMObjectsAreStopped());
     vm.entryScope = nullptr;
     Ref context = *globalObject->scriptExecutionContext();
-    Ref<WTF::RunLoop> runLoop = vm.runLoop();
 
     Bun__InspectorConnection__disconnectAllOnExit(globalObject);
     // Deferred promises / callbacks (DOMGuardedObject) hold JSC::Weak handles and observe the
@@ -5304,7 +5299,6 @@ extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObjec
     globalObject = nullptr;
 
     destroyVM(vm);
-    runLoop->threadWillExit();
     // `context` is released here, after ~VM: contextDestroyed() reaches observers at a defined
     // point on this thread instead of from inside a GC destructor.
     BUN_END_REMOVABLE_ENTRY_POINT

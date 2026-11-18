@@ -13,11 +13,11 @@ use bun_engine_text::{Identifier, PropertyName, names};
 
 pub(crate) use copy_plan::Move;
 pub use has_own_property::{HasOwnPropertyEntry, has_own_property};
-pub(crate) use megamorphic::is_known_to_be_absent;
 pub use megamorphic::{
     LoadEntry, StoreEntry, get_megamorphic, has_megamorphic, primary_hash, put_megamorphic,
     secondary_hash, store_growing,
 };
+pub(crate) use megamorphic::{has_enumerable_megamorphic, is_known_to_be_absent};
 
 use crate::heap::{Scope, virtual_memory};
 use crate::{CellType, JsObject, Vm};
@@ -144,6 +144,13 @@ impl State {
         }
     }
 
+    /// Whether a symbol lives on depends on who has its name.
+    pub(crate) fn will_collect(&self, scope: Scope) {
+        if scope == Scope::Full {
+            self.release_names();
+        }
+    }
+
     #[cold]
     pub(crate) fn did_wrap_epoch(&self) {
         self.release_names();
@@ -151,13 +158,7 @@ impl State {
     }
 }
 
-impl crate::services::Service for State {
-    fn did_collect(&self, _: &Vm, scope: Scope) {
-        if scope == Scope::Full {
-            self.release_names();
-        }
-    }
-}
+impl crate::services::Service for State {}
 
 impl Vm {
     /// The address does not change.

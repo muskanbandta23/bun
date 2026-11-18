@@ -59,7 +59,7 @@ impl NumberStrings {
 
     pub(crate) fn initialize(&self, vm: &Vm) {
         for (entry, digit) in self.small.iter().zip(b'0'..=b'9') {
-            entry.set(vm.small_strings.single_character(vm, digit).address());
+            entry.set(vm.small_strings.single_character(digit).address());
         }
     }
 
@@ -107,14 +107,18 @@ impl NumberStrings {
 impl JsString {
     #[inline(always)]
     pub fn from_int32(vm: &Vm, number: i32) -> Gc<JsString> {
+        Self::existing_for_int32(vm, number).unwrap_or_else(|| Self::cache_int32(vm, number))
+    }
+
+    #[inline(always)]
+    pub fn existing_for_int32(vm: &Vm, number: i32) -> Option<Gc<JsString>> {
         let strings = &vm.number_strings;
-        let cached = match strings.small.get(number as u32 as usize).map(Cell::get) {
+        match strings.small.get(number as u32 as usize).map(Cell::get) {
             Some(0) => None,
             // SAFETY: cleared before the string is freed.
             Some(address) => Some(unsafe { Gc::from_address(address) }),
             None => strings.int32s[NumberStrings::int32_index(number)].get(Value::int32(number)),
-        };
-        cached.unwrap_or_else(|| Self::cache_int32(vm, number))
+        }
     }
 
     #[inline(never)]

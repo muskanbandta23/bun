@@ -15,3 +15,4 @@ smallvec.workspace = true
 
 [dev-dependencies]
 bun_engine_exec_memory.workspace = true
+libc.workspace = true

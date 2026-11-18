@@ -665,6 +665,7 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bun_engine_exec_memory",
+ "libc",
  "smallvec",
 ]
 

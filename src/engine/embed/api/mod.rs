@@ -15,6 +15,7 @@ mod hooks;
 mod inspector;
 mod iteration;
 mod json;
+mod module_hooks;
 mod modules;
 mod object;
 mod options;

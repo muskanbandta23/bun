@@ -96,19 +96,22 @@ pub(crate) fn with_names() -> Vec<Pattern> {
     all
 }
 
-/// With a few bytes changed, or one after another.
+/// One after another, one for each operand of another, or with a few bytes changed.
 pub(crate) fn near_names(count: usize, random: &mut Random) -> Vec<Pattern> {
     let named = with_names();
     let patterns = (0..count).map(|index| {
-        let mut pattern = named[random.below(named.len())];
-        if index % 2 == 0 {
-            let before = named[random.below(named.len())];
-            return indices(pattern, |i| before[usize::from(i % 16)]);
+        let [mut pattern, first, second] = [(); 3].map(|()| named[random.below(named.len())]);
+        let operands = [indices(first, |i| i % 16), indices(second, |i| i | 16)];
+        match index % 3 {
+            0 => indices(pattern, |i| first[usize::from(i % 16)]),
+            1 => indices(pattern, |i| operands.as_flattened()[usize::from(i)]),
+            _ => {
+                for _ in 0..=random.below(2) {
+                    pattern[random.below(16)] = random.below(34) as u8;
+                }
+                pattern
+            }
         }
-        for _ in 0..=random.below(2) {
-            pattern[random.below(16)] = random.below(34) as u8;
-        }
-        pattern
     });
     patterns.collect()
 }

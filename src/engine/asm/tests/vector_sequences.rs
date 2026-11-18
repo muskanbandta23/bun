@@ -308,6 +308,6 @@ fn totals_for_shuffles() {
         totals::<x64::MacroAssembler>(avx2, &INTEL),
         totals::<arm64::MacroAssembler>(Arm64Features::empty(), &support::ARM64),
     ];
-    let known = [(20900, 6079), (19931, 6040), (27753, 7057)].map(Some);
+    let known = [(20680, 5998), (19783, 5958), (27666, 7024)].map(Some);
     assert!(actual == known || actual == [None; 3], "{actual:?}");
 }
